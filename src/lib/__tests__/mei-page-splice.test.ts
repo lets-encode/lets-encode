@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { splicePage, splicePageSpan } from "../mei-page-splice.ts";
+import {
+  firstElementOfPage,
+  splicePage,
+  splicePageSpan,
+} from "../mei-page-splice.ts";
 import {
   initialFacsimileModel,
   buildBlankScoreMei,
@@ -211,4 +215,15 @@ test("the last page's span ends at the enclosing close, nested sections included
   // The enclosing structure is kept from the base, not doubled.
   assert.equal((spliced.match(/<\/score>/g) ?? []).length, 1);
   assert.equal((spliced.match(/<\/mdiv>/g) ?? []).length, 1);
+});
+
+test("firstElementOfPage returns the page's first note, else its first measure", () => {
+  assert.equal(firstElementOfPage(base, "surface-2"), "measure-3");
+  const noted = base.replace(
+    /(<measure xml:id="measure-4"[^>]*>[\s\S]*?)<mRest\b[^>]*\/>/,
+    '$1<note xml:id="n-1" dur="4" oct="4" pname="c"/>',
+  );
+  assert.equal(firstElementOfPage(noted, "surface-2"), "n-1");
+  assert.equal(firstElementOfPage(noted, "surface-1"), "measure-1");
+  assert.equal(firstElementOfPage(base, "surface-9"), null);
 });

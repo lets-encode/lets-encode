@@ -66,7 +66,11 @@ import type {
   ScoreDefModel,
 } from "./mei-facsimile.ts";
 import { pieceFieldForPath, pieceKindForPath } from "./coordinator-policy.ts";
-import { splicePage, splicePageSpan } from "./mei-page-splice.ts";
+import {
+  firstElementOfPage,
+  splicePage,
+  splicePageSpan,
+} from "./mei-page-splice.ts";
 import { resolveFacsimileImageUrls } from "./facsimile-images.ts";
 import { WorkflowRunWatch } from "./run-watch.ts";
 import { checkMei } from "./mei-check.ts";
@@ -1057,6 +1061,28 @@ const openEditor: CommandDef<
         le_taskid: task_id,
         le_base: base,
       });
+      // mei-friend opens at page 1; `select` makes it page to the given
+      // element. A page task selects the first note (else measure) of its page
+      // in the file mei-friend opens. Without either, mei-friend opens at page 1.
+      // In speed mode mei-friend does not page to the selected element on
+      // load, so `speed=false` accompanies it.
+      if (pageNo) {
+        try {
+          const mei = await f.getRepoFile(
+            workRepo.owner,
+            workRepo.repo,
+            fragment,
+            ref,
+          );
+          const elementId = mei && firstElementOfPage(mei, taskDef.locator);
+          if (elementId) {
+            params.set("select", elementId);
+            params.set("speed", "false");
+          } else console.log("[editor] nothing to select on", taskDef.locator);
+        } catch (e) {
+          console.log("[editor] could not read the page's first element", e);
+        }
+      }
       const url = `${meiFriendUrl}/?${params}`;
       return {
         ok: true,
