@@ -455,6 +455,55 @@ test("openEditor claims first, then starts the task branch from the current scor
   assert.equal(url.searchParams.get("le_campaignname"), "my-campaign");
   assert.equal(url.searchParams.get("le_taskid"), "T0001");
   assert.equal(url.searchParams.get("le_base"), "https://le.test");
+  assert.equal(url.searchParams.get("select"), null);
+  assert.equal(url.searchParams.get("speed"), null);
+});
+
+test("openEditor selects the first note of a page task's page", async () => {
+  const files: Record<string, string> = {
+    ...editorFiles(lockHeader),
+    "tracking/task.csv":
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\nT0002,,sources/score.mei,surface-2,,,\n",
+    "tracking/state.csv":
+      "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\nT0002,,encoding_required,,,\n",
+    "sources/score.mei":
+      '<section><pb xml:id="pb-1" n="1" facs="#surface-1"/><measure xml:id="m-1"/>' +
+      '<pb xml:id="pb-2" n="2" facs="#surface-2"/><measure xml:id="m-2"><note xml:id="n-2"/></measure></section>',
+  };
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    openChangePr: async () => ({
+      number: 3,
+      html_url: "https://example.test/pr/3",
+      head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
+    }),
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    deleteBranch: async () => {},
+    createBranch: async () => {},
+    getRepoFileDownloadUrl: async () => "https://raw.example/score.mei",
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.openEditor,
+      { task_id: "T0002", campaign: "my-campaign", base: "https://le.test" },
+      context(forge),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  const url = new URL(result.meiFriendUrl!);
+  assert.equal(url.searchParams.get("select"), "n-2");
+  assert.equal(url.searchParams.get("speed"), "false");
 });
 
 test("openEditor keeps the holder's work on an existing task branch", async () => {

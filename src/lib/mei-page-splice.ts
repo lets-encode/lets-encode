@@ -145,6 +145,26 @@ function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
 }
 
 /**
+ * The xml:id of the element to select when opening `locator`'s page
+ * (`surface-N`): its first note, or its first measure if it has no note with an
+ * xml:id. Null if the page has no `<pb>` or neither element.
+ */
+export function firstElementOfPage(
+  mei: string,
+  locator: string,
+): string | null {
+  const surfaces = pbSurfaces(mei);
+  const at = surfaces.indexOf(locator);
+  if (at === -1) return null;
+  const { from, to } = pageSpanAt(mei, locator, surfaces[at + 1] ?? null);
+  const page = mei.slice(from, to);
+  const element =
+    /<note\b[^>]*\bxml:id="([^"]*)"/.exec(page) ??
+    /<measure\b[^>]*\bxml:id="([^"]*)"/.exec(page);
+  return element ? element[1] : null;
+}
+
+/**
  * Splice the fork's encoding of one page into the base score. `locator` is the
  * page's `surface-N` id; the base's span for that page is replaced by the
  * fork's span content wholesale, and everything outside it is preserved from
