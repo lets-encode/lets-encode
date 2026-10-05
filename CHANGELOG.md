@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-05
+
+- The reaper releases a lock at the time in the new `expires` column of `tracking/lock.csv`.
+
 ## 2026-10-02
 
 - A campaign address with capital letters forwards to the lowercase name.

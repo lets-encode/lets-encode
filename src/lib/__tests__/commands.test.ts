@@ -43,7 +43,7 @@ async function withImmediateTimeouts<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-const lockHeader = "task_id,subtask_id,user_id,timestamp,kind\n";
+const lockHeader = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
 // What an encoding submission reads before opening its PR: the task table for
 // the fragment path, and the fragment itself from the encode branch.
 const encodingFiles: Record<string, string> = {

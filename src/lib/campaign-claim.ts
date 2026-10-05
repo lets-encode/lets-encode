@@ -5,8 +5,9 @@
 // Addressing follows the (task_id, subtask_id) convention: an encoding claim
 // targets the task row (empty subtask_id), a validation claim targets one
 // subtask row. Per DESIGN.md §6 the Action is the sole author of the lock
-// row — `user_id` is the PR author and `timestamp` is server time (passed in
-// as `now`), never values the fork supplied.
+// row — `user_id` is the PR author, `timestamp` is server time (passed in as
+// `now`) and `expires` is `now` plus the lock lifetime, never values the fork
+// supplied.
 
 import { findRow, isFinalValidation, LOCK_PATH } from "./campaign-tables.ts";
 import type { ParsedState, TaskRow, LockRow } from "./campaign-tables.ts";
@@ -29,6 +30,8 @@ export interface CheckClaimArgs {
   changedPaths: string[];
   /** ISO-8601 timestamp to stamp the lock. */
   now: string;
+  /** Lock lifetime (locking.stale_after_minutes); sets the lock's `expires`. */
+  staleAfterMinutes: number;
   /** config.yaml allow_self_validation: the encoder may validate their own work. */
   allowSelfValidation?: boolean;
   /** Pass verdicts that complete a subtask; defaults to the slot count. */
@@ -61,6 +64,7 @@ export function checkClaim({
   author,
   changedPaths,
   now,
+  staleAfterMinutes,
   allowSelfValidation,
   passThreshold,
 }: CheckClaimArgs): ClaimResult {
@@ -140,6 +144,9 @@ export function checkClaim({
       user_id: author,
       timestamp: now,
       kind: intent.kind,
+      expires: new Date(
+        Date.parse(now) + staleAfterMinutes * 60_000,
+      ).toISOString(),
     },
   };
 }

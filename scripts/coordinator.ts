@@ -343,6 +343,7 @@ async function attemptClaim(
             user_id: row.user_id,
             timestamp: row.timestamp,
             kind: row.action.replace(/^claim_/, ""),
+            expires: "",
           }
         : undefined,
     };
@@ -350,11 +351,6 @@ async function attemptClaim(
   const now = new Date().toISOString();
   const { kept: locks, removed } = reapLocks({
     locks: parseLockCsv(lockCsv ?? ""),
-    staleAfterMinutes: configNumber(
-      configText,
-      "stale_after_minutes",
-      DEFAULT_STALE_MINUTES,
-    ),
     now,
   });
 
@@ -368,6 +364,11 @@ async function attemptClaim(
         author,
         changedPaths,
         now,
+        staleAfterMinutes: configNumber(
+          configText,
+          "stale_after_minutes",
+          DEFAULT_STALE_MINUTES,
+        ),
         allowSelfValidation: configFlag(configText, "allow_self_validation"),
         passThreshold: passThresholdOf(
           configText,
@@ -1089,21 +1090,15 @@ async function runComment(
 async function attemptReap(): Promise<void> {
   const readStart = Date.now();
   const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [lockCsv, historyCsv, configText] = await Promise.all([
+  const [lockCsv, historyCsv] = await Promise.all([
     getRepoFile(token, owner, repo, LOCK_PATH, sha),
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-    getRepoFile(token, owner, repo, CONFIG_PATH, sha),
   ]);
   logPhase("read_tables", readStart);
   const now = new Date().toISOString();
 
   const { kept, removed } = reapLocks({
     locks: parseLockCsv(lockCsv ?? ""),
-    staleAfterMinutes: configNumber(
-      configText,
-      "stale_after_minutes",
-      DEFAULT_STALE_MINUTES,
-    ),
     now,
   });
   if (removed.length === 0) {
