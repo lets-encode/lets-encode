@@ -77,8 +77,9 @@ needs a rebuild. The SPA reaches the broker at `PUBLIC_BROKER_URL` (default
 `/auth`) and the name registry at `PUBLIC_REGISTRY_URL` (default `/registry`) —
 both proxied to the broker by the Vite dev server, and by Apache in production.
 `PUBLIC_AUTOMATION_*` is the central automation pointer written into each new
-campaign's `config.yaml`; pin `PUBLIC_AUTOMATION_REF` to a commit SHA for
-production releases. See the comments in `instances-config/.env` for the full commentary.
+campaign's `config.yaml`; each `.env.<mode>` sets `PUBLIC_AUTOMATION_REF` to
+its instance's branch, so a campaign runs the coordinator of the instance that
+created it. Pin it to a commit SHA for production releases. See the comments in `instances-config/.env` for the full commentary.
 
 ## 4. Run locally (two processes)
 
@@ -156,6 +157,10 @@ broker (section 4), with its own OAuth App whose callback is
   the checkout's `website/` directory. Each checkout runs its own broker
   (`PORT=<port> gunicorn -c gunicorn_config.py wsgi:app` in `broker/`), so
   sessions and the slug DB (`broker/instance/`) are naturally separate.
+- **Coordinator per instance:** each `.env.<mode>` sets
+  `PUBLIC_AUTOMATION_REF` to its branch, so a campaign created on an instance
+  runs the coordinator from that branch; only the fixed part of
+  `.github/workflows/campaign.yml` runs from `main` for every campaign.
 - **Deploying:** in the instance's checkout, on its branch:
 
   ```bash

@@ -7,23 +7,23 @@ import type { LockRow } from "../campaign-tables.ts";
 const NOW = "2026-06-25T12:00:00Z";
 const lock = (
   task_id: string,
-  timestamp: string,
+  expires: string,
   kind = "encoding",
 ): LockRow => ({
   task_id,
   subtask_id: kind === "validation" ? "S0001" : "",
   user_id: "bob",
-  timestamp,
+  timestamp: "2026-06-25T08:00:00Z",
   kind,
+  expires,
 });
 
-test("removes locks older than the timeout, keeps fresh ones", () => {
+test("removes expired locks, keeps unexpired ones", () => {
   const { kept, removed } = reapLocks({
     locks: [
-      lock("T0001", "2026-06-25T11:00:00Z"), // 60 min — fresh
-      lock("T0002", "2026-06-25T09:00:00Z"), // 180 min — stale
+      lock("T0001", "2026-06-25T13:00:00Z"), // expires in 60 min
+      lock("T0002", "2026-06-25T11:00:00Z"), // expired 60 min ago
     ],
-    staleAfterMinutes: 120,
     now: NOW,
   });
   assert.deepEqual(
@@ -36,34 +36,30 @@ test("removes locks older than the timeout, keeps fresh ones", () => {
   );
 });
 
-test("the boundary is strict: exactly at the timeout is kept, just over is removed", () => {
+test("the boundary is strict: exactly at expires is kept, just after is removed", () => {
   const at = reapLocks({
-    locks: [lock("T1", "2026-06-25T10:00:00Z")],
-    staleAfterMinutes: 120,
+    locks: [lock("T1", "2026-06-25T12:00:00Z")],
     now: NOW,
   });
-  assert.equal(at.removed.length, 0); // exactly 120 min
+  assert.equal(at.removed.length, 0);
 
   const over = reapLocks({
-    locks: [lock("T1", "2026-06-25T09:59:00Z")],
-    staleAfterMinutes: 120,
+    locks: [lock("T1", "2026-06-25T11:59:00Z")],
     now: NOW,
   });
-  assert.equal(over.removed.length, 1); // 121 min
+  assert.equal(over.removed.length, 1);
 });
 
-test("keeps locks when either timestamp is unparseable", () => {
+test("keeps locks when either time is unparseable or expires is empty", () => {
   const { kept, removed } = reapLocks({
-    locks: [lock("T1", "not-a-date")],
-    staleAfterMinutes: 120,
+    locks: [lock("T1", "not-a-date"), lock("T2", "")],
     now: NOW,
   });
-  assert.equal(kept.length, 1);
+  assert.equal(kept.length, 2);
   assert.equal(removed.length, 0);
 
   const invalidNow = reapLocks({
     locks: [lock("T1", "2026-06-25T09:00:00Z")],
-    staleAfterMinutes: 120,
     now: "not-a-date",
   });
   assert.equal(invalidNow.kept.length, 1);
@@ -71,7 +67,7 @@ test("keeps locks when either timestamp is unparseable", () => {
 });
 
 test("empty lock table yields nothing to do", () => {
-  assert.deepEqual(reapLocks({ locks: [], staleAfterMinutes: 120, now: NOW }), {
+  assert.deepEqual(reapLocks({ locks: [], now: NOW }), {
     kept: [],
     removed: [],
   });

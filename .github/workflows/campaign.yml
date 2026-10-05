@@ -6,6 +6,13 @@ name: Campaign automation
 # checks out that central automation code and runs it. Claims, submissions and
 # the stale-lock reaper are all routed there.
 #
+# caller.yml calls this file at @main on every campaign. The job guard, the
+# concurrency group, the pointer read and the checkout below therefore run
+# from main; the coordinator step is the composite action
+# .github/actions/coordinator, used from the checkout, so it and the code it
+# runs come from the campaign's automation.ref (the branch of the instance
+# that created the campaign).
+#
 # Trust boundary: a called workflow runs in the calling repo's context. For
 # pull_request_target that is the campaign's base branch with a write token.
 # Only the pinned central code is checked out; the automation pointer is read
@@ -97,10 +104,6 @@ jobs:
           echo "repo=$repo" >> "$GITHUB_OUTPUT"
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "path=$path" >> "$GITHUB_OUTPUT"
-          # The runner image's own Node runs the coordinator's TypeScript
-          # directly (type stripping, Node 22.18 or later); an older Node fails
-          # the run step with an unknown-extension error.
-          echo "runner node: $(node --version)"
 
       - name: Check out the central automation code
         if: steps.cfg.outputs.repo != ''
@@ -110,21 +113,8 @@ jobs:
           ref: ${{ steps.cfg.outputs.ref }}
           path: central
 
-      # The entry point reaches the shell as an environment variable, quoted,
-      # never expanded into the command line.
       - name: Run the central coordinator
         if: steps.cfg.outputs.repo != ''
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CENTRAL_PATH: ${{ steps.cfg.outputs.path }}
-          BASE_REPO: ${{ github.repository }}
-          EVENT_NAME: ${{ github.event_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          # Numeric account id is the identity written to the tracking tables;
-          # the login rides alongside for human-readable commit messages only.
-          PR_AUTHOR: ${{ github.event.pull_request.user.id }}
-          PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        run: node "central/$CENTRAL_PATH"
+        uses: ./central/.github/actions/coordinator
+        with:
+          path: ${{ steps.cfg.outputs.path }}

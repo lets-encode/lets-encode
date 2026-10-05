@@ -18,7 +18,7 @@ const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
 const TASK_HEADER =
   "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n";
-const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind\n";
+const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
 
 const twoTasks = parseTaskCsv(
   TASK_HEADER +
