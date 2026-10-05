@@ -8,11 +8,16 @@ import { RUN_REQUIREMENTS } from "../commands.ts";
 // may be passed to the coordinator as data (env), but no step may check it out
 // or expand it into a command. These checks pin that invariant, which the
 // workflow otherwise states only in comments. The steps live in this repo's
-// campaign.yml; each campaign's caller.yml carries only the triggers and is
+// campaign.yml and the coordinator action it uses from the central checkout;
+// each campaign's caller.yml carries only the triggers and is
 // read from the template repository on GitHub, so the test does not depend on
 // a local checkout of the template.
 const workflow = readFileSync(
   new URL("../../../.github/workflows/campaign.yml", import.meta.url),
+  "utf8",
+);
+const action = readFileSync(
+  new URL("../../../.github/actions/coordinator/action.yml", import.meta.url),
   "utf8",
 );
 const callerUrl =
@@ -20,11 +25,11 @@ const callerUrl =
 const response = await fetch(callerUrl);
 assert.ok(response.ok, `fetching ${callerUrl}: ${response.status}`);
 const caller = await response.text();
-const lines = workflow.split("\n");
+const files = { "campaign.yml": workflow, "action.yml": action };
 const indentOf = (line: string) => line.length - line.trimStart().length;
 
 // Lines inside an `env:` mapping (of any step), where PR head values may appear.
-function isInEnv(index: number): boolean {
+function isInEnv(lines: string[], index: number): boolean {
   for (let i = index - 1; i >= 0; i--) {
     const line = lines[i];
     if (!line.trim()) continue;
@@ -34,15 +39,17 @@ function isInEnv(index: number): boolean {
   return false;
 }
 
-// Each step's lines, split at the list items under `steps:`.
+// Each step's lines in both files, split at the list items under `steps:`.
 function steps(): string[][] {
   const out: string[][] = [];
-  let current: string[] | null = null;
-  for (const line of lines) {
-    if (/^\s{6}- /.test(line)) {
-      current = [line];
-      out.push(current);
-    } else if (current) current.push(line);
+  for (const text of Object.values(files)) {
+    let current: string[] | null = null;
+    for (const line of text.split("\n")) {
+      if (/^\s+- name:/.test(line)) {
+        current = [line];
+        out.push(current);
+      } else if (current) current.push(line);
+    }
   }
   return out;
 }
@@ -52,15 +59,18 @@ test("caller.yml runs on pull_request_target, so the invariant applies", () => {
 });
 
 test("the PR head is passed to the coordinator only as env data", () => {
-  const offenders = lines
-    .map((line, i) => ({ line, i }))
-    .filter(({ line }) =>
-      /pull_request\.head|github\.head_ref|github\.event\.pull_request\.head/.test(
-        line,
-      ),
-    )
-    .filter(({ i }) => !isInEnv(i))
-    .map(({ line, i }) => `${i + 1}: ${line.trim()}`);
+  const offenders = Object.entries(files).flatMap(([name, text]) => {
+    const lines = text.split("\n");
+    return lines
+      .map((line, i) => ({ line, i }))
+      .filter(({ line }) =>
+        /pull_request\.head|github\.head_ref|github\.event\.pull_request\.head/.test(
+          line,
+        ),
+      )
+      .filter(({ i }) => !isInEnv(lines, i))
+      .map(({ line, i }) => `${name}:${i + 1}: ${line.trim()}`);
+  });
   assert.deepEqual(offenders, []);
 });
 
@@ -86,6 +96,7 @@ test("run steps do not expand PR head values or the central pointer into command
   const expansions: Array<[RegExp, string]> = [
     [/\$\{\{[^}]*head\.(sha|ref|repo)/, "the PR head"],
     [/\$\{\{[^}]*steps\.cfg\.outputs/, "the central pointer"],
+    [/\$\{\{[^}]*inputs\./, "the central pointer"],
   ];
   for (const step of steps()) {
     const runStart = step.findIndex((l) => /^\s*run:/.test(l));
@@ -131,4 +142,14 @@ test("pull request runs are gated on the event payload before a runner is assign
   assert.match(RUN_REQUIREMENTS, /three files/);
   assert.match(RUN_REQUIREMENTS, /draft/);
   assert.match(RUN_REQUIREMENTS, /user account/);
+});
+
+// The coordinator step comes from the central checkout at automation.ref, so
+// its steps follow the campaign's instance branch rather than caller.yml's ref.
+test("the coordinator action is used from the central checkout", () => {
+  assert.match(
+    workflow,
+    /uses:\s*\.\/central\/\.github\/actions\/coordinator\s*$/m,
+  );
+  assert.match(action, /node "central\/\$CENTRAL_PATH"/);
 });

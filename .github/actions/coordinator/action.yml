@@ -1,0 +1,37 @@
+name: Run the central coordinator
+description: >
+  Runs the coordinator entry point for one campaign event. campaign.yml checks
+  out this repository at the campaign's automation.ref and uses this action
+  from that checkout, so these steps come from the same ref as the coordinator
+  code.
+
+inputs:
+  path:
+    description: Entry point within the central checkout (validated by campaign.yml).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # The runner image's own Node runs the coordinator's TypeScript directly
+    # (type stripping, Node 22.18 or later); an older Node fails the run step
+    # with an unknown-extension error. The entry point reaches the shell as an
+    # environment variable, quoted, never expanded into the command line.
+    - name: Run the central coordinator
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        CENTRAL_PATH: ${{ inputs.path }}
+        BASE_REPO: ${{ github.repository }}
+        EVENT_NAME: ${{ github.event_name }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        # Numeric account id is the identity written to the tracking tables;
+        # the login rides alongside for human-readable commit messages only.
+        PR_AUTHOR: ${{ github.event.pull_request.user.id }}
+        PR_AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      run: |
+        echo "runner node: $(node --version)"
+        node "central/$CENTRAL_PATH"

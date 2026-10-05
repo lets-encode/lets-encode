@@ -26,7 +26,7 @@ const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n";
 const TASK_HEADER =
   "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n";
-const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind\n";
+const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
 const COMMENT_HEADER =
   "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n";
 
@@ -55,7 +55,8 @@ const state = parseStateCsv(
     "T0004,S0001,validation_required,,,pass|9|2026-07-30T08:00:00Z,\n",
 );
 const locks = parseLockCsv(
-  LOCK_HEADER + "T0001,,7,2026-08-01T10:00:00Z,encoding\n",
+  LOCK_HEADER +
+    "T0001,,7,2026-08-01T10:00:00Z,encoding,2026-08-01T12:00:00.000Z\n",
 );
 const comments = parseCommentCsv(
   COMMENT_HEADER +
@@ -82,7 +83,6 @@ const stats: CampaignStats = {
   logins: { "7": "lisa", "9": "tcrane" },
   lastActivity: "",
   createdAt: "",
-  staleAfterMinutes: 120,
   allowSelfValidation: false,
   pieceNames: {},
   taskDefs,
@@ -136,7 +136,7 @@ test("attentionCount: tasks whose validation records a fail", () => {
 test("myTasksIn groups the viewer's tasks by what needs doing", () => {
   const mine = myTasksIn(stats, "7");
   const byGroup = Object.fromEntries(mine.map((t) => [t.group, t]));
-  // The held claim → encoding, with the reaper-derived expiry.
+  // The held claim → encoding, with the lock's expiry.
   assert.equal(byGroup.encoding.task, "T0001");
   assert.equal(byGroup.encoding.claimedAt, "2026-08-01T10:00:00Z");
   assert.equal(byGroup.encoding.expiresAt, "2026-08-01T12:00:00.000Z");
@@ -148,11 +148,12 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
   assert.equal(byGroup.awaiting.passes, 1);
   assert.deepEqual(byGroup.awaiting.dots, ["pass", "open"]);
   assert.equal(myTasksIn(stats, "").length, 0);
-  // A held validation claim → validating, with the reaper-derived expiry.
+  // A held validation claim → validating, with the lock's expiry.
   const reviewing = {
     ...stats,
     locks: parseLockCsv(
-      LOCK_HEADER + "T0003,S0001,9,2026-08-01T10:00:00Z,validation\n",
+      LOCK_HEADER +
+        "T0003,S0001,9,2026-08-01T10:00:00Z,validation,2026-08-01T12:00:00.000Z\n",
     ),
   };
   const validating = myTasksIn(reviewing, "9").find(

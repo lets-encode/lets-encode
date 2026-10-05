@@ -32,6 +32,8 @@ export interface LockRow {
   user_id: string;
   timestamp: string;
   kind: string;
+  /** ISO-8601 time at which the reaper releases the lock. */
+  expires: string;
 }
 
 /**
@@ -136,6 +138,7 @@ export const LOCK_COLUMNS = [
   "user_id",
   "timestamp",
   "kind",
+  "expires",
 ];
 export const HISTORY_COLUMNS = [
   "timestamp",

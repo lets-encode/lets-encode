@@ -15,7 +15,7 @@ import type { CheckClaimArgs } from "../campaign-claim.ts";
 type ClaimView = { ok: boolean; reason?: string; lock?: LockRow };
 
 const NOW = "2026-06-25T10:00:00Z";
-const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind\n";
+const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
 const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
 const STATE_HEADER_2 =
@@ -60,6 +60,7 @@ const claim = (over: Partial<CheckClaimArgs> = {}): ClaimView =>
     author: "carol",
     changedPaths: ["tracking/lock.csv"],
     now: NOW,
+    staleAfterMinutes: 120,
     ...over,
   });
 
@@ -115,6 +116,7 @@ test("encoding claim on a free task is accepted with an Action-authored lock", (
       user_id: "carol",
       timestamp: NOW,
       kind: "encoding",
+      expires: "2026-06-25T12:00:00.000Z",
     },
   });
 });
