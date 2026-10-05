@@ -65,6 +65,7 @@ function facsimileData(): GraphData {
         user_id: "dan",
         timestamp: "2026-07-14T09:30:00Z",
         kind: "validation",
+        expires: "",
       },
     ],
     passThreshold: 2,
@@ -105,6 +106,7 @@ test("buildGraph assigns concurrent validation locks to separate slots", () => {
       user_id: "carol",
       timestamp: "t1",
       kind: "validation",
+      expires: "",
     },
     {
       task_id: "T0001",
@@ -112,6 +114,7 @@ test("buildGraph assigns concurrent validation locks to separate slots", () => {
       user_id: "dan",
       timestamp: "t2",
       kind: "validation",
+      expires: "",
     },
   ];
 
@@ -179,6 +182,7 @@ test("buildGraph: nextUp marks the first task the viewer can act on", () => {
       user_id: "you",
       timestamp: "",
       kind: "validation",
+      expires: "",
     },
   ];
   assert.deepEqual(

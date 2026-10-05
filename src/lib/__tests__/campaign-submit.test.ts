@@ -61,7 +61,7 @@ const comment = (over: Partial<CommentRow>): CommentRow => ({
 });
 
 const NOW = "2026-06-25T10:00:00Z";
-const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind\n";
+const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
 const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
 

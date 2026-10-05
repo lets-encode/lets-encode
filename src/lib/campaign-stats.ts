@@ -16,9 +16,7 @@ import type { GraphData, WorkStage } from "./campaign-graph.ts";
 import { cardTitle } from "./campaign-board.ts";
 import {
   configFlag,
-  configNumber,
   configPieces,
-  DEFAULT_STALE_MINUTES,
   passThresholdOf,
   configString,
   findRow,
@@ -77,8 +75,6 @@ export interface CampaignStats {
   lastActivity: string;
   /** The repository's creation time (first history entry as fallback); '' unknown. */
   createdAt: string;
-  /** locking.stale_after_minutes from config.yaml. */
-  staleAfterMinutes: number;
   /** validation.allow_self_validation from config.yaml. */
   allowSelfValidation: boolean;
   /** Fragment path → piece display name, from the config's pieces list. */
@@ -361,11 +357,6 @@ async function fetchStats(
   );
 
   const passThreshold = passThresholdOf(yaml, state.validationColumns.length);
-  const staleAfterMinutes = configNumber(
-    yaml,
-    "stale_after_minutes",
-    DEFAULT_STALE_MINUTES,
-  );
 
   const composer = configString(yaml, "composer");
 
@@ -393,7 +384,6 @@ async function fetchStats(
     logins,
     lastActivity: history.at(-1)?.timestamp ?? "",
     createdAt: summary.created_at || history[0]?.timestamp || "",
-    staleAfterMinutes,
     allowSelfValidation: configFlag(yaml, "allow_self_validation"),
     pieceNames: pieceNamesOf(configPieces(yaml)),
     taskDefs,
@@ -503,13 +493,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
     };
   };
 
-  // Held claims → "encoding now" / "validating now", with the reaper-derived expiry.
-  const lockExpiry = (lock: LockRow): string =>
-    stats.staleAfterMinutes > 0 && Number.isFinite(Date.parse(lock.timestamp))
-      ? new Date(
-          Date.parse(lock.timestamp) + stats.staleAfterMinutes * 60_000,
-        ).toISOString()
-      : "";
+  // Held claims → "encoding now" / "validating now", with the lock's expiry.
   for (const lock of stats.locks) {
     if (lock.user_id !== viewer) continue;
     if (lock.kind === "encoding" && lock.subtask_id === "") {
@@ -517,7 +501,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
         ...base(lock.task_id),
         group: "encoding",
         claimedAt: lock.timestamp,
-        expiresAt: lockExpiry(lock),
+        expiresAt: lock.expires,
       });
     } else if (lock.kind === "validation") {
       out.push({
@@ -525,7 +509,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
         subtask: lock.subtask_id,
         group: "validating",
         claimedAt: lock.timestamp,
-        expiresAt: lockExpiry(lock),
+        expiresAt: lock.expires,
       });
     }
   }

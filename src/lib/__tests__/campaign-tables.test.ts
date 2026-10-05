@@ -126,14 +126,14 @@ test("serializeStateCsv: round-trips with parseStateCsv", () => {
 });
 
 test("lock.csv: a header-only table and an empty row list round-trip", () => {
-  const header = "task_id,subtask_id,user_id,timestamp,kind\n";
+  const header = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
   assert.deepEqual(parseLockCsv(header), []);
   assert.equal(serializeLockCsv([]), header);
 });
 
 test("parseLockCsv: rows become objects", () => {
   const rows = parseLockCsv(
-    "task_id,subtask_id,user_id,timestamp,kind\nT0001,,bob,2026-06-25T10:00:00Z,encoding\n",
+    "task_id,subtask_id,user_id,timestamp,kind,expires\nT0001,,bob,2026-06-25T10:00:00Z,encoding,2026-06-25T12:00:00.000Z\n",
   );
   assert.deepEqual(rows, [
     {
@@ -142,15 +142,16 @@ test("parseLockCsv: rows become objects", () => {
       user_id: "bob",
       timestamp: "2026-06-25T10:00:00Z",
       kind: "encoding",
+      expires: "2026-06-25T12:00:00.000Z",
     },
   ]);
 });
 
 test("serializeLockCsv: round-trips with parseLockCsv", () => {
   const text =
-    "task_id,subtask_id,user_id,timestamp,kind\n" +
-    "T0001,,bob,2026-06-25T10:00:00Z,encoding\n" +
-    "T0001,S0001,carol,2026-06-25T10:05:00Z,validation\n";
+    "task_id,subtask_id,user_id,timestamp,kind,expires\n" +
+    "T0001,,bob,2026-06-25T10:00:00Z,encoding,2026-06-25T12:00:00.000Z\n" +
+    "T0001,S0001,carol,2026-06-25T10:05:00Z,validation,2026-06-25T12:05:00.000Z\n";
   assert.equal(serializeLockCsv(parseLockCsv(text)), text);
 });
 

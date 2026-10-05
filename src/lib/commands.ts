@@ -31,10 +31,8 @@ import {
   configString,
   passThresholdOf,
   configFlag,
-  configNumber,
   configPieces,
   resolveLogins,
-  DEFAULT_STALE_MINUTES,
   COMMENT_PATH,
   CONFIG_PATH,
   HISTORY_PATH,
@@ -590,6 +588,7 @@ async function openClaimPr(
     user_id: viewer,
     timestamp: new Date().toISOString(),
     kind,
+    expires: "",
   });
   const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
   const body = `Reserves ${target} for ${kind} work by ${viewerLogin}. Opened from the campaign console.`;
@@ -869,11 +868,6 @@ const openEditor: CommandDef<
         // task branch, which may hold their work, is touched.
         const { kept } = reapLocks({
           locks,
-          staleAfterMinutes: configNumber(
-            configYaml,
-            "stale_after_minutes",
-            DEFAULT_STALE_MINUTES,
-          ),
           now: new Date().toISOString(),
         });
         if (
