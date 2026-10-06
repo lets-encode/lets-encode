@@ -68,6 +68,7 @@
         created with the platform are kept, but the platform may no longer open
         them.</span
       >
+      <span class="short">Data on this platform can be reset at any time.</span>
       <span class="banner-links">
         <button type="button" class="link" onclick={open}>Details</button>
         <a class="long" href={reportHref} target="_blank" rel="noopener"
@@ -187,6 +188,28 @@
     }
     .banner-links {
       margin-left: 8px;
+    }
+  }
+  .banner .short {
+    display: none;
+  }
+  /* A short window (a phone in landscape): the notice takes the footer's
+     place at the bottom as one line, and the layout hides the footer. */
+  @media (max-height: 500px) {
+    .banner {
+      order: 1;
+      padding: 5px 12px;
+      font-size: 12.5px;
+      align-items: center;
+      border-bottom: 0;
+      border-top: 1px solid var(--warn-line);
+    }
+    .banner .long {
+      display: none;
+    }
+    .banner .short,
+    .banner-links .long {
+      display: inline;
     }
   }
   .banner-links a,

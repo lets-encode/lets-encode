@@ -1,13 +1,14 @@
 <!--
   The review view: a full-screen surface for validating an encoding task. The
   score fills the window, facsimile and rendered encoding side by side, and
-  the side panel on the right carries the task box — the validation
-  record with the verdict controls — pinned above the task's comments.
+  the side panel on the right carries the task box — the campaign page's
+  TaskBox with the verdict controls — pinned above the task's comments.
   Clicking a measure in either pane highlights it in both and prefills the
   fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
   import { page } from "$app/state";
+  import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
@@ -23,6 +24,7 @@
   import {
     findRow,
     pieceNamesOf,
+    piecePreparationsOf,
     commentAnchor,
     type MeasureAnchor,
   } from "$lib/campaign-tables.ts";
@@ -34,11 +36,7 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import {
-    pageOfLocator,
-    preTaskRoute,
-    statusPill,
-  } from "$lib/campaign-graph.ts";
+  import { pageOfLocator, preTaskRoute } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
@@ -46,9 +44,7 @@
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
-  import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import ValidationRecord from "$lib/components/ValidationRecord.svelte";
-  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
+  import TaskBox from "$lib/components/TaskBox.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -94,6 +90,8 @@
       viewer,
       logins,
       pieceNamesOf(pieces),
+      undefined,
+      piecePreparationsOf(pieces),
     ),
   );
   const card = $derived(
@@ -111,6 +109,10 @@
 
   // The score viewer, bound for the anchor jump and the fail-form prefill.
   let preview = $state<ReturnType<typeof ScorePreview>>();
+  // The score column's width, padding included: where the preview inside it
+  // is narrower than 560px (the preview's narrow width, a phone) the review
+  // opens on the facsimile alone instead of side by side.
+  let scoreW = $state(0);
   // The measure selected in the viewer, reported back for the fail form.
   let selectedMeasure = $state<string | null>(null);
   // The measure range a fail comment refers to, highlighted in both panes.
@@ -152,6 +154,7 @@
       const tables = await invoke(commands.readTables, {}, ctx(f));
       if (name !== campaign) return;
       notInitialised = tables.notInitialised;
+      recordCampaignTitle(name, tables.title);
       canPush = tables.canPush;
       taskDefs = tables.taskDefs;
       rows = tables.rows;
@@ -238,15 +241,8 @@
       { overviewOnSuccess: true },
     );
 
-  // The review slot the viewer holds on this task, if any.
-  const mySlot = $derived(
-    locks.find(
-      (l) =>
-        l.task_id === taskId && l.kind === "validation" && l.user_id === viewer,
-    )?.subtask_id,
-  );
-  const giveBack = (subtask_id: string) =>
-    run((c) => invoke(commands.giveBack, { task_id: taskId, subtask_id }, c), {
+  const giveBack = (task_id: string, subtask_id: string) =>
+    run((c) => invoke(commands.giveBack, { task_id, subtask_id }, c), {
       overviewOnSuccess: true,
     });
 
@@ -274,7 +270,7 @@
 </script>
 
 <svelte:head>
-  <title>{card ? `Review · ${card.title}` : "Review"} · Let's Encode!</title>
+  <title>{card ? card.title : "Review"} · Let's Encode!</title>
 </svelte:head>
 
 {#if runner.busy && runner.overlay}
@@ -287,7 +283,7 @@
 {/if}
 
 {#snippet resultBanner()}
-  <RunnerBanner {runner} />
+  <RunnerBanner {runner} bar />
 {/snippet}
 
 <div class="review sidehost">
@@ -338,49 +334,28 @@
     </div>
   {:else}
     {#snippet taskBox()}
-      <div class="taskbox" aria-label={`Review ${card.title}`}>
-        <div class="tbhead">
-          <h2 class="tbtitle">{card.title}</h2>
-          <span class="taskchip"
-            >{card.task}{taskDef.locator ? ` · ${taskDef.locator}` : ""}</span
-          >
-        </div>
-        <TaskRunState task={taskId} bar />
-        {@render resultBanner()}
-        <div class="tbstatus">
-          <span class="pill s-{card.statusKey}">
-            {card.statusKey === "validation_required"
-              ? `review · ${card.passes} of ${card.threshold} reviews`
-              : statusPill(card.statusKey, card.pre)}
-          </span>
-        </div>
-        <div class="tbrecord">
-          <ValidationRecord
-            {card}
-            {comments}
-            {viewer}
-            {logins}
-            {canPush}
-            {runner}
-            {prefill}
-            onshowanchor={showAnchorFor}
-            onclaim={claim}
-            onvalidate={validate}
-            onresolve={resolveCommentRow}
-            onsendback={sendBackTask}
-          />
-        </div>
-        {#if mySlot}
-          <div class="tbgiveback">
-            <GiveBackButton
-              disabled={runner.busy || pendingVerdicts.taskProcessing(taskId)}
-              ongiveback={() => giveBack(mySlot)}
-            />
-          </div>
-        {/if}
-      </div>
+      <TaskBox
+        {card}
+        pieceName={card.piece}
+        {campaign}
+        {comments}
+        {locks}
+        {rows}
+        {logins}
+        {viewer}
+        {canPush}
+        {runner}
+        inReview
+        {prefill}
+        onshowanchor={showAnchorFor}
+        onclaim={claim}
+        ongiveback={giveBack}
+        onvalidate={validate}
+        onresolve={resolveCommentRow}
+        onsendback={sendBackTask}
+      />
     {/snippet}
-    <div class="scorecol">
+    <div class="scorecol" bind:clientWidth={scoreW}>
       {#if !auth.user}
         <div class="banner warn">
           <span>
@@ -394,17 +369,19 @@
         </div>
       {/if}
       {#if fragment}
-        <ScorePreview
-          bind:this={preview}
-          {owner}
-          {repo}
-          {fragment}
-          {startPage}
-          {anchor}
-          initialPane="both"
-          initialView={taskPage === null ? null : "single"}
-          onmeasureselect={(label) => (selectedMeasure = label)}
-        />
+        {#if scoreW > 0}
+          <ScorePreview
+            bind:this={preview}
+            {owner}
+            {repo}
+            {fragment}
+            {startPage}
+            {anchor}
+            initialPane={scoreW - 32 < 560 ? "facs" : "both"}
+            initialView={taskPage === null ? null : "single"}
+            onmeasureselect={(label) => (selectedMeasure = label)}
+          />
+        {/if}
       {:else}
         <p class="msg perr">
           No score file is recorded for {card.task}.
@@ -418,6 +395,7 @@
       {runner}
       bind:panel={sidePanel}
       review={card.column === "validation"}
+      banner={resultBanner}
       {taskBox}
       onanchor={showAnchorFor}
       oncomment={postComment}
@@ -466,104 +444,15 @@
   .review > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 12px 0;
   }
+  /* The score column: the preview's toolbar and the side panel share their
+     top edge, 12px below the navigation bar. */
   .scorecol {
     flex: 1;
     min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
-  }
-
-  /* -------------------------------------------------------------- task box
-     The task's record and verdict controls, pinned at the top of the
-     side panel. The tint follows the panel's piece colour (--zone). */
-  .taskbox {
-    background: var(--card);
-    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: var(--shadow-sm);
-  }
-  .taskbox :global(.banner) {
-    border-radius: 0;
-    box-shadow: none;
-    margin: 0;
-  }
-  .tbhead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    background: color-mix(in srgb, var(--zone) 10%, var(--card));
-    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
-    padding: 9px 12px;
-  }
-  .tbtitle {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-  }
-  .taskchip {
-    font-size: 11px;
-    font-family: ui-monospace, Menlo, monospace;
-    background: var(--bg-tint);
-    border-radius: 5px;
-    padding: 2px 7px;
-    white-space: nowrap;
-  }
-  .tbstatus {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
-    padding: 10px 12px;
-  }
-  .tbrecord {
-    padding: 0 12px 10px;
-  }
-  /* A grid, so the button fills the box's width like the verdict pair. */
-  .tbgiveback {
-    display: grid;
-    padding: 0 12px 10px;
-  }
-
-  /* ---------------------------------------------------------------- pills */
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 600;
-    font-size: 11px;
-    line-height: 1;
-    padding: 4px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    color: var(--ink-faint);
-  }
-  .pill.s-completed,
-  .pill.s-pass {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
-  }
-  .pill.s-encoding_required,
-  .pill.s-encoding,
-  .pill.s-claimed {
-    background: var(--info-bg);
-    border-color: var(--info-line);
-    color: var(--info);
-  }
-  .pill.s-validation_required,
-  .pill.s-review {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-    color: var(--warn);
-  }
-  .pill.s-fail {
-    background: var(--danger-bg);
-    border-color: var(--danger-line);
-    color: var(--danger);
+    padding: 12px 16px 0;
+    box-sizing: border-box;
   }
 </style>

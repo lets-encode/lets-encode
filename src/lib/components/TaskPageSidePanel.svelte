@@ -1,6 +1,6 @@
 <!--
   The side panel of the full-screen task views (review, zones, score setup):
-  derives the task's piece and its colour slot from the campaign tables and
+  derives the colour slot of the task's piece from the campaign tables and
   renders SidePanel on the task, with the view's task box pinned on top. The
   view is the task's own, so the panel has no Campaign state.
 -->
@@ -9,13 +9,13 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CampaignTables, Result } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { findRow, pieceLabel, pieceZone } from "$lib/campaign-tables.ts";
+  import { findRow, pieceZone } from "$lib/campaign-tables.ts";
   import type { SidePanelState } from "$lib/side-panels.ts";
   import SidePanel from "./SidePanel.svelte";
 
   type PanelTables = Pick<
     CampaignTables,
-    "taskDefs" | "comments" | "pieces" | "logins" | "canPush"
+    "taskDefs" | "comments" | "logins" | "canPush"
   >;
 
   let {
@@ -66,15 +66,10 @@
     findRow(tables.taskDefs, taskId, "")?.fragment ?? "",
   );
   const index = $derived(Math.max(0, paths.indexOf(fragment)));
-  const piece = $derived.by(() => {
-    const p = tables.pieces.find((x) => x.path === fragment);
-    return { id: p?.id ?? fragment, path: fragment, title: p?.title ?? "" };
-  });
 </script>
 
 <SidePanel
   task={taskId}
-  subtitle={fragment ? pieceLabel(piece) : ""}
   zone={pieceZone(index)}
   {review}
   comments={tables.comments}

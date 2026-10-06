@@ -13,6 +13,7 @@
     commentAnchor,
     type MeasureAnchor,
     pieceLabel,
+    clipTitle,
   } from "$lib/campaign-tables.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
@@ -30,7 +31,6 @@
     anchor = null,
     card,
     cardOnPiece,
-    cardSubtitle = "",
     cardZone = 0,
     taskBox,
     banner,
@@ -57,7 +57,6 @@
     card: BoardCard | null;
     /** Whether the selected task is a task of this piece. */
     cardOnPiece: boolean;
-    cardSubtitle?: string;
     cardZone?: number;
     /** The selected task's box. */
     taskBox?: Snippet;
@@ -132,7 +131,9 @@
 
 <div class="scoreview">
   <div class="shead">
-    <span class="sname">{pieceLabel(piece)}</span>
+    <span class="sname" title={pieceLabel(piece)}
+      >{clipTitle(pieceLabel(piece))}</span
+    >
     <span class="scamp">{campaignTitle}</span>
   </div>
   <div class="srow sidehost">
@@ -149,7 +150,6 @@
     </div>
     <SidePanel
       {task}
-      subtitle={card ? cardSubtitle : ""}
       zone={card ? cardZone : 0}
       review={card?.column === "validation"}
       {comments}

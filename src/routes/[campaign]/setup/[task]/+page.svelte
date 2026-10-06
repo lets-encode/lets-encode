@@ -2,6 +2,7 @@
   import { commentAnchor, type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -43,6 +44,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
+  import TaskHeading from "$lib/components/TaskHeading.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskReview from "$lib/components/PreTaskReview.svelte";
@@ -234,6 +236,9 @@
   const repo = $derived(session.campaign.repo);
   const repoId = $derived(session.campaign.repoId);
   const tables = $derived(session.tables);
+  $effect(() => {
+    if (tables) recordCampaignTitle(campaign, tables.title);
+  });
   const viewer = $derived(session.viewer);
 
   // A count of 0, a blank, or anything non-numeric would emit a meter no
@@ -334,6 +339,12 @@
   // not recognised. The count stays editable until the piece holds notation,
   // since the setup submission rebuilds empty measures for it until then.
   const omr = $derived(data?.preparation === "omr");
+  // Below this width the form and the source pages take turns, chosen by a
+  // switch, instead of sharing the row.
+  const NARROW_DESK = 760;
+  let mainW = $state(0);
+  const narrow = $derived(mainW > 0 && mainW < NARROW_DESK);
+  let shownCol = $state<"form" | "pages">("form");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
   let recognition = $state<PieceRecognition | null>(null);
@@ -628,7 +639,7 @@
 </script>
 
 <svelte:head>
-  <title>Score setup · {campaign} · Let's Encode!</title>
+  <title>Score setup · {session.pieceName || campaign} · Let's Encode!</title>
 </svelte:head>
 
 {#if runner.busy && runner.overlay}
@@ -692,12 +703,30 @@
       </div>
     </div>
   {:else if data}
-    <div class="main">
+    <div class="main" bind:clientWidth={mainW}>
       <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
-      <div class="desk">
-        <div class="formcol">
+      {#if narrow}
+        <div class="colswitch">
+          <div class="seg" role="group" aria-label="Shown column">
+            <button
+              type="button"
+              class:on={shownCol === "form"}
+              aria-pressed={shownCol === "form"}
+              onclick={() => (shownCol = "form")}>Setup</button
+            >
+            <button
+              type="button"
+              class:on={shownCol === "pages"}
+              aria-pressed={shownCol === "pages"}
+              onclick={() => (shownCol = "pages")}>Source pages</button
+            >
+          </div>
+        </div>
+      {/if}
+      <div class="desk" class:narrow>
+        <div class="formcol" class:hidden={narrow && shownCol !== "form"}>
           <form class="setup" onsubmit={(e) => e.preventDefault()}>
             <fieldset disabled={!canEdit}>
               <p class="grouphead">Staves</p>
@@ -967,7 +996,7 @@
              clefs, key signature and meter are entered. Opens on the facsimile
              with the measure zones hidden: the setup is read off the source
              image, not the measure grid. -->
-        <div class="refcol">
+        <div class="refcol" class:hidden={narrow && shownCol !== "pages"}>
           <ScorePreview
             bind:this={refPreview}
             {owner}
@@ -989,8 +1018,11 @@
           class="tbhead"
           title="Every encoding task of this piece waits for this setup."
         >
-          <h2 class="abtitle">Score setup</h2>
-          <code class="taskchip">{taskId}</code>
+          <TaskHeading
+            description="Score setup"
+            piece={session.pieceName}
+            task={taskId}
+          />
         </div>
         <div class="tbsection">
           <span class="abcount">
@@ -1104,15 +1136,18 @@
   .main {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
+  /* The form and the source pages start 12px below the navigation bar, on
+     the side panel's top edge. */
   .desk {
     flex: 1;
     min-height: 0;
     display: flex;
-    gap: 24px;
-    padding: 16px 24px;
+    gap: 16px;
+    padding: 12px 16px;
     box-sizing: border-box;
     overflow: hidden;
   }
@@ -1122,6 +1157,21 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
+    container-type: inline-size;
+  }
+  /* A narrow form: a staff row's clef and instrument fields take their own
+     lines' width, the line count, line and buttons wrap after them. */
+  @container (max-width: 520px) {
+    .staffrow {
+      flex-wrap: wrap;
+    }
+    .staffrow > .field:not(.narrow) {
+      flex: 1 1 140px;
+    }
+    .grouprow .field {
+      width: auto;
+      flex: 1 1 140px;
+    }
   }
   .refcol {
     flex: 1;
@@ -1132,6 +1182,26 @@
     border-radius: 10px;
     background: var(--card);
     overflow: hidden;
+  }
+  /* Narrow (NARROW_DESK): one column at a time; the hidden one stays
+     mounted so the preview keeps its page and zoom. */
+  .colswitch {
+    flex: none;
+    padding: 12px 16px 0;
+  }
+  .colswitch .seg {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .colswitch .seg > button {
+    justify-content: center;
+    min-height: 38px;
+  }
+  .desk.narrow {
+    padding-top: 10px;
+  }
+  .hidden {
+    display: none;
   }
   /* Banner styles are shared app-wide in ui.css. */
 
@@ -1164,13 +1234,14 @@
   }
   .grouprow {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: 10px;
     margin-bottom: 8px;
   }
   .grouprow .field {
     flex: none;
-    width: 180px;
+    width: 160px;
   }
   .grouprow .field.narrow {
     width: 88px;
@@ -1299,10 +1370,6 @@
     box-shadow: var(--shadow-sm);
   }
   .tbhead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
     background: color-mix(in srgb, var(--zone) 10%, var(--card));
     border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
     padding: 9px 12px;
@@ -1320,19 +1387,6 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-faint);
-  }
-  .abtitle {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .taskchip {
-    font-size: 12px;
-    font-family: ui-monospace, Menlo, monospace;
-    background: var(--bg-tint);
-    border-radius: 5px;
-    padding: 2px 7px;
   }
   .abcount {
     font-size: 12.5px;

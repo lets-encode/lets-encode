@@ -1,51 +1,51 @@
 <!--
-  A task's validation record: one row per validation slot (claim, pass/fail
-  controls on the viewer's own slot, the fail form), the fail comments with
-  their anchors, and the send-back action. Commands run through callbacks the
-  host passes in; the host decides where the record renders (the task panel's
-  rail or the review view's rail).
+  A task's validation record in its task box: the fails with their comments,
+  anchors and the send-back action, the viewer's own slot with its pass/fail
+  controls and fail form, and for the owner (canPush) also the slots held and
+  passed under a "Reviews" heading. The host's status pill carries the slot
+  count and its footer the claim. Commands run through callbacks the host
+  passes in.
 -->
 <script lang="ts">
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
-  import type { CommentRow } from "$lib/campaign-tables.ts";
+  import type { CommentRow, LockRow } from "$lib/campaign-tables.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
   import { handle, workStage } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { buildRecord, elapsed, orphanedFails } from "$lib/campaign-board.ts";
+  import {
+    buildRecord,
+    elapsed,
+    expiresIn,
+    orphanedFails,
+  } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
 
   let {
     card,
     comments,
+    locks = [],
     viewer,
     logins,
     canPush,
     runner,
-    variant = "full",
     prefill,
     onshowanchor,
-    onclaim,
     onvalidate,
     onresolve,
     onsendback,
   }: {
     card: BoardCard;
     comments: CommentRow[];
+    /** The claim locks, for when a held slot's claim expires. */
+    locks?: LockRow[];
     logins: Record<string, string>;
     viewer: string;
     canPush: boolean;
     runner: CommandRunner;
-    /**
-     * "full" renders every slot row including the claim control (the review
-     * view); "side" leaves the claim to the host's footer action (the task
-     * side panel).
-     */
-    variant?: "full" | "side";
     /** The anchor a fresh fail form opens with (page and measure range). */
     prefill: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the preview. */
     onshowanchor: (c: CommentRow) => void;
-    onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
@@ -56,7 +56,29 @@
     onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
 
-  const rows = $derived(buildRecord(card, comments, viewer, logins));
+  // With one slot in all, its rows need no slot number.
+  const slotName = (slot: number) =>
+    card.slots.length > 1 ? `Slot ${slot + 1} · ` : "";
+  /** When the claim on a held slot expires; '' for none. */
+  const slotExpiry = (sub: string, userId: string) => {
+    const lock = locks.find(
+      (l) =>
+        l.task_id === card.task &&
+        l.subtask_id === sub &&
+        l.kind === "validation" &&
+        l.user_id === userId,
+    );
+    return lock ? expiresIn(lock.expires) : "";
+  };
+
+  const rows = $derived(
+    buildRecord(card, comments, viewer, logins).filter(
+      (r) =>
+        r.key === "fail" ||
+        r.mine ||
+        (canPush && (r.key === "review" || r.key === "pass")),
+    ),
+  );
   // A submission on this task still being processed (a claim, verdict or
   // send-back): the slot controls hold until it lands — a repeat would only
   // be rejected.
@@ -130,13 +152,15 @@
 
 {#if rows.length > 0 || orphanFails.length > 0}
   <div class="rsec">
-    <div class="rlabel">Review record</div>
+    {#if canPush}
+      <div class="rlabel">Reviews</div>
+    {/if}
     {#each rows as r (r.sub + "/" + r.slot)}
       {#if r.key === "fail"}
         <div class="failbox">
           <div class="failhead">
             {@render slotDot("fail")}
-            <span class="failtitle">Slot {r.slot + 1} · fail</span>
+            <span class="failtitle">{slotName(r.slot)}fail</span>
             <span class="rwho">{r.login} · {r.elapsed}</span>
           </div>
           {#if r.comment}
@@ -194,26 +218,18 @@
         <div class="rrow">
           {@render slotDot(r.key)}
           <span class="rslot"
-            >Slot {r.slot + 1} · {r.key === "review"
-              ? "in review"
-              : r.key}</span
+            >{slotName(r.slot)}{r.key === "review" ? "in review" : r.key}</span
           >
           {#if r.login}
-            <span class="rwho">{r.login} · {r.elapsed}</span>
+            <span class="rwho"
+              >{r.login} · {r.key === "review"
+                ? slotExpiry(r.sub, r.userId)
+                : r.elapsed}</span
+            >
           {/if}
           <span class="mspacer"></span>
           {#if r.key === "pass"}
             <span class="muted small-note">no remarks</span>
-          {:else if r.key === "open" && r.claimable && variant !== "side"}
-            <button
-              type="button"
-              class="btn btn-review"
-              onclick={() => onclaim(card.task, r.sub)}
-              disabled={runner.busy || processing}
-              title="Reserve this review slot.">Claim to review</button
-            >
-          {:else if r.key === "open"}
-            <span class="muted small-note">{r.note}</span>
           {:else if r.mine}
             <span class="rverdict">
               <button
@@ -381,9 +397,7 @@
   .rlabel {
     font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     padding-bottom: 4px;
   }
   /* Wraps so the trailing controls stay visible in a narrow panel. */

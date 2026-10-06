@@ -18,6 +18,8 @@ import type {
   Result,
 } from "./commands.ts";
 import { handle } from "./campaign-graph.ts";
+import { fragmentPieceName } from "./campaign-board.ts";
+import { findRow, pieceNamesOf } from "./campaign-tables.ts";
 import { CampaignResolution } from "./campaign-resolution.svelte.ts";
 import { CommandRunner, viewerId } from "./command-runner.svelte.ts";
 import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
@@ -73,6 +75,14 @@ export class PreTaskSession {
   );
   /** id → login for every user the tables mention. */
   logins = $derived(this.tables?.logins ?? {});
+  /** The display name of the task's piece; '' until the tables load. */
+  pieceName = $derived.by(() => {
+    const t = this.tables;
+    const fragment = t
+      ? (findRow(t.taskDefs, this.#taskId(), "")?.fragment ?? "")
+      : "";
+    return fragment ? fragmentPieceName(fragment, pieceNamesOf(t!.pieces)) : "";
+  });
 
   // The review happens in the editor too: the same claim/pass/fail the
   // console offers, against the task's validation subtask.

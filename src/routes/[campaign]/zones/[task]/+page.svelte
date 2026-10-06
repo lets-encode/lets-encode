@@ -2,6 +2,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import { tick, untrack } from "svelte";
   import { page } from "$app/state";
+  import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -11,7 +12,7 @@
     Result,
   } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
-  import { workStage, typeLabel } from "$lib/campaign-graph.ts";
+  import { workStage, taskDescription } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
@@ -30,6 +31,8 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
+  import TaskHeading from "$lib/components/TaskHeading.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskReview from "$lib/components/PreTaskReview.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
@@ -161,6 +164,9 @@
   const runner = session.runner;
   const data = $derived(session.data);
   const tables = $derived(session.tables);
+  $effect(() => {
+    if (tables) recordCampaignTitle(campaign, tables.title);
+  });
   const holds = $derived(session.holds);
   const canEdit = $derived(session.canEdit);
   const busy = $derived(session.busy);
@@ -170,7 +176,7 @@
   const viewer = $derived(session.viewer);
   // The task's kind: measure correction, which for an OMR-prepared piece
   // (omr-layout) also corrects the staff and grand-staff boxes.
-  const taskTitle = $derived(typeLabel(data?.locator ?? "measure-zones"));
+  const taskTitle = $derived(taskDescription(data?.locator ?? "measure-zones"));
   const stage = $derived(workStage(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
   // A layout task's three steps: the staff boxes, the grand-staff boxes, the measures.
@@ -206,6 +212,9 @@
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
   const ZOOM_STOPS = 100;
+  /** Below this tool-column width the toolbar keeps only the page
+      navigation, fit width, undo and redo (the narrow rule in the styles). */
+  const NARROW_TOOL = 560;
   const zoomPos = $derived(
     Math.round(
       (Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * ZOOM_STOPS,
@@ -228,7 +237,7 @@
     if (!pages.length || !deskW || !deskH) return 1;
     const aspect = Math.max(...pages.map((p) => p.height / p.width));
     const pagesW = deskW - 48;
-    const colW = view === "double" ? (pagesW - 4) / 2 : pagesW;
+    const colW = shownView === "double" ? (pagesW - 4) / 2 : pagesW;
     const usableH = deskH - 76;
     if (colW <= 0 || usableH <= 0) return 1;
     const z = usableH / (colW * aspect);
@@ -257,7 +266,12 @@
   // toggle) stands in for it.
   let view = $state<"single" | "double">("double");
   let firstOnRight = $state(true);
-  const spreads = $derived(buildSpreads(pages.length, view, firstOnRight));
+  // A narrow tool column (a phone) shows one page per row and hides the
+  // switch; the chosen view returns when the column widens.
+  let mainW = $state(0);
+  const narrow = $derived(mainW > 0 && mainW < NARROW_TOOL);
+  const shownView = $derived(narrow ? "single" : view);
+  const spreads = $derived(buildSpreads(pages.length, shownView, firstOnRight));
 
   // The desk scrolls through the rows, one per spread.
   let desk = $state<HTMLElement | null>(null);
@@ -900,6 +914,19 @@
     );
   }
 
+  // A second finger turns the gesture into a pinch: the drag the first one
+  // started is undone.
+  function cancelDrag() {
+    if (!drag) return;
+    const { kind, layer, p, z, started, orig } = drag;
+    drag = null;
+    if (!started) return;
+    if (kind === "draw") {
+      items(p, layer).splice(z, 1);
+      selected = null;
+    } else Object.assign(items(p, layer)[z].box, orig);
+  }
+
   function pointerUp() {
     if (!drag) return;
     const { kind, layer, p, z, moved, started } = drag;
@@ -1050,7 +1077,7 @@
 </script>
 
 <svelte:head>
-  <title>{taskTitle} · {campaign} · Let's Encode!</title>
+  <title>{taskTitle} · {session.pieceName || campaign} · Let's Encode!</title>
 </svelte:head>
 
 <svelte:window
@@ -1120,7 +1147,7 @@
       </div>
     </div>
   {:else if data}
-    <div class="main">
+    <div class="main" bind:clientWidth={mainW}>
       <div class="ctoolbar">
         <div class="seg" title="How many pages the desk shows side by side">
           <button
@@ -1169,7 +1196,7 @@
         >
         <button
           type="button"
-          class="tbtn tbtn-icon"
+          class="tbtn tbtn-icon fitpage"
           class:on={fit === "page"}
           onclick={fitWholePage}
           aria-label="Fit the whole page"
@@ -1236,10 +1263,18 @@
         bind:clientWidth={deskW}
         bind:clientHeight={deskH}
         onscroll={deskScrolled}
+        {@attach zoomGestures({
+          get: () => zoom,
+          set: (z) => {
+            zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+            fit = null;
+          },
+          onpinchstart: cancelDrag,
+        })}
       >
         <div
           class="pages"
-          class:double={view === "double"}
+          class:double={shownView === "double"}
           style={`--zoom:${zoom}`}
         >
           {#each spreads as sp, r (r)}
@@ -1516,8 +1551,11 @@
       {@const d = data!}
       <div class="taskbox">
         <div class="tbhead">
-          <h2 class="abtitle">{taskTitle}</h2>
-          <code class="taskchip">{taskId}</code>
+          <TaskHeading
+            description={taskTitle}
+            piece={session.pieceName}
+            task={taskId}
+          />
         </div>
         <div class="tbsection">
           <span class="abcount">
@@ -1653,10 +1691,6 @@
     box-shadow: var(--shadow-sm);
   }
   .tbhead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
     background: color-mix(in srgb, var(--zone) 10%, var(--card));
     border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
     padding: 9px 12px;
@@ -1667,19 +1701,6 @@
     align-items: flex-start;
     gap: 8px;
     padding: 10px 12px;
-  }
-  .abtitle {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .taskchip {
-    font-size: 12px;
-    font-family: ui-monospace, Menlo, monospace;
-    background: var(--bg-tint);
-    border-radius: 5px;
-    padding: 2px 7px;
   }
   .abcount {
     font-size: 12.5px;
@@ -1733,11 +1754,46 @@
   }
   /* The desk column beside the sidebar: the paging and zoom toolbar on top,
      result banners over the desk. */
+  /* The tool column: its toolbar's top edge and the side panel's are one
+     line, 12px below the navigation bar. */
   .main {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
+    padding: 12px 16px 0;
+    box-sizing: border-box;
+    container-type: inline-size;
+  }
+  /* Narrow tool column (NARROW_TOOL): the page navigation leads, then fit
+     width, undo and redo at touch size; the page-count switch, "Page 1
+     right", the zoom slider, fit page and the help mark are hidden. Zoom
+     stays reachable by pinch and Ctrl/Cmd + scroll. */
+  @container (max-width: 559px) {
+    .ctoolbar {
+      gap: 4px;
+      padding: 0 6px;
+    }
+    .ctoolbar > .seg,
+    .ctoolbar > .checkline,
+    .ctoolbar > .tspacer,
+    .ctoolbar > .zoomslider,
+    .ctoolbar > .zval,
+    .ctoolbar > .fitpage,
+    .ctoolbar > .helpico,
+    .pgnav > .vline {
+      display: none;
+    }
+    .pgnav {
+      order: -1;
+      margin-right: auto;
+    }
+    .ctoolbar :global(.btn),
+    .ctoolbar :global(.tbtn) {
+      min-width: 44px;
+      min-height: 44px;
+    }
   }
   .ctoolbar {
     flex: none;
@@ -1746,9 +1802,11 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 0 16px;
-    border-bottom: 1px solid var(--line);
+    padding: 0 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
     background: var(--card);
+    box-shadow: var(--shadow-sm);
     overflow-x: auto;
   }
   .tspacer {
@@ -1760,6 +1818,8 @@
     min-height: 0;
     overflow: auto;
     overflow-anchor: none;
+    /* A pinch zooms the pages (zoomGestures), not the window. */
+    touch-action: pan-x pan-y;
     padding: 16px 24px;
     box-sizing: border-box;
   }

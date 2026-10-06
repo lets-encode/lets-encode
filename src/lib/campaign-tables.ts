@@ -449,6 +449,19 @@ export function pieceNamesOf(pieces: PieceRef[]): PieceNames {
 export const pieceLabel = (p: { title: string; id: string }): string =>
   p.title || p.id;
 
+/** Display titles longer than this are shortened (clipTitle). */
+export const TITLE_MAX = 40;
+
+/** A title cut to at most `max` characters at a word boundary, with an
+    ellipsis; a title that fits is returned unchanged. */
+export function clipTitle(title: string, max = TITLE_MAX): string {
+  if (title.length <= max) return title;
+  const cut = title.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  const head = space >= max / 2 ? cut.slice(0, space) : cut;
+  return `${head.replace(/[\s.,;:!?–-]+$/, "")}…`;
+}
+
 /** The colour zone (1–8) of the piece at `index` in config order. */
 export const pieceZone = (index: number): number => (index % 8) + 1;
 

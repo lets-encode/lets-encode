@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  clipTitle,
   parseCsv,
   parseTaskCsv,
   parseStateCsv,
@@ -333,4 +334,14 @@ test("passThresholdOf: defaults to the slot count when the key is absent", () =>
   assert.equal(passThresholdOf(null, 3), 3);
   assert.equal(passThresholdOf("", 1), 1);
   assert.equal(passThresholdOf(null, 0), 1);
+});
+
+test("clipTitle keeps short titles and cuts long ones at a word", () => {
+  assert.equal(clipTitle("Blume und Duft"), "Blume und Duft");
+  const long =
+    "Blume und Duft is a very beautiful piece with an unusually long title.";
+  const clipped = clipTitle(long);
+  assert.equal(clipped, "Blume und Duft is a very beautiful…");
+  assert.ok(clipped.length <= 40);
+  assert.equal(clipTitle("x".repeat(60), 10), "xxxxxxxxx…");
 });

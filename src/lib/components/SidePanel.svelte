@@ -4,8 +4,9 @@
   without one (task '') it holds the campaign comments. Beside the content
   it is resizable by its left edge; in portrait on a narrow screen
   (DOCKED_QUERY) it docks below the content, resizable by its top edge, and
-  below PANEL_LOWERED shows only its task box. Sizes persist per browser
-  (side-panels.ts).
+  below PANEL_LOWERED shows only its task box. Docked without a task it starts
+  as a bar holding the campaign comment field, with a button that opens the
+  list. Sizes persist per browser (side-panels.ts).
 -->
 <script module lang="ts">
   // Whether resolved threads are hidden; held for the session across views.
@@ -23,6 +24,9 @@
     DOCKED_QUERY,
     PANEL_LOWERED,
     defaultPanelHeight,
+    defaultPanelWidth,
+    hasStoredPanelHeight,
+    hasStoredPanelWidth,
     writeSidePanel,
     type SidePanelState,
   } from "$lib/side-panels.ts";
@@ -33,7 +37,6 @@
 
   let {
     task,
-    subtitle = "",
     zone = 0,
     comments,
     logins,
@@ -46,6 +49,7 @@
     composerHint = "",
     emptyLine = "",
     banner,
+    info,
     taskBox,
     ondeselect,
     onanchor,
@@ -54,8 +58,6 @@
   }: {
     /** The task the panel shows, or '' for the campaign. */
     task: string;
-    /** Shown after the heading, e.g. the task's piece. */
-    subtitle?: string;
     /** The piece's colour slot, 1-based (--zone-N); 0 for none. */
     zone?: number;
     /** The whole comment log; the panel filters to its task. */
@@ -75,6 +77,8 @@
     emptyLine?: string;
     /** Rendered at the panel's top, e.g. the result of the last command. */
     banner?: Snippet;
+    /** The campaign's details, above the campaign comments. */
+    info?: Snippet;
     /** The task's record and controls, pinned above the comments. */
     taskBox?: Snippet;
     /** Return to the campaign; absent where the view is the task's own. */
@@ -93,8 +97,30 @@
   const docked = $derived(dockedQuery.current);
   // Docked, or in a window too short to hold the task box beside a list.
   const shortQuery = new MediaQuery("(max-height: 500px)", false);
-  const cramped = $derived(docked || shortQuery.current);
-  const lowered = $derived(docked && panel.height < PANEL_LOWERED);
+  const cramped = $derived(dockedQuery.current || shortQuery.current);
+  // Docked without a task, the campaign comments open only on request.
+  let campaignOpen = $state(false);
+  const collapsedCampaign = $derived(docked && !task && !campaignOpen);
+  const lowered = $derived(
+    docked && (panel.height < PANEL_LOWERED || collapsedCampaign),
+  );
+
+  // Until the viewer sets a size, the panel keeps its default share of the
+  // window as the window changes (a resized window, a phone turned upright):
+  // its width beside the content, its height docked below it.
+  $effect(() => {
+    const isDocked = docked;
+    const fit = () => {
+      if (isDocked) {
+        if (!hasStoredPanelHeight())
+          panel.height = defaultPanelHeight(window.innerHeight);
+      } else if (!hasStoredPanelWidth())
+        panel.width = defaultPanelWidth(window.innerWidth, window.innerHeight);
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  });
 
   const allThreads = $derived(buildThreads(comments, task));
   const count = $derived(
@@ -116,13 +142,30 @@
   $effect.pre(() => {
     void task;
     replyTo = null;
+    campaignOpen = false;
   });
 
   function raise() {
+    campaignOpen = true;
+    if (panel.height >= PANEL_LOWERED) return;
     panel.height = defaultPanelHeight(window.innerHeight);
-    writeSidePanel({ ...panel });
+    writeSidePanel({ ...panel }, "height");
   }
 </script>
+
+{#snippet composer()}
+  <div class="composerwrap">
+    <CommentComposer
+      {task}
+      {logins}
+      {runner}
+      bind:replyTo
+      placeholder={composerHint ||
+        (task ? "Comment on this task…" : "Comment on the campaign…")}
+      {oncomment}
+    />
+  </div>
+{/snippet}
 
 <div
   class="spwrap"
@@ -152,81 +195,84 @@
         >
         <span class="sep" aria-hidden="true">/</span>
       {/if}
-      {#if zone}<span class="dot"></span>{/if}
       <h2 class="sptitle">{task ? "Task" : "Campaign"}</h2>
-      {#if subtitle}<span class="spsub">· {subtitle}</span>{/if}
+      {#if collapsedCampaign && (count > 0 || info)}
+        <button type="button" class="btn showinline" onclick={raise}
+          >{info ? "Details and comments" : "Comments"} · {count}</button
+        >
+      {/if}
     </div>
     {#if taskBox}
       <div class="pinhead">{@render taskBox()}</div>
-    {:else if emptyLine}
+    {:else if emptyLine && !collapsedCampaign}
       <p class="empty">{emptyLine}</p>
     {/if}
-    {#if lowered}
+    {#if collapsedCampaign}
+      <!-- The bar is the campaign's comment field; the list opens above. -->
+      {@render composer()}
+    {:else if lowered}
       <button type="button" class="btn showcomments" onclick={raise}
         >Show comments · {count}</button
       >
     {:else}
       <div class="clist">
-        <div class="sechead" class:review>
-          <span class="secdot"></span>
-          {task ? "Comments" : "Campaign comments"}
-          <span class="seccount">{count}</span>
-          {#if resolvedCount > 0}
-            <button
-              type="button"
-              class="chip-switch"
-              class:on={hideResolved}
-              onclick={() => (hideResolved = !hideResolved)}
-              title="Hide the resolved threads"
-              ><span class="sw"></span>Hide resolved · {resolvedCount}</button
-            >
-          {/if}
-        </div>
-        {#each threads as t (t.root.comment_id)}
-          <CommentCard
-            comment={t.root}
-            {logins}
-            {viewer}
-            {canPush}
-            {runner}
-            {review}
-            {inScore}
-            {onanchor}
-            onreply={(c) => (replyTo = c)}
-            {onresolve}
-          />
-          {#each t.replies as reply (reply.comment_id)}
+        {#if !task}{@render info?.()}{/if}
+        <!-- In a docked or short panel, no comments means no list: the
+             composer sits right under the task box. -->
+        {#if !(cramped && count === 0 && (task || !info))}
+          <div class="sechead" class:review>
+            <span class="secdot"></span>
+            {task ? "Comments" : "Campaign comments"}
+            <span class="seccount">{count}</span>
+            {#if resolvedCount > 0}
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={hideResolved}
+                onclick={() => (hideResolved = !hideResolved)}
+                title="Hide the resolved threads"
+                ><span class="sw"></span>Hide resolved · {resolvedCount}</button
+              >
+            {/if}
+          </div>
+          {#each threads as t (t.root.comment_id)}
             <CommentCard
-              comment={reply}
+              comment={t.root}
               {logins}
               {viewer}
               {canPush}
               {runner}
               {review}
-              reply
               {inScore}
               {onanchor}
+              onreply={(c) => (replyTo = c)}
               {onresolve}
             />
+            {#each t.replies as reply (reply.comment_id)}
+              <CommentCard
+                comment={reply}
+                {logins}
+                {viewer}
+                {canPush}
+                {runner}
+                {review}
+                reply
+                {inScore}
+                {onanchor}
+                {onresolve}
+              />
+            {/each}
           {/each}
-        {/each}
-        {#if threads.length === 0}
-          <span class="cnone"
-            >{allThreads.length === 0
-              ? "No comments yet."
-              : `${resolvedCount} resolved ${resolvedCount === 1 ? "thread" : "threads"} hidden.`}</span
-          >
+          {#if threads.length === 0}
+            <span class="cnone"
+              >{allThreads.length === 0
+                ? "No comments yet."
+                : `${resolvedCount} resolved ${resolvedCount === 1 ? "thread" : "threads"} hidden.`}</span
+            >
+          {/if}
         {/if}
       </div>
-      <CommentComposer
-        {task}
-        {logins}
-        {runner}
-        bind:replyTo
-        placeholder={composerHint ||
-          (task ? "Comment on this task…" : "Comment on the campaign…")}
-        {oncomment}
-      />
+      {@render composer()}
     {/if}
   </aside>
 </div>
@@ -288,25 +334,11 @@
   .sep {
     color: var(--ink-faint);
   }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--zone);
-    flex: none;
-  }
   .sptitle {
     margin: 0;
     font-size: 13px;
     font-weight: 600;
     color: var(--ink);
-  }
-  .spsub {
-    font-size: 12px;
-    color: var(--ink-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
   }
   /* The pinned task box keeps its controls in reach while the list scrolls;
      past its share of the panel it scrolls on its own. */
@@ -316,8 +348,10 @@
     overflow-y: auto;
   }
   /* Docked or in a short window, the task box keeps its full height so its
-     controls never scroll away inside it; the panel scrolls as a whole when
-     it runs out of room. */
+     controls never scroll away inside it, and the composer stays at the
+     bottom: only the comment list between them scrolls, down to nothing.
+     The panel scrolls as a whole only when the box and composer alone
+     overflow it. */
   .cramped .pinhead {
     max-height: none;
   }
@@ -325,7 +359,29 @@
     overflow-y: auto;
   }
   .cramped .clist {
-    flex: 1 0 96px;
+    flex: 1 1 0;
+    min-height: 0;
+  }
+  /* When the panel itself scrolls, the composer stays at its bottom edge. */
+  .composerwrap {
+    flex: none;
+  }
+  /* The shadow fills the panel's bottom padding, so content scrolling under
+     the composer does not show below it. */
+  .cramped .composerwrap {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-inset);
+    box-shadow: 0 12px 0 var(--bg-inset);
+    padding-top: 6px;
+  }
+  /* Docked or in a short window the panel is on a touch screen: its buttons
+     are 36px touch targets, the size of the campaign header's. */
+  .cramped :global(.btn) {
+    min-height: 36px;
+  }
+  .cramped :global(.btn-icon) {
+    min-width: 36px;
   }
   .empty {
     flex: none;
@@ -337,6 +393,10 @@
   .showcomments {
     flex: none;
   }
+  .showinline {
+    margin-left: auto;
+    flex: none;
+  }
   .clist {
     flex: 1;
     min-height: 0;
@@ -346,10 +406,8 @@
     gap: 6px;
   }
   .sechead {
-    font-size: 10.5px;
+    font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     color: var(--ink-soft);
     padding: 4px 2px 0;
     display: flex;

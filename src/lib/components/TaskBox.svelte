@@ -1,8 +1,9 @@
 <!--
   A task's box in the side panel (SidePanel.svelte) of the campaign page and
-  the score view: one continuous card — piece-tinted header, status line with
-  the measure/page score link, submission, validation record and the action
-  footer. Commands run through callbacks the campaign page passes in.
+  the score view: one continuous card — piece-tinted header with the task's
+  name over its piece, status pill, submission, fails and the viewer's own
+  review slot, and the action footer. Commands run through callbacks the
+  host page passes in.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
@@ -24,16 +25,18 @@
     cardPill,
     elapsed,
     initialOf,
+    orphanedFails,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import GiveBackButton from "./GiveBackButton.svelte";
+  import TaskHeading from "./TaskHeading.svelte";
   import TaskRunState from "./TaskRunState.svelte";
   import ValidationRecord from "./ValidationRecord.svelte";
 
   let {
     card,
     pieceName,
-    zone,
+    zone = 0,
     campaign,
     comments,
     locks,
@@ -43,7 +46,9 @@
     canPush,
     runner,
     editorError = null,
-    onopenscore,
+    primary = true,
+    inReview = false,
+    prefill,
     onshowanchor,
     onclaim,
     oneditor,
@@ -55,8 +60,9 @@
     card: BoardCard;
     /** The display name of the task's piece. */
     pieceName: string;
-    /** The piece's colour slot, 1-based (--zone-N). */
-    zone: number;
+    /** The piece's colour slot, 1-based (--zone-N); 0 takes --zone from the
+        surrounding side panel. */
+    zone?: number;
     campaign: string;
     comments: CommentRow[];
     locks: LockRow[];
@@ -68,12 +74,19 @@
     /** An error from the return from mei-friend; `label` names mei-friend
         when the text is its own message. */
     editorError?: { label: string; text: string } | null;
-    /** Open the score at the task's pages. */
-    onopenscore: () => void;
+    /** The footer's action is the view's primary action (a solid button);
+        otherwise an outline, beside a primary elsewhere in the view. */
+    primary?: boolean;
+    /** The box sits in the task's review view: the footer leaves out the
+        links to that view and offers only review actions. */
+    inReview?: boolean;
+    /** The anchor a fresh fail form opens with; defaults to the task's page. */
+    prefill?: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the score. */
     onshowanchor: (c: CommentRow) => void;
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
-    oneditor: (task_id: string) => Promise<void>;
+    /** Claim or open the task in mei-friend; not used in the review view. */
+    oneditor?: (task_id: string) => Promise<void>;
     /** Give back the viewer's claim: the task's encoding ('' subtask) or a review slot. */
     ongiveback: (task_id: string, subtask_id: string) => Promise<unknown>;
     onvalidate: (
@@ -107,6 +120,16 @@
   /** The review slot the viewer holds a lock on, if any. */
   const myReviewSub = $derived(record.find((r) => r.mine)?.sub);
   const myReview = $derived(myReviewSub !== undefined);
+  /** What the side record shows: fails, the viewer's own slot, and for the
+      owner the slots held and passed. */
+  const hasRecord = $derived(
+    record.some(
+      (r) =>
+        r.key === "fail" ||
+        r.mine ||
+        (canPush && (r.key === "review" || r.key === "pass")),
+    ) || orphanedFails(card, comments).length > 0,
+  );
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
   const editorName = $derived(workPlace(card.locator));
 
@@ -116,17 +139,41 @@
     taskState?.encoder ? handle(logins, taskState.encoder) : "",
   );
 
-  // The task's page, linking the status line to the score and prefilling a
-  // fail's anchor.
+  // What the task asks of the volunteer, in one line: the panel is where a
+  // touch screen reads it.
+  const help = $derived.by(() => {
+    if (card.column === "done") return "";
+    if (card.column === "validation")
+      return card.pre
+        ? `Check the submitted work in the ${editorName} and record a pass or a fail.`
+        : inReview
+          ? "Compare the encoding with the scan and record a pass or a fail."
+          : "Compare the encoding with the scan in the review view and record a pass or a fail.";
+    if (card.locator === "score-setup")
+      return "Set the score's staves, clefs, key signature and time signature from the source.";
+    if (card.locator === "omr-layout")
+      return "Check the staff and measure boxes on each page and correct the wrong ones.";
+    if (card.locator === "measure-zones")
+      return "Check the measure boxes on each page and correct the wrong ones.";
+    if (card.omr)
+      return "Correct the notes that optical music recognition (OMR) read from this page, in the mei-friend editor.";
+    return card.scope
+      ? "Encode the music of this page in the mei-friend editor."
+      : "Encode the music of the piece in the mei-friend editor.";
+  });
+
+  // The task's page, prefilling a fail's anchor.
   const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
-  const scoreLink = $derived(taskPage ? `p. ${taskPage}` : "score");
 </script>
 
-<div class="taskcard" style="--zone: var(--zone-{zone})">
+<div class="taskcard" style={zone ? `--zone: var(--zone-${zone})` : ""}>
   <div class="tsphead">
-    <span class="dot"></span>
-    <h3 class="tsptitle">{card.title}</h3>
-    <span class="tspid">{card.task}</span>
+    <TaskHeading
+      description={card.description}
+      scope={card.scope}
+      piece={pieceName}
+      task={canPush ? card.task : ""}
+    />
   </div>
   <TaskRunState task={card.task} bar />
   {#if editorError}
@@ -146,15 +193,9 @@
           ? card.doneLine
           : undefined}>{cardPill(card, viewer)}</span
     >
-    <span class="pieceline"
-      >{pieceName} ·
-      <button
-        type="button"
-        class="scorelink"
-        onclick={onopenscore}
-        title="Open the score at this task's pages">{scoreLink}</button
-      ></span
-    >
+    {#if help}
+      <p class="help">{help}</p>
+    {/if}
   </div>
   {#if encoderLogin}
     <div class="section">
@@ -171,19 +212,18 @@
       </div>
     </div>
   {/if}
-  {#if card.slots.length > 0}
+  {#if hasRecord}
     <div class="section">
       <ValidationRecord
         {card}
         {comments}
+        {locks}
         {viewer}
         {logins}
         {canPush}
         {runner}
-        variant="side"
-        prefill={() => ({ page: taskPage, m1: "", m2: "" })}
+        prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
         {onshowanchor}
-        {onclaim}
         {onvalidate}
         {onresolve}
         {onsendback}
@@ -192,11 +232,14 @@
   {/if}
   <!-- The one action the viewer can take on this task in its current
            state; a task the viewer cannot work on gets no footer. -->
-  {#if card.column === "ready"}
+  {#if inReview && card.column !== "validation"}
+    <!-- The review view offers no work actions. -->
+  {:else if card.column === "ready"}
     <div class="tspfoot">
       {#if card.pre}
         <a
-          class="btn btn-primary btn-pre"
+          class="btn btn-pre"
+          class:btn-primary={primary}
           href={processing ? undefined : editorRoute}
           aria-disabled={processing}
           title={`Claims the task for you and opens the ${editorName}.`}
@@ -205,8 +248,9 @@
       {:else}
         <button
           type="button"
-          class="btn btn-primary"
-          onclick={() => oneditor(card.task)}
+          class="btn btn-enc"
+          class:btn-primary={primary}
+          onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
           title={auth.user
             ? "Claims the task for you, then opens the score in mei-friend."
@@ -219,7 +263,8 @@
     {#if card.pre && card.worker?.mine}
       <div class="tspfoot">
         <a
-          class="btn btn-primary"
+          class="btn"
+          class:btn-primary={primary}
           href={processing ? undefined : editorRoute}
           aria-disabled={processing}
           title={`Continue your work in the ${editorName}.`}
@@ -234,8 +279,9 @@
       <div class="tspfoot">
         <button
           type="button"
-          class="btn btn-primary"
-          onclick={() => oneditor(card.task)}
+          class="btn"
+          class:btn-primary={primary}
+          onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || processing}
           title="Opens the score in mei-friend. Completing the task there submits it for review."
           >Open in mei-friend <Icon name="external" /></button
@@ -251,12 +297,13 @@
       <div class="tspfoot">
         <button
           type="button"
-          class="btn btn-primary btn-review"
+          class="btn btn-review"
+          class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
           title="Reserve this review slot.">Claim to review</button
         >
-        {#if !card.pre}
+        {#if !card.pre && !inReview}
           <a
             class="btn btn-soft"
             href={`/${campaign}/review/${card.task}`}
@@ -269,15 +316,17 @@
       <div class="tspfoot">
         {#if card.pre}
           <a
-            class="btn btn-primary"
+            class="btn"
+            class:btn-primary={primary}
             href={processing ? undefined : editorRoute}
             aria-disabled={processing}
             title={`Review the submitted work in the ${editorName}.`}
             >Open {editorName}</a
           >
-        {:else}
+        {:else if !inReview}
           <a
-            class="btn btn-primary"
+            class="btn"
+            class:btn-primary={primary}
             href={processing ? undefined : `/${campaign}/review/${card.task}`}
             aria-disabled={processing}
             title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
@@ -302,36 +351,9 @@
     box-shadow: var(--shadow-sm);
   }
   .tsphead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     background: color-mix(in srgb, var(--zone) 10%, var(--card));
     border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
     padding: 9px 12px;
-  }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--zone);
-    flex: none;
-  }
-  .tsptitle {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .tspid {
-    font:
-      400 10px ui-monospace,
-      Menlo,
-      monospace;
-    color: var(--ink-faint);
-    flex: none;
   }
   .statusrow {
     display: flex;
@@ -340,19 +362,12 @@
     flex-wrap: wrap;
     padding: 10px 12px;
   }
-  .pieceline {
-    font-size: 11.5px;
+  .help {
+    flex-basis: 100%;
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.45;
     color: var(--ink-soft);
-    white-space: nowrap;
-  }
-  .scorelink {
-    font: 600 11.5px var(--font);
-    color: var(--info);
-    background: none;
-    border: 0;
-    padding: 6px 0;
-    margin: -6px 0;
-    cursor: pointer;
   }
   .section {
     padding: 10px 12px;
@@ -362,10 +377,8 @@
     gap: 6px;
   }
   .seclbl {
-    font-size: 10.5px;
+    font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
     color: var(--ink-soft);
   }
   .subline {

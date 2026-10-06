@@ -1,11 +1,13 @@
 <!--
   The drag bar on the side panel's edge: on its left edge beside the content,
   dragging left widens the panel; on its top edge when docked below the
-  content, dragging up raises it. The size is clamped to the viewport and
-  persisted per browser when the drag ends (side-panels.ts).
+  content, dragging up raises it. Focused, the arrow keys move it in 24px
+  steps. The size is clamped to the viewport and persisted per browser when
+  the drag or key press ends (side-panels.ts).
 -->
 <script lang="ts">
   import {
+    PANEL_MIN,
     clampPanelHeight,
     clampPanelWidth,
     writeSidePanel,
@@ -52,17 +54,39 @@
   function end() {
     if (!resizing) return;
     resizing = false;
-    writeSidePanel({ ...panel });
+    writeSidePanel({ ...panel }, docked ? "height" : "width");
+  }
+  // The keyboard path: towards the content grows the panel.
+  const STEP = 24;
+  function key(e: KeyboardEvent) {
+    const grow = docked
+      ? { ArrowUp: STEP, ArrowDown: -STEP }
+      : { ArrowLeft: STEP, ArrowRight: -STEP };
+    const delta = grow[e.key as keyof typeof grow];
+    if (delta === undefined) return;
+    e.preventDefault();
+    if (docked)
+      panel.height = clampPanelHeight(panel.height + delta, window.innerHeight);
+    else panel.width = clampPanelWidth(panel.width + delta, window.innerWidth);
+    writeSidePanel({ ...panel }, docked ? "height" : "width");
   }
 </script>
 
+<!-- A focusable separator is the ARIA window-splitter pattern, an
+     interactive widget; the lint counts every separator as static. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
   class="handle"
   class:docked
   class:active={resizing}
   role="separator"
+  tabindex="0"
   aria-orientation={docked ? "horizontal" : "vertical"}
   aria-label={label}
+  aria-valuenow={docked ? panel.height : panel.width}
+  aria-valuemin={docked ? 120 : PANEL_MIN}
+  aria-valuetext={`${docked ? panel.height : panel.width} pixels`}
+  onkeydown={key}
   onpointerdown={begin}
   onpointermove={move}
   onpointerup={end}
@@ -102,6 +126,10 @@
   .handle.docked:hover,
   .handle.docked.active {
     background: none;
+  }
+  .handle:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
   /* The embossed double line marking the bar as draggable. */
   .handle::before,

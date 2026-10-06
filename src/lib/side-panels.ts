@@ -16,7 +16,9 @@ const HEIGHT_KEY = "lets-encode:side-panel-height";
 export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 900px)";
 
 export const PANEL_MIN = 280;
-export const DEFAULT_PANEL_WIDTH = 480;
+/** The widest default panel beside the content (defaultPanelWidth). */
+export const DEFAULT_PANEL_WIDTH = 400;
+const DEFAULT_WIDTH_SHARE = 0.38;
 /** Below this docked height the panel shows only its task box. */
 export const PANEL_LOWERED = 200;
 
@@ -35,6 +37,22 @@ function readNumber(key: string): unknown {
 const finite = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
 
+/** The default width beside the content: half a short window (a phone in
+    landscape), else 38% of the viewport between PANEL_MIN and
+    DEFAULT_PANEL_WIDTH; never more than half the viewport. */
+export const defaultPanelWidth = (width: number, height: number): number =>
+  Math.round(
+    Math.min(
+      width / 2,
+      height <= 500
+        ? width / 2
+        : Math.min(
+            DEFAULT_PANEL_WIDTH,
+            Math.max(PANEL_MIN, width * DEFAULT_WIDTH_SHARE),
+          ),
+    ),
+  );
+
 /** The default docked height: 40% of the viewport. */
 export const defaultPanelHeight = (viewport: number): number =>
   Math.round(viewport * 0.4);
@@ -44,8 +62,13 @@ export function readSidePanel(): SidePanelState {
   const w = readNumber(WIDTH_KEY);
   const h = readNumber(HEIGHT_KEY);
   const viewport = typeof window === "undefined" ? 800 : window.innerHeight;
+  const viewportWidth =
+    typeof window === "undefined" ? 1280 : window.innerWidth;
   return {
-    width: finite(w) && w >= PANEL_MIN ? Math.round(w) : DEFAULT_PANEL_WIDTH,
+    width:
+      finite(w) && w >= PANEL_MIN
+        ? Math.round(w)
+        : defaultPanelWidth(viewportWidth, viewport),
     height:
       finite(h) && h > 0
         ? clampPanelHeight(h, viewport)
@@ -53,11 +76,29 @@ export function readSidePanel(): SidePanelState {
   };
 }
 
-/** Store the panel state. A browser refusing the write leaves it unstored. */
-export function writeSidePanel(state: SidePanelState): void {
+/** Whether the viewer has set a docked height (by dragging) in this browser. */
+export const hasStoredPanelHeight = (): boolean => {
+  const h = readNumber(HEIGHT_KEY);
+  return finite(h) && h > 0;
+};
+
+/** Whether the viewer has set a width (by dragging) in this browser. */
+export const hasStoredPanelWidth = (): boolean => {
+  const w = readNumber(WIDTH_KEY);
+  return finite(w) && w >= PANEL_MIN;
+};
+
+/** Store the dimension the viewer set: the width beside the content, or
+    the height docked below it. A browser refusing the write leaves it
+    unstored. */
+export function writeSidePanel(
+  state: SidePanelState,
+  dimension: "width" | "height",
+): void {
   try {
-    store()?.setItem(WIDTH_KEY, JSON.stringify(state.width));
-    store()?.setItem(HEIGHT_KEY, JSON.stringify(state.height));
+    if (dimension === "width")
+      store()?.setItem(WIDTH_KEY, JSON.stringify(state.width));
+    else store()?.setItem(HEIGHT_KEY, JSON.stringify(state.height));
   } catch {
     /* full or blocked storage only costs the preference */
   }

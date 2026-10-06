@@ -27,6 +27,7 @@ import {
   parseStateCsv,
   parseTaskCsv,
   pieceNamesOf,
+  piecePreparationsOf,
   resolveLogins,
   COMMENT_PATH,
   CONFIG_PATH,
@@ -40,12 +41,25 @@ import type {
   HistoryRow,
   LockRow,
   PieceNames,
+  PiecePreparations,
   StateRow,
   TaskRow,
 } from "./campaign-tables.ts";
 import type { ForgeClient } from "./forge/types.ts";
 import { RateLimitError } from "./forge/github-rest.ts";
 import type { RepoSummary } from "./forge/github-rest.ts";
+
+/** A task's one-line title in a campaign (cardTitle). */
+const titleOf = (
+  stats: Pick<CampaignStats, "pieceNames" | "preparations">,
+  def: TaskRow,
+): string =>
+  cardTitle(
+    def.fragment,
+    def.locator,
+    stats.pieceNames,
+    stats.preparations[def.fragment] === "omr",
+  );
 
 /** One campaign's tracking tables condensed for the dashboard views. */
 export interface CampaignStats {
@@ -79,6 +93,8 @@ export interface CampaignStats {
   allowSelfValidation: boolean;
   /** Fragment path → piece display name, from the config's pieces list. */
   pieceNames: PieceNames;
+  /** Fragment path → the piece's preparation ("omr"), from the same list. */
+  preparations: PiecePreparations;
   // The raw tables, for the my-work projections.
   taskDefs: TaskRow[];
   rows: StateRow[];
@@ -184,7 +200,7 @@ export function nextTask(
     const locator = def?.locator ?? "";
     return {
       task,
-      title: def ? cardTitle(def.fragment, locator, stats.pieceNames) : task,
+      title: def ? titleOf(stats, def) : task,
       locator,
       pre: isPreTask(locator),
     };
@@ -386,6 +402,7 @@ async function fetchStats(
     createdAt: summary.created_at || history[0]?.timestamp || "",
     allowSelfValidation: configFlag(yaml, "allow_self_validation"),
     pieceNames: pieceNamesOf(configPieces(yaml)),
+    preparations: piecePreparationsOf(configPieces(yaml)),
     taskDefs,
     rows: state.rows,
     validationColumns: state.validationColumns,
@@ -479,9 +496,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       task,
       subtask: "",
       locator: def?.locator ?? "",
-      title: def
-        ? cardTitle(def.fragment, def.locator, stats.pieceNames)
-        : task,
+      title: def ? titleOf(stats, def) : task,
       claimedAt: "",
       expiresAt: "",
       passes: dots.filter((d) => d === "pass").length,
@@ -566,9 +581,7 @@ export function commentsOnMyWork(
         comment: c,
         campaignSlug: stats.name,
         task: c.task_id,
-        taskTitle: def
-          ? cardTitle(def.fragment, def.locator, stats.pieceNames)
-          : c.task_id,
+        taskTitle: def ? titleOf(stats, def) : c.task_id,
         logins: stats.logins,
       };
     });

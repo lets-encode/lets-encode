@@ -274,7 +274,7 @@ test("buildGraph: numeric user ids render as logins via the map", () => {
 test("claimLabel names mei-friend for an encoding only", () => {
   assert.equal(claimLabel("surface-3"), "Claim & open in mei-friend");
   assert.equal(claimLabel(""), "Claim & open in mei-friend");
-  assert.equal(claimLabel("score-setup"), "Claim task");
-  assert.equal(claimLabel("omr-layout"), "Claim task");
-  assert.equal(claimLabel("measure-zones"), "Claim task");
+  assert.equal(claimLabel("score-setup"), "Claim & open score setup");
+  assert.equal(claimLabel("omr-layout"), "Claim & open measure correction");
+  assert.equal(claimLabel("measure-zones"), "Claim & open measure correction");
 });

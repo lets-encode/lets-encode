@@ -43,6 +43,7 @@
   } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
   import FitIcon from "./FitIcon.svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
   import type { PreviewPane } from "$lib/preview-pane.ts";
 
   let {
@@ -124,6 +125,9 @@
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
   const PV_ZOOM_STOPS = 100;
+  /** Below this preview width the toolbar keeps only the panes and the page
+      navigation (the narrow rule in the styles). */
+  const PV_NARROW = 560;
   const pvZoomPos = $derived(
     Math.round(
       (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) *
@@ -142,7 +146,14 @@
   const pvPageTotal = $derived(
     preview ? Math.max(preview.facs?.length ?? 0, preview.pageCount) : 0,
   );
-  const pvSpreads = $derived(buildSpreads(pvPageTotal, pvView, pvFirstOnRight));
+  // A narrow preview (a phone) shows one page per row and hides the
+  // page-count switch; the chosen view returns when it widens.
+  let pvW = $state(0);
+  const pvNarrow = $derived(pvW > 0 && pvW < PV_NARROW);
+  const pvShownView = $derived(pvNarrow ? "single" : pvView);
+  const pvSpreads = $derived(
+    buildSpreads(pvPageTotal, pvShownView, pvFirstOnRight),
+  );
   // The scroll area's inner size, for the whole-page fit. Both panes share it.
   let pvScrollW = $state(0);
   let pvScrollH = $state(0);
@@ -161,7 +172,7 @@
     // A row holds each shown pane's pages, 10px between the panes and 14px
     // between a pane's pages.
     const halves = showFacs && showEnc ? 2 : 1;
-    const perHalf = pvView === "double" ? 2 : 1;
+    const perHalf = pvShownView === "double" ? 2 : 1;
     const halfW = (pvScrollW - 10 * (halves - 1)) / halves;
     const colW = (halfW - 14 * (perHalf - 1)) / perHalf;
     const z = Math.min(
@@ -496,7 +507,7 @@
   });
 </script>
 
-<div class="preview">
+<div class="preview" bind:clientWidth={pvW}>
   <div class="ptoolbar">
     {#if preview?.facs?.length}
       <!-- Where the toolbar is too narrow for the labels, the buttons carry
@@ -529,7 +540,10 @@
         >
       </div>
     {/if}
-    <div class="seg" title="How many pages the viewer shows side by side">
+    <div
+      class="seg viewseg"
+      title="How many pages the viewer shows side by side"
+    >
       <button
         type="button"
         class:on={pvView === "single"}
@@ -558,7 +572,7 @@
     {#if facsVisible}
       <button
         type="button"
-        class="chip-switch"
+        class="chip-switch zonesw"
         class:on={showZones}
         onclick={() => (showZones = !showZones)}
         title="Show or hide the measure zones on the facsimile"
@@ -575,38 +589,41 @@
       >
     {/if}
     <span class="mspacer"></span>
-    <input
-      class="zoomslider"
-      type="range"
-      aria-label="Zoom"
-      aria-valuetext={`${Math.round(pvZoom * 100)}%`}
-      min={0}
-      max={PV_ZOOM_STOPS}
-      step={1}
-      value={pvZoomPos}
-      oninput={(e) => {
-        setPvZoomPos(Number((e.target as HTMLInputElement).value));
-        pvFit = null;
-      }}
-    />
-    <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
-    <button
-      type="button"
-      class="tbtn tbtn-icon"
-      class:on={pvFit === "width"}
-      onclick={() => (pvFit = "width")}
-      aria-label="Fit the page width"
-      title="Fit the page width to the pane"><FitIcon kind="width" /></button
-    >
-    <button
-      type="button"
-      class="tbtn tbtn-icon"
-      class:on={pvFit === "page"}
-      onclick={pvFitWholePage}
-      aria-label="Fit the whole page"
-      title="Fit the whole page in the pane, top to bottom"
-      ><FitIcon kind="page" /></button
-    >
+    <!-- The zoom controls wrap onto a second line together. -->
+    <span class="zoomgrp">
+      <input
+        class="zoomslider"
+        type="range"
+        aria-label="Zoom"
+        aria-valuetext={`${Math.round(pvZoom * 100)}%`}
+        min={0}
+        max={PV_ZOOM_STOPS}
+        step={1}
+        value={pvZoomPos}
+        oninput={(e) => {
+          setPvZoomPos(Number((e.target as HTMLInputElement).value));
+          pvFit = null;
+        }}
+      />
+      <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
+      <button
+        type="button"
+        class="tbtn tbtn-icon fitbtn"
+        class:on={pvFit === "width"}
+        onclick={() => (pvFit = "width")}
+        aria-label="Fit the page width"
+        title="Fit the page width to the pane"><FitIcon kind="width" /></button
+      >
+      <button
+        type="button"
+        class="tbtn tbtn-icon fitbtn"
+        class:on={pvFit === "page"}
+        onclick={pvFitWholePage}
+        aria-label="Fit the whole page"
+        title="Fit the whole page in the pane, top to bottom"
+        ><FitIcon kind="page" /></button
+      >
+    </span>
     <!-- Last in the toolbar, next to the side panel on the right. -->
     <div class="pgnav">
       <span class="vline"></span>
@@ -629,7 +646,16 @@
       >
     </div>
   </div>
-  <div class="pbody-panes">
+  <div
+    class="pbody-panes"
+    {@attach zoomGestures({
+      get: () => pvZoom,
+      set: (z) => {
+        pvZoom = Math.min(PV_ZOOM_MAX, Math.max(PV_ZOOM_MIN, z));
+        pvFit = null;
+      },
+    })}
+  >
     {#if !preview || preview.loading}
       <p class="muted pnote">Loading the score…</p>
     {:else if preview.error}
@@ -808,8 +834,9 @@
   }
 
   /* -------------------------------------------------------------- toolbar */
+  /* Controls that do not fit on one line wrap onto a second. */
   .ptoolbar {
-    height: 44px;
+    min-height: 44px;
     flex: none;
     background: var(--card);
     border: 1px solid var(--line);
@@ -817,13 +844,19 @@
     box-shadow: var(--shadow-sm);
     margin-bottom: 10px;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    padding: 0 16px;
-    gap: 10px;
-    overflow-x: auto;
+    padding: 4px 16px;
+    box-sizing: border-box;
+    gap: 6px 10px;
   }
   .paneseg {
     flex: none;
+  }
+  .zoomgrp {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
   .paneseg .ico {
     display: none;
@@ -848,6 +881,28 @@
       white-space: nowrap;
     }
   }
+  /* Narrow (PV_NARROW): the pane switch and the page navigation at touch
+     size; the page-count switch, "Page 1 right", the zone switch, the zoom
+     slider and the fit buttons are hidden. Zoom stays reachable by pinch
+     and Ctrl/Cmd + scroll. */
+  @container (max-width: 559px) {
+    .ptoolbar {
+      min-height: 48px;
+      gap: 4px;
+      padding: 1px 4px;
+    }
+    .viewseg,
+    .pcheck,
+    .zonesw,
+    .zoomgrp,
+    .pgnav > .vline {
+      display: none;
+    }
+    .ptoolbar .pgbtn {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
   .pcheck {
     display: flex;
     align-items: center;
@@ -858,6 +913,8 @@
   }
   /* ---------------------------------------------------------------- panes */
   .pbody-panes {
+    /* A pinch zooms the pages (zoomGestures), not the window. */
+    touch-action: pan-x pan-y;
     flex: 1;
     min-height: 0;
     background: var(--bg-inset);

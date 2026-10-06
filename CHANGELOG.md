@@ -3,8 +3,80 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-06
+
+- The back link names the campaign where it fits and shows only its arrow where it does not.
+- The docked side panel keeps a gap to the content above it.
+- The review page uses the campaign page's task box.
+- On phones the review page opens on the facsimile alone.
+- The score toolbar wraps onto a second line instead of hiding controls.
+- Content scrolling under the side panel's comment field no longer shows below it.
+- The campaign page has one View score button and the side panel always offers the task's claim.
+- Encoding tasks are named "Encode" and OMR page tasks "Correct the OMR draft".
+- The volunteer view shows a progress bar and lists only the tasks the viewer can claim.
+- Volunteers see their own submissions that wait for another volunteer's review.
+- The campaign header on phones is shorter and the repository link moved to the campaign details.
+- On phones the piece strip leaves out its image and incipit and the stats line keeps only the filter.
+- Beside the piece dots only "All pieces" and its open count show; a selected piece is named in the strip below.
+- The piece dots carry a "Pieces" label.
+- On phones the board filter sits beside the piece dots and the stats line shows only when tasks need attention.
+- The side panel opens at 38% of the window up to 480 px and never wider than half the window.
+- With many pieces the piece dots wrap onto further rows on phones and the filter moves below them.
+- The next-task card carries its label as a badge on its top edge.
+- The owner's claim button shows only when there is a task to claim.
+- Command results and run states are announced to screen readers.
+- The lane tabs and the board filter tell screen readers which option is selected.
+- The side panel can be resized with the arrow keys.
+- Every focusable control shows the accent focus ring.
+- Dark-theme lane headers use white text.
+- Owners see who holds a review slot and for how long, on the card and in the task panel.
+- The task panel shows the piece's full title.
+- The side panel opens at 400 px on wide screens so the piece rail stays visible.
+- The review stage is called "Review" everywhere and "in flight" reads "in progress".
+- Preparation tasks are called "preparation" and task ids no longer show on cards or to volunteers.
+- The next-task card says when a task starts from an OMR draft.
+- On phones the side panel starts as a bar until a task is opened or the comments are shown.
+- The owner board opens on the campaign unless the last task is the owner's own claim.
+- An empty Claimable filter says that no task can be claimed.
+- Finished cards show when they were finished.
+- The task panel says in one line what a task asks for.
+- The next-task card takes the task's stage colour.
+- Claimed tasks show when the claim expires instead of how long it has been held.
+- On phones the comment field stays at the bottom of the side panel, and without a task the panel is just the campaign comment field.
+- One-piece campaigns no longer repeat the progress and the next task in the piece list.
+- Section labels are in sentence case and preparation claims say where they open.
+- The volunteer standing line shows only once there is something to count.
+- The piece rail counts follow the Claimable filter.
+- On phones the owner board opens on the first lane that has tasks.
+- Empty lanes are muted and say "No tasks".
+- Review counts read "0 of 1" everywhere and a single review slot drops its slot number.
+- Dark-theme lane tabs and the panel's detail labels meet the contrast target.
+- In short windows the next-task card leaves out its page image.
+- The "All pieces" count includes tasks that wait for an earlier task.
+- The volunteer header takes two lines on phones.
+- The docked side panel keeps its default share of the window when a phone is turned.
+- On phones and portrait tablets the side panel takes the lower part of the screen, in short windows the right half.
+- The board and the side panel keep a gap above the footer.
+- Board lanes stack in one column on tablets.
+- The piece chips are a strip of coloured dots.
+- The Manage button shows a gear icon.
+- Long piece titles are cut at 40 characters.
+- The owner board drops the activity ticker and keeps its stats on one line.
+- The owner's claim button reads "Open your task" when the next task is already theirs.
+- The top bar and the footer stay on one line on phones.
+- Campaign details moved from the Info toggle into the owner's side panel.
+- The task panel shows only fails and the viewer's own review slot.
+
 ## 2026-10-05
 
+- Task titles name the task first and the piece second.
+- Long piece titles are cut to one or two lines with the full title as a tooltip.
+- The task pages' toolbars and side panel share their top edge.
+- The task pages fit a phone in portrait and landscape.
+- Ctrl or Cmd with scroll and a two-finger pinch zoom the score and the zone editor.
+- The owner board shows two rows of lanes or one lane at a time on narrow screens.
+- Done task cards no longer show who encoded the task.
+- Short screens show the under-construction notice in place of the footer.
 - mei-friend opens a page task at its page by selecting the page's first note with speed mode off.
 - A new campaign runs the coordinator from the branch of the instance that created it.
 - The reaper releases a lock at the time in the new `expires` column of `tracking/lock.csv`.

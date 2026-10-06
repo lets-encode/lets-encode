@@ -150,7 +150,9 @@ export const workPlace = (locator: string): string =>
  * different site, so its label says so.
  */
 export const claimLabel = (locator: string): string =>
-  isPreTask(locator) ? "Claim task" : "Claim & open in mei-friend";
+  isPreTask(locator)
+    ? `Claim & open ${workStage(locator)}`
+    : "Claim & open in mei-friend";
 
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
@@ -168,13 +170,29 @@ export function pageOfLocator(locator: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** The task's human type from its locator. */
-export function typeLabel(locator: string): string {
+/** What the task asks for, from its locator. A page of an OMR-prepared piece
+    (`omr`) starts from the OMR transcription draft; every other encoding
+    task encodes from scratch. */
+export function taskDescription(locator: string, omr = false): string {
   if (locator === "score-setup") return "Score setup";
   if (locator === "measure-zones" || locator === "omr-layout")
     return "Measure correction";
+  return omr && pageOfLocator(locator) !== null
+    ? "Correct the OMR draft"
+    : "Encode";
+}
+
+/** The part of the piece a task covers ("p. 3"); '' for the whole piece. */
+export function taskScope(locator: string): string {
   const page = pageOfLocator(locator);
-  return page ? `Encoding · page ${page}` : "Encoding";
+  return page === null ? "" : `p. ${page}`;
+}
+
+/** A task's name without its piece: description, then scope. */
+export function taskName(locator: string, omr = false): string {
+  const scope = taskScope(locator);
+  const description = taskDescription(locator, omr);
+  return scope ? `${description} · ${scope}` : description;
 }
 
 // ---------------------------------------------------------------------------

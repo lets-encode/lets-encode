@@ -85,6 +85,7 @@ const stats: CampaignStats = {
   createdAt: "",
   allowSelfValidation: false,
   pieceNames: {},
+  preparations: {},
   taskDefs,
   rows: state.rows,
   validationColumns: state.validationColumns,
@@ -170,7 +171,7 @@ test("nextTask: an open validation slot the viewer may take → review", () => {
   assert.equal(next?.task, "T0003");
   assert.equal(next?.action, "review");
   assert.equal(next?.subtask, "S0001");
-  assert.equal(next?.title, "a · p. 3");
+  assert.equal(next?.title, "Encode · p. 3 · a");
   assert.equal(next?.kind, "review");
 });
 
@@ -329,5 +330,5 @@ test("commentsOnMyWork: others' comments on the viewer's encodings, not their ow
     ["c1", "c2"],
   );
   assert.equal(feed[0].campaignSlug, "fledermaus");
-  assert.equal(feed[1].taskTitle, "a · p. 4");
+  assert.equal(feed[1].taskTitle, "Encode · p. 4 · a");
 });
