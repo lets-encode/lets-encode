@@ -24,6 +24,7 @@
     buildRecord,
     cardPill,
     elapsed,
+    expiresIn,
     initialOf,
     orphanedFails,
   } from "$lib/campaign-board.ts";
@@ -102,16 +103,19 @@
   // A submission on this task still being processed: every action in the
   // footer holds until it lands.
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
-  const mineEncoding = $derived(
-    viewer !== "" &&
-      locks.some(
-        (l) =>
-          l.task_id === card.task &&
-          l.subtask_id === "" &&
-          l.kind === "encoding" &&
-          l.user_id === viewer,
-      ),
+  /** The viewer's encoding claim on the task, if any. */
+  const myEncodingLock = $derived(
+    viewer === ""
+      ? undefined
+      : locks.find(
+          (l) =>
+            l.task_id === card.task &&
+            l.subtask_id === "" &&
+            l.kind === "encoding" &&
+            l.user_id === viewer,
+        ),
   );
+  const mineEncoding = $derived(myEncodingLock !== undefined);
   const record = $derived(buildRecord(card, comments, viewer, logins));
   /** The validation slot the viewer may claim right now, if any. */
   const claimableSub = $derived(
@@ -195,6 +199,14 @@
     >
     {#if help}
       <p class="help">{help}</p>
+    {/if}
+    {#if myEncodingLock && card.column === "encoding" && expiresIn(myEncodingLock.expires)}
+      <p
+        class="help"
+        title={`Your claim ends ${new Date(myEncodingLock.expires).toLocaleString()}. Submit before then; afterwards the task is open to others.`}
+      >
+        Your claim {expiresIn(myEncodingLock.expires)}.
+      </p>
     {/if}
   </div>
   {#if encoderLogin}

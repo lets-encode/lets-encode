@@ -483,7 +483,7 @@ export function commentAnchor(c: CommentRow): MeasureAnchor {
 }
 
 /** locking.stale_after_minutes when config.yaml does not set it. */
-export const DEFAULT_STALE_MINUTES = 120;
+export const DEFAULT_STALE_MINUTES = 1440;
 
 /** A positive-integer scalar from config.yaml by key, or `fallback`. */
 export function configNumber(

@@ -47,6 +47,7 @@ import type {
 } from "./campaign-tables.ts";
 import type { ForgeClient } from "./forge/types.ts";
 import { RateLimitError } from "./forge/github-rest.ts";
+import { liveLocks } from "./campaign-reaper.ts";
 import type { RepoSummary } from "./forge/github-rest.ts";
 
 /** A task's one-line title in a campaign (cardTitle). */
@@ -343,7 +344,8 @@ async function fetchStats(
   const state = stateCsv
     ? parseStateCsv(stateCsv)
     : { header: [], validationColumns: [], rows: [] };
-  const locks = lockCsv ? parseLockCsv(lockCsv) : [];
+  // A lock past its `expires` no longer holds the task.
+  const locks = lockCsv ? liveLocks(parseLockCsv(lockCsv)) : [];
   const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
   const comments = commentCsv ? parseCommentCsv(commentCsv) : [];
   const yaml = configYaml ?? "";

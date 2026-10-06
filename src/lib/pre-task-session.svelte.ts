@@ -59,8 +59,17 @@ export class PreTaskSession {
 
   /** The acting user's stable numeric id; login is display-only. */
   viewer = $derived(viewerId());
+  /** The clock claim expiries count against, a minute at a time. */
+  now = $state(Date.now());
+  /** The viewer's encoding claim ran out while the editor was open. */
+  claimRanOut = $derived(
+    Boolean(this.data?.holdsLock) &&
+      this.#past(this.data?.encodingLockExpires ?? ""),
+  );
   holds = $derived(
-    Boolean(this.data?.holdsLock) && this.data?.status === "encoding_required",
+    Boolean(this.data?.holdsLock) &&
+      this.data?.status === "encoding_required" &&
+      !this.claimRanOut,
   );
   // The submission runs in the background; the editor holds until its
   // verdict lands, since a repeat would only be rejected.
@@ -100,8 +109,16 @@ export class PreTaskSession {
     this.data?.status === "validation_required" ||
       this.data?.status === "completed",
   );
+  /** The viewer's review claim ran out while the editor was open. */
+  reviewRanOut = $derived(
+    this.viewer !== "" &&
+      this.validation?.lockUser === this.viewer &&
+      this.#past(this.validation.lockExpires),
+  );
   holdsValidation = $derived(
-    this.viewer !== "" && this.validation?.lockUser === this.viewer,
+    this.viewer !== "" &&
+      this.validation?.lockUser === this.viewer &&
+      !this.reviewRanOut,
   );
   lockUserLogin = $derived(
     handle(this.logins, this.validation?.lockUser ?? ""),
@@ -123,7 +140,7 @@ export class PreTaskSession {
     !!this.validation &&
       this.validation.status === "validation_required" &&
       this.validation.openSlots > 0 &&
-      !this.validation.lockUser &&
+      (!this.validation.lockUser || this.reviewRanOut) &&
       !this.selfValidation &&
       !this.alreadyValidated &&
       !this.verdictPending,
@@ -151,6 +168,11 @@ export class PreTaskSession {
     this.#taskId = taskId;
     this.#hooks = hooks;
     this.campaign = new CampaignResolution(name);
+
+    $effect(() => {
+      const timer = setInterval(() => (this.now = Date.now()), 60_000);
+      return () => clearInterval(timer);
+    });
 
     // A same-route navigation to another campaign or task starts over: the
     // loaded task belongs to the previous params.
@@ -214,6 +236,12 @@ export class PreTaskSession {
         }
       }),
     );
+  }
+
+  /** Whether an ISO time lies before the clock; false when unreadable. */
+  #past(iso: string): boolean {
+    const t = Date.parse(iso);
+    return Number.isFinite(t) && this.now > t;
   }
 
   ctx(f: ForgeClient): CommandContext {

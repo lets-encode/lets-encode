@@ -56,6 +56,7 @@
     initialOf,
   } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
+  import { liveLocks } from "$lib/campaign-reaper.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
   import {
@@ -108,7 +109,7 @@
   let taskDefs = $state<TaskRow[]>([]);
   let rows = $state<StateRow[]>([]);
   let validationColumns = $state<string[]>([]);
-  let locks = $state<LockRow[]>([]);
+  let tableLocks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
   let comments = $state<CommentRow[]>([]);
   let pieces = $state<PieceRef[]>([]);
@@ -205,6 +206,14 @@
     [...new Set(history.map((h) => h.user_id))].filter(Boolean),
   );
 
+  // The clock the board's claim expiries count against, a minute at a time.
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(timer);
+  });
+  // A lock past its `expires` stops holding its task on the next tick.
+  const locks = $derived(liveLocks(tableLocks, now));
   const graphData = $derived({
     taskDefs,
     rows,
@@ -215,12 +224,6 @@
   });
   const pieceNames = $derived(pieceNamesOf(pieces));
   const piecePreparations = $derived(piecePreparationsOf(pieces));
-  // The clock the board's claim expiries count against, a minute at a time.
-  let now = $state(Date.now());
-  $effect(() => {
-    const timer = setInterval(() => (now = Date.now()), 60_000);
-    return () => clearInterval(timer);
-  });
   /** When the claim on a held review slot expires. */
   const reviewExpiry = (task: string, sub: string, user: string) => {
     const lock = locks.find(
@@ -537,7 +540,7 @@
       taskDefs = tables.taskDefs;
       rows = tables.rows;
       validationColumns = tables.validationColumns;
-      locks = tables.locks;
+      tableLocks = tables.locks;
       history = tables.history;
       comments = tables.comments;
       pieces = tables.pieces;

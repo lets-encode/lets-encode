@@ -10,6 +10,7 @@
 // supplied.
 
 import { findRow, isFinalValidation, LOCK_PATH } from "./campaign-tables.ts";
+import { claimRanOut } from "./campaign-reaper.ts";
 import type { ParsedState, TaskRow, LockRow } from "./campaign-tables.ts";
 
 /** What a PR is trying to claim: a task or subtask and the kind of work. */
@@ -158,6 +159,11 @@ export interface CheckReleaseArgs {
   author: string;
   /** Paths the PR changes. */
   changedPaths: string[];
+  /**
+   * Locks dropped as expired before this decision; the author's own lock
+   * among them rejects the release as `claim_expired`.
+   */
+  expired?: LockRow[];
 }
 
 /**
@@ -170,6 +176,7 @@ export function checkRelease({
   intent,
   author,
   changedPaths,
+  expired = [],
 }: CheckReleaseArgs): ClaimResult {
   if (!boundaryCheck(changedPaths, [LOCK_PATH])) return reject("out_of_bounds");
   if (!CLAIM_KINDS.includes(intent.kind)) return reject("invalid_kind");
@@ -180,5 +187,8 @@ export function checkRelease({
       l.kind === intent.kind &&
       l.user_id === author,
   );
-  return lock ? { ok: true, lock } : reject("not_lock_holder");
+  if (lock) return { ok: true, lock };
+  return reject(
+    claimRanOut(expired, intent, author) ? "claim_expired" : "not_lock_holder",
+  );
 }

@@ -41,7 +41,7 @@ import {
   TASK_PATH,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
-import { reapLocks } from "./campaign-reaper.ts";
+import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resetTaskRows, resolveCommentThread } from "./campaign-submit.ts";
 import { pageOfLocator, workStage } from "./campaign-graph.ts";
 import type {
@@ -723,7 +723,8 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
       };
     }
     const state = parseStateCsv(stateCsv);
-    const locks = parseLockCsv(lockCsv);
+    // A lock past its `expires` no longer holds the task.
+    const locks = liveLocks(parseLockCsv(lockCsv));
     const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
     const comments = commentCsv ? parseCommentCsv(commentCsv) : [];
     return {
@@ -783,6 +784,9 @@ const giveBack: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
       const locks = parseLockCsv(
         (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
       );
+      const { removed } = reapLocks({ locks, now: new Date().toISOString() });
+      if (claimRanOut(removed, { task_id, subtask_id, kind }, viewer))
+        return { error: `Your claim on ${target} has run out.` };
       const kept = locks.filter(
         (l) =>
           !(
@@ -858,7 +862,7 @@ const openEditor: CommandDef<
       if (!taskDef || !fragment || !task)
         return { error: `Unknown task ${task_id}.` };
 
-      const locks = parseLockCsv(lockCsv ?? "");
+      const locks = liveLocks(parseLockCsv(lockCsv ?? ""));
       const mine = locks.some(
         (l) =>
           l.task_id === task_id &&
@@ -870,12 +874,8 @@ const openEditor: CommandDef<
       if (claiming) {
         // Someone else's active claim would reject this one; stop before the
         // task branch, which may hold their work, is touched.
-        const { kept } = reapLocks({
-          locks,
-          now: new Date().toISOString(),
-        });
         if (
-          kept.some(
+          locks.some(
             (l) =>
               l.task_id === task_id &&
               l.subtask_id === "" &&
@@ -1659,6 +1659,8 @@ export interface FacsimileTaskData {
   holdsLock: boolean;
   /** Who holds the task's active encoding lock ('' when unclaimed). */
   encodingLockUser: string;
+  /** When that lock runs out (ISO); '' when unclaimed. */
+  encodingLockExpires: string;
   /** The incomplete task this one waits for (task.csv depends_on); '' when none. */
   blockedBy: string;
   /** Who submitted the task's work ('' while unsubmitted). Encoders cannot validate it. */
@@ -1673,6 +1675,8 @@ export interface FacsimileTaskData {
     status: string;
     /** Who holds the subtask's active validation lock ('' when unclaimed). */
     lockUser: string;
+    /** When that lock runs out (ISO); '' when unclaimed. */
+    lockExpires: string;
     /** The recorded final verdicts (`pass`/`fail` with author and timestamp), in slot order. */
     verdicts: { verdict: string; user: string; ts: string }[];
     /** Validation slots still empty (claimable while > active locks). */
@@ -1719,7 +1723,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       task.fragment,
       model.pages.map((page) => page.image),
     );
-    const locks = parseLockCsv(lockCsv ?? "");
+    const locks = liveLocks(parseLockCsv(lockCsv ?? ""));
     const encodingLock = locks.find(
       (l) =>
         l.task_id === task_id && l.subtask_id === "" && l.kind === "encoding",
@@ -1738,17 +1742,20 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     const cells = subRow
       ? state.validationColumns.map((c) => subRow[c] ?? "")
       : [];
+    const validationLock = subRow
+      ? locks.find(
+          (l) =>
+            l.task_id === task_id &&
+            l.subtask_id === subRow.subtask_id &&
+            l.kind === "validation",
+        )
+      : undefined;
     const validation = subRow
       ? {
           subtask_id: subRow.subtask_id,
           status: subRow.status,
-          lockUser:
-            locks.find(
-              (l) =>
-                l.task_id === task_id &&
-                l.subtask_id === subRow.subtask_id &&
-                l.kind === "validation",
-            )?.user_id ?? "",
+          lockUser: validationLock?.user_id ?? "",
+          lockExpires: validationLock?.expires ?? "",
           verdicts: cells.filter(isFinalValidation).map((cell) => {
             const [verdict, user, ts] = cell.split("|");
             return { verdict, user, ts };
@@ -1766,6 +1773,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       status: taskState?.status ?? "",
       holdsLock,
       encodingLockUser: encodingLock?.user_id ?? "",
+      encodingLockExpires: encodingLock?.expires ?? "",
       blockedBy,
       encoder: taskState?.encoder ?? "",
       allowSelfValidation: configFlag(configYaml, "allow_self_validation"),

@@ -8,7 +8,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import GiveBackButton from "$lib/components/GiveBackButton.svelte";
   import { handle } from "$lib/campaign-graph.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
   let {
@@ -46,9 +46,11 @@
         Review done
       {:else if session.verdictPending}
         Your verdict is being processed…
+      {:else if session.reviewRanOut}
+        Your review claim has run out
       {:else if validation.lockUser}
         {session.holdsValidation
-          ? "You are reviewing"
+          ? `You are reviewing${expiresIn(validation.lockExpires, session.now) ? ` · claim ${expiresIn(validation.lockExpires, session.now)}` : ""}`
           : `@${session.lockUserLogin} reviewing`}
       {:else if session.failedVerdicts.length > 0 && validation.openSlots === 0}
         Failed — send it back to redo the {stage}

@@ -331,6 +331,10 @@ test("release: the holder gives back their own lock", () => {
   );
   assert.equal(release({ author: "dave" }).reason, "not_lock_holder");
   assert.equal(
+    release({ locks: [], expired: [locks[0]] }).reason,
+    "claim_expired",
+  );
+  assert.equal(
     release({ changedPaths: ["tracking/lock.csv", "tracking/state.csv"] })
       .reason,
     "out_of_bounds",

@@ -1,10 +1,12 @@
 <!--
-  A pre-task editor's lock state as a pill: held (with a give-back button),
-  done, awaiting or failing review, blocked, claimed by someone else, or
-  unclaimed with a claim button.
+  A pre-task editor's lock state as a pill: held (with its expiry and a
+  give-back button), run out (with a claim button), done, awaiting or
+  failing review, blocked, claimed by someone else, or unclaimed with a
+  claim button.
 -->
 <script lang="ts">
   import { handle } from "$lib/campaign-graph.ts";
+  import { expiresIn } from "$lib/campaign-board.ts";
   import GiveBackButton from "$lib/components/GiveBackButton.svelte";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
@@ -13,11 +15,25 @@
 </script>
 
 {#if session.holds}
-  <span class="lockpill ok">you hold this task</span>
+  <span
+    class="lockpill ok"
+    title={`Your claim ends ${new Date(d.encodingLockExpires).toLocaleString()}. Submit before then; afterwards the task is open to others.`}
+    >you hold this task{expiresIn(d.encodingLockExpires, session.now)
+      ? ` · ${expiresIn(d.encodingLockExpires, session.now)}`
+      : ""}</span
+  >
   <GiveBackButton
     disabled={session.busy}
     ongiveback={() => session.giveBack("")}
   />
+{:else if session.claimRanOut}
+  <span class="lockpill red">your claim has run out — read-only</span>
+  <button
+    type="button"
+    class="btn btn-pre"
+    onclick={() => session.claim()}
+    disabled={session.busy}>Claim task</button
+  >
 {:else if d.status === "completed"}
   <span class="lockpill grey">done — read-only</span>
 {:else if d.status !== "encoding_required"}

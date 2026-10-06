@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-10-06
 
+- Claims last 24 hours and end exactly at their expiry time.
+- The task side panel shows when your claim expires.
 - The back link names the campaign where it fits and shows only its arrow where it does not.
 - The docked side panel keeps a gap to the content above it.
 - The review page uses the campaign page's task box.

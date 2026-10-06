@@ -198,6 +198,8 @@ const REASON_TEXT: Record<string, string> = {
   already_validated: "this person already recorded a verdict on this subtask",
   no_open_validation_slot: "no review slot is open",
   not_lock_holder: "the author does not hold the required claim",
+  claim_expired:
+    "the author's claim had run out when the submission was opened",
   mei_invalid: "the submitted MEI failed the machine check",
   invalid_verdict: "a review verdict must be pass or fail",
   fail_without_comment: "a fail must carry a comment saying why",
@@ -252,6 +254,18 @@ function priorVerdict(
   console.log(`PR #${prNumber} was already decided (${row.outcome}).`);
   return { ok, reason: ok ? undefined : row.detail, row };
 }
+
+// The history rows for locks dropped as expired, stamped with the run's time.
+const expiryRows = (removed: LockRow[], now: string): HistoryRow[] =>
+  removed.map((lock) => ({
+    timestamp: now,
+    task_id: lock.task_id,
+    subtask_id: lock.subtask_id,
+    user_id: lock.user_id,
+    action: "reap",
+    outcome: "released",
+    detail: lock.kind,
+  }));
 
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
@@ -377,15 +391,7 @@ async function attemptClaim(
       })
     : { ok: false, reason: "malformed_claim" };
 
-  const reapedHistory: HistoryRow[] = removed.map((lock) => ({
-    timestamp: now,
-    task_id: lock.task_id,
-    subtask_id: lock.subtask_id,
-    user_id: lock.user_id,
-    action: "reap",
-    outcome: "released",
-    detail: lock.kind,
-  }));
+  const reapedHistory = expiryRows(removed, now);
   const history: HistoryRow = {
     timestamp: now,
     task_id: intent?.task_id ?? "",
@@ -489,8 +495,18 @@ async function attemptRelease(
   const prior = priorVerdict(historyCsv);
   if (prior) return prior;
   const now = new Date().toISOString();
-  const locks = parseLockCsv(lockCsv ?? "");
-  const verdict = checkRelease({ locks, intent, author, changedPaths });
+  // A claim is judged at the time its pull request was opened.
+  const { kept: locks, removed } = reapLocks({
+    locks: parseLockCsv(lockCsv ?? ""),
+    now: submittedAt,
+  });
+  const verdict = checkRelease({
+    locks,
+    intent,
+    author,
+    changedPaths,
+    expired: removed,
+  });
   if (isAuditFree(verdict)) return verdict;
   const history: HistoryRow = {
     timestamp: now,
@@ -504,12 +520,20 @@ async function attemptRelease(
     pr: String(prNumber),
   };
   const files: FileChange[] = [
-    { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", [history]) },
+    {
+      path: HISTORY_PATH,
+      content: appendHistory(historyCsv ?? "", [
+        ...expiryRows(removed, now),
+        history,
+      ]),
+    },
   ];
-  if (verdict.ok) {
+  if (verdict.ok || removed.length) {
     files.push({
       path: LOCK_PATH,
-      content: serializeLockCsv(locks.filter((l) => l !== verdict.lock)),
+      content: serializeLockCsv(
+        verdict.ok ? locks.filter((l) => l !== verdict.lock) : locks,
+      ),
     });
   }
   const target = `${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}`;
@@ -568,6 +592,7 @@ async function decideEncoding(
   changedPaths: string[],
   envelope: CommandEnvelope | null,
   now: string,
+  expired: LockRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -666,6 +691,7 @@ async function decideEncoding(
     changedPaths,
     meiValid,
     now,
+    expired,
   });
 
   const history: HistoryRow = {
@@ -741,6 +767,7 @@ async function decideValidation(
   prFiles: PullRequestFile[],
   changedPaths: string[],
   now: string,
+  expired: LockRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -801,6 +828,7 @@ async function decideValidation(
     passThreshold: passThresholdOf(configText, state.validationColumns.length),
     failComment,
     now,
+    expired,
   });
 
   const history: HistoryRow = {
@@ -901,13 +929,25 @@ async function attemptSubmit(
   if (prior) return prior;
   const tasks = parseTaskCsv(taskCsv ?? "");
   const state = parseStateCsv(stateCsv ?? "");
-  const locks = parseLockCsv(lockCsv ?? "");
   const now = new Date().toISOString();
+  // A claim is judged at the time its pull request was opened.
+  const { kept: locks, removed } = reapLocks({
+    locks: parseLockCsv(lockCsv ?? ""),
+    now: submittedAt,
+  });
 
   const decideStart = Date.now();
   const outcome =
     kind === "validation"
-      ? await decideValidation(sha, state, locks, prFiles, changedPaths, now)
+      ? await decideValidation(
+          sha,
+          state,
+          locks,
+          prFiles,
+          changedPaths,
+          now,
+          removed,
+        )
       : await decideEncoding(
           sha,
           tasks,
@@ -916,6 +956,7 @@ async function attemptSubmit(
           changedPaths,
           envelope,
           now,
+          removed,
         );
   logPhase("decide", decideStart);
   if (isAuditFree(outcome)) return outcome;
@@ -935,8 +976,17 @@ async function attemptSubmit(
   };
   const files: FileChange[] = [
     ...(outcome.files ?? []),
-    { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", [history]) },
+    {
+      path: HISTORY_PATH,
+      content: appendHistory(historyCsv ?? "", [
+        ...expiryRows(removed, now),
+        history,
+      ]),
+    },
   ];
+  // An accepted outcome writes the lock table itself, from the kept locks.
+  if (removed.length && !files.some((f) => f.path === LOCK_PATH))
+    files.push({ path: LOCK_PATH, content: serializeLockCsv(locks) });
   const message = outcome.ok
     ? coAuthored(outcome.message!)
     : `Reject ${kind} submission by ${authorLabel} (${outcome.reason})`;
@@ -1106,15 +1156,7 @@ async function attemptReap(): Promise<void> {
     return;
   }
 
-  const history: HistoryRow[] = removed.map((l) => ({
-    timestamp: now,
-    task_id: l.task_id,
-    subtask_id: l.subtask_id,
-    user_id: l.user_id,
-    action: "reap",
-    outcome: "released",
-    detail: l.kind,
-  }));
+  const history = expiryRows(removed, now);
   const commitStart = Date.now();
   await commitFiles(
     token,

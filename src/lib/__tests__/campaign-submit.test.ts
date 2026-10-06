@@ -214,6 +214,16 @@ test("encoding: rejects out-of-bounds changes, non-lock-holders, invalid MEI, th
       { locks: parseLockCsv(LOCK_HEADER + "T0001,S0001,bob,t,validation\n") },
       "not_lock_holder",
     ],
+    [
+      "encoding lock that ran out",
+      { locks: [], expired: encodingLock },
+      "claim_expired",
+    ],
+    [
+      "someone else's lock that ran out",
+      { locks: [], expired: encodingLock, author: "mallory" },
+      "not_lock_holder",
+    ],
     ["invalid MEI", { meiValid: false }, "mei_invalid"],
     ["task in validation", { state: validationState() }, "wrong_state"],
     ["unknown task", { intent: { task_id: "T9999" } }, "unknown_task"],
@@ -758,6 +768,17 @@ test("validation: rejects invalid verdicts, out-of-bounds changes, wrong states,
       intent: { task_id: "T0001", subtask_id: "S0001", verdict: "pass" },
     }).reason,
     "not_lock_holder",
+  );
+  assert.equal(
+    val({
+      ...base,
+      state: validationState(),
+      locks: [],
+      expired: validationLock,
+      author: "carol",
+      intent: { task_id: "T0001", subtask_id: "S0001", verdict: "pass" },
+    }).reason,
+    "claim_expired",
   );
 });
 

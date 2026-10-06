@@ -38,6 +38,7 @@
   } from "$lib/campaign-tables.ts";
   import { pageOfLocator, preTaskRoute } from "$lib/campaign-graph.ts";
   import { buildBoard } from "$lib/campaign-board.ts";
+  import { liveLocks } from "$lib/campaign-reaper.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
@@ -65,7 +66,7 @@
   let taskDefs = $state<TaskRow[]>([]);
   let rows = $state<StateRow[]>([]);
   let validationColumns = $state<string[]>([]);
-  let locks = $state<LockRow[]>([]);
+  let tableLocks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
   let comments = $state<CommentRow[]>([]);
   let pieces = $state<PieceRef[]>([]);
@@ -74,6 +75,15 @@
   let allowSelfValidation = $state(false);
 
   const runner = new CommandRunner();
+
+  // The clock claim expiries count against, a minute at a time.
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(timer);
+  });
+  // A lock past its `expires` stops holding its task on the next tick.
+  const locks = $derived(liveLocks(tableLocks, now));
 
   const board = $derived(
     buildBoard(
@@ -159,7 +169,7 @@
       taskDefs = tables.taskDefs;
       rows = tables.rows;
       validationColumns = tables.validationColumns;
-      locks = tables.locks;
+      tableLocks = tables.locks;
       history = tables.history;
       comments = tables.comments;
       pieces = tables.pieces;

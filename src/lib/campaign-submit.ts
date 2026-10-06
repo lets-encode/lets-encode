@@ -12,6 +12,7 @@
 // produce the authoritative table changes.
 
 import { boundaryCheck } from "./campaign-claim.ts";
+import { claimRanOut } from "./campaign-reaper.ts";
 import { correctedLayoutPath, layoutRecordPath } from "./omr-layout.ts";
 import { omrRecordPath } from "./omr-record.ts";
 import {
@@ -49,6 +50,11 @@ export interface CheckEncodingArgs {
   changedPaths: string[];
   meiValid: boolean;
   now: string;
+  /**
+   * Locks dropped as expired before this decision; the author's own lock
+   * among them rejects the submission as `claim_expired`.
+   */
+  expired?: LockRow[];
 }
 
 export interface CheckValidationArgs {
@@ -65,6 +71,11 @@ export interface CheckValidationArgs {
    */
   failComment: CommentRow | null;
   now: string;
+  /**
+   * Locks dropped as expired before this decision; the author's own lock
+   * among them rejects the submission as `claim_expired`.
+   */
+  expired?: LockRow[];
 }
 
 /** Send-back intent: the failed task being returned to encoding. */
@@ -158,6 +169,7 @@ export function checkEncoding({
   changedPaths,
   meiValid,
   now,
+  expired = [],
 }: CheckEncodingArgs): SubmitResult {
   const task = findRow(tasks, intent.task_id, "");
   const row = findRow(state.rows, intent.task_id, "");
@@ -177,7 +189,16 @@ export function checkEncoding({
       l.kind === "encoding" &&
       l.user_id === author,
   );
-  if (!holdsLock) return reject("not_lock_holder");
+  if (!holdsLock)
+    return reject(
+      claimRanOut(
+        expired,
+        { task_id: intent.task_id, subtask_id: "", kind: "encoding" },
+        author,
+      )
+        ? "claim_expired"
+        : "not_lock_holder",
+    );
   if (!meiValid) return reject("mei_invalid");
 
   const hasSubtasks = state.rows.some(
@@ -227,6 +248,7 @@ export function checkValidation({
   passThreshold,
   failComment,
   now,
+  expired = [],
 }: CheckValidationArgs): SubmitResult {
   const row = findRow(state.rows, intent.task_id, intent.subtask_id);
   if (!row || intent.subtask_id === "") return reject("unknown_task");
@@ -257,7 +279,12 @@ export function checkValidation({
       l.kind === "validation" &&
       l.user_id === author,
   );
-  if (!holdsLock) return reject("not_lock_holder");
+  if (!holdsLock)
+    return reject(
+      claimRanOut(expired, { ...intent, kind: "validation" }, author)
+        ? "claim_expired"
+        : "not_lock_holder",
+    );
 
   const slot = state.validationColumns.find((c) => (row[c] ?? "") === "");
   if (!slot) return reject("no_open_validation_slot");

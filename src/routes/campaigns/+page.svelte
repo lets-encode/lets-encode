@@ -21,7 +21,7 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
   import {
     handle,
     isPreTask,
@@ -286,15 +286,9 @@
     const e = elapsed(iso);
     return e === "now" ? "just now" : `${e} ago`;
   };
-  const expiresIn = (t: MyTask): string => {
-    if (!t.expiresAt) return "";
-    const ms = Date.parse(t.expiresAt) - Date.now();
-    if (!Number.isFinite(ms)) return "";
-    if (ms <= 0) return "claim has gone stale";
-    const days = Math.round(ms / (24 * 3600_000));
-    if (days >= 2) return `claim expires in ${days} days`;
-    const hours = Math.max(1, Math.round(ms / 3600_000));
-    return `claim expires in ${hours} h`;
+  const claimExpiry = (t: MyTask): string => {
+    const e = expiresIn(t.expiresAt);
+    return e && `claim ${e}`;
   };
 
   // ------------------------------------------------------------- the list
@@ -433,8 +427,8 @@
             <span class="rowtitle">{taskLine(t)}</span>
             <span class="pill blue">encoding</span>
             <span class="rowmeta"
-              >claimed {ago(t.claimedAt)}{expiresIn(t)
-                ? ` · ${expiresIn(t)}`
+              >claimed {ago(t.claimedAt)}{claimExpiry(t)
+                ? ` · ${claimExpiry(t)}`
                 : ""}</span
             >
             <span class="spacer"></span>
@@ -466,8 +460,8 @@
             <span class="rowtitle">{taskLine(t)}</span>
             <span class="pill grey">reviewing</span>
             <span class="rowmeta"
-              >claimed {ago(t.claimedAt)}{expiresIn(t)
-                ? ` · ${expiresIn(t)}`
+              >claimed {ago(t.claimedAt)}{claimExpiry(t)
+                ? ` · ${claimExpiry(t)}`
                 : ""}</span
             >
             <span class="spacer"></span>
