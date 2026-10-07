@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-07
 
+- The side panel task box no longer scrolls on its own; the whole panel scrolls when needed.
 - Edit yourself moved from the review buttons into the change request form.
 - The score setup and measure correction editors use the same task box and review controls as the campaign page.
 - The pre-task editors no longer repeat the task status below the status pill.

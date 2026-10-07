@@ -278,9 +278,7 @@
 </div>
 
 <style>
-  /* Beside the content the panel runs the full row height; the task box
-     stays pinned on top, the comments scroll and the composer stays pinned
-     at the bottom. */
+  /* Beside the content the panel runs the full row height. */
   .spwrap {
     flex: none;
     display: flex;
@@ -312,6 +310,7 @@
     box-shadow: var(--shadow-inset);
     border-radius: 12px;
     padding: 12px;
+    overflow-y: auto;
   }
   .docked .sp {
     border-radius: 0;
@@ -340,40 +339,26 @@
     font-weight: 600;
     color: var(--ink);
   }
-  /* The pinned task box keeps its controls in reach while the list scrolls;
-     past its share of the panel it scrolls on its own. */
+  /* The task box keeps its full height so its controls never scroll away
+     inside it, and the composer stays at the bottom: only the comment list
+     between them scrolls, down to its minimum height. Past that the panel
+     scrolls as a whole. */
   .pinhead {
-    flex: none;
-    max-height: 55%;
-    overflow-y: auto;
-  }
-  /* Docked or in a short window, the task box keeps its full height so its
-     controls never scroll away inside it, and the composer stays at the
-     bottom: only the comment list between them scrolls, down to nothing.
-     The panel scrolls as a whole only when the box and composer alone
-     overflow it. */
-  .cramped .pinhead {
-    max-height: none;
-  }
-  .cramped .sp {
-    overflow-y: auto;
-  }
-  .cramped .clist {
-    flex: 1 1 0;
-    min-height: 0;
-  }
-  /* When the panel itself scrolls, the composer stays at its bottom edge. */
-  .composerwrap {
     flex: none;
   }
   /* The shadow fills the panel's bottom padding, so content scrolling under
      the composer does not show below it. */
-  .cramped .composerwrap {
+  .composerwrap {
+    flex: none;
     position: sticky;
     bottom: 0;
     background: var(--bg-inset);
     box-shadow: 0 12px 0 var(--bg-inset);
     padding-top: 6px;
+  }
+  /* Docked or in a short window the list shrinks to nothing. */
+  .cramped .clist {
+    min-height: 0;
   }
   /* Docked or in a short window the panel is on a touch screen: its buttons
      are 36px touch targets, the size of the campaign header's. */
@@ -398,8 +383,9 @@
     flex: none;
   }
   .clist {
-    flex: 1;
-    min-height: 0;
+    flex: 1 1 0;
+    /* Room for the list heading and a line below it. */
+    min-height: 72px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
