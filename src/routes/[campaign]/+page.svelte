@@ -1571,7 +1571,8 @@
                         <span class="attnspacer"></span>
                         {#if card.counts.fails > 0}
                           <span class="chip chip-fail"
-                            >{card.counts.fails} fail{card.counts.fails === 1
+                            >{card.counts.fails} change request{card.counts
+                              .fails === 1
                               ? ""
                               : "s"}</span
                           >
@@ -1815,8 +1816,8 @@
                                 <div class="card-chips">
                                   {#if card.counts.fails > 0}
                                     <span class="chip chip-fail"
-                                      >{card.counts.fails} fail{card.counts
-                                        .fails === 1
+                                      >{card.counts.fails} change request{card
+                                        .counts.fails === 1
                                         ? ""
                                         : "s"}</span
                                     >

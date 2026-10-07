@@ -27,7 +27,6 @@ import {
   appendComments,
   appendHistory,
   findRow,
-  isFinalValidation,
   configString,
   passThresholdOf,
   configFlag,
@@ -1828,27 +1827,6 @@ export interface FacsimileTaskData {
   workSource: FileSource | null;
   /** The incomplete task this one waits for (task.csv depends_on); '' when none. */
   blockedBy: string;
-  /** Who submitted the task's work ('' while unsubmitted). Encoders cannot validate it. */
-  encoder: string;
-  /** validation.allow_self_validation from config.yaml; false when unreadable. */
-  allowSelfValidation: boolean;
-  /** Whether the viewer has push access to the campaign repo. */
-  canPush: boolean;
-  /** The task's validation subtask, so the editor can drive the review too. */
-  validation: {
-    subtask_id: string;
-    status: string;
-    /** Who holds the subtask's active validation lock ('' when unclaimed). */
-    lockUser: string;
-    /** When that lock runs out (ISO); '' when unclaimed. */
-    lockExpires: string;
-    /** The recorded final verdicts (`pass`/`fail` with author and timestamp), in slot order. */
-    verdicts: { verdict: string; user: string; ts: string }[];
-    /** Validation slots still empty (claimable while > active locks). */
-    openSlots: number;
-  } | null;
-  /** The task's fail comments from comment.csv, in table order. */
-  failComments: CommentRow[];
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -1857,15 +1835,12 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
   log: "none",
   async run({ task_id }, ctx) {
     const { forge: f, owner, repo, viewer } = ctx;
-    const [taskCsv, stateCsv, lockCsv, commentCsv, configYaml, head] =
-      await Promise.all([
-        f.getRepoFile(owner, repo, TASK_PATH),
-        f.getRepoFile(owner, repo, STATE_PATH),
-        f.getRepoFile(owner, repo, LOCK_PATH),
-        f.getRepoFile(owner, repo, COMMENT_PATH),
-        f.getRepoFile(owner, repo, CONFIG_PATH),
-        f.getRepoHead(owner, repo),
-      ]);
+    const [taskCsv, stateCsv, lockCsv, configYaml] = await Promise.all([
+      f.getRepoFile(owner, repo, TASK_PATH),
+      f.getRepoFile(owner, repo, STATE_PATH),
+      f.getRepoFile(owner, repo, LOCK_PATH),
+      f.getRepoFile(owner, repo, CONFIG_PATH),
+    ]);
     const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
     if (!task) throw new Error(`Unknown task ${task_id}.`);
     const preparation =
@@ -1913,33 +1888,6 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       findRow(state.rows, task.depends_on, "")?.status !== "completed"
         ? task.depends_on
         : "";
-    const subRow = state.rows.find(
-      (r) => r.task_id === task_id && r.subtask_id !== "",
-    );
-    const cells = subRow
-      ? state.validationColumns.map((c) => subRow[c] ?? "")
-      : [];
-    const validationLock = subRow
-      ? locks.find(
-          (l) =>
-            l.task_id === task_id &&
-            l.subtask_id === subRow.subtask_id &&
-            l.kind === "validation",
-        )
-      : undefined;
-    const validation = subRow
-      ? {
-          subtask_id: subRow.subtask_id,
-          status: subRow.status,
-          lockUser: validationLock?.user_id ?? "",
-          lockExpires: validationLock?.expires ?? "",
-          verdicts: cells.filter(isFinalValidation).map((cell) => {
-            const [verdict, user, ts] = cell.split("|");
-            return { verdict, user, ts };
-          }),
-          openSlots: cells.filter((cell) => cell === "").length,
-        }
-      : null;
     return {
       model,
       imageUrls,
@@ -1953,13 +1901,6 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       encodingLockExpires: encodingLock?.expires ?? "",
       workSource: source,
       blockedBy,
-      encoder: taskState?.encoder ?? "",
-      allowSelfValidation: configFlag(configYaml, "allow_self_validation"),
-      canPush: head.canPush,
-      validation,
-      failComments: parseCommentCsv(commentCsv ?? "").filter(
-        (c) => c.task_id === task_id && c.kind === "fail",
-      ),
     };
   },
 };

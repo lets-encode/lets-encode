@@ -38,7 +38,6 @@ export type StatusKey =
   | "pending"
   | "blocked"
   | "pass"
-  | "fail"
   | "review"
   | "open";
 
@@ -51,7 +50,6 @@ const STATUS_KEYS = new Set<string>([
   "pending",
   "blocked",
   "pass",
-  "fail",
   "review",
   "open",
 ]);

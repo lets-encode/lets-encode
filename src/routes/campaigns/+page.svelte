@@ -1,7 +1,7 @@
 <!--
   The main screen — the app's only dashboard. Top to bottom, for a logged-in
-  viewer: what needs their attention (fix requests and unresolved comments on
-  their work), their open work, every campaign as a searchable list of
+  viewer: what needs their attention (unresolved comments on their work),
+  their open work, every campaign as a searchable list of
   full-width rows (each carrying its suggested next task, claimable in
   place), and unfinished wizard drafts. Logged out, only the list renders.
   Campaign creation lives behind the top bar's New campaign button. One stats
@@ -101,7 +101,6 @@
   const tasks = $derived(
     viewer ? stats.flatMap((s) => myTasksIn(s, viewer)) : ([] as MyTask[]),
   );
-  const fix = $derived(tasks.filter((t) => t.group === "fix"));
   const encoding = $derived(tasks.filter((t) => t.group === "encoding"));
   const validating = $derived(tasks.filter((t) => t.group === "validating"));
   const awaiting = $derived(tasks.filter((t) => t.group === "awaiting"));
@@ -115,8 +114,7 @@
   );
   let showCompleted = $state(false);
 
-  // Unresolved comments on the viewer's work; fails surface through
-  // the fix group instead, so they are not repeated here.
+  // Unresolved discussion comments on the viewer's work.
   const openComments = $derived(
     viewer
       ? stats
@@ -355,29 +353,13 @@
   <h1 class="vh">Campaigns</h1>
   <RunnerBanner {runner} />
 
-  {#if auth.user && (fix.length > 0 || openComments.length > 0)}
+  {#if auth.user && openComments.length > 0}
     <section class="block">
       <h2 class="slabel danger">
         <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your
         attention
       </h2>
       <div class="rows attn">
-        {#each fix as t (t.campaignSlug + t.task)}
-          <a class="row attention" href={taskHref(t.campaignSlug, t.task)}>
-            <span class="pill red">Changes requested</span>
-            <span class="rowtitle">{taskLine(t)}</span>
-            {#if t.failComment}
-              <span class="excerpt"
-                >@{handle(t.logins, t.failComment.author_id)}: “{t.failComment
-                  .body}”</span
-              >
-            {/if}
-            <span class="spacer"></span>
-            <span class="golink red"
-              >Open task <Icon name="arrow-right" size={12} /></span
-            >
-          </a>
-        {/each}
         {#each openComments as f (f.comment.comment_id || f.comment.timestamp + f.task)}
           <a class="row" href={taskHref(f.campaignSlug, f.task)}>
             <span class="pill grey">Comment</span>
@@ -419,7 +401,7 @@
       <div class="rows">
         {#if listLoading && tasks.length === 0}
           <p class="note">Loading your claimed tasks…</p>
-        {:else if encoding.length === 0 && validating.length === 0 && awaiting.length === 0 && fix.length === 0}
+        {:else if encoding.length === 0 && validating.length === 0 && awaiting.length === 0}
           <p class="note">No open work. Claim a task from a campaign below.</p>
         {/if}
         {#each encoding as t (t.campaignSlug + t.task)}
@@ -714,13 +696,6 @@
   a.row:hover {
     border-color: var(--info-line);
   }
-  .row.attention {
-    background: var(--danger-bg);
-    border-color: var(--danger-line);
-  }
-  a.row.attention:hover {
-    border-color: var(--danger);
-  }
   .rowtitle {
     flex: none;
     font-size: 13.5px;
@@ -786,11 +761,6 @@
     padding: 3px 9px;
     white-space: nowrap;
   }
-  .pill.red {
-    color: var(--danger);
-    background: var(--card);
-    border: 1px solid var(--danger-line);
-  }
   .pill.blue {
     color: var(--info);
     background: var(--info-bg);
@@ -812,9 +782,6 @@
     font-weight: 600;
     color: var(--link);
     text-decoration: none;
-  }
-  .golink.red {
-    color: var(--danger);
   }
   .donerow {
     color: var(--ink-faint);

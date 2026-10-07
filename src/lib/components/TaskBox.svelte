@@ -26,7 +26,7 @@
     cardPill,
     elapsed,
     initialOf,
-    orphanedFails,
+    openChangeRequests,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import AbandonButton from "./AbandonButton.svelte";
@@ -128,7 +128,7 @@
         ),
   );
   const mineEncoding = $derived(myEncodingLock !== undefined);
-  const record = $derived(buildRecord(card, comments, viewer, logins));
+  const record = $derived(buildRecord(card, viewer, logins));
   /** The validation slot the viewer may claim right now, if any. */
   const claimableSub = $derived(
     record.find((r) => r.key === "open" && r.claimable)?.sub,
@@ -136,15 +136,12 @@
   /** The review slot the viewer holds a lock on, if any. */
   const myReviewSub = $derived(record.find((r) => r.mine)?.sub);
   const myReview = $derived(myReviewSub !== undefined);
-  /** What the side record shows: fails, the viewer's own slot, and for the
-      owner the slots held and passed. */
+  /** What the side record shows: change requests, the viewer's own slot,
+      and for the owner the slots held and passed. */
   const hasRecord = $derived(
     record.some(
-      (r) =>
-        r.key === "fail" ||
-        r.mine ||
-        (canPush && (r.key === "review" || r.key === "pass")),
-    ) || orphanedFails(card, comments).length > 0,
+      (r) => r.mine || (canPush && (r.key === "review" || r.key === "pass")),
+    ) || openChangeRequests(card.task, comments).length > 0,
   );
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
   const editorName = $derived(workPlace(card.locator));

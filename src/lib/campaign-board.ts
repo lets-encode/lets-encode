@@ -93,39 +93,17 @@ export const cardName = (card: BoardCard): string =>
 // ---------------------------------------------------------------------------
 // Comments per task
 
-/** Timestamps of the fail cells currently recorded on a task's subtasks. */
-function failCellTimestamps(d: GraphData, task: string): Set<string> {
-  const set = new Set<string>();
-  for (const row of d.rows) {
-    if (row.task_id !== task || row.subtask_id === "") continue;
-    for (const column of d.validationColumns) {
-      const cell = row[column] ?? "";
-      if (isFinalValidation(cell) && cell.startsWith("fail|"))
-        set.add(cell.split("|")[2]);
-    }
-  }
-  return set;
-}
-
-/** The attention chips of one task: recorded fails and open comments. */
+/** The attention chips of one task: open change requests and open comments. */
 export interface TaskCounts {
   fails: number;
   comments: number;
 }
 
 /**
- * Chip counts for a task. Fails are the fail cells on its subtasks; a fail
- * comment still matched by a fail cell is the same issue and is not counted
- * again (a fail resets the task and clears the cells, so the unresolved fail
- * comment takes over the count as a plain comment).
+ * Chip counts for a task: its unresolved fail comments (change requests) and
+ * its other unresolved comments.
  */
-function taskCounts(
-  d: GraphData,
-  comments: CommentRow[],
-  task: string,
-): TaskCounts {
-  const cellTs = failCellTimestamps(d, task);
-  const fails = cellTs.size;
+function taskCounts(comments: CommentRow[], task: string): TaskCounts {
   const byId = new Map(comments.map((c) => [c.comment_id, c]));
   // A reply is closed with its thread: once the root it chains to (via
   // parent_id) is resolved, the reply no longer needs attention.
@@ -138,13 +116,13 @@ function taskCounts(
     }
     return c?.resolved === "true";
   };
+  let fails = 0;
   let other = 0;
   for (const c of comments) {
     if (c.task_id !== task || c.resolved === "true") continue;
     if (c.kind === "reply" && rootResolved(c)) continue;
-    if (c.kind === "fail") {
-      if (!cellTs.has(c.timestamp)) other++;
-    } else other++;
+    if (c.kind === "fail") fails++;
+    else other++;
   }
   return { fails, comments: other };
 }
@@ -187,7 +165,6 @@ const COLUMN_OF: Record<StatusKey, ColumnKey> = {
   completed: "done",
   // Slot-level keys; never a task status, but the record is total.
   pass: "done",
-  fail: "validation",
   review: "validation",
   open: "ready",
 };
@@ -336,7 +313,7 @@ export function buildBoard(
     );
     const dep = blockedBy(d, n.task);
     const depDef = dep ? findRow(d.taskDefs, dep, "") : undefined;
-    const counts = taskCounts(d, comments, n.task);
+    const counts = taskCounts(comments, n.task);
     const omr = preparations[def.fragment] === "omr";
     columnByKey.get(column)!.cards.push({
       task: n.task,
@@ -389,7 +366,7 @@ export function buildBoard(
     );
 
   // The campaign's attention count (the hero counter): unresolved comments
-  // plus recorded fails, on non-completed tasks — summed from the card counts
+  // plus open change requests, on non-completed tasks — summed from the card counts
   // computed above.
   const attention = columns
     .filter((column) => column.key !== "done")
@@ -435,8 +412,6 @@ export interface RecordRow {
   /** The stored user id behind the row, for permission checks; '' when open. */
   userId: string;
   elapsed: string;
-  /** The fail's mandatory comment, when one matches the verdict. */
-  comment: CommentRow | null;
   claimable: boolean;
   /** The viewer holds this slot's review lock. */
   mine: boolean;
@@ -445,7 +420,6 @@ export interface RecordRow {
 /** The validation record for a task card, one row per slot. */
 export function buildRecord(
   card: Pick<BoardCard, "task" | "slots">,
-  comments: CommentRow[],
   viewer = "",
   logins: Logins = {},
   now = Date.now(),
@@ -457,40 +431,21 @@ export function buildRecord(
     login: s.user ? handle(logins, s.user) : "",
     userId: s.user,
     elapsed: s.ts ? elapsed(s.ts, now) : "",
-    comment:
-      s.key === "fail"
-        ? (comments.find(
-            (c) =>
-              c.task_id === card.task &&
-              c.subtask_id === s.sub &&
-              c.kind === "fail" &&
-              c.timestamp === s.ts,
-          ) ?? null)
-        : null,
     claimable: s.claimable,
     mine: viewer !== "" && s.key === "review" && s.user === viewer,
   }));
 }
 
-/**
- * A task's unresolved fail comments no longer matched by a fail cell — the
- * reset that came with each fail cleared its verdict. They count as plain
- * comments (see taskCounts), so the record renders them after its slot rows.
- */
-export function orphanedFails(
-  card: Pick<BoardCard, "task" | "slots">,
+/** A task's unresolved fail comments (change requests), newest first. */
+export function openChangeRequests(
+  task: string,
   comments: CommentRow[],
 ): CommentRow[] {
-  return comments.filter(
-    (c) =>
-      c.task_id === card.task &&
-      c.kind === "fail" &&
-      c.resolved !== "true" &&
-      !card.slots.some(
-        (s) =>
-          s.key === "fail" && s.sub === c.subtask_id && s.ts === c.timestamp,
-      ),
-  );
+  return comments
+    .filter(
+      (c) => c.task_id === task && c.kind === "fail" && c.resolved !== "true",
+    )
+    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 }
 
 /** One discussion thread: a top-level comment and its replies, oldest first. */

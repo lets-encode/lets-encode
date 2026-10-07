@@ -1,7 +1,6 @@
 <!--
-  A task's validation record in its task box: the fails (shown as change
-  requests) with their notes and anchors, the viewer's
-  own slot with its approve/request-changes/edit controls and the note form a
+  A task's validation record in its task box: the open change requests with
+  their notes and anchors, the viewer's own slot with its approve/request-changes/edit controls and the note form a
   change request or an edit fills in, and for the owner (canPush) also the
   slots held and passed under a "Reviews" heading. The host's status pill
   carries the slot count and its footer the claim. Commands run through
@@ -17,7 +16,7 @@
     buildRecord,
     elapsed,
     expiresIn,
-    orphanedFails,
+    openChangeRequests,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
 
@@ -89,23 +88,15 @@
   };
 
   const rows = $derived(
-    buildRecord(card, comments, viewer, logins).filter(
-      (r) =>
-        r.key === "fail" ||
-        r.mine ||
-        (canPush && (r.key === "review" || r.key === "pass")),
+    buildRecord(card, viewer, logins).filter(
+      (r) => r.mine || (canPush && (r.key === "review" || r.key === "pass")),
     ),
   );
   // A submission on this task still being processed (a claim or verdict):
   // the slot controls hold until it lands — a repeat would only
   // be rejected.
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
-  // Newest first.
-  const orphanFails = $derived(
-    orphanedFails(card, comments).sort((a, b) =>
-      b.timestamp.localeCompare(a.timestamp),
-    ),
-  );
+  const changeRequests = $derived(openChangeRequests(card.task, comments));
 
   // The inline form a fail verdict or an edit from review fills in (its
   // mandatory comment).
@@ -182,154 +173,105 @@
   {/if}
 {/snippet}
 
-{#if rows.length > 0 || orphanFails.length > 0}
+{#if rows.length > 0 || changeRequests.length > 0}
   <div class="rsec">
     {#if canPush}
       <div class="rlabel">Reviews</div>
     {/if}
     {#each rows as r (r.sub + "/" + r.slot)}
-      {#if r.key === "fail"}
-        <div class="failbox">
-          <div class="failhead">
-            {@render slotDot("fail")}
-            <span class="failtitle">{slotName(r.slot)}changes requested</span>
-            <span class="rwho">{r.login} · {r.elapsed}</span>
-          </div>
-          {#if r.comment}
-            <div class="failbody">“{r.comment.body}”</div>
-            {#if hasAnchor(r.comment)}
-              <div class="failchips">
-                <button
-                  type="button"
-                  class="chip chip-question anchorchip"
-                  onclick={() => onshowanchor(r.comment!)}
-                  title="Highlight this measure range in the preview"
-                  >{anchorLabel(r.comment)} — show in the preview</button
-                >
-              </div>
-            {/if}
-          {:else}
-            <div class="failbody muted">
-              No note was recorded with this request.
-            </div>
-          {/if}
-          <div class="failacts">
-            {#if r.comment && r.comment.resolved !== "true" && canResolve(r.comment)}
-              {#if resolvePending(r.comment.comment_id)}
-                <span class="resolving">
-                  <span class="spinner" aria-hidden="true"></span>
-                  Resolving…
-                </span>
-              {:else}
-                <button
-                  type="button"
-                  class="linkish"
-                  onclick={() => resolve(r.comment!.comment_id)}
-                  disabled={runner.busy || resolving !== null}
-                  title="Mark this request as handled — it leaves the attention counts."
-                  >Resolve</button
-                >
-              {/if}
-            {:else if r.comment?.resolved === "true"}
-              <span class="muted small-note">resolved</span>
-            {/if}
-          </div>
-        </div>
-      {:else}
-        <div class="rrow">
-          {@render slotDot(r.key)}
-          <span class="rslot">{slotName(r.slot)}{slotLabel(r.key)}</span>
-          {#if r.login}
-            <span class="rwho"
-              >{r.login} · {r.key === "review"
-                ? slotExpiry(r.sub, r.userId)
-                : r.elapsed}</span
-            >
-          {/if}
-          <span class="mspacer"></span>
-          {#if r.key === "pass"}
-            <span class="muted small-note">no remarks</span>
-          {:else if r.mine}
-            <span class="rverdict">
-              <button
-                type="button"
-                class="btn btn-primary btn-finish"
-                onclick={() => onvalidate(card.task, r.sub, "pass")}
-                disabled={runner.busy || processing}
-                title="Approve the submitted work.">Approve</button
-              >
-              <button
-                type="button"
-                class="btn btn-danger failbtn"
-                class:on={failForm?.sub === r.sub}
-                onclick={() =>
-                  (failForm =
-                    failForm?.sub === r.sub
-                      ? null
-                      : { sub: r.sub, body: "", ...prefill() })}
-                disabled={runner.busy || processing}
-                title="Ask for changes — a request carries a note saying what needs to change."
-                >Request changes</button
-              >
-            </span>
-          {/if}
-        </div>
-        {#if failForm && failForm.sub === r.sub && r.mine}
-          <div class="failform">
-            <textarea
-              rows="3"
-              bind:value={failForm.body}
-              placeholder="What needs to change? (required)"
-            ></textarea>
-            <div class="failform-anchor">
-              <label>p. <input size="3" bind:value={failForm.page} /></label>
-              {#if measures}
-                <label
-                  >m. <input
-                    size="4"
-                    bind:value={failForm.m1}
-                    placeholder="from"
-                  /></label
-                >
-                <label
-                  >– <input
-                    size="4"
-                    bind:value={failForm.m2}
-                    placeholder="to"
-                  /></label
-                >
-              {/if}
-              <span class="mspacer"></span>
-              {#if onreviewedit}
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={() => submitFail(true)}
-                  disabled={runner.busy || !failForm.body.trim() || processing}
-                  title="Requests changes with this note and gives you the task to edit. Your edit is then reviewed by someone else."
-                  >Edit yourself</button
-                >
-              {/if}
-              <button
-                type="button"
-                class="btn btn-danger"
-                onclick={() => submitFail(false)}
-                disabled={runner.busy || !failForm.body.trim() || processing}
-                title="Sends the change request with this note."
-                >Send request</button
-              >
-            </div>
-            {#if onreviewedit}
-              <p class="editnote">
-                Edit yourself gives you the task to edit. Your edit is then
-                reviewed by someone else.
-              </p>
-            {/if}
-          </div>
+      <div class="rrow">
+        {@render slotDot(r.key)}
+        <span class="rslot">{slotName(r.slot)}{slotLabel(r.key)}</span>
+        {#if r.login}
+          <span class="rwho"
+            >{r.login} · {r.key === "review"
+              ? slotExpiry(r.sub, r.userId)
+              : r.elapsed}</span
+          >
         {/if}
+        <span class="mspacer"></span>
+        {#if r.key === "pass"}
+          <span class="muted small-note">no remarks</span>
+        {:else if r.mine}
+          <span class="rverdict">
+            <button
+              type="button"
+              class="btn btn-primary btn-finish"
+              onclick={() => onvalidate(card.task, r.sub, "pass")}
+              disabled={runner.busy || processing}
+              title="Approve the submitted work.">Approve</button
+            >
+            <button
+              type="button"
+              class="btn btn-danger failbtn"
+              class:on={failForm?.sub === r.sub}
+              onclick={() =>
+                (failForm =
+                  failForm?.sub === r.sub
+                    ? null
+                    : { sub: r.sub, body: "", ...prefill() })}
+              disabled={runner.busy || processing}
+              title="Ask for changes — a request carries a note saying what needs to change."
+              >Request changes</button
+            >
+          </span>
+        {/if}
+      </div>
+      {#if failForm && failForm.sub === r.sub && r.mine}
+        <div class="failform">
+          <textarea
+            rows="3"
+            bind:value={failForm.body}
+            placeholder="What needs to change? (required)"
+          ></textarea>
+          <div class="failform-anchor">
+            <label>p. <input size="3" bind:value={failForm.page} /></label>
+            {#if measures}
+              <label
+                >m. <input
+                  size="4"
+                  bind:value={failForm.m1}
+                  placeholder="from"
+                /></label
+              >
+              <label
+                >– <input
+                  size="4"
+                  bind:value={failForm.m2}
+                  placeholder="to"
+                /></label
+              >
+            {/if}
+            <span class="mspacer"></span>
+            {#if onreviewedit}
+              <button
+                type="button"
+                class="btn"
+                onclick={() => submitFail(true)}
+                disabled={runner.busy || !failForm.body.trim() || processing}
+                title="Requests changes with this note and gives you the task to edit. Your edit is then reviewed by someone else."
+                >Edit yourself</button
+              >
+            {/if}
+            <button
+              type="button"
+              class="btn btn-danger"
+              onclick={() => submitFail(false)}
+              disabled={runner.busy || !failForm.body.trim() || processing}
+              title="Sends the change request with this note."
+              >Send request</button
+            >
+          </div>
+          {#if onreviewedit}
+            <p class="editnote">
+              Edit yourself gives you the task to edit. Your edit is then
+              reviewed by someone else.
+            </p>
+          {/if}
+        </div>
       {/if}
     {/each}
-    {#each orphanFails as c (c.comment_id)}
+    {#each changeRequests as c (c.comment_id)}
       <div class="failbox">
         <div class="failhead">
           {@render slotDot("fail")}
