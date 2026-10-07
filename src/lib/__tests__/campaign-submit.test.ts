@@ -14,12 +14,14 @@ import {
   checkComment,
   checkEncoding,
   checkResolveComment,
+  checkReviewEdit,
   checkSendBack,
   checkValidation,
   resolveCommentThread,
 } from "../campaign-submit.ts";
 import type {
   CheckEncodingArgs,
+  CheckReviewEditArgs,
   CheckValidationArgs,
 } from "../campaign-submit.ts";
 
@@ -56,6 +58,7 @@ const comment = (over: Partial<CommentRow>): CommentRow => ({
   resolved: "",
   parent_id: "",
   body: "Slur missing in m. 34–35.",
+  fragment: "",
   ...over,
 });
 
@@ -211,6 +214,16 @@ test("encoding: rejects out-of-bounds changes, non-lock-holders, invalid MEI, th
     [
       "validation lock instead of an encoding lock",
       { locks: parseLockCsv(LOCK_HEADER + "T0001,S0001,bob,t,validation\n") },
+      "not_lock_holder",
+    ],
+    [
+      "encoding lock that ran out",
+      { locks: [], expired: encodingLock },
+      "claim_expired",
+    ],
+    [
+      "someone else's lock that ran out",
+      { locks: [], expired: encodingLock, author: "mallory" },
       "not_lock_holder",
     ],
     ["invalid MEI", { meiValid: false }, "mei_invalid"],
@@ -504,6 +517,11 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
       "unknown_task",
     ],
     [
+      "campaign comment naming a subtask",
+      comment({ kind: "comment", task_id: "" }),
+      "unknown_task",
+    ],
+    [
       "reply to a missing parent",
       comment({ kind: "reply", parent_id: "nope" }),
       "unknown_parent",
@@ -517,6 +535,11 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
     [
       "reply to a reply",
       comment({ kind: "reply", parent_id: "c2" }),
+      "invalid_parent",
+    ],
+    [
+      "reply to another task's comment",
+      comment({ kind: "reply", parent_id: "c1", task_id: "", subtask_id: "" }),
       "invalid_parent",
     ],
     // Fail comments live in the validation record, not the discussion threads.
@@ -533,6 +556,48 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
     checkComment({
       ...base,
       added: comment({ kind: "reply", parent_id: "c1" }),
+    }).ok,
+    true,
+  );
+});
+
+test("comments: a campaign comment has no task and keeps its measure anchor", () => {
+  const added = comment({
+    kind: "comment",
+    task_id: "",
+    subtask_id: "",
+    fragment: "scores/piece2.mei",
+    body: "Old clefs here; encode them as written.",
+  });
+  const v = checkComment({
+    state: validationState(),
+    comments: [],
+    added,
+    author: "carol",
+    changedPaths: ["tracking/comment.csv"],
+    now: NOW,
+    newId: "c1",
+  });
+  assert.equal(v.ok, true);
+  if (v.ok) {
+    assert.equal(v.row.task_id, "");
+    assert.equal(v.row.fragment, "scores/piece2.mei");
+    assert.equal(v.row.measure_start, "34");
+  }
+  assert.equal(
+    checkComment({
+      state: validationState(),
+      comments: [{ ...added, comment_id: "c1" }],
+      added: comment({
+        kind: "reply",
+        task_id: "",
+        subtask_id: "",
+        parent_id: "c1",
+      }),
+      author: "dave",
+      changedPaths: ["tracking/comment.csv"],
+      now: NOW,
+      newId: "c2",
     }).ok,
     true,
   );
@@ -706,6 +771,17 @@ test("validation: rejects invalid verdicts, out-of-bounds changes, wrong states,
     }).reason,
     "not_lock_holder",
   );
+  assert.equal(
+    val({
+      ...base,
+      state: validationState(),
+      locks: [],
+      expired: validationLock,
+      author: "carol",
+      intent: { task_id: "T0001", subtask_id: "S0001", verdict: "pass" },
+    }).reason,
+    "claim_expired",
+  );
 });
 
 test("validation: rejects the task row as a target", () => {
@@ -737,4 +813,56 @@ test("validation: rejects when no open slot remains", () => {
     now: NOW,
   });
   assert.equal(v.reason, "no_open_validation_slot");
+});
+
+// --- Edit from review ------------------------------------------------------
+
+test("review edit: resets the task and hands the reviewer the encoding claim", () => {
+  const base: CheckReviewEditArgs = {
+    state: validationState(),
+    locks: [...validationLock, ...encodingLock],
+    intent: { task_id: "T0001", subtask_id: "S0001" },
+    author: "carol",
+    changedPaths: ["tracking/lock.csv", "tracking/comment.csv"],
+    failComment: comment({}),
+    now: NOW,
+    staleAfterMinutes: 60,
+  };
+  const v = checkReviewEdit(base) as SubmitView;
+  assert.equal(v.ok, true);
+  assert.equal(
+    findRow(v.state!.rows, "T0001", "")!.status,
+    "encoding_required",
+  );
+  assert.equal(findRow(v.state!.rows, "T0001", "")!.encoder, "");
+  assert.equal(findRow(v.state!.rows, "T0001", "S0001")!.status, "pending");
+  assert.deepEqual(v.locks, [
+    {
+      task_id: "T0001",
+      subtask_id: "",
+      user_id: "carol",
+      timestamp: NOW,
+      kind: "encoding",
+      expires: "2026-06-25T11:00:00.000Z",
+    },
+  ]);
+
+  const reason = (over: Partial<CheckReviewEditArgs>) =>
+    (checkReviewEdit({ ...base, ...over }) as SubmitView).reason;
+  assert.equal(reason({ failComment: null }), "fail_without_comment");
+  assert.equal(
+    reason({ failComment: comment({ body: " " }) }),
+    "fail_without_comment",
+  );
+  assert.equal(reason({ author: "dave" }), "not_lock_holder");
+  assert.equal(reason({ locks: [], expired: validationLock }), "claim_expired");
+  assert.equal(reason({ state: encodingState() }), "wrong_state");
+  assert.equal(
+    reason({ changedPaths: ["tracking/lock.csv", "tracking/state.csv"] }),
+    "out_of_bounds",
+  );
+  assert.equal(
+    reason({ intent: { task_id: "T0001", subtask_id: "" } }),
+    "unknown_task",
+  );
 });

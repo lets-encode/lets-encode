@@ -234,11 +234,12 @@ test("validation claim is rejected when active locks already fill the slots", ()
   assert.equal(v.reason, "no_open_validation_slot");
 });
 
-test("two-slot subtask: same validator cannot claim twice, a second validator can", () => {
+test("two-slot subtask: a held review claim holds back every other review claim on the task", () => {
   const locks = parseLockCsv(LOCK_HEADER + "T0001,S0001,carol,t,validation\n");
   const base = { state: validationTwoSlots, locks, intent: validationIntent };
   assert.equal(claim({ ...base, author: "carol" }).reason, "already_locked");
-  assert.equal(claim({ ...base, author: "dave" }).ok, true);
+  assert.equal(claim({ ...base, author: "dave" }).reason, "review_in_progress");
+  assert.equal(claim({ ...base, locks: [], author: "dave" }).ok, true);
 });
 
 test("a validator with a recorded verdict cannot claim another slot of the subtask", () => {
@@ -279,8 +280,12 @@ test("pass threshold below the slot count counts active locks as prospective pas
     claim({ ...base, passThreshold: 1 }).reason,
     "no_open_validation_slot",
   );
-  // At threshold 2 the second slot is still needed.
-  assert.equal(claim({ ...base, passThreshold: 2 }).ok, true);
+  // At threshold 2 the second slot is still needed, but waits for carol's
+  // review to finish.
+  assert.equal(
+    claim({ ...base, passThreshold: 2 }).reason,
+    "review_in_progress",
+  );
 });
 
 test("a fail verdict does not count toward the pass threshold", () => {
@@ -330,6 +335,10 @@ test("release: the holder gives back their own lock", () => {
     locks[1],
   );
   assert.equal(release({ author: "dave" }).reason, "not_lock_holder");
+  assert.equal(
+    release({ locks: [], expired: [locks[0]] }).reason,
+    "claim_expired",
+  );
   assert.equal(
     release({ changedPaths: ["tracking/lock.csv", "tracking/state.csv"] })
       .reason,

@@ -42,27 +42,19 @@ export type StatusKey =
   | "review"
   | "open";
 
-const STATUS_LABELS: Record<StatusKey, string> = {
-  completed: "✓ done",
-  encoding_required: "encoding required",
-  encoding: "● encoding",
-  claimed: "● claimed",
-  validation_required: "review",
-  pending: "pending",
-  blocked: "blocked",
-  pass: "✓ pass",
-  fail: "✗ fail",
-  review: "review",
-  open: "○ open",
-};
-
-/**
- * The pill label for a status key, aware of measure-correction (pre) tasks:
- * an unclaimed pre-task reads as "action required" rather than "encoding
- * required", since no encoding happens at that stage.
- */
-export const statusPill = (key: StatusKey, pre = false): string =>
-  pre && key === "encoding_required" ? "action required" : STATUS_LABELS[key];
+const STATUS_KEYS = new Set<string>([
+  "completed",
+  "encoding_required",
+  "encoding",
+  "claimed",
+  "validation_required",
+  "pending",
+  "blocked",
+  "pass",
+  "fail",
+  "review",
+  "open",
+]);
 
 /** One validation slot on its task node. */
 export interface NodeSlot {
@@ -150,7 +142,9 @@ export const workPlace = (locator: string): string =>
  * different site, so its label says so.
  */
 export const claimLabel = (locator: string): string =>
-  isPreTask(locator) ? "Claim task" : "Claim & open in mei-friend";
+  isPreTask(locator)
+    ? `Claim & open ${workStage(locator)}`
+    : "Claim & open in mei-friend";
 
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
@@ -168,13 +162,29 @@ export function pageOfLocator(locator: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** The task's human type from its locator. */
-export function typeLabel(locator: string): string {
+/** What the task asks for, from its locator. A page of an OMR-prepared piece
+    (`omr`) starts from the OMR transcription draft; every other encoding
+    task encodes from scratch. */
+export function taskDescription(locator: string, omr = false): string {
   if (locator === "score-setup") return "Score setup";
   if (locator === "measure-zones" || locator === "omr-layout")
     return "Measure correction";
+  return omr && pageOfLocator(locator) !== null
+    ? "Correct the OMR draft"
+    : "Encode";
+}
+
+/** The part of the piece a task covers ("p. 3"); '' for the whole piece. */
+export function taskScope(locator: string): string {
   const page = pageOfLocator(locator);
-  return page ? `Encoding · page ${page}` : "Encoding";
+  return page === null ? "" : `p. ${page}`;
+}
+
+/** A task's name without its piece: description, then scope. */
+export function taskName(locator: string, omr = false): string {
+  const scope = taskScope(locator);
+  const description = taskDescription(locator, omr);
+  return scope ? `${description} · ${scope}` : description;
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +301,7 @@ function mainStatusKey(d: GraphData, task: string): StatusKey {
   if (status === "encoding_required" && encodingLock(d, task)) {
     return isPreTask(taskDef(d, task)?.locator ?? "") ? "claimed" : "encoding";
   }
-  if (status in STATUS_LABELS) return status as StatusKey;
+  if (STATUS_KEYS.has(status)) return status as StatusKey;
   return "pending";
 }
 
@@ -407,8 +417,9 @@ export function buildGraph(
             row.status === "validation_required" &&
             (d.allowSelfValidation ||
               (state?.encoder !== viewer && !hasVerdictBy(d, row, viewer))) &&
-            !validationLocks(d, row.task_id, row.subtask_id).some(
-              (l) => l.user_id === viewer,
+            // Reviews of a task run one at a time (mirrors checkClaim).
+            !d.locks.some(
+              (l) => l.task_id === row.task_id && l.kind === "validation",
             ) &&
             slot === nextUnreservedSlot(d, row) &&
             // Claimable only while the verdict can still land: passes plus

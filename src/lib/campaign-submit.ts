@@ -12,12 +12,14 @@
 // produce the authoritative table changes.
 
 import { boundaryCheck } from "./campaign-claim.ts";
+import { claimRanOut } from "./campaign-reaper.ts";
 import { correctedLayoutPath, layoutRecordPath } from "./omr-layout.ts";
 import { omrRecordPath } from "./omr-record.ts";
 import {
   findRow,
   isFinalValidation,
   COMMENT_PATH,
+  LOCK_PATH,
   STATE_PATH,
 } from "./campaign-tables.ts";
 import type {
@@ -49,6 +51,11 @@ export interface CheckEncodingArgs {
   changedPaths: string[];
   meiValid: boolean;
   now: string;
+  /**
+   * Locks dropped as expired before this decision; the author's own lock
+   * among them rejects the submission as `claim_expired`.
+   */
+  expired?: LockRow[];
 }
 
 export interface CheckValidationArgs {
@@ -65,6 +72,11 @@ export interface CheckValidationArgs {
    */
   failComment: CommentRow | null;
   now: string;
+  /**
+   * Locks dropped as expired before this decision; the author's own lock
+   * among them rejects the submission as `claim_expired`.
+   */
+  expired?: LockRow[];
 }
 
 /** Send-back intent: the failed task being returned to encoding. */
@@ -158,6 +170,7 @@ export function checkEncoding({
   changedPaths,
   meiValid,
   now,
+  expired = [],
 }: CheckEncodingArgs): SubmitResult {
   const task = findRow(tasks, intent.task_id, "");
   const row = findRow(state.rows, intent.task_id, "");
@@ -177,7 +190,16 @@ export function checkEncoding({
       l.kind === "encoding" &&
       l.user_id === author,
   );
-  if (!holdsLock) return reject("not_lock_holder");
+  if (!holdsLock)
+    return reject(
+      claimRanOut(
+        expired,
+        { task_id: intent.task_id, subtask_id: "", kind: "encoding" },
+        author,
+      )
+        ? "claim_expired"
+        : "not_lock_holder",
+    );
   if (!meiValid) return reject("mei_invalid");
 
   const hasSubtasks = state.rows.some(
@@ -227,6 +249,7 @@ export function checkValidation({
   passThreshold,
   failComment,
   now,
+  expired = [],
 }: CheckValidationArgs): SubmitResult {
   const row = findRow(state.rows, intent.task_id, intent.subtask_id);
   if (!row || intent.subtask_id === "") return reject("unknown_task");
@@ -257,7 +280,12 @@ export function checkValidation({
       l.kind === "validation" &&
       l.user_id === author,
   );
-  if (!holdsLock) return reject("not_lock_holder");
+  if (!holdsLock)
+    return reject(
+      claimRanOut(expired, { ...intent, kind: "validation" }, author)
+        ? "claim_expired"
+        : "not_lock_holder",
+    );
 
   const slot = state.validationColumns.find((c) => (row[c] ?? "") === "");
   if (!slot) return reject("no_open_validation_slot");
@@ -337,6 +365,98 @@ export function checkSendBack({
   };
 }
 
+/** Edit-from-review intent: the subtask whose review switches to editing. */
+export interface ReviewEditIntent {
+  task_id: string;
+  subtask_id: string;
+}
+
+export interface CheckReviewEditArgs {
+  state: ParsedState;
+  locks: LockRow[];
+  intent: ReviewEditIntent;
+  author: string;
+  changedPaths: string[];
+  /** The fail comment row the PR adds to comment.csv; null when it adds none or several. */
+  failComment: CommentRow | null;
+  now: string;
+  /** Lock lifetime (locking.stale_after_minutes); sets the new lock's `expires`. */
+  staleAfterMinutes: number;
+  /**
+   * Locks dropped as expired before this decision; the author's own review
+   * lock among them rejects the switch as `claim_expired`.
+   */
+  expired?: LockRow[];
+}
+
+/**
+ * A reviewer switching to editing: a fail and a send-back in one step, with
+ * the task's encoding claim going to the reviewer. The PR may change only
+ * lock.csv (removing the reviewer's own review lock) and comment.csv (one
+ * added fail comment saying what the edit is for). The author must hold the
+ * subtask's review lock while it is in review. On accept: the task is reset
+ * as by a send-back (checkSendBack), every lock on it is released, and the
+ * author holds a fresh encoding lock.
+ */
+export function checkReviewEdit({
+  state,
+  locks,
+  intent,
+  author,
+  changedPaths,
+  failComment,
+  now,
+  staleAfterMinutes,
+  expired = [],
+}: CheckReviewEditArgs): SubmitResult {
+  if (!boundaryCheck(changedPaths, [LOCK_PATH, COMMENT_PATH]))
+    return reject("out_of_bounds");
+  const row = findRow(state.rows, intent.task_id, intent.subtask_id);
+  if (!row || intent.subtask_id === "") return reject("unknown_task");
+  if (
+    !failComment ||
+    failComment.kind !== "fail" ||
+    failComment.task_id !== intent.task_id ||
+    failComment.subtask_id !== intent.subtask_id ||
+    failComment.body.trim() === ""
+  )
+    return reject("fail_without_comment");
+  if (row.status !== "validation_required") return reject("wrong_state");
+  const holdsLock = locks.some(
+    (l) =>
+      l.task_id === intent.task_id &&
+      l.subtask_id === intent.subtask_id &&
+      l.kind === "validation" &&
+      l.user_id === author,
+  );
+  if (!holdsLock)
+    return reject(
+      claimRanOut(expired, { ...intent, kind: "validation" }, author)
+        ? "claim_expired"
+        : "not_lock_holder",
+    );
+
+  const next = cloneState(state);
+  resetTaskRows(next.rows, next.validationColumns, intent.task_id);
+  return {
+    ok: true,
+    state: next,
+    locks: [
+      ...locks.filter((l) => l.task_id !== intent.task_id),
+      {
+        task_id: intent.task_id,
+        subtask_id: "",
+        user_id: author,
+        timestamp: now,
+        kind: "encoding",
+        expires: new Date(
+          Date.parse(now) + staleAfterMinutes * 60_000,
+        ).toISOString(),
+      },
+    ],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Comments (discussion): adding and resolving rows of comment.csv.
 
@@ -361,7 +481,8 @@ const DISCUSSION_KINDS = ["comment", "reply"];
 
 /**
  * A discussion comment. The PR may only append one row to comment.csv; `fail`
- * comments never arrive this way (they ride the fail-validation PR). The
+ * comments never arrive this way (they ride the fail-validation PR). An empty
+ * task_id makes it a campaign comment, which names no subtask. The
  * automation authors the id, author and timestamp — never the fork's values.
  */
 export function checkComment({
@@ -379,14 +500,19 @@ export function checkComment({
   if (!DISCUSSION_KINDS.includes(added.kind))
     return { ok: false, reason: "invalid_kind" };
   if (added.body.trim() === "") return { ok: false, reason: "empty_comment" };
-  if (!findRow(state.rows, added.task_id, ""))
+  if (
+    added.task_id === ""
+      ? added.subtask_id !== ""
+      : !findRow(state.rows, added.task_id, "")
+  )
     return { ok: false, reason: "unknown_task" };
   if (added.kind === "reply") {
     const parent = comments.find((c) => c.comment_id === added.parent_id);
     if (!parent) return { ok: false, reason: "unknown_parent" };
     // Replies attach to the top-level discussion comments only — the ones
-    // the threads projection renders as roots.
-    if (parent.kind !== "comment") {
+    // the threads projection renders as roots — of the same task, or of the
+    // campaign.
+    if (parent.kind !== "comment" || parent.task_id !== added.task_id) {
       return { ok: false, reason: "invalid_parent" };
     }
   } else if (added.parent_id !== "") {

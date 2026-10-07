@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  clipTitle,
   parseCsv,
   parseTaskCsv,
   parseStateCsv,
@@ -247,17 +248,27 @@ test("findRow: distinguishes the task row from subtask rows", () => {
 
 test("comment.csv: rows round-trip, and appending creates the header when missing", () => {
   const csv =
-    "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n" +
-    'c1,T0001,S0001,fail,12,34,35,carol,t1,,,"Slur missing, see source"\n';
+    "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body,fragment\n" +
+    'c1,T0001,S0001,fail,12,34,35,carol,t1,,,"Slur missing, see source",\n' +
+    "c2,,,comment,3,5,5,dave,t2,,,Old clefs,scores/p2.mei\n";
   const rows = parseCommentCsv(csv);
-  assert.equal(rows.length, 1);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].task_id, "");
+  assert.equal(rows[1].fragment, "scores/p2.mei");
   assert.equal(rows[0].kind, "fail");
   assert.equal(rows[0].measure_end, "35");
   assert.equal(rows[0].body, "Slur missing, see source");
   assert.equal(serializeCommentCsv(rows), csv);
-  const appended = appendComments("", [rows[0]]);
+  const appended = appendComments("", rows);
   assert.equal(appended, csv);
-  assert.equal(parseCommentCsv(appendComments(csv, rows)).length, 2);
+  assert.equal(parseCommentCsv(appendComments(csv, rows)).length, 4);
+  // A table written before the fragment column reads it as empty.
+  const older = parseCommentCsv(
+    "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n" +
+      "c1,T0001,,comment,,,,carol,t1,,,Hello\n",
+  );
+  assert.equal(older[0].body, "Hello");
+  assert.equal(older[0].fragment, "");
 });
 
 test("isFinalValidation: only pass/fail are final", () => {
@@ -323,4 +334,14 @@ test("passThresholdOf: defaults to the slot count when the key is absent", () =>
   assert.equal(passThresholdOf(null, 3), 3);
   assert.equal(passThresholdOf("", 1), 1);
   assert.equal(passThresholdOf(null, 0), 1);
+});
+
+test("clipTitle keeps short titles and cuts long ones at a word", () => {
+  assert.equal(clipTitle("Blume und Duft"), "Blume und Duft");
+  const long =
+    "Blume und Duft is a very beautiful piece with an unusually long title.";
+  const clipped = clipTitle(long);
+  assert.equal(clipped, "Blume und Duft is a very beautiful…");
+  assert.ok(clipped.length <= 40);
+  assert.equal(clipTitle("x".repeat(60), 10), "xxxxxxxxx…");
 });

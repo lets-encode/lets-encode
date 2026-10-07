@@ -62,12 +62,18 @@
   <div class="banner" role="note" bind:offsetHeight={bannerHeight}>
     <Icon name="warning" size={16} />
     <span class="banner-text"
-      ><strong>Under construction.</strong> Data on this platform can be reset
-      at any time. GitHub repositories created with the platform are kept, but
-      the platform may no longer open them.
+      ><strong>Under construction.</strong>
+      <span class="long"
+        >Data on this platform can be reset at any time. GitHub repositories
+        created with the platform are kept, but the platform may no longer open
+        them.</span
+      >
+      <span class="short">Data on this platform can be reset at any time.</span>
       <span class="banner-links">
         <button type="button" class="link" onclick={open}>Details</button>
-        <a href={reportHref} target="_blank" rel="noopener">Report a bug</a>
+        <a class="long" href={reportHref} target="_blank" rel="noopener"
+          >Report a bug</a
+        >
       </span></span
     >
   </div>
@@ -169,6 +175,42 @@
     gap: 16px;
     margin-left: 12px;
     white-space: nowrap;
+  }
+  /* Phones: one line; the footer carries the bug report link there. */
+  @media (max-width: 560px) {
+    .banner {
+      padding: 6px 12px;
+      font-size: 12.5px;
+      align-items: center;
+    }
+    .banner .long {
+      display: none;
+    }
+    .banner-links {
+      margin-left: 8px;
+    }
+  }
+  .banner .short {
+    display: none;
+  }
+  /* A short window (a phone in landscape): the notice takes the footer's
+     place at the bottom as one line, and the layout hides the footer. */
+  @media (max-height: 500px) {
+    .banner {
+      order: 1;
+      padding: 5px 12px;
+      font-size: 12.5px;
+      align-items: center;
+      border-bottom: 0;
+      border-top: 1px solid var(--warn-line);
+    }
+    .banner .long {
+      display: none;
+    }
+    .banner .short,
+    .banner-links .long {
+      display: inline;
+    }
   }
   .banner-links a,
   .link {

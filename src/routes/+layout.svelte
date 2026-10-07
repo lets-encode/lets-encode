@@ -6,6 +6,7 @@
   import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
   import ConstructionNotice from "$lib/components/ConstructionNotice.svelte";
   import { bugReportHref } from "$lib/bug-report.ts";
+  import { campaignTitle } from "$lib/campaign-title.svelte.ts";
   import "./theme.css";
   import "./ui.css";
 
@@ -54,6 +55,12 @@
     return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
   });
 
+  // The back link to a campaign names it by its title once a page has read
+  // it; until then the slug is its accessible name.
+  const campaignTitleShown = $derived(
+    campaignTitle.campaign === page.params.campaign ? campaignTitle.title : "",
+  );
+
   // Surfaces fixed below the top bar offset themselves by its current height,
   // read as --topbar-h; narrow viewports wrap it onto a second row.
   let headerHeight = $state(56);
@@ -91,18 +98,31 @@
     />
   </a>
   <!-- Closing a screen lands one level up: the campaign view returns to the
-       listing, the corrector to the campaign it belongs to. -->
+       listing, the corrector to the campaign it belongs to. The label shows
+       only where it fits beside the arrow: otherwise it wraps onto a second
+       line, which the link clips (screen readers still read it). -->
   {#if inScore}
-    <a class="nav-link back" href={campaignHref}
-      ><Icon name="arrow-left" /> {page.params.campaign}</a
+    <a
+      class="nav-link back"
+      href={campaignHref}
+      aria-label={campaignTitleShown ? undefined : page.params.campaign}
+      ><Icon name="arrow-left" />
+      {#if campaignTitleShown}<span class="backlabel">{campaignTitleShown}</span
+        >{/if}</a
     >
   {:else if inCampaign}
     <a class="nav-link back" href="/campaigns"
-      ><Icon name="arrow-left" /> All campaigns</a
+      ><Icon name="arrow-left" />
+      <span class="backlabel">All campaigns</span></a
     >
   {:else if corrector}
-    <a class="nav-link back" href={`/${page.params.campaign}`}
-      ><Icon name="arrow-left" /> {page.params.campaign}</a
+    <a
+      class="nav-link back"
+      href={`/${page.params.campaign}`}
+      aria-label={campaignTitleShown ? undefined : page.params.campaign}
+      ><Icon name="arrow-left" />
+      {#if campaignTitleShown}<span class="backlabel">{campaignTitleShown}</span
+        >{/if}</a
     >
   {/if}
   <div class="topbar-right">
@@ -203,11 +223,12 @@
 </main>
 
 <footer>
-  <span
+  <span class="flong"
     >© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span
   >
+  <span class="fshort">© 2026 Let's Encode! · mdw</span>
   <span class="fsep" aria-hidden="true">·</span>
-  <span>app last updated {__BUILD_DATE__}</span>
+  <span><span class="flong">{"app last updated "}</span>{__BUILD_DATE__}</span>
   <span class="fsep" aria-hidden="true">·</span>
   <a href="https://iwk.mdw.ac.at/impressum/" target="_blank" rel="noopener"
     >Imprint</a
@@ -239,6 +260,10 @@
     padding: 0 20px;
     border-bottom: 1px solid var(--line);
     background: var(--topbar-bg);
+  }
+  .brand,
+  .topbar-right {
+    flex: none;
   }
   .topbar-right {
     display: flex;
@@ -272,23 +297,54 @@
     color: var(--accent);
   }
   .nav-link.back {
+    --back-h: 24px;
     font-size: 13px;
     color: var(--link);
     margin-left: 4px;
-    display: inline-flex;
+    display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    min-height: 24px;
+    align-content: flex-start;
+    column-gap: 4px;
+    height: var(--back-h);
+    overflow: hidden;
+    flex: 0 1 auto;
+    min-width: 0;
   }
+  /* Each item fills the link's height, so a wrapped label starts below it. */
+  .nav-link.back > :global(svg) {
+    height: var(--back-h);
+  }
+  .backlabel {
+    white-space: nowrap;
+    line-height: var(--back-h);
+  }
+  /* Phones: one line — a smaller logo, a 32px back link, no login name. */
   @media (max-width: 560px) {
     header {
-      height: auto;
-      min-height: 56px;
-      flex-wrap: wrap;
-      row-gap: 4px;
-      padding: 6px 12px;
+      height: 48px;
+      gap: 10px;
+      padding: 0 12px;
+    }
+    .brand img {
+      height: 24px;
+    }
+    .topbar-right {
+      gap: 8px;
     }
     .user > span {
       display: none;
+    }
+    header .user :global(.btn) {
+      padding: 5px 11px;
+    }
+    header .theme-toggle {
+      width: 34px;
+      height: 34px;
+    }
+    .nav-link.back {
+      --back-h: 32px;
+      min-width: 32px;
     }
   }
   .user {
@@ -342,6 +398,7 @@
   }
   footer {
     flex: none;
+    white-space: nowrap;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -357,6 +414,33 @@
   }
   footer a {
     color: inherit;
+  }
+  /* Where the long credit and date would wrap, the short credit and the
+     bare date; the links stay. */
+  .fshort {
+    display: none;
+  }
+  @media (max-width: 960px) {
+    .flong {
+      display: none;
+    }
+    .fshort {
+      display: inline;
+    }
+  }
+  @media (max-width: 560px) {
+    footer {
+      gap: 5px;
+      padding: 6px 8px;
+      font-size: 11px;
+    }
+  }
+  /* A short window: the under-construction notice takes the footer's place
+     (ConstructionNotice.svelte). */
+  @media (max-height: 500px) {
+    footer {
+      display: none;
+    }
   }
   /* ---- Theme (light/dark) bulb toggle --------------------------------- */
   .theme-toggle {

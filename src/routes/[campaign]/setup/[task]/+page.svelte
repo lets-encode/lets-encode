@@ -2,6 +2,7 @@
   import { commentAnchor, type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -12,7 +13,7 @@
   } from "$lib/commands.ts";
   import { workStage } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { readSidePanel, writeSidePanel } from "$lib/side-panels.ts";
+  import { readSidePanel } from "$lib/side-panels.ts";
   import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
   import type {
     MeasureBox,
@@ -42,8 +43,8 @@
   import { getVerovio, loadSnippet, renderPage } from "$lib/verovio-render.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import PanelIcon from "$lib/components/PanelIcon.svelte";
-  import PieceCommentsPanel from "$lib/components/PieceCommentsPanel.svelte";
+  import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
+  import TaskHeading from "$lib/components/TaskHeading.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskReview from "$lib/components/PreTaskReview.svelte";
@@ -235,6 +236,9 @@
   const repo = $derived(session.campaign.repo);
   const repoId = $derived(session.campaign.repoId);
   const tables = $derived(session.tables);
+  $effect(() => {
+    if (tables) recordCampaignTitle(campaign, tables.title);
+  });
   const viewer = $derived(session.viewer);
 
   // A count of 0, a blank, or anything non-numeric would emit a meter no
@@ -279,9 +283,9 @@
   ) => session.run(command, opts);
 
   // ------------------------------------------------------------- comments
-  // The piece's comments panel beside the tool. Posting and resolving refresh
-  // the tables only: a full reload would discard unsubmitted form values.
-  let commentsPanel = $state(readSidePanel("comments"));
+  // The side panel beside the tool. Posting and resolving refresh the tables
+  // only: a full reload would discard unsubmitted form values.
+  let sidePanel = $state(readSidePanel());
   // A comment anchor turns the reference score to its page and highlights the
   // range; the measure zones show so the range is visible.
   let refPreview = $state<ReturnType<typeof ScorePreview>>();
@@ -335,6 +339,12 @@
   // not recognised. The count stays editable until the piece holds notation,
   // since the setup submission rebuilds empty measures for it until then.
   const omr = $derived(data?.preparation === "omr");
+  // Below this width the form and the source pages take turns, chosen by a
+  // switch, instead of sharing the row.
+  const NARROW_DESK = 760;
+  let mainW = $state(0);
+  const narrow = $derived(mainW > 0 && mainW < NARROW_DESK);
+  let shownCol = $state<"form" | "pages">("form");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
   let recognition = $state<PieceRecognition | null>(null);
@@ -342,6 +352,20 @@
   $effect(() => {
     void taskId;
     recognition = null;
+  });
+
+  // While the task is held, its definition (and the recognition record this
+  // session made) is saved as a draft after each pause in editing.
+  $effect(() => {
+    if (!session.canEdit || staves.length === 0) return;
+    session.draft({
+      scoreDef,
+      ...(omr && recognition
+        ? {
+            omr: serializeOmrRecord(withClefCorrections(recognition.record)),
+          }
+        : {}),
+    });
   });
 
   /** Clef tokens of the form's staves for placing the boxes. */
@@ -506,10 +530,18 @@
     const task = taskId;
     try {
       runner.log.step("Reading the recognition record");
+      // A record saved with the work, or kept from an expired claim, comes
+      // before the campaign's.
+      const from = d.workSource ?? { owner, repo, ref: undefined };
       const existing =
         recognition?.record ??
         parseOmrRecord(
-          await f.getRepoFile(owner, repo, omrRecordPath(d.fragment)),
+          await f.getRepoFile(
+            from.owner,
+            from.repo,
+            omrRecordPath(d.fragment),
+            from.ref,
+          ),
         );
       const result = await recognisePiece({
         forge: f,
@@ -629,7 +661,7 @@
 </script>
 
 <svelte:head>
-  <title>Score setup · {campaign} · Let's Encode!</title>
+  <title>Score setup · {session.pieceName || campaign} · Let's Encode!</title>
 </svelte:head>
 
 {#if runner.busy && runner.overlay}
@@ -641,7 +673,7 @@
   />
 {/if}
 
-<div class="corrector">
+<div class="corrector sidehost">
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -693,12 +725,30 @@
       </div>
     </div>
   {:else if data}
-    <div class="main">
+    <div class="main" bind:clientWidth={mainW}>
       <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
-      <div class="desk">
-        <div class="formcol">
+      {#if narrow}
+        <div class="colswitch">
+          <div class="seg" role="group" aria-label="Shown column">
+            <button
+              type="button"
+              class:on={shownCol === "form"}
+              aria-pressed={shownCol === "form"}
+              onclick={() => (shownCol = "form")}>Setup</button
+            >
+            <button
+              type="button"
+              class:on={shownCol === "pages"}
+              aria-pressed={shownCol === "pages"}
+              onclick={() => (shownCol = "pages")}>Source pages</button
+            >
+          </div>
+        </div>
+      {/if}
+      <div class="desk" class:narrow>
+        <div class="formcol" class:hidden={narrow && shownCol !== "form"}>
           <form class="setup" onsubmit={(e) => e.preventDefault()}>
             <fieldset disabled={!canEdit}>
               <p class="grouphead">Staves</p>
@@ -968,7 +1018,7 @@
              clefs, key signature and meter are entered. Opens on the facsimile
              with the measure zones hidden: the setup is read off the source
              image, not the measure grid. -->
-        <div class="refcol">
+        <div class="refcol" class:hidden={narrow && shownCol !== "pages"}>
           <ScorePreview
             bind:this={refPreview}
             {owner}
@@ -977,25 +1027,7 @@
             initialPane="facs"
             initialZones={false}
             {anchor}
-          >
-            {#snippet trailing()}
-              <button
-                type="button"
-                aria-pressed={commentsPanel.open}
-                class="btn"
-                title={commentsPanel.open
-                  ? "Hide the comments panel with the task's controls"
-                  : "Show the comments panel with the task's controls"}
-                onclick={() => {
-                  commentsPanel.open = !commentsPanel.open;
-                  writeSidePanel("comments", { ...commentsPanel });
-                }}
-              >
-                <PanelIcon />
-                Comments
-              </button>
-            {/snippet}
-          </ScorePreview>
+          />
         </div>
       </div>
     </div>
@@ -1008,8 +1040,11 @@
           class="tbhead"
           title="Every encoding task of this piece waits for this setup."
         >
-          <h2 class="abtitle">Score setup</h2>
-          <code class="taskchip">{taskId}</code>
+          <TaskHeading
+            description="Score setup"
+            piece={session.pieceName}
+            task={taskId}
+          />
         </div>
         <div class="tbsection">
           <span class="abcount">
@@ -1065,13 +1100,13 @@
     {/snippet}
 
     {#if tables}
-      <PieceCommentsPanel
+      <TaskPageSidePanel
         {tables}
         {taskId}
         {viewer}
         {runner}
-        bind:panel={commentsPanel}
-        header={taskBox}
+        bind:panel={sidePanel}
+        {taskBox}
         onanchor={showAnchorFor}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
@@ -1108,9 +1143,9 @@
     background: var(--desk);
     box-shadow: var(--shadow-inset);
   }
-  /* The comments panel brings no outer spacing of its own; the score view's
-     host row provides it there. */
-  .corrector > :global(.cpwrap) {
+  /* The side panel brings no outer spacing of its own; the score view's
+     host row provides it there. Docked below the tool it spans the width. */
+  .corrector > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 12px 0;
   }
   .deskwrap {
@@ -1123,15 +1158,18 @@
   .main {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
   }
+  /* The form and the source pages start 12px below the navigation bar, on
+     the side panel's top edge. */
   .desk {
     flex: 1;
     min-height: 0;
     display: flex;
-    gap: 24px;
-    padding: 16px 24px;
+    gap: 16px;
+    padding: 12px 16px;
     box-sizing: border-box;
     overflow: hidden;
   }
@@ -1141,6 +1179,21 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
+    container-type: inline-size;
+  }
+  /* A narrow form: a staff row's clef and instrument fields take their own
+     lines' width, the line count, line and buttons wrap after them. */
+  @container (max-width: 520px) {
+    .staffrow {
+      flex-wrap: wrap;
+    }
+    .staffrow > .field:not(.narrow) {
+      flex: 1 1 140px;
+    }
+    .grouprow .field {
+      width: auto;
+      flex: 1 1 140px;
+    }
   }
   .refcol {
     flex: 1;
@@ -1151,6 +1204,26 @@
     border-radius: 10px;
     background: var(--card);
     overflow: hidden;
+  }
+  /* Narrow (NARROW_DESK): one column at a time; the hidden one stays
+     mounted so the preview keeps its page and zoom. */
+  .colswitch {
+    flex: none;
+    padding: 12px 16px 0;
+  }
+  .colswitch .seg {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .colswitch .seg > button {
+    justify-content: center;
+    min-height: 38px;
+  }
+  .desk.narrow {
+    padding-top: 10px;
+  }
+  .hidden {
+    display: none;
   }
   /* Banner styles are shared app-wide in ui.css. */
 
@@ -1183,13 +1256,14 @@
   }
   .grouprow {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
     gap: 10px;
     margin-bottom: 8px;
   }
   .grouprow .field {
     flex: none;
-    width: 180px;
+    width: 160px;
   }
   .grouprow .field.narrow {
     width: 88px;
@@ -1309,7 +1383,7 @@
 
   /* --------------------------------------------------------------- task box
      The task's status, actions and validation controls, pinned at the top of
-     the comments panel. The tint follows the panel's piece colour (--zone). */
+     the side panel. The tint follows the panel's piece colour (--zone). */
   .taskbox {
     background: var(--card);
     border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
@@ -1318,10 +1392,6 @@
     box-shadow: var(--shadow-sm);
   }
   .tbhead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-wrap: wrap;
     background: color-mix(in srgb, var(--zone) 10%, var(--card));
     border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
     padding: 9px 12px;
@@ -1339,19 +1409,6 @@
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--ink-faint);
-  }
-  .abtitle {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .taskchip {
-    font-size: 12px;
-    font-family: ui-monospace, Menlo, monospace;
-    background: var(--bg-tint);
-    border-radius: 5px;
-    padding: 2px 7px;
   }
   .abcount {
     font-size: 12.5px;

@@ -16,7 +16,7 @@
   }: {
     /** The task id whose run state renders, e.g. "T0002". */
     task: string;
-    /** Render as a full-width strip (task panel) instead of a card badge. */
+    /** Render as a full-width strip (side panel task box) instead of a card badge. */
     bar?: boolean;
     /** Render at the next-task card's text size. */
     large?: boolean;
@@ -25,53 +25,64 @@
   const entry = $derived(pendingVerdicts.forTask(task));
 </script>
 
-{#if entry}
-  <div class="runstate {entry.state}" class:bar class:large aria-live="polite">
-    {#if entry.state === "opening"}
-      <span class="spinner" aria-hidden="true"></span>
-      <span>opening the submission…</span>
-    {:else if entry.state === "processing"}
-      <span class="spinner" aria-hidden="true"></span>
-      <span
-        >processing
-        <a
-          href={entry.prUrl}
-          target="_blank"
-          rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
-        >…</span
-      >
-    {:else if entry.state === "accepted"}
-      <span class="mark" aria-hidden="true"
-        ><Icon name="check" size={12} /></span
-      >
-      <span>submission #{entry.prNumber} accepted</span>
-    {:else if entry.state === "timeout"}
-      <span class="mark" aria-hidden="true">…</span>
-      <span
-        ><a
-          href={entry.prUrl}
-          target="_blank"
-          rel="noreferrer"
-          onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
-        > is still being processed</span
-      >
-    {:else}
-      <span class="mark" aria-hidden="true"
-        ><Icon name="close" size={12} /></span
-      >
-      <span
-        >{entry.runFailed
-          ? `run for submission #${entry.prNumber} failed`
-          : entry.prNumber
-            ? `submission #${entry.prNumber} rejected`
-            : "submission failed"}</span
-      >
-    {/if}
-  </div>
-{/if}
+<!-- A live region that is always present, so a run state appearing in it
+     is announced; empty, it takes no room. -->
+<div class="live" aria-live="polite">
+  {#if entry}
+    <div class="runstate {entry.state}" class:bar class:large>
+      {#if entry.state === "opening"}
+        <span class="spinner" aria-hidden="true"></span>
+        <span>opening the submission…</span>
+      {:else if entry.state === "processing"}
+        <span class="spinner" aria-hidden="true"></span>
+        <span
+          >processing
+          <a
+            href={entry.prUrl}
+            target="_blank"
+            rel="noreferrer"
+            onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
+          >…</span
+        >
+      {:else if entry.state === "accepted"}
+        <span class="mark" aria-hidden="true"
+          ><Icon name="check" size={12} /></span
+        >
+        <span>submission #{entry.prNumber} accepted</span>
+      {:else if entry.state === "timeout"}
+        <span class="mark" aria-hidden="true">…</span>
+        <span
+          ><a
+            href={entry.prUrl}
+            target="_blank"
+            rel="noreferrer"
+            onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
+          > is still being processed</span
+        >
+      {:else}
+        <span class="mark" aria-hidden="true"
+          ><Icon name="close" size={12} /></span
+        >
+        <span
+          >{entry.runFailed
+            ? `run for submission #${entry.prNumber} failed`
+            : entry.prNumber
+              ? `submission #${entry.prNumber} rejected`
+              : "submission failed"}</span
+        >
+      {/if}
+    </div>
+  {/if}
+</div>
 
 <style>
+  .live:empty {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
   .runstate {
     display: flex;
     align-items: center;

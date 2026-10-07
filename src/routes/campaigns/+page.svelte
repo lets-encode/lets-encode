@@ -21,7 +21,7 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
   import {
     handle,
     isPreTask,
@@ -44,7 +44,7 @@
   } from "$lib/campaign-stats.ts";
   import CampaignRow from "$lib/components/CampaignRow.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
-  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
+  import AbandonButton from "$lib/components/AbandonButton.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -236,9 +236,9 @@
       t.task,
       stats.find((x) => x.name === t.campaignSlug)?.repoId,
     );
-  const giveBack = (t: MyTask) =>
+  const abandon = (t: MyTask) =>
     run(t, (c) =>
-      invoke(commands.giveBack, { task_id: t.task, subtask_id: t.subtask }, c),
+      invoke(commands.abandon, { task_id: t.task, subtask_id: t.subtask }, c),
     );
 
   // Claim a campaign row's suggested next task. Encoding claims open
@@ -286,15 +286,9 @@
     const e = elapsed(iso);
     return e === "now" ? "just now" : `${e} ago`;
   };
-  const expiresIn = (t: MyTask): string => {
-    if (!t.expiresAt) return "";
-    const ms = Date.parse(t.expiresAt) - Date.now();
-    if (!Number.isFinite(ms)) return "";
-    if (ms <= 0) return "claim has gone stale";
-    const days = Math.round(ms / (24 * 3600_000));
-    if (days >= 2) return `claim expires in ${days} days`;
-    const hours = Math.max(1, Math.round(ms / 3600_000));
-    return `claim expires in ${hours} h`;
+  const claimExpiry = (t: MyTask): string => {
+    const e = expiresIn(t.expiresAt);
+    return e && `claim ${e}`;
   };
 
   // ------------------------------------------------------------- the list
@@ -370,7 +364,7 @@
       <div class="rows">
         {#each fix as t (t.campaignSlug + t.task)}
           <a class="row attention" href={taskHref(t.campaignSlug, t.task)}>
-            <span class="pill red">Fix requested</span>
+            <span class="pill red">Changes requested</span>
             <span class="rowtitle">{taskLine(t)}</span>
             {#if t.failComment}
               <span class="excerpt"
@@ -433,8 +427,8 @@
             <span class="rowtitle">{taskLine(t)}</span>
             <span class="pill blue">encoding</span>
             <span class="rowmeta"
-              >claimed {ago(t.claimedAt)}{expiresIn(t)
-                ? ` · ${expiresIn(t)}`
+              >claimed {ago(t.claimedAt)}{claimExpiry(t)
+                ? ` · ${claimExpiry(t)}`
                 : ""}</span
             >
             <span class="spacer"></span>
@@ -455,9 +449,9 @@
                 >Open in mei-friend <Icon name="external" /></button
               >
             {/if}
-            <GiveBackButton
+            <AbandonButton
               disabled={runner.busy || processing(t)}
-              ongiveback={() => giveBack(t)}
+              onabandon={() => abandon(t)}
             />
           </div>
         {/each}
@@ -466,14 +460,15 @@
             <span class="rowtitle">{taskLine(t)}</span>
             <span class="pill grey">reviewing</span>
             <span class="rowmeta"
-              >claimed {ago(t.claimedAt)}{expiresIn(t)
-                ? ` · ${expiresIn(t)}`
+              >claimed {ago(t.claimedAt)}{claimExpiry(t)
+                ? ` · ${claimExpiry(t)}`
                 : ""}</span
             >
             <span class="spacer"></span>
-            <GiveBackButton
+            <AbandonButton
+              review
               disabled={runner.busy || processing(t)}
-              ongiveback={() => giveBack(t)}
+              onabandon={() => abandon(t)}
             />
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
               >Details <Icon name="arrow-right" size={12} /></a

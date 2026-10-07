@@ -41,8 +41,12 @@ import {
   TASK_PATH,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
-import { reapLocks } from "./campaign-reaper.ts";
-import { resetTaskRows, resolveCommentThread } from "./campaign-submit.ts";
+import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
+import {
+  resetTaskRows,
+  resolveCommentThread,
+  sideFilesOf,
+} from "./campaign-submit.ts";
 import { pageOfLocator, workStage } from "./campaign-graph.ts";
 import type {
   TaskRow,
@@ -65,8 +69,16 @@ import type {
   ParsedFacsimile,
   ScoreDefModel,
 } from "./mei-facsimile.ts";
-import { pieceFieldForPath, pieceKindForPath } from "./coordinator-policy.ts";
-import { splicePage, splicePageSpan } from "./mei-page-splice.ts";
+import {
+  keptWorkBranch,
+  pieceFieldForPath,
+  pieceKindForPath,
+} from "./coordinator-policy.ts";
+import {
+  firstElementOfPage,
+  splicePage,
+  splicePageSpan,
+} from "./mei-page-splice.ts";
 import { resolveFacsimileImageUrls } from "./facsimile-images.ts";
 import { WorkflowRunWatch } from "./run-watch.ts";
 import { checkMei } from "./mei-check.ts";
@@ -376,6 +388,93 @@ async function cleanupForkHeadBranch(
       `Could not delete ${head.branch} in ${head.owner}/${head.repo}: ${(e as Error).message}`,
     );
   }
+}
+
+// Delete the viewer's task branch `encode-<task_id>` — in the campaign repo
+// with push access, in their fork otherwise. Non-fatal: a leftover branch is
+// deleted by the next claim of the task.
+async function deleteTaskBranch(
+  ctx: CommandContext,
+  task_id: string,
+): Promise<void> {
+  try {
+    const workRepo = await workRepoOf(ctx);
+    await ctx.forge.deleteBranch(
+      workRepo.owner,
+      workRepo.repo,
+      `encode-${task_id}`,
+    );
+  } catch (e) {
+    console.warn(`Could not delete encode-${task_id}: ${(e as Error).message}`);
+  }
+}
+
+// The repo the viewer's task branches live in: the campaign repo with push
+// access, their fork otherwise (a repo cannot be forked by its owner).
+async function workRepoOf(
+  ctx: CommandContext,
+): Promise<{ owner: string; repo: string }> {
+  const { forge: f, owner, repo } = ctx;
+  const { canPush } = await f.getRepoHead(owner, repo);
+  return canPush ? { owner, repo } : f.ensureFork(owner, repo);
+}
+
+/** Where a task's files are read from: a repo and the ref within it. */
+export interface FileSource {
+  owner: string;
+  repo: string;
+  ref: string;
+}
+
+// Where the viewer's work on a task stands: their task branch
+// `encode-<task_id>` when it carries the task's score, else the work kept
+// from expired claims (campaign branch `wip-<task_id>`) when there is any;
+// null when the work starts from `main`.
+async function workSource(
+  ctx: CommandContext,
+  task: TaskRow,
+): Promise<FileSource | null> {
+  const { forge: f, owner, repo } = ctx;
+  const workRepo = await workRepoOf(ctx);
+  const own = { ...workRepo, ref: `encode-${task.task_id}` };
+  if (
+    (await f.getRepoFile(own.owner, own.repo, task.fragment, own.ref)) != null
+  )
+    return own;
+  const kept = { owner, repo, ref: keptWorkBranch(task.task_id) };
+  if ((await f.getRepoFile(owner, repo, task.fragment, kept.ref)) != null)
+    return kept;
+  return null;
+}
+
+// Commit the work kept from the task's expired claims (`wip-<task_id>`) onto
+// the viewer's fresh task branch: the score and the side files it carries.
+// Returns whether there was any.
+async function seedFromKeptWork(
+  ctx: CommandContext,
+  task: TaskRow,
+  workRepo: { owner: string; repo: string },
+  ref: string,
+): Promise<boolean> {
+  const { forge: f, owner, repo } = ctx;
+  const paths = [task.fragment, ...sideFilesOf(task)];
+  const contents = await Promise.all(
+    paths.map((path) =>
+      f.getRepoFile(owner, repo, path, keptWorkBranch(task.task_id)),
+    ),
+  );
+  const files = paths.flatMap((path, i) =>
+    contents[i] == null ? [] : [{ path, content: contents[i]! }],
+  );
+  if (files.length === 0) return false;
+  await f.commitFiles(
+    workRepo.owner,
+    workRepo.repo,
+    files,
+    `Let's Encode: continue ${task.task_id} from kept work`,
+    { branch: ref },
+  );
+  return true;
 }
 
 // Map the automation's verdict on a PR to a result banner: a rejection is an
@@ -719,7 +818,8 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
       };
     }
     const state = parseStateCsv(stateCsv);
-    const locks = parseLockCsv(lockCsv);
+    // A lock past its `expires` no longer holds the task.
+    const locks = liveLocks(parseLockCsv(lockCsv));
     const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
     const comments = commentCsv ? parseCommentCsv(commentCsv) : [];
     return {
@@ -762,11 +862,13 @@ const claimValidation: CommandDef<
     claimAndWait(ctx, task_id, subtask_id, "validation", envelope),
 };
 
-// Give a held claim back: a PR that removes the viewer's lock row (an encoding
+// Abandon a held claim: a PR that removes the viewer's lock row (an encoding
 // claim on the task row, a review claim on a subtask row). The task's state is
 // unchanged, so the task is open to claim again once the release is accepted.
-const giveBack: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
-  id: "campaign.giveBack",
+// An accepted encoding release deletes the viewer's task branch, which holds
+// their unsubmitted changes.
+const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
+  id: "campaign.abandon",
   version: 1,
   log: "pr",
   async run({ task_id, subtask_id }, ctx, envelope) {
@@ -774,11 +876,14 @@ const giveBack: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
     const kind = subtask_id ? "validation" : "encoding";
     const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
     try {
-      ctx.progress({ step: "Giving back the task…" });
+      ctx.progress({ step: "Abandoning the task…" });
       await muteOnce(ctx);
       const locks = parseLockCsv(
         (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
       );
+      const { removed } = reapLocks({ locks, now: new Date().toISOString() });
+      if (claimRanOut(removed, { task_id, subtask_id, kind }, viewer))
+        return { error: `Your claim on ${target} has run out.` };
       const kept = locks.filter(
         (l) =>
           !(
@@ -790,20 +895,20 @@ const giveBack: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
       );
       if (kept.length === locks.length)
         return { error: `You hold no claim on ${target}.` };
-      const body = `Gives back ${target} (${kind === "validation" ? "review" : kind}) by ${viewerLogin}. Opened from the campaign console.`;
+      const body = `Abandons ${target} (${kind === "validation" ? "review" : kind}) by ${viewerLogin}. Opened from the campaign console.`;
       const pr = await f.openChangePr(owner, repo, {
         branch: `release-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
         files: [{ path: LOCK_PATH, content: serializeLockCsv(kept) }],
-        message: `Give back ${target} (${kind})`,
-        title: `Give back ${target} (${kind})`,
+        message: `Abandon ${target} (${kind})`,
+        title: `Abandon ${target} (${kind})`,
         body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
       });
-      console.log("[giveback] release PR opened", pr.number, pr.html_url);
+      console.log("[abandon] release PR opened", pr.number, pr.html_url);
       let verdict: PrProcessingResult;
       try {
         verdict = await waitForPrProcessed(ctx, pr);
       } catch (e) {
-        console.warn("[giveback] verdict poll failed:", (e as Error).message);
+        console.warn("[abandon] verdict poll failed:", (e as Error).message);
         verdict = { state: "timeout" };
       }
       const res = verdictResult(
@@ -812,11 +917,11 @@ const giveBack: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         pr.html_url,
         `Release #${pr.number} opened for ${target}.`,
       );
-      return res.ok && !res.warn
-        ? { ...res, message: `You gave back ${target}.` }
-        : res;
+      if (!res.ok || res.warn) return res;
+      if (kind === "encoding") await deleteTaskBranch(ctx, task_id);
+      return { ...res, message: `You abandoned ${target}.` };
     } catch (e) {
-      return { error: `Giving back the task failed: ${(e as Error).message}` };
+      return { error: `Abandoning the task failed: ${(e as Error).message}` };
     }
   },
 };
@@ -854,7 +959,7 @@ const openEditor: CommandDef<
       if (!taskDef || !fragment || !task)
         return { error: `Unknown task ${task_id}.` };
 
-      const locks = parseLockCsv(lockCsv ?? "");
+      const locks = liveLocks(parseLockCsv(lockCsv ?? ""));
       const mine = locks.some(
         (l) =>
           l.task_id === task_id &&
@@ -866,12 +971,8 @@ const openEditor: CommandDef<
       if (claiming) {
         // Someone else's active claim would reject this one; stop before the
         // task branch, which may hold their work, is touched.
-        const { kept } = reapLocks({
-          locks,
-          now: new Date().toISOString(),
-        });
         if (
-          kept.some(
+          locks.some(
             (l) =>
               l.task_id === task_id &&
               l.subtask_id === "" &&
@@ -912,9 +1013,6 @@ const openEditor: CommandDef<
           pr.html_url,
         );
         prUrl = pr.html_url;
-        // A new claim starts from the current score: the branch is deleted
-        // now, so a claim accepted after a timeout finds it fresh as well.
-        await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
         const verdict = await waitForPrProcessed(ctx, pr);
         if (verdict.state === "timeout") {
           // The claim is followed in the background; its controls hold on
@@ -953,6 +1051,11 @@ const openEditor: CommandDef<
             prUrl,
           };
         }
+        // A new claim starts from the current score or the work kept from
+        // expired claims. The branch is deleted only once the claim is
+        // accepted: until then, an expired claim's work on it may still be
+        // being kept.
+        await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
         claimMessage = `${res.message} `;
       }
 
@@ -988,6 +1091,14 @@ const openEditor: CommandDef<
           "=>",
           fresh,
         );
+      }
+      // A fresh branch continues from the work kept from expired claims of
+      // the task, when there is any.
+      if (fresh && (await seedFromKeptWork(ctx, taskDef, workRepo, ref))) {
+        fresh = false;
+        ctx.progress({
+          step: "Continuing from the unsubmitted work of an earlier claim.",
+        });
       }
 
       // A page task of an OMR-prepared piece starts from a draft of its page
@@ -1057,6 +1168,28 @@ const openEditor: CommandDef<
         le_taskid: task_id,
         le_base: base,
       });
+      // mei-friend opens at page 1; `select` makes it page to the given
+      // element. A page task selects the first note (else measure) of its page
+      // in the file mei-friend opens. Without either, mei-friend opens at page 1.
+      // In speed mode mei-friend does not page to the selected element on
+      // load, so `speed=false` accompanies it.
+      if (pageNo) {
+        try {
+          const mei = await f.getRepoFile(
+            workRepo.owner,
+            workRepo.repo,
+            fragment,
+            ref,
+          );
+          const elementId = mei && firstElementOfPage(mei, taskDef.locator);
+          if (elementId) {
+            params.set("select", elementId);
+            params.set("speed", "false");
+          } else console.log("[editor] nothing to select on", taskDef.locator);
+        } catch (e) {
+          console.log("[editor] could not read the page's first element", e);
+        }
+      }
       const url = `${meiFriendUrl}/?${params}`;
       return {
         ok: true,
@@ -1220,10 +1353,11 @@ const submitValidation: CommandDef<
     }
     if (verdict === "fail" && !comment?.body.trim()) {
       return {
-        error: "A fail needs a comment saying why — nothing was submitted.",
+        error:
+          "A change request needs a note saying what to change — nothing was submitted.",
       };
     }
-    const label = `Review of ${task_id}/${subtask_id} (${verdict})`;
+    const label = `Review of ${task_id}/${subtask_id} (${verdict === "pass" ? "approved" : "changes requested"})`;
     return openAndFinishInBackground(
       ctx,
       label,
@@ -1261,6 +1395,7 @@ const submitValidation: CommandDef<
                 resolved: "",
                 parent_id: "",
                 body: comment!.body.trim(),
+                fragment: "",
               },
             ]),
           });
@@ -1286,15 +1421,125 @@ const submitValidation: CommandDef<
   },
 };
 
+// Switch from reviewing to editing: a PR that removes the viewer's review
+// lock and appends the fail comment saying what the edit is for. The
+// automation records it as a fail and a send-back in one step and gives the
+// viewer the task's encoding claim. Waits for the verdict, since the edit
+// starts from it.
+const reviewEdit: CommandDef<
+  { task_id: string; subtask_id: string; comment: FailComment },
+  Result
+> = {
+  id: "campaign.reviewEdit",
+  version: 1,
+  log: "pr",
+  envelopeInput: ({ task_id, subtask_id }) => ({ task_id, subtask_id }),
+  async run({ task_id, subtask_id, comment }, ctx, envelope) {
+    const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
+    const target = `${task_id}/${subtask_id}`;
+    if (!comment.body.trim())
+      return {
+        error:
+          "Switching to editing needs a note saying why — nothing was submitted.",
+      };
+    try {
+      ctx.progress({ step: "Switching to editing…" });
+      await muteOnce(ctx);
+      const [lockCsv, commentCsv] = await Promise.all([
+        f.getRepoFile(owner, repo, LOCK_PATH),
+        f.getRepoFile(owner, repo, COMMENT_PATH),
+      ]);
+      const locks = parseLockCsv(lockCsv ?? "");
+      const mine = (l: LockRow) =>
+        l.task_id === task_id &&
+        l.subtask_id === subtask_id &&
+        l.kind === "validation" &&
+        l.user_id === viewer;
+      const { removed } = reapLocks({ locks, now: new Date().toISOString() });
+      if (removed.some(mine))
+        return { error: `Your review claim on ${target} has run out.` };
+      if (!locks.some(mine))
+        return { error: `You hold no review claim on ${target}.` };
+      const body = `Switches the review of ${target} by ${viewerLogin} to editing. Opened from the campaign console.`;
+      const pr = await f.openChangePr(owner, repo, {
+        branch: `review-edit-${task_id}-${rand()}`,
+        files: [
+          {
+            path: LOCK_PATH,
+            content: serializeLockCsv(locks.filter((l) => !mine(l))),
+          },
+          // The id, author and timestamp are the Action's to write.
+          {
+            path: COMMENT_PATH,
+            content: appendComments(commentCsv ?? "", [
+              {
+                comment_id: "",
+                task_id,
+                subtask_id,
+                kind: "fail",
+                page: comment.page,
+                measure_start: comment.measure_start,
+                measure_end: comment.measure_end,
+                author_id: "",
+                timestamp: "",
+                resolved: "",
+                parent_id: "",
+                body: comment.body.trim(),
+                fragment: "",
+              },
+            ]),
+          },
+        ],
+        message: `Edit ${task_id} from review`,
+        title: `Edit ${task_id} from review`,
+        body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+      });
+      console.log("[review-edit] PR opened", pr.number, pr.html_url);
+      let verdict: PrProcessingResult;
+      try {
+        verdict = await waitForPrProcessed(ctx, pr);
+      } catch (e) {
+        console.warn(
+          "[review-edit] verdict poll failed:",
+          (e as Error).message,
+        );
+        verdict = { state: "timeout" };
+      }
+      const res = verdictResult(
+        verdict,
+        pr.number,
+        pr.html_url,
+        `Review edit #${pr.number} opened for ${target}.`,
+      );
+      if (!res.ok || res.warn) return res;
+      // The edit starts from the reviewed submission, not from an earlier
+      // branch of the viewer's.
+      await deleteTaskBranch(ctx, task_id);
+      return { ...res, message: `You now edit ${task_id}.` };
+    } catch (e) {
+      return { error: `Switching to editing failed: ${(e as Error).message}` };
+    }
+  },
+};
+
 // Open a PR that appends one discussion comment (comment / reply)
 // to comment.csv. The Action re-authors id, author and timestamp.
-/** The submitComment input for a task-level comment, anchored at `at` when given. */
+/** A measure anchor; `fragment` names the piece on a campaign comment. */
+export interface CommentAnchorInput {
+  page: string;
+  measure_start: string;
+  measure_end: string;
+  fragment?: string;
+}
+
+/** The submitComment input for a task comment, or a campaign comment when
+    `task_id` is '', anchored at `at` when given. */
 export const commentInput = (
   task_id: string,
   kind: string,
   body: string,
   parent_id: string,
-  at?: { page: string; measure_start: string; measure_end: string },
+  at?: CommentAnchorInput,
 ) => ({
   task_id,
   subtask_id: "",
@@ -1303,6 +1548,7 @@ export const commentInput = (
   page: at?.page ?? "",
   measure_start: at?.measure_start ?? "",
   measure_end: at?.measure_end ?? "",
+  fragment: at?.fragment ?? "",
   parent_id,
 });
 
@@ -1315,6 +1561,7 @@ const submitComment: CommandDef<
     page: string;
     measure_start: string;
     measure_end: string;
+    fragment: string;
     parent_id: string;
   },
   Result
@@ -1333,9 +1580,10 @@ const submitComment: CommandDef<
     const { forge: f, owner, repo } = ctx;
     if (!input.body.trim())
       return { error: "The comment is empty — nothing was sent." };
+    const target = input.task_id || "the campaign";
     return openAndFinishInBackground(
       ctx,
-      `Comment on ${input.task_id}`,
+      `Comment on ${target}`,
       `comment:${input.task_id}`,
       async () => {
         await muteOnce(ctx);
@@ -1355,14 +1603,15 @@ const submitComment: CommandDef<
             resolved: "",
             parent_id: input.parent_id,
             body: input.body.trim(),
+            fragment: input.fragment,
           },
         ]);
-        const body = `Adds a ${input.kind} on ${input.task_id}. Opened from the campaign console.`;
+        const body = `Adds a ${input.kind} on ${target}. Opened from the campaign console.`;
         const pr = await f.openChangePr(owner, repo, {
-          branch: `comment-${input.task_id}-${rand()}`,
+          branch: `comment-${input.task_id || "campaign"}-${rand()}`,
           files: [{ path: COMMENT_PATH, content }],
-          message: `Comment on ${input.task_id} (${input.kind})`,
-          title: `Comment on ${input.task_id} (${input.kind})`,
+          message: `Comment on ${target} (${input.kind})`,
+          title: `Comment on ${target} (${input.kind})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         });
         console.log("[comment] comment PR opened", pr.number, pr.html_url);
@@ -1404,7 +1653,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
       `resolve:${comment_id}`,
       async () => {
         await muteOnce(ctx);
-        const body = `Resolves comment ${comment_id} on ${row.task_id}. Opened from the campaign console.`;
+        const body = `Resolves comment ${comment_id} on ${row.task_id || "the campaign"}. Opened from the campaign console.`;
         const pr = await f.openChangePr(owner, repo, {
           branch: `resolve-${comment_id}-${rand()}`,
           files: [
@@ -1619,6 +1868,11 @@ export interface FacsimileTaskData {
   holdsLock: boolean;
   /** Who holds the task's active encoding lock ('' when unclaimed). */
   encodingLockUser: string;
+  /** When that lock runs out (ISO); '' when unclaimed. */
+  encodingLockExpires: string;
+  /** Where the score was read from when not from `main`: the holder's saved
+      work or the work kept from expired claims. */
+  workSource: FileSource | null;
   /** The incomplete task this one waits for (task.csv depends_on); '' when none. */
   blockedBy: string;
   /** Who submitted the task's work ('' while unsubmitted). Encoders cannot validate it. */
@@ -1633,6 +1887,8 @@ export interface FacsimileTaskData {
     status: string;
     /** Who holds the subtask's active validation lock ('' when unclaimed). */
     lockUser: string;
+    /** When that lock runs out (ISO); '' when unclaimed. */
+    lockExpires: string;
     /** The recorded final verdicts (`pass`/`fail` with author and timestamp), in slot order. */
     verdicts: { verdict: string; user: string; ts: string }[];
     /** Validation slots still empty (claimable while > active locks). */
@@ -1662,10 +1918,30 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     const preparation =
       pieceFieldForPath(configYaml, task.fragment, "preparation") ??
       "measure-detection";
+    const locks = liveLocks(parseLockCsv(lockCsv ?? ""));
+    const encodingLock = locks.find(
+      (l) =>
+        l.task_id === task_id && l.subtask_id === "" && l.kind === "encoding",
+    );
+    const holdsLock = viewer !== "" && encodingLock?.user_id === viewer;
+    const state = parseStateCsv(stateCsv ?? "");
+    const taskState = findRow(state.rows, task_id, "");
+    // The claim holder's editor opens on their saved work, else on the work
+    // kept from expired claims, else on the campaign's score.
+    const source =
+      holdsLock && taskState?.status === "encoding_required"
+        ? await workSource(ctx, task)
+        : null;
+    const from = source ?? { owner, repo, ref: undefined };
     const [mei, corrected] = await Promise.all([
-      f.getRepoFile(owner, repo, task.fragment),
+      f.getRepoFile(from.owner, from.repo, task.fragment, from.ref),
       preparation === "omr"
-        ? f.getRepoFile(owner, repo, correctedLayoutPath(task.fragment))
+        ? f.getRepoFile(
+            from.owner,
+            from.repo,
+            correctedLayoutPath(task.fragment),
+            from.ref,
+          )
         : null,
     ]);
     if (mei == null) throw new Error(`Could not read ${task.fragment}.`);
@@ -1679,14 +1955,6 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       task.fragment,
       model.pages.map((page) => page.image),
     );
-    const locks = parseLockCsv(lockCsv ?? "");
-    const encodingLock = locks.find(
-      (l) =>
-        l.task_id === task_id && l.subtask_id === "" && l.kind === "encoding",
-    );
-    const holdsLock = viewer !== "" && encodingLock?.user_id === viewer;
-    const state = parseStateCsv(stateCsv ?? "");
-    const taskState = findRow(state.rows, task_id, "");
     const blockedBy =
       task.depends_on &&
       findRow(state.rows, task.depends_on, "")?.status !== "completed"
@@ -1698,17 +1966,20 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     const cells = subRow
       ? state.validationColumns.map((c) => subRow[c] ?? "")
       : [];
+    const validationLock = subRow
+      ? locks.find(
+          (l) =>
+            l.task_id === task_id &&
+            l.subtask_id === subRow.subtask_id &&
+            l.kind === "validation",
+        )
+      : undefined;
     const validation = subRow
       ? {
           subtask_id: subRow.subtask_id,
           status: subRow.status,
-          lockUser:
-            locks.find(
-              (l) =>
-                l.task_id === task_id &&
-                l.subtask_id === subRow.subtask_id &&
-                l.kind === "validation",
-            )?.user_id ?? "",
+          lockUser: validationLock?.user_id ?? "",
+          lockExpires: validationLock?.expires ?? "",
           verdicts: cells.filter(isFinalValidation).map((cell) => {
             const [verdict, user, ts] = cell.split("|");
             return { verdict, user, ts };
@@ -1726,6 +1997,8 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       status: taskState?.status ?? "",
       holdsLock,
       encodingLockUser: encodingLock?.user_id ?? "",
+      encodingLockExpires: encodingLock?.expires ?? "",
+      workSource: source,
       blockedBy,
       encoder: taskState?.encoder ?? "",
       allowSelfValidation: configFlag(configYaml, "allow_self_validation"),
@@ -1744,8 +2017,15 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
   id: "campaign.claimTask",
   version: 1,
   log: "pr",
-  run: ({ task_id }, ctx, envelope) =>
-    claimAndWait(ctx, task_id, "", "encoding", envelope),
+  async run({ task_id }, ctx, envelope) {
+    const result = await claimAndWait(ctx, task_id, "", "encoding", envelope);
+    // A new claim starts from the current score or the work kept from
+    // expired claims, never from a branch of an earlier claim. The branch is
+    // deleted only once the claim is accepted: until then, an expired claim's
+    // work on it may still be being kept.
+    if (result.ok && !result.warn) await deleteTaskBranch(ctx, task_id);
+    return result;
+  },
 };
 
 // Check and build the rewritten score, then open its PR in the background;
@@ -1763,6 +2043,46 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // later. Its tight measure, staff and grand-staff boxes go to
 // `layout-corrected.json`, and the score is left out of the pull request when
 // only those boxes changed.
+// The score a measure or layout correction's pages amount to, built on the
+// campaign's current score (`current`), and for a layout correction its
+// corrected boxes.
+async function facsimileScore(
+  ctx: CommandContext,
+  task: TaskRow,
+  pages: PageModel[],
+  layout: boolean,
+): Promise<{ current: string; content: string; corrected: string | null }> {
+  const { forge: f, owner, repo } = ctx;
+  const current = await f.getRepoFile(owner, repo, task.fragment);
+  if (current == null) throw new Error(`Could not read ${task.fragment}.`);
+  const parsed = parseFacsimileMei(current);
+  return {
+    current,
+    content: buildFacsimileMei(
+      { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
+      { withBreaks: true, emptyMeasures: layout, padZones: layout },
+    ),
+    corrected: layout ? correctedLayoutJson(pages) : null,
+  };
+}
+
+// A side file of the viewer's saved work (or of the work kept from expired
+// claims) that differs from the campaign's; null when there is none.
+async function savedSideFile(
+  ctx: CommandContext,
+  task: TaskRow,
+  path: string,
+): Promise<string | null> {
+  const { forge: f, owner, repo } = ctx;
+  const source = await workSource(ctx, task);
+  if (!source) return null;
+  const [saved, campaign] = await Promise.all([
+    f.getRepoFile(source.owner, source.repo, path, source.ref),
+    f.getRepoFile(owner, repo, path),
+  ]);
+  return saved != null && saved !== campaign ? saved : null;
+}
+
 async function submitFacsimile(
   ctx: CommandContext,
   task_id: string,
@@ -1775,20 +2095,22 @@ async function submitFacsimile(
   try {
     await muteOnce(ctx);
     const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
-    const fragment = findRow(
-      parseTaskCsv(taskCsv ?? ""),
-      task_id,
-      "",
-    )?.fragment;
-    if (!fragment) return { error: `Unknown task ${task_id}.` };
-    const current = await f.getRepoFile(owner, repo, fragment);
-    if (current == null) return { error: `Could not read ${fragment}.` };
-    const parsed = parseFacsimileMei(current);
-    const content = buildFacsimileMei(
-      { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
-      { withBreaks: true, emptyMeasures: layout, padZones: layout },
+    const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+    if (!task) return { error: `Unknown task ${task_id}.` };
+    const fragment = task.fragment;
+    const { current, content, corrected } = await facsimileScore(
+      ctx,
+      task,
+      pages,
+      layout,
     );
-    const corrected = layout ? correctedLayoutJson(pages) : null;
+    // The layout model's raw output from an earlier session of the claim
+    // was saved with the work.
+    const rawLayoutJson = rawLayout
+      ? JSON.stringify(rawLayout, null, "\t") + "\n"
+      : layout
+        ? await savedSideFile(ctx, task, layoutRecordPath(fragment))
+        : null;
     const correctedChanged =
       corrected !== null &&
       corrected !==
@@ -1820,11 +2142,8 @@ async function submitFacsimile(
     if (correctedChanged) {
       files.push({ path: correctedLayoutPath(fragment), content: corrected! });
     }
-    if (rawLayout) {
-      files.push({
-        path: layoutRecordPath(fragment),
-        content: JSON.stringify(rawLayout, null, "\t") + "\n",
-      });
+    if (rawLayoutJson) {
+      files.push({ path: layoutRecordPath(fragment), content: rawLayoutJson });
     }
     return openAndFinishInBackground(
       ctx,
@@ -1899,6 +2218,54 @@ const submitOmrLayout: CommandDef<
     submitFacsimile(ctx, task_id, pages, envelope, true, layout),
 };
 
+// The score a score setup's definition amounts to, built on the campaign's
+// current score (`current`) as described at submitScoreSetup.
+async function setupScore(
+  ctx: CommandContext,
+  task: TaskRow,
+  scoreDef: ScoreDefModel,
+): Promise<{ current: string; content: string }> {
+  const { forge: f, owner, repo } = ctx;
+  const fragment = task.fragment;
+  const [current, configYaml] = await Promise.all([
+    f.getRepoFile(owner, repo, fragment),
+    f.getRepoFile(owner, repo, CONFIG_PATH),
+  ]);
+  if (current == null) throw new Error(`Could not read ${fragment}.`);
+  const parsed = parseFacsimileMei(current);
+  const omr = pieceFieldForPath(configYaml, fragment, "preparation") === "omr";
+  const content =
+    omr && hasNotation(current)
+      ? replaceScoreDef(current, scoreDef)
+      : omr
+        ? buildFacsimileMei(
+            {
+              headXml: parsed.headXml,
+              scoreDef,
+              pages: withCorrectedLayout(
+                parsed.pages,
+                await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)),
+              ),
+            },
+            {
+              withBreaks: parsed.hasBreaks,
+              emptyMeasures: true,
+              padZones: true,
+            },
+          )
+        : pieceKindForPath(configYaml, fragment) === "physical-only"
+          ? buildBlankScoreMei(
+              parsed.headXml,
+              (current.match(/<pb\b/g) ?? []).length,
+              scoreDef,
+            )
+          : buildFacsimileMei(
+              { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
+              { withBreaks: parsed.hasBreaks },
+            );
+  return { current, content };
+}
+
 // Score setup: submit the piece's initial score definition — staves with their
 // clefs and instrument labels, key signature and meter — by rebuilding the
 // score around it. A facsimile piece is rebuilt at the stage it is already at,
@@ -1925,61 +2292,21 @@ const submitScoreSetup: CommandDef<
     keysig: scoreDef.keysig,
     meter: scoreDef.meterSym || `${scoreDef.meterCount}/${scoreDef.meterUnit}`,
   }),
-  async run({ task_id, scoreDef, omr: record }, ctx, envelope) {
+  async run({ task_id, scoreDef, omr: given }, ctx, envelope) {
     const { forge: f, owner, repo } = ctx;
     try {
       await muteOnce(ctx);
-      const [taskCsv, configYaml] = await Promise.all([
-        f.getRepoFile(owner, repo, TASK_PATH),
-        f.getRepoFile(owner, repo, CONFIG_PATH),
-      ]);
-      const fragment = findRow(
-        parseTaskCsv(taskCsv ?? ""),
-        task_id,
-        "",
-      )?.fragment;
-      if (!fragment) return { error: `Unknown task ${task_id}.` };
-      const current = await f.getRepoFile(owner, repo, fragment);
-      if (current == null) return { error: `Could not read ${fragment}.` };
-      const parsed = parseFacsimileMei(current);
-      const omr =
-        pieceFieldForPath(configYaml, fragment, "preparation") === "omr";
-      const content =
-        omr && hasNotation(current)
-          ? replaceScoreDef(current, scoreDef)
-          : omr
-            ? buildFacsimileMei(
-                {
-                  headXml: parsed.headXml,
-                  scoreDef,
-                  pages: withCorrectedLayout(
-                    parsed.pages,
-                    await f.getRepoFile(
-                      owner,
-                      repo,
-                      correctedLayoutPath(fragment),
-                    ),
-                  ),
-                },
-                {
-                  withBreaks: parsed.hasBreaks,
-                  emptyMeasures: true,
-                  padZones: true,
-                },
-              )
-            : pieceKindForPath(configYaml, fragment) === "physical-only"
-              ? buildBlankScoreMei(
-                  parsed.headXml,
-                  (current.match(/<pb\b/g) ?? []).length,
-                  scoreDef,
-                )
-              : buildFacsimileMei(
-                  { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
-                  { withBreaks: parsed.hasBreaks },
-                );
+      const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
+      const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+      if (!task) return { error: `Unknown task ${task_id}.` };
+      const fragment = task.fragment;
+      const { current, content } = await setupScore(ctx, task, scoreDef);
       const recordPath = omrRecordPath(fragment);
+      // A recognition record from an earlier session of the claim was saved
+      // with the work.
+      const record = given ?? (await savedSideFile(ctx, task, recordPath));
       const recordChanged =
-        record !== undefined &&
+        record != null &&
         record !== (await f.getRepoFile(owner, repo, recordPath));
       // A no-op would open an empty PR the path-filtered caller never runs;
       // guard against that rather than leaving the console polling forever.
@@ -2025,11 +2352,96 @@ const submitScoreSetup: CommandDef<
   },
 };
 
+/** A pre-task editor's state, as saveDraft takes it. */
+export type DraftInput = {
+  task_id: string;
+  /** A measure or layout correction's pages. */
+  pages?: PageModel[];
+  /** The pages are a layout correction's. */
+  layout?: boolean;
+  /** The layout model's raw output, when detection ran in this session. */
+  rawLayout?: LayoutRecord;
+  /** A score setup's definition. */
+  scoreDef?: ScoreDefModel;
+  /** A score setup's recognition record, when recognition ran in this session. */
+  omr?: string;
+};
+
+// Save a pre-task editor's state to the viewer's task branch
+// `encode-<task_id>` as the files its submission would carry, so the work
+// survives leaving the editor and is kept when the claim expires. A missing
+// branch is created from the campaign's head and first given the work kept
+// from expired claims, whose side files the state may not repeat.
+const saveDraft: CommandDef<DraftInput, Result> = {
+  id: "campaign.saveDraft",
+  version: 1,
+  log: "none",
+  async run(input, ctx) {
+    const { forge: f, owner, repo } = ctx;
+    try {
+      const task = findRow(
+        parseTaskCsv((await f.getRepoFile(owner, repo, TASK_PATH)) ?? ""),
+        input.task_id,
+        "",
+      );
+      if (!task) return { error: `Unknown task ${input.task_id}.` };
+      const files: FileChange[] = [];
+      if (input.scoreDef) {
+        const { content } = await setupScore(ctx, task, input.scoreDef);
+        files.push({ path: task.fragment, content });
+        if (input.omr)
+          files.push({
+            path: omrRecordPath(task.fragment),
+            content: input.omr,
+          });
+      } else if (input.pages) {
+        const { content, corrected } = await facsimileScore(
+          ctx,
+          task,
+          input.pages,
+          Boolean(input.layout),
+        );
+        files.push({ path: task.fragment, content });
+        if (corrected)
+          files.push({
+            path: correctedLayoutPath(task.fragment),
+            content: corrected,
+          });
+        if (input.rawLayout)
+          files.push({
+            path: layoutRecordPath(task.fragment),
+            content: JSON.stringify(input.rawLayout, null, "\t") + "\n",
+          });
+      } else return { error: "Nothing to save." };
+      const workRepo = await workRepoOf(ctx);
+      const ref = `encode-${task.task_id}`;
+      const { sha } = await f.getRepoHead(owner, repo);
+      try {
+        await f.createBranch(workRepo.owner, workRepo.repo, ref, sha);
+        await seedFromKeptWork(ctx, task, workRepo, ref);
+      } catch (e) {
+        if (!/already exists/i.test((e as Error).message)) throw e;
+      }
+      await f.commitFiles(
+        workRepo.owner,
+        workRepo.repo,
+        files,
+        `Draft of ${task.task_id}`,
+        { branch: ref },
+      );
+      return { ok: true, message: "Draft saved." };
+    } catch (e) {
+      return { error: `The draft was not saved: ${(e as Error).message}` };
+    }
+  },
+};
+
 /** The console command registry. */
 export const commands = {
   readTables,
   claimValidation,
-  giveBack,
+  abandon,
+  reviewEdit,
   openEditor,
   submitEncoding,
   submitValidation,
@@ -2043,4 +2455,5 @@ export const commands = {
   submitZones,
   submitOmrLayout,
   submitScoreSetup,
+  saveDraft,
 };

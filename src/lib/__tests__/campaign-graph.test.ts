@@ -127,17 +127,17 @@ test("buildGraph assigns concurrent validation locks to separate slots", () => {
     ],
   );
 
-  // With one of two slots reserved, the other remains available to a different
-  // reviewer. Parsed tables are replaced, never mutated — lookups are indexed
-  // per array identity.
+  // With one of two slots reserved, the other is open but not claimable:
+  // reviews of a task run one at a time. Parsed tables are replaced, never
+  // mutated — lookups are indexed per array identity.
   d.locks = d.locks.slice(0, -1);
   const available = buildGraph(d, "you").find((n) => n.task === "T0001")!;
   assert.deepEqual(
     available.slots.map((slot) => slot.key),
     ["review", "open"],
   );
-  assert.equal(available.slots[1].claimable, true);
-  assert.equal(available.nextUp, true);
+  assert.equal(available.slots[1].claimable, false);
+  assert.equal(available.nextUp, false);
   // carol, holding the first slot, is not offered the second.
   assert.equal(
     buildGraph(d, "carol")
@@ -274,7 +274,7 @@ test("buildGraph: numeric user ids render as logins via the map", () => {
 test("claimLabel names mei-friend for an encoding only", () => {
   assert.equal(claimLabel("surface-3"), "Claim & open in mei-friend");
   assert.equal(claimLabel(""), "Claim & open in mei-friend");
-  assert.equal(claimLabel("score-setup"), "Claim task");
-  assert.equal(claimLabel("omr-layout"), "Claim task");
-  assert.equal(claimLabel("measure-zones"), "Claim task");
+  assert.equal(claimLabel("score-setup"), "Claim & open score setup");
+  assert.equal(claimLabel("omr-layout"), "Claim & open measure correction");
+  assert.equal(claimLabel("measure-zones"), "Claim & open measure correction");
 });

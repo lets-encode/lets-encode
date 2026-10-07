@@ -25,51 +25,64 @@
     navigator.clipboard?.writeText(text).catch(() => {});
 </script>
 
-{#if result && (result.error || (result.ok && !result.background))}
-  <div
-    class="banner {result.error ? 'err' : result.warn ? 'warn' : 'ok'}"
-    class:bar
-  >
-    <div class="banner-body">
-      <span>
-        {result.error ?? result.message}
-        {#if result.prUrl}
-          <a href={result.prUrl} target="_blank" rel="noreferrer"
-            >View submission <Icon name="external" size={12} /></a
-          >
-        {/if}
-      </span>
-      {#if !result.error && result.meiFriendUrl}
-        <div class="rawlink">
-          <input
-            readonly
-            value={result.meiFriendUrl}
-            onfocus={(e) => (e.target as HTMLInputElement).select()}
-          />
-          <button type="button" onclick={() => copy(result.meiFriendUrl!)}
-            >Copy</button
-          >
-        </div>
-        <span class="muted">
-          <a href={result.meiFriendUrl}
-            >Open in mei-friend <Icon name="external" size={12} /></a
-          >
-        </span>
-        {#if isPrivate}
-          <span class="muted">
-            Opening mei-friend shares a short-lived, read-capable GitHub URL
-            with that external service.
-          </span>
-        {/if}
-      {/if}
-    </div>
-    <button type="button" class="dismiss" onclick={() => (runner.result = null)}
-      >Dismiss</button
+<!-- A live region that is always present, so a result appearing in it is
+     announced; empty, it takes no room. -->
+<div class="live" role="status">
+  {#if result && (result.error || (result.ok && !result.background))}
+    <div
+      class="banner {result.error ? 'err' : result.warn ? 'warn' : 'ok'}"
+      class:bar
     >
-  </div>
-{/if}
+      <div class="banner-body">
+        <span>
+          {result.error ?? result.message}
+          {#if result.prUrl}
+            <a href={result.prUrl} target="_blank" rel="noreferrer"
+              >View submission <Icon name="external" size={12} /></a
+            >
+          {/if}
+        </span>
+        {#if !result.error && result.meiFriendUrl}
+          <div class="rawlink">
+            <input
+              readonly
+              value={result.meiFriendUrl}
+              onfocus={(e) => (e.target as HTMLInputElement).select()}
+            />
+            <button type="button" onclick={() => copy(result.meiFriendUrl!)}
+              >Copy</button
+            >
+          </div>
+          <span class="muted">
+            <a href={result.meiFriendUrl}
+              >Open in mei-friend <Icon name="external" size={12} /></a
+            >
+          </span>
+          {#if isPrivate}
+            <span class="muted">
+              Opening mei-friend shares a short-lived, read-capable GitHub URL
+              with that external service.
+            </span>
+          {/if}
+        {/if}
+      </div>
+      <button
+        type="button"
+        class="dismiss"
+        onclick={() => (runner.result = null)}>Dismiss</button
+      >
+    </div>
+  {/if}
+</div>
 
 <style>
+  .live:empty {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
   .muted {
     color: var(--ink-faint);
   }

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { reapLocks } from "../campaign-reaper.ts";
+import { claimRanOut, liveLocks, reapLocks } from "../campaign-reaper.ts";
 import type { LockRow } from "../campaign-tables.ts";
 
 const NOW = "2026-06-25T12:00:00Z";
@@ -71,4 +71,26 @@ test("empty lock table yields nothing to do", () => {
     kept: [],
     removed: [],
   });
+});
+
+test("liveLocks keeps the locks in force at the given time", () => {
+  const locks = [
+    lock("T1", "2026-06-25T13:00:00Z"),
+    lock("T2", "2026-06-25T11:00:00Z"),
+  ];
+  assert.deepEqual(
+    liveLocks(locks, Date.parse(NOW)).map((l) => l.task_id),
+    ["T1"],
+  );
+});
+
+test("claimRanOut matches only the author's own lock on the row and kind", () => {
+  const expired = [lock("T1", "2026-06-25T11:00:00Z")];
+  const key = { task_id: "T1", subtask_id: "", kind: "encoding" };
+  assert.equal(claimRanOut(expired, key, "bob"), true);
+  assert.equal(claimRanOut(expired, key, "carol"), false);
+  assert.equal(
+    claimRanOut(expired, { ...key, kind: "validation" }, "bob"),
+    false,
+  );
 });

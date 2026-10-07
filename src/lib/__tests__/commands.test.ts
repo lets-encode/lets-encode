@@ -136,7 +136,8 @@ test("readTables decodes generated quoted config values", async () => {
       'campaign:\n  title: "A \\"quoted\\" \\\\ title\\nsecond line"\n  license: "CC-BY-4.0"\nvalidation:\n  pass_threshold: 2\n',
   };
   const forge = fakeForge({
-    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      ref?.startsWith("wip-") ? null : (files[path] ?? null),
     getRepoAccess: async () => ({ isPrivate: true, canPush: false }),
   });
 
@@ -407,7 +408,8 @@ test("openEditor claims first, then starts the task branch from the current scor
   const calls: string[] = [];
   const forge = fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      ref?.startsWith("wip-") ? null : (files[path] ?? null),
     openChangePr: async () => {
       calls.push("claim");
       return {
@@ -445,8 +447,8 @@ test("openEditor claims first, then starts the task branch from the current scor
   assert.equal(result.ok, true);
   assert.deepEqual(calls, [
     "claim",
-    "delete encode-T0001",
     "delete claim-x",
+    "delete encode-T0001",
     "create volunteer/encode-T0001@head1",
   ]);
   const url = new URL(result.meiFriendUrl!);
@@ -455,6 +457,119 @@ test("openEditor claims first, then starts the task branch from the current scor
   assert.equal(url.searchParams.get("le_campaignname"), "my-campaign");
   assert.equal(url.searchParams.get("le_taskid"), "T0001");
   assert.equal(url.searchParams.get("le_base"), "https://le.test");
+  assert.equal(url.searchParams.get("select"), null);
+  assert.equal(url.searchParams.get("speed"), null);
+});
+
+test("openEditor selects the first note of a page task's page", async () => {
+  const files: Record<string, string> = {
+    ...editorFiles(lockHeader),
+    "tracking/task.csv":
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\nT0002,,sources/score.mei,surface-2,,,\n",
+    "tracking/state.csv":
+      "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\nT0002,,encoding_required,,,\n",
+    "sources/score.mei":
+      '<section><pb xml:id="pb-1" n="1" facs="#surface-1"/><measure xml:id="m-1"/>' +
+      '<pb xml:id="pb-2" n="2" facs="#surface-2"/><measure xml:id="m-2"><note xml:id="n-2"/></measure></section>',
+  };
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      ref?.startsWith("wip-") ? null : (files[path] ?? null),
+    openChangePr: async () => ({
+      number: 3,
+      html_url: "https://example.test/pr/3",
+      head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
+    }),
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    deleteBranch: async () => {},
+    createBranch: async () => {},
+    getRepoFileDownloadUrl: async () => "https://raw.example/score.mei",
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.openEditor,
+      { task_id: "T0002", campaign: "my-campaign", base: "https://le.test" },
+      context(forge),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  const url = new URL(result.meiFriendUrl!);
+  assert.equal(url.searchParams.get("select"), "n-2");
+  assert.equal(url.searchParams.get("speed"), "false");
+});
+
+test("openEditor starts a fresh task branch from the work kept from expired claims", async () => {
+  const files = editorFiles(lockHeader);
+  const commits: {
+    owner: string;
+    repo: string;
+    paths: string[];
+    branch?: string;
+  }[] = [];
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      ref === "wip-T0001" && path === "sources/score.mei"
+        ? "<mei>kept</mei>"
+        : ref?.startsWith("wip-")
+          ? null
+          : (files[path] ?? null),
+    openChangePr: async () => ({
+      number: 3,
+      html_url: "https://example.test/pr/3",
+      head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
+    }),
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    deleteBranch: async () => {},
+    createBranch: async () => {},
+    commitFiles: async (owner, repo, changes, _message, opts) => {
+      commits.push({
+        owner,
+        repo,
+        paths: changes.map((c) => c.path),
+        branch: opts?.branch,
+      });
+      return "c1";
+    },
+    getRepoFileDownloadUrl: async () => "https://raw.example/score.mei",
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.openEditor,
+      { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
+      context(forge),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(commits, [
+    {
+      owner: "volunteer",
+      repo: "campaign",
+      paths: ["sources/score.mei"],
+      branch: "encode-T0001",
+    },
+  ]);
 });
 
 test("openEditor keeps the holder's work on an existing task branch", async () => {
@@ -463,7 +578,8 @@ test("openEditor keeps the holder's work on an existing task branch", async () =
   );
   const calls: string[] = [];
   const forge = fakeForge({
-    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      ref?.startsWith("wip-") ? null : (files[path] ?? null),
     getRepoHead: async () => ({
       sha: "head1",
       treeSha: "tree1",
@@ -497,7 +613,8 @@ test("openEditor leaves the task branch alone while someone else holds the claim
     lockHeader + `T0001,,4242,${new Date().toISOString()},encoding\n`,
   );
   const forge = fakeForge({
-    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      ref?.startsWith("wip-") ? null : (files[path] ?? null),
   });
 
   const result = await invoke(

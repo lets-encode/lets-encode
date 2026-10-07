@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import {
@@ -25,6 +26,7 @@
     type MeasureAnchor,
     pieceLabel,
     pieceZone,
+    clipTitle,
   } from "$lib/campaign-tables.ts";
   import type {
     TaskRow,
@@ -35,35 +37,48 @@
     PieceRef,
   } from "$lib/campaign-tables.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
-  import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
+  import type {
+    CommandContext,
+    CommentAnchorInput,
+    Result,
+    FailComment,
+  } from "$lib/commands.ts";
   import {
+    handle,
+    isPreTask,
     pageOfLocator,
     preTaskHref,
     reviewHref,
   } from "$lib/campaign-graph.ts";
-  import { buildBoard, elapsed, initialOf } from "$lib/campaign-board.ts";
+  import {
+    buildBoard,
+    doneLabel,
+    elapsed,
+    expiresIn,
+    initialOf,
+  } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
+  import { liveLocks } from "$lib/campaign-reaper.ts";
   import { parseMeiHeader } from "$lib/mei-header.ts";
   import type { MeiHeader } from "$lib/mei-header.ts";
   import {
+    DOCKED_QUERY,
     readSidePanel,
-    DEFAULT_PANEL_WIDTH,
-    writeSidePanel,
     readLastTask,
     writeLastTask,
   } from "$lib/side-panels.ts";
+  import { MediaQuery } from "svelte/reactivity";
   import { piecePreview } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
-  import CommentsPanel from "$lib/components/CommentsPanel.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import PanelIcon from "$lib/components/PanelIcon.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import TaskSidePanel from "$lib/components/TaskSidePanel.svelte";
+  import SidePanel from "$lib/components/SidePanel.svelte";
+  import TaskBox from "$lib/components/TaskBox.svelte";
   import VolunteerView from "$lib/components/VolunteerView.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
@@ -96,7 +111,7 @@
   let taskDefs = $state<TaskRow[]>([]);
   let rows = $state<StateRow[]>([]);
   let validationColumns = $state<string[]>([]);
-  let locks = $state<LockRow[]>([]);
+  let tableLocks = $state<LockRow[]>([]);
   let history = $state<HistoryRow[]>([]);
   let comments = $state<CommentRow[]>([]);
   let pieces = $state<PieceRef[]>([]);
@@ -111,41 +126,36 @@
   const runner = new CommandRunner();
 
   // UI-only state — the board, with the owner's manage takeover and the score
-  // view (?score=) over it, plus the task panel when ?task= is present.
-  // Everything else derives from the tracking tables.
+  // view (?score=) over it, and the side panel showing the ?task= task or the
+  // campaign. Everything else derives from the tracking tables.
   let manage = $state(false);
-  let showInfo = $state(false);
-  // The in-page task panel's width; its open state follows ?task=.
-  let taskPanel = $state(readSidePanel("task"));
-  // The two side panels share one width (side-panels.ts); mirroring the live
-  // objects keeps a drag on either panel in step within the session. Writing
-  // an unchanged width does not re-trigger the effects.
-  $effect(() => {
-    taskPanel.width = commentsPanel.width;
-  });
-  $effect(() => {
-    commentsPanel.width = taskPanel.width;
-  });
-  // The board row's layout steps, all judged against the task panel's docked
-  // width whether it is docked or floating: the panel docks only while four
-  // lanes fit beside the dot rail, and the rail takes its wide form only
-  // while four lanes fit beside it with the panel docked. The space the
-  // panel frees when it floats therefore changes neither.
+  // The side panel's size (side-panels.ts).
+  let sidePanel = $state(readSidePanel());
+  // The board row's rail takes its wide form only while four lanes fit
+  // beside it and the side panel, at the panel's rendered width (its stored
+  // width, capped at half the window).
   let instrowBox = $state<DOMRectReadOnly | null>(null);
   const instrowWidth = $derived(instrowBox?.width ?? 0);
   let windowWidth = $state(0);
+  // In portrait up to tablet width and in a short window the view is split:
+  // the content scrolls as one region and the side panel takes the lower part
+  // of the screen (docked) or its right half (a short window).
+  const panelOutQuery = new MediaQuery(`${DOCKED_QUERY}, (max-height: 500px)`);
+  const panelOut = $derived(panelOutQuery.current);
   /** Four 200px lanes with 1px borders and three 12px gaps. */
   const LANES_WIDTH = 844;
   const ROW_GAP = 14;
-  /** The rail's two widths (PieceRail.svelte). */
+  /** The rail's wide width (PieceRail.svelte). */
   const RAIL_WIDE = 168;
-  const RAIL_DOTS = 38;
-  const rowBesidePanel = $derived(instrowWidth - taskPanel.width - ROW_GAP);
-  const railCompact = $derived(
-    instrowWidth > 0 && rowBesidePanel < RAIL_WIDE + ROW_GAP + LANES_WIDTH,
+  // With the panel outside the board row (panelOut) the row is already
+  // narrowed by it.
+  const rowBesidePanel = $derived(
+    panelOut
+      ? instrowWidth
+      : instrowWidth - Math.min(sidePanel.width, windowWidth / 2) - ROW_GAP,
   );
-  const panelFloats = $derived(
-    instrowWidth > 0 && rowBesidePanel < RAIL_DOTS + ROW_GAP + LANES_WIDTH,
+  const railChips = $derived(
+    instrowWidth > 0 && rowBesidePanel < RAIL_WIDE + ROW_GAP + LANES_WIDTH,
   );
   // The scores a viewer can read end to end: the pieces the tasks address,
   // named from the campaign's config where it names them.
@@ -169,7 +179,8 @@
     c.column === "ready" ||
     (c.column === "validation" && c.slots.some((s) => s.key === "open"));
 
-  // The score's <meiHead> fields, fetched on first open of the info panel.
+  // The score's <meiHead> fields, for the campaign details in the owner's
+  // side panel.
   let scoreHead = $state<MeiHeader | null>(null);
   let scoreHeadState = $state<"idle" | "loading" | "done" | "error">("idle");
   async function loadScoreHead() {
@@ -188,11 +199,23 @@
     }
   }
 
+  $effect(() => {
+    if (loaded && canPush) loadScoreHead();
+  });
+
   // Everyone the campaign history records as having acted on the score.
   const workedOn = $derived(
     [...new Set(history.map((h) => h.user_id))].filter(Boolean),
   );
 
+  // The clock the board's claim expiries count against, a minute at a time.
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(timer);
+  });
+  // A lock past its `expires` stops holding its task on the next tick.
+  const locks = $derived(liveLocks(tableLocks, now));
   const graphData = $derived({
     taskDefs,
     rows,
@@ -203,6 +226,17 @@
   });
   const pieceNames = $derived(pieceNamesOf(pieces));
   const piecePreparations = $derived(piecePreparationsOf(pieces));
+  /** When the claim on a held review slot expires. */
+  const reviewExpiry = (task: string, sub: string, user: string) => {
+    const lock = locks.find(
+      (l) =>
+        l.task_id === task &&
+        l.subtask_id === sub &&
+        l.kind === "validation" &&
+        l.user_id === user,
+    );
+    return lock ? expiresIn(lock.expires, now) : "";
+  };
   const board = $derived(
     buildBoard(
       graphData,
@@ -211,7 +245,7 @@
       viewer,
       logins,
       pieceNames,
-      Date.now(),
+      now,
       piecePreparations,
     ),
   );
@@ -266,6 +300,8 @@
     >();
     for (const c of allCards) {
       if (c.column === "done") continue;
+      // The Claimable filter counts what the board then shows.
+      if (boardScope === "open" && !actionable(c)) continue;
       const path = previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path;
       if (!path) continue;
       const n = by.get(path) ?? { open: 0, encoding: 0, validation: 0 };
@@ -276,6 +312,10 @@
     }
     return by;
   });
+  // Cards name their piece only while the board shows several pieces.
+  const piecesListed = $derived(
+    previewPieces.length > 1 && selectedPiece === "all",
+  );
   const railPiece = $derived.by(() => {
     const index = previewPieces.findIndex((p) => p.path === selectedPiece);
     return index >= 0 ? { piece: previewPieces[index], index } : null;
@@ -330,33 +370,12 @@
     const reviewing = locks.filter(
       (l) => l.user_id === viewer && l.kind === "validation",
     ).length;
+    // A newcomer has nothing to count yet; the line appears with the first.
+    if (!done && !claimed && !reviewing) return "";
     const parts = [`${done} done`, `${claimed} claimed`];
     if (reviewing) parts.push(`${reviewing} reviewing`);
     return `You: ${parts.join(" · ")}`;
   });
-
-  // ----------------------------------------- the volunteer's comments panel
-  let commentsPanel = $state(readSidePanel("comments"));
-  // The piece row the volunteer expanded; the comments panel follows it, and
-  // falls back to the next task's piece.
-  let volunteerPiece = $state<string | null>(null);
-  const volunteerScope = $derived.by(() => {
-    const path =
-      volunteerPiece ??
-      (nextCard
-        ? previewPieces[pieceIndexByTask.get(nextCard.task) ?? 0]?.path
-        : undefined) ??
-      previewPieces[0]?.path;
-    const index = previewPieces.findIndex((p) => p.path === path);
-    return index >= 0 ? { piece: previewPieces[index], index } : null;
-  });
-  const scopeCards = $derived(
-    volunteerScope
-      ? allCards.filter(
-          (c) => (pieceIndexByTask.get(c.task) ?? 0) === volunteerScope.index,
-        )
-      : [],
-  );
 
   // --------------------------------------------------------- the task detail
   // A task's detail opens in the preview panel; the URL carries it as ?task=
@@ -365,8 +384,25 @@
   const detailCard = $derived(
     detailTask ? (allCards.find((c) => c.task === detailTask) ?? null) : null,
   );
+  // The lane the narrow board shows (lane tabs): the one picked, else the
+  // selected task's, else the next task's.
+  let pickedLane = $state<ColumnKey | null>(null);
+  const laneOf = (c: BoardCard | null): ColumnKey | null =>
+    !c ? null : c.column === "blocked" ? "ready" : c.column;
+  // Without a pick, a task or a next task, the first lane holding cards:
+  // review, then encoding, then open, then done.
+  const firstFilledLane = $derived<ColumnKey>(
+    (["validation", "encoding", "ready", "done"] as ColumnKey[]).find((key) =>
+      scopedColumns.some((c) => c.key === key && c.cards.length > 0),
+    ) ?? "ready",
+  );
+  const laneTab = $derived<ColumnKey>(
+    pickedLane ?? laneOf(detailCard) ?? laneOf(nextCard) ?? firstFilledLane,
+  );
   function openTask(task: string) {
     detailTask = task;
+    // The lane tabs follow the opened task again.
+    pickedLane = null;
     writeLastTask(campaign, task);
     goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
       replaceState: true,
@@ -374,11 +410,15 @@
       keepFocus: true,
     });
   }
-  // Close the task panel.
+  // Deselect the task: the side panel shows the campaign. The score view's
+  // parameters stay.
   function closeTask() {
     detailTask = null;
     writeLastTask(campaign, null);
-    goto(`/${campaign}`, {
+    const query = new URLSearchParams(page.url.searchParams);
+    query.delete("task");
+    const rest = query.toString();
+    goto(`/${campaign}${rest ? `?${rest}` : ""}`, {
       replaceState: true,
       noScroll: true,
       keepFocus: true,
@@ -397,16 +437,10 @@
   const scoreStartPage = $derived(
     Math.max(0, (Number(page.url.searchParams.get("page")) || 1) - 1),
   );
-  const scoreCards = $derived(
-    scoreView
-      ? allCards.filter(
-          (c) => (pieceIndexByTask.get(c.task) ?? 0) === scoreView.index,
-        )
-      : [],
-  );
   // The measure range the score view opens highlighted (from a comment
   // anchor); within the view, anchors work without navigation.
   let anchor = $state<MeasureAnchor | null>(null);
+  let scoreViewRef = $state<ReturnType<typeof ScoreView>>();
   // The open task's ?task= survives entering and leaving the score view.
   function openScoreView(
     path: string,
@@ -418,7 +452,15 @@
     if (detailTask) query.set("task", detailTask);
     query.set("score", path);
     if (startPage) query.set("page", String(startPage + 1));
-    goto(`/${campaign}?${query}`, { noScroll: true, keepFocus: true });
+    // The score already open turns in place; the URL follows without a new
+    // history entry.
+    const same = scoreView?.piece.path === path;
+    if (same) scoreViewRef?.show(startPage, a);
+    goto(`/${campaign}?${query}`, {
+      noScroll: true,
+      keepFocus: true,
+      replaceState: same,
+    });
   }
   function closeScoreView() {
     goto(
@@ -440,11 +482,35 @@
       page ? Number(page) - 1 : undefined,
     );
   }
+  // The header's score button opens the score where the view's attention is:
+  // the selected task's pages, else the piece the board is scoped to, else
+  // the next task's pages, else the first piece.
+  const scoreTarget = $derived(
+    detailCard ??
+      (railPiece ? null : nextCard) ??
+      railPiece?.piece ??
+      previewPieces[0] ??
+      null,
+  );
+  const scoreHint = $derived(
+    !scoreTarget
+      ? ""
+      : "task" in scoreTarget
+        ? `Opens the score at ${scoreTarget.title}.`
+        : `Opens the score of ${pieceLabel(scoreTarget)}.`,
+  );
+  const canViewScore = $derived(previewPieces.length > 0 && !!scoreTarget);
+  function viewContextScore() {
+    if (!scoreTarget) return;
+    if ("task" in scoreTarget) viewCardScore(scoreTarget);
+    else viewScorePiece(previewPieces.indexOf(scoreTarget));
+  }
   // A comment anchor outside the score view: open it on the comment's piece,
   // at the anchored page, with the range highlighted.
   function showCommentInScore(c: CommentRow) {
-    const index = pieceIndexByTask.get(c.task_id);
-    const path = previewPieces[index ?? -1]?.path;
+    const path = c.task_id
+      ? previewPieces[pieceIndexByTask.get(c.task_id) ?? -1]?.path
+      : c.fragment;
     if (!path) return;
     openScoreView(
       path,
@@ -473,17 +539,16 @@
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
       canPush = tables.canPush;
-      // Volunteers start with the comments panel closed; a stored choice wins.
-      if (!canPush) commentsPanel = readSidePanel("comments", false);
       taskDefs = tables.taskDefs;
       rows = tables.rows;
       validationColumns = tables.validationColumns;
-      locks = tables.locks;
+      tableLocks = tables.locks;
       history = tables.history;
       comments = tables.comments;
       pieces = tables.pieces;
       logins = tables.logins;
       title = tables.title;
+      recordCampaignTitle(name, tables.title);
       description = tables.description;
       license = tables.license;
       passThreshold = tables.passThreshold;
@@ -519,6 +584,8 @@
     slugState = null;
     loaded = false;
     loadError = null;
+    scoreHead = null;
+    scoreHeadState = "idle";
   });
 
   // Resolve the campaign name to its repo before anything reads the tables. The
@@ -662,16 +729,16 @@
   const submitpr = (task_id: string) =>
     run((c) => invoke(commands.submitEncoding, { task_id }, c));
 
-  const giveBack = (task_id: string, subtask_id: string) => {
+  const abandon = (task_id: string, subtask_id: string) => {
     actedOn(task_id);
-    return run((c) => invoke(commands.giveBack, { task_id, subtask_id }, c));
+    return run((c) => invoke(commands.abandon, { task_id, subtask_id }, c));
   };
 
   // ------------------------------------------------ the return from mei-friend
   // mei-friend returns the volunteer to /<campaign>?task=<id>&mf_status=
   // complete|failed|abandoned (with an optional mf_msg). `complete` submits the
-  // encoding, `abandoned` gives the claim back, `failed` shows mei-friend's
-  // message in the task panel.
+  // encoding, `abandoned` abandons the claim, `failed` shows mei-friend's
+  // message in the side panel.
   /** An error from the return from mei-friend, shown in the task's panel;
       `label` names mei-friend when the text is its own message. */
   let editorError = $state<{
@@ -683,6 +750,17 @@
   let completed = $state<{ task: string; until: number } | null>(null);
   const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
   const completedTask = $derived(completed?.task ?? null);
+  // The next task's own control only opens it (the viewer's claimed work):
+  // with it open, its task box holds the action.
+  const nextOpensOnly = $derived(
+    !!nextCard &&
+      nextCard.column !== "ready" &&
+      !(
+        nextCard.column === "validation" &&
+        nextCard.slots.some((s) => s.claimable)
+      ),
+  );
+
   $effect(() => {
     if (!completed) return;
     const timer = setTimeout(
@@ -728,14 +806,14 @@
         text:
           status === "complete"
             ? "mei-friend reported the task complete, but you do not hold its claim, so nothing was submitted."
-            : "mei-friend reported the task given back, but you do not hold its claim.",
+            : "mei-friend reported the task abandoned, but you do not hold its claim.",
       };
       return;
     }
     if (status === "complete") {
       completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
       submitpr(task);
-    } else giveBack(task, "");
+    } else abandon(task, "");
   }
 
   const validate = (
@@ -754,6 +832,42 @@
     );
   };
 
+  // Switch a held review to editing: a pre-task opens its editor, an
+  // encoding opens in mei-friend — both only once the switch is accepted.
+  const reviewEdit = async (
+    task_id: string,
+    subtask_id: string,
+    comment: FailComment,
+  ) => {
+    actedOn(task_id);
+    const locator =
+      taskDefs.find((t) => t.task_id === task_id && t.subtask_id === "")
+        ?.locator ?? "";
+    if (isPreTask(locator)) {
+      const result = await run((c) =>
+        invoke(commands.reviewEdit, { task_id, subtask_id, comment }, c),
+      );
+      if (result?.ok && !result.warn)
+        await goto(preTaskHref(campaign, locator, task_id));
+      return result;
+    }
+    const result = await run(async (c) => {
+      const edit = await invoke(
+        commands.reviewEdit,
+        { task_id, subtask_id, comment },
+        c,
+      );
+      if (!edit.ok || edit.warn) return edit;
+      return invoke(
+        commands.openEditor,
+        { task_id, campaign, base: location.origin },
+        c,
+      );
+    });
+    openMeiFriend(result);
+    return result;
+  };
+
   const sendBackTask = (task_id: string) => {
     actedOn(task_id);
     return run((c) => invoke(commands.sendBack, { task_id }, c));
@@ -764,7 +878,7 @@
     kind: string,
     body: string,
     parent_id: string,
-    at?: { page: string; measure_start: string; measure_end: string },
+    at?: CommentAnchorInput,
   ) =>
     run((c) =>
       invoke(
@@ -787,8 +901,8 @@
   }
 
   // Deep links, read once after the first load: ?task= opens that task's
-  // detail. On the owner's board the panel defaults open — to the task chosen
-  // last time, or the first card on the board.
+  // detail. On the owner's board the side panel reopens the task chosen last
+  // time, if any; the score view shows a task only from ?task=.
   let deepLinked = false;
   $effect(() => {
     if (!loaded || deepLinked) return;
@@ -819,13 +933,12 @@
       }
       return;
     }
-    if (!canPush) return;
+    // The owner's board reopens the task chosen last time only while it is
+    // the owner's own claimed work; otherwise it opens on the campaign.
+    if (!canPush || scoreView) return;
     const last = readLastTask(campaign);
-    detailTask =
-      last && allCards.some((c) => c.task === last)
-        ? last
-        : (displayColumns.find((c) => c.cards.length > 0)?.cards[0]?.task ??
-          null);
+    if (last && locks.some((l) => l.task_id === last && l.user_id === viewer))
+      detailTask = last;
   });
 
   function claimCard(card: BoardCard) {
@@ -851,7 +964,7 @@
     if (nextCard) actOnCard(nextCard);
   }
 
-  // The task panel names its piece and carries its colour.
+  // The side panel names its piece and carries its colour.
   const pieceNameOf = (task: string) => {
     const p = previewPieces[pieceIndexByTask.get(task) ?? 0];
     return p ? pieceLabel(p) : "";
@@ -880,7 +993,7 @@
       },
       {
         key: "validation" as ColumnKey,
-        label: "Awaiting review",
+        label: "Review",
         cards: validation?.cards ?? [],
       },
       {
@@ -948,14 +1061,20 @@
   <RunnerBanner {runner} bar {isPrivate} />
 {/snippet}
 
-{#snippet slotDot(key: string)}
-  <span class="dot {key}" aria-label={key} title={key}></span>
+{#snippet slotDot(key: string, who = "")}
+  <span
+    class="dot {key}"
+    role="img"
+    aria-label={who ? `${key}: ${who}` : key}
+    title={who || key}
+  ></span>
 {/snippet}
 
-{#snippet taskSide(card: BoardCard, floating: boolean)}
-  <TaskSidePanel
+<!-- In the score view (inBoard false) the task box has no next-task control
+     beside it, so its action stays the view's primary one. -->
+{#snippet boardTaskBox(card: BoardCard, inBoard = true)}
+  <TaskBox
     {card}
-    {floating}
     pieceName={pieceNameOf(card.task)}
     zone={zoneOf(card.task)}
     {campaign}
@@ -966,21 +1085,155 @@
     {viewer}
     {canPush}
     {runner}
-    {resultBanner}
-    bind:panel={taskPanel}
-    onclose={closeTask}
-    onopenscore={() => viewCardScore(card)}
+    primary={!inBoard || (card.task === nextCard?.task && nextOpensOnly)}
     onshowanchor={showCommentInScore}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
-    ongiveback={giveBack}
+    onabandon={abandon}
     onvalidate={validate}
-    oncomment={(kind, body, parent_id) =>
-      postComment(card.task, kind, body, parent_id)}
+    onreviewedit={reviewEdit}
     onresolve={resolveCommentRow}
     onsendback={sendBackTask}
   />
+{/snippet}
+
+<!-- The side panel of the board and the volunteer view: the selected task,
+     else the campaign. -->
+{#snippet sidePanelFor(card: BoardCard | null, emptyLine: string)}
+  {#if card}
+    <SidePanel
+      task={card.task}
+      zone={zoneOf(card.task)}
+      review={card.column === "validation"}
+      {comments}
+      {logins}
+      {viewer}
+      {canPush}
+      {runner}
+      bind:panel={sidePanel}
+      banner={resultBanner}
+      ondeselect={closeTask}
+      onanchor={showCommentInScore}
+      oncomment={(kind, body, parent_id) =>
+        postComment(card.task, kind, body, parent_id)}
+      onresolve={resolveCommentRow}
+    >
+      {#snippet taskBox()}{@render boardTaskBox(card)}{/snippet}
+    </SidePanel>
+  {:else}
+    <SidePanel
+      task=""
+      {emptyLine}
+      info={canPush ? campaignInfo : undefined}
+      {comments}
+      {logins}
+      {viewer}
+      {canPush}
+      {runner}
+      bind:panel={sidePanel}
+      onanchor={showCommentInScore}
+      oncomment={(kind, body, parent_id) =>
+        postComment("", kind, body, parent_id)}
+      onresolve={resolveCommentRow}
+    />
+  {/if}
+{/snippet}
+
+<!-- The board filter: every task, or only the claimable ones. -->
+{#snippet scopeSeg()}
+  <div class="seg" role="group" aria-label="Board filter">
+    <button
+      type="button"
+      class:on={boardScope === "all"}
+      aria-pressed={boardScope === "all"}
+      onclick={() => (boardScope = "all")}>All tasks</button
+    >
+    <button
+      type="button"
+      class:on={boardScope === "open"}
+      aria-pressed={boardScope === "open"}
+      onclick={() => (boardScope = "open")}
+      title="Only tasks with something to do right now: open encodings and free review slots."
+      >Claimable</button
+    >
+  </div>
+{/snippet}
+
+<!-- The campaign's details in the owner's side panel, above the campaign
+     comments. -->
+{#snippet campaignInfo()}
+  <div class="cinfo">
+    <div class="isec">
+      <span class="seclabel">Score</span>
+      {#if scoreHeadState === "loading"}
+        <span class="muted inote">Loading the score header…</span>
+      {:else if scoreHeadState === "error"}
+        <span class="muted inote">Could not read the score.</span>
+      {:else if scoreHeadState === "done" && !scoreHead}
+        <span class="muted inote">The score has no MEI header.</span>
+      {:else if scoreHead}
+        <div class="irow">
+          <span>Title</span>
+          <span>{scoreHead.title || "—"}</span>
+        </div>
+        <div class="irow">
+          <span>Composer</span>
+          <span>{scoreHead.composer || "—"}</span>
+        </div>
+      {/if}
+      <div
+        class="irow"
+        title="Everyone the campaign history records: claims, submissions and reviews."
+      >
+        <span>Worked on this</span>
+        <span>
+          {#if workedOn.length}
+            {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
+                class="mono"
+                href={readForge().userWebUrl(logins[u] || u)}
+                target="_blank"
+                rel="noreferrer">@{logins[u] || u}</a
+              >{/each}
+          {:else}—{/if}
+        </span>
+      </div>
+    </div>
+    <div class="isec">
+      <span class="seclabel">Campaign</span>
+      <div class="irow">
+        <span>Repository</span>
+        <a
+          class="mono"
+          href={readForge().repoWebUrl(owner, repo)}
+          target="_blank"
+          rel="noreferrer">{owner}/{repo}</a
+        >
+      </div>
+      <div class="irow">
+        <span>About</span>
+        <span>{description || "—"}</span>
+      </div>
+      <div class="irow">
+        <span>Visibility</span>
+        <span>{isPrivate ? "Private" : "Public"}</span>
+      </div>
+      <div
+        class="irow"
+        title="Contributions to this campaign are published under this license."
+      >
+        <span>License</span>
+        <span>{license || "—"}</span>
+      </div>
+      <div
+        class="irow"
+        title="Approving reviews each task needs before it counts as done."
+      >
+        <span>Reviews required</span>
+        <span>{passThreshold}</span>
+      </div>
+    </div>
+  </div>
 {/snippet}
 
 <div class="console">
@@ -1053,7 +1306,7 @@
         </span>
       </div>
     {:else}
-      <div class="viewcol" class:capped={!!scoreView || !canPush}>
+      <div class="viewcol">
         {#if !resolved}
           <p class="msg muted">Finding the campaign…</p>
         {:else if loading}
@@ -1074,23 +1327,35 @@
         {:else if scoreView}
           {#key scoreView.piece.path}
             <ScoreView
+              bind:this={scoreViewRef}
               piece={scoreView.piece}
-              zone={pieceZone(scoreView.index)}
               campaignTitle={title || repo}
               {owner}
               {repo}
               startPage={scoreStartPage}
               {anchor}
-              cards={scoreCards}
+              card={detailCard}
+              cardOnPiece={!!detailCard &&
+                (pieceIndexByTask.get(detailCard.task) ?? 0) ===
+                  scoreView.index}
+              cardZone={detailCard ? zoneOf(detailCard.task) : 0}
+              banner={resultBanner}
               {comments}
               {logins}
               {viewer}
               {canPush}
               {runner}
-              bind:panel={commentsPanel}
+              bind:panel={sidePanel}
+              ondeselect={closeTask}
+              onopenanchor={showCommentInScore}
               oncomment={postComment}
               onresolve={resolveCommentRow}
-            />
+            >
+              {#snippet taskBox()}{#if detailCard}{@render boardTaskBox(
+                    detailCard,
+                    false,
+                  )}{/if}{/snippet}
+            </ScoreView>
           {/key}
         {:else if manage && canPush}
           <div class="crumbrow">
@@ -1130,490 +1395,470 @@
             {locks}
             {logins}
             {pieceNames}
+            preparations={piecePreparations}
             busy={runner.busy}
             onsave={savePlan}
             oncancel={() => (manage = false)}
           />
         {:else if !canPush}
-          <div class="volwrap">
-            <!-- The group's width: the task column plus the side panel's default
-               width and the row's gap. It does not follow a dragged panel
-               width, so widening the panel narrows the column instead. -->
-            <div
-              class="volcenter"
-              style="--side: {detailCard || commentsPanel.open
-                ? `${DEFAULT_PANEL_WIDTH + 14}px`
-                : '0px'}"
-            >
-              <div class="volhead">
-                <div class="voltitle">
-                  <h1>{title || repo}</h1>
-                  {#if volStanding}
-                    <span class="volstanding">{volStanding}</span>
+          <!-- Split (panelOut): the list scrolls above or beside the panel. -->
+          <div class="volsplit" class:split={panelOut}>
+            <div class="volwrap">
+              <div class="volcenter">
+                <div class="volhead">
+                  <div class="voltitle">
+                    <h1 title={title || repo}>{title || repo}</h1>
+                    {#if volStanding}
+                      <span class="volstanding">{volStanding}</span>
+                    {/if}
+                  </div>
+                  <span class="volprogress">
+                    <span class="vbar"
+                      ><span
+                        style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+                      ></span></span
+                    >
+                    <span class="volcount"
+                      >{board.done} of {board.total} done</span
+                    >
+                  </span>
+                  {#if canViewScore}
+                    <button
+                      type="button"
+                      class="btn scorebtn"
+                      onclick={viewContextScore}
+                      title={scoreHint}>View score</button
+                    >
                   {/if}
                 </div>
-                <span class="volspacer"></span>
-                <span class="volcount">{board.done} of {board.total} done</span>
-                {#if volunteerScope && !detailCard}
-                  <button
-                    type="button"
-                    class="cptoggle"
-                    aria-pressed={commentsPanel.open}
-                    title={commentsPanel.open
-                      ? "Hide the comments panel"
-                      : "Show the comments panel"}
-                    onclick={() => {
-                      commentsPanel.open = !commentsPanel.open;
-                      writeSidePanel("comments", { ...commentsPanel });
-                    }}><PanelIcon /></button
+                <div class="volrow sidehost">
+                  <VolunteerView
+                    {owner}
+                    {repo}
+                    cards={allCards}
+                    {nextCard}
+                    {completedTask}
+                    {taskDefs}
+                    {locks}
+                    {viewer}
+                    pieces={previewPieces}
+                    progress={pieceProgress}
+                    pieceIndex={pieceIndexByTask}
+                    busy={runner.busy}
+                    shownTask={detailTask}
+                    onact={actOnCard}
+                    onopen={openTask}
+                  />
+                  {#if !panelOut}
+                    <div class="sideslot">
+                      {@render sidePanelFor(
+                        detailCard,
+                        "Select a task to show it here.",
+                      )}
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            </div>
+            {#if panelOut}
+              <div class="panelslot">
+                {@render sidePanelFor(
+                  detailCard,
+                  "Select a task to show it here.",
+                )}
+              </div>
+            {/if}
+          </div>
+        {:else}
+          <!-- Split (panelOut): the board scrolls above or beside the panel. -->
+          <div class="boardview" class:split={panelOut}>
+            <div class="boardscroll">
+              <div class="hero">
+                <div class="hero-line">
+                  <h1 title={title || repo}>{title || repo}</h1>
+                  <a
+                    class="mono slug"
+                    href={readForge().repoWebUrl(owner, repo)}
+                    target="_blank"
+                    rel="noreferrer"
+                    >{owner}/{repo} <Icon name="external" size={12} /></a
                   >
+                  <div class="hero-acts">
+                    {#if auth.user && canPush}
+                      <button
+                        type="button"
+                        class="btn managechip"
+                        onclick={() => (manage = true)}
+                        disabled={runner.busy}
+                        aria-label="Manage"
+                        title="Owner only: plan editor and expired-claim release"
+                        ><Icon name="gear" /><span class="managelabel"
+                          >Manage</span
+                        ></button
+                      >
+                    {/if}
+                    {#if canViewScore}
+                      <button
+                        type="button"
+                        class="btn scorebtn"
+                        onclick={viewContextScore}
+                        title={scoreHint}>View score</button
+                      >
+                    {/if}
+                    <!-- Only while there is a task to act on: logged out, the
+                         banner offers the login; with nothing open, no
+                         button stands in for it. -->
+                    {#if auth.user && nextCard}
+                      <button
+                        type="button"
+                        class="btn btn-primary claimbtn"
+                        disabled={runner.busy}
+                        title={nextOpensOnly
+                          ? "Open the task you have claimed."
+                          : "Claim the first task that is open for you."}
+                        onclick={actOnNext}
+                        >{nextOpensOnly
+                          ? "Open your task"
+                          : "Claim the next task"}</button
+                      >
+                    {/if}
+                  </div>
+                </div>
+                <!-- One line: the progress first; the other counts give way
+                     as the column narrows, the attention count last. -->
+                <div class="hero-stats" class:quiet={board.attention === 0}>
+                  <div class="hbar">
+                    <div
+                      style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
+                    ></div>
+                  </div>
+                  <span class="hbarlabel"
+                    >{board.done} of {board.total} tasks done</span
+                  >
+                  <span class="sep m2">·</span>
+                  <span class="stat m2"
+                    ><b class="c-info">{board.inFlight}</b> in progress</span
+                  >
+                  {#if board.attention > 0}
+                    <span class="sep m2">·</span>
+                    <button
+                      type="button"
+                      class="stat statbtn"
+                      onclick={() => (showAttention = !showAttention)}
+                      title="Show the tasks with unresolved change requests or comments."
+                      ><b>{board.attention}</b> need{board.attention === 1
+                        ? "s"
+                        : ""} attention <Icon
+                        name={showAttention ? "chevron-down" : "chevron-right"}
+                        size={12}
+                      /></button
+                    >
+                  {:else}
+                    <span class="sep m2">·</span>
+                    <span class="stat m2"><b>0</b> need attention</span>
+                  {/if}
+                  <span class="sep m1">·</span>
+                  <span class="stat m1"
+                    ><b>{board.contributorsWeek}</b>
+                    contributor{board.contributorsWeek === 1 ? "" : "s"} this week</span
+                  >
+                  {@render scopeSeg()}
+                </div>
+                {#if showAttention && attentionCards.length > 0}
+                  <div class="attnbox">
+                    {#each attentionCards as card (card.task)}
+                      <button
+                        type="button"
+                        class="attnrow"
+                        onclick={() => openTask(card.task)}
+                        title="Open this task"
+                      >
+                        <span class="attntitle">{card.title}</span>
+                        <span class="attnspacer"></span>
+                        {#if card.counts.fails > 0}
+                          <span class="chip chip-fail"
+                            >{card.counts.fails} fail{card.counts.fails === 1
+                              ? ""
+                              : "s"}</span
+                          >
+                        {/if}
+                        {#if card.counts.comments > 0}
+                          <span class="chip chip-note"
+                            >{card.counts.comments} comment{card.counts
+                              .comments === 1
+                              ? ""
+                              : "s"}</span
+                          >
+                        {/if}
+                        <span class="attnchev"
+                          ><Icon name="chevron-right" /></span
+                        >
+                      </button>
+                    {/each}
+                  </div>
                 {/if}
               </div>
-              <div class="volrow">
-                <VolunteerView
-                  {owner}
-                  {repo}
-                  cards={allCards}
-                  {nextCard}
-                  {completedTask}
-                  {taskDefs}
-                  {locks}
-                  {viewer}
-                  pieces={previewPieces}
-                  progress={pieceProgress}
-                  pieceIndex={pieceIndexByTask}
-                  busy={runner.busy}
-                  panelOpen={!!detailCard}
-                  bind:expandedPiece={volunteerPiece}
-                  onact={actOnCard}
-                  onopen={openTask}
-                  onviewscore={viewScorePiece}
-                />
-                {#if detailCard}
-                  {@render taskSide(detailCard, windowWidth < 1100)}
-                {:else if volunteerScope && commentsPanel.open}
-                  <div class="cpholder">
-                    <CommentsPanel
-                      piece={volunteerScope.piece}
-                      zone={pieceZone(volunteerScope.index)}
-                      cards={scopeCards}
-                      {comments}
-                      {logins}
-                      {viewer}
-                      {canPush}
-                      {runner}
-                      fitEmpty
-                      bind:panel={commentsPanel}
-                      onanchor={showCommentInScore}
-                      oncomment={postComment}
-                      onresolve={resolveCommentRow}
+
+              <div class="instrow sidehost" bind:contentRect={instrowBox}>
+                {#if previewPieces.length > 0 && !railChips}
+                  <div class="railslot">
+                    <PieceRail
+                      pieces={previewPieces}
+                      chips={false}
+                      progress={pieceProgress}
+                      counts={railCounts}
+                      attention={attentionByPiece}
+                      openCount={displayColumns[0].cards.length}
+                      selected={selectedPiece}
+                      onselect={(sel) => (selectedPiece = sel)}
                     />
                   </div>
                 {/if}
-              </div>
-            </div>
-          </div>
-        {:else}
-          <div class="hero">
-            <div class="hero-line">
-              <h1>{title || repo}</h1>
-              <a
-                class="mono slug"
-                href={readForge().repoWebUrl(owner, repo)}
-                target="_blank"
-                rel="noreferrer"
-                >{owner}/{repo} <Icon name="external" size={12} /></a
-              >
-              <button
-                type="button"
-                class="infochip"
-                class:on={showInfo}
-                onclick={() => {
-                  showInfo = !showInfo;
-                  if (showInfo) loadScoreHead();
-                }}
-                title="Show or hide campaign information"
-                ><Icon name="info" /> Info <Icon
-                  name={showInfo ? "chevron-down" : "chevron-right"}
-                  size={12}
-                /></button
-              >
-              <span class="cspacer"></span>
-              {#if auth.user && canPush}
-                <button
-                  type="button"
-                  class="btn btn-lg managechip"
-                  onclick={() => (manage = true)}
-                  disabled={runner.busy}
-                  title="Owner only: plan editor and expired-claim release"
-                  ><Icon name="gear" /> Manage</button
-                >
-              {/if}
-              <button
-                type="button"
-                class="btn btn-lg btn-primary"
-                disabled={runner.busy || !auth.user || !nextCard}
-                title={!auth.user
-                  ? "Log in to claim a task."
-                  : !nextCard
-                    ? "Nothing to claim right now."
-                    : "Claim the first task that is open for you."}
-                onclick={actOnNext}>Claim the next task</button
-              >
-            </div>
-            {#if showInfo}
-              <div class="infoblock">
-                <div class="isec">
-                  <span class="seclabel">Score</span>
-                  {#if scoreHeadState === "loading"}
-                    <span class="muted inote">Loading the score header…</span>
-                  {:else if scoreHeadState === "error"}
-                    <span class="muted inote">Could not read the score.</span>
-                  {:else if scoreHeadState === "done" && !scoreHead}
-                    <span class="muted inote">The score has no MEI header.</span
-                    >
-                  {:else if scoreHead}
-                    <div class="irow">
-                      <span>Title</span>
-                      <span>{scoreHead.title || "—"}</span>
+                <div class="boardcol">
+                  {#if railChips}
+                    <!-- On a phone the board filter joins the piece dots;
+                         the header keeps it elsewhere. -->
+                    <div class="boardtools">
+                      {#if previewPieces.length > 0}
+                        <PieceRail
+                          pieces={previewPieces}
+                          chips
+                          progress={pieceProgress}
+                          counts={railCounts}
+                          attention={attentionByPiece}
+                          openCount={displayColumns[0].cards.length}
+                          selected={selectedPiece}
+                          onselect={(sel) => (selectedPiece = sel)}
+                        />
+                      {/if}
+                      {@render scopeSeg()}
                     </div>
-                    <div class="irow">
-                      <span>Composer</span>
-                      <span>{scoreHead.composer || "—"}</span>
-                    </div>
-                    {#each scoreHead.contributors as c (c.role + c.name)}
-                      <div class="irow">
-                        <span>{c.role || "contributor"}</span>
-                        <span>{c.name}</span>
-                      </div>
-                    {/each}
                   {/if}
-                  <div
-                    class="irow"
-                    title="Everyone the campaign history records: claims, submissions and reviews."
-                  >
-                    <span>Worked on this</span>
-                    <span>
-                      {#if workedOn.length}
-                        {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
-                            class="mono"
-                            href={readForge().userWebUrl(logins[u] || u)}
-                            target="_blank"
-                            rel="noreferrer">@{logins[u] || u}</a
-                          >{/each}
-                      {:else}—{/if}
-                    </span>
-                  </div>
-                </div>
-                <div class="isec">
-                  <span class="seclabel">Campaign</span>
-                  <div class="irow">
-                    <span>About</span>
-                    <span>{description || "—"}</span>
-                  </div>
-                  <div class="irow">
-                    <span>Visibility</span>
-                    <span>{isPrivate ? "Private" : "Public"}</span>
-                  </div>
-                  <div
-                    class="irow"
-                    title="Contributions to this campaign are published under this license."
-                  >
-                    <span>License</span>
-                    <span>{license || "—"}</span>
-                  </div>
-                  <div
-                    class="irow"
-                    title="Passing reviews each task needs before it counts as done."
-                  >
-                    <span>Reviews required</span>
-                    <span>{passThreshold}</span>
-                  </div>
-                </div>
-              </div>
-            {/if}
-            <div class="hero-stats">
-              <span class="stat"><b class="c-ok">{board.done}</b> done</span>
-              <span class="sep">·</span>
-              <span class="stat"
-                ><b class="c-info">{board.inFlight}</b> in flight</span
-              >
-              <span class="sep">·</span>
-              {#if board.attention > 0}
-                <button
-                  type="button"
-                  class="stat statbtn"
-                  onclick={() => (showAttention = !showAttention)}
-                  title="Show the tasks with unresolved fails or comments."
-                  ><b>{board.attention}</b> need{board.attention === 1
-                    ? "s"
-                    : ""} attention <Icon
-                    name={showAttention ? "chevron-down" : "chevron-right"}
-                    size={12}
-                  /></button
-                >
-              {:else}
-                <span class="stat"><b>0</b> need attention</span>
-              {/if}
-              <span class="sep">·</span>
-              <span class="stat"
-                ><b>{board.contributorsWeek}</b>
-                contributor{board.contributorsWeek === 1 ? "" : "s"} this week</span
-              >
-              <div class="hbar">
-                <div
-                  style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
-                ></div>
-              </div>
-              <span class="hbarlabel"
-                >{board.done}/{board.total} tasks done</span
-              >
-              <div class="seg">
-                <button
-                  type="button"
-                  class:on={boardScope === "all"}
-                  onclick={() => (boardScope = "all")}>All tasks</button
-                >
-                <button
-                  type="button"
-                  class:on={boardScope === "open"}
-                  onclick={() => (boardScope = "open")}
-                  title="Only tasks with something to do right now: open encodings and free review slots."
-                  >Claimable</button
-                >
-              </div>
-            </div>
-            {#if showAttention && attentionCards.length > 0}
-              <div class="attnbox">
-                {#each attentionCards as card (card.task)}
-                  <button
-                    type="button"
-                    class="attnrow"
-                    onclick={() => openTask(card.task)}
-                    title="Open this task"
-                  >
-                    <span class="attntitle">{card.title}</span>
-                    <span class="mono card-id">{card.task}</span>
-                    <span class="attnspacer"></span>
-                    {#if card.counts.fails > 0}
-                      <span class="chip chip-fail"
-                        >{card.counts.fails} fail{card.counts.fails === 1
-                          ? ""
-                          : "s"}</span
-                      >
-                    {/if}
-                    {#if card.counts.comments > 0}
-                      <span class="chip chip-note"
-                        >{card.counts.comments} comment{card.counts.comments ===
-                        1
-                          ? ""
-                          : "s"}</span
-                      >
-                    {/if}
-                    <span class="attnchev"><Icon name="chevron-right" /></span>
-                  </button>
-                {/each}
-              </div>
-            {/if}
-          </div>
-
-          <div class="instrow" bind:contentRect={instrowBox}>
-            {#if previewPieces.length > 0}
-              <div class="railslot">
-                <PieceRail
-                  pieces={previewPieces}
-                  compact={railCompact}
-                  progress={pieceProgress}
-                  counts={railCounts}
-                  attention={attentionByPiece}
-                  openCount={board.columns.find((c) => c.key === "ready")?.cards
-                    .length ?? 0}
-                  selected={selectedPiece}
-                  onselect={(sel) => (selectedPiece = sel)}
-                />
-              </div>
-            {/if}
-            <div class="boardcol">
-              {#if railPiece}
-                {@const p = pieceProgress.get(railPiece.piece.path)}
-                <div
-                  class="ctxstrip"
-                  style="--zone: var(--zone-{pieceZone(railPiece.index)})"
-                >
-                  <span class="ctxpaper">
-                    {#if stripPreview?.thumb}
-                      <img src={stripPreview.thumb} alt="" loading="lazy" />
-                    {/if}
-                  </span>
-                  <div class="ctxinfo">
-                    <span class="ctxname">{pieceLabel(railPiece.piece)}</span>
-                    <span class="ctxmeta"
-                      >{stripPreview?.pageMeasures.length
-                        ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
-                        : ""}{p?.done ?? 0} of {p?.total ?? 0} done</span
+                  {#if railPiece}
+                    {@const p = pieceProgress.get(railPiece.piece.path)}
+                    <div
+                      class="ctxstrip"
+                      style="--zone: var(--zone-{pieceZone(railPiece.index)})"
                     >
-                  </div>
-                  <div class="ctxincipit">
-                    {#if stripPreview?.incipit}
-                      {@html stripPreview.incipit}
-                    {:else if stripPreview?.incipitPending}
-                      <span class="ctxincnote"
-                        >incipit appears after the setup tasks</span
-                      >
-                    {/if}
-                  </div>
-                  <button
-                    type="button"
-                    class="btn"
-                    onclick={() => viewScorePiece(railPiece.index)}
-                    title="Show every page of this piece's score."
-                    >View score <Icon name="arrow-right" size={12} /></button
-                  >
-                </div>
-              {/if}
-              <div class="board">
-                {#each scopedColumns as col (col.key)}
-                  <div class="bcol c-{col.key}">
-                    <div class="bcol-head">
-                      <h2 class="bcol-name">{col.label}</h2>
-                      <span class="bcol-count">{col.cards.length}</span>
+                      <span class="ctxpaper">
+                        {#if stripPreview?.thumb}
+                          <img src={stripPreview.thumb} alt="" loading="lazy" />
+                        {/if}
+                      </span>
+                      <div class="ctxinfo">
+                        <span
+                          class="ctxname"
+                          title={pieceLabel(railPiece.piece)}
+                          >{clipTitle(pieceLabel(railPiece.piece))}</span
+                        >
+                        <span class="ctxmeta"
+                          >{stripPreview?.pageMeasures.length
+                            ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
+                            : ""}{p?.done ?? 0} of {p?.total ?? 0} done</span
+                        >
+                      </div>
+                      <div class="ctxincipit">
+                        {#if stripPreview?.incipit}
+                          {@html stripPreview.incipit}
+                        {:else if stripPreview?.incipitPending}
+                          <span class="ctxincnote"
+                            >incipit appears after the setup tasks</span
+                          >
+                        {/if}
+                      </div>
                     </div>
-                    <div class="well">
-                      {#each col.cards as card (card.task)}
-                        <!-- A focusable div, not a <button>: the run state inside
+                  {/if}
+                  <!-- A toggle group: the pressed lane is the one shown. -->
+                  <div class="lanetabs" role="group" aria-label="Lanes">
+                    {#each scopedColumns as col (col.key)}
+                      <button
+                        type="button"
+                        class="lanetab c-{col.key}"
+                        class:on={laneTab === col.key}
+                        aria-pressed={laneTab === col.key}
+                        onclick={() => (pickedLane = col.key)}
+                        >{col.label}
+                        <span class="lanetab-count">{col.cards.length}</span
+                        ></button
+                      >
+                    {/each}
+                  </div>
+                  {#if boardScope === "open" && scopedColumns.every((c) => c.cards.length === 0)}
+                    <p class="boardnote">No task can be claimed right now.</p>
+                  {/if}
+                  <div class="board">
+                    {#each scopedColumns as col (col.key)}
+                      <div
+                        class="bcol c-{col.key}"
+                        class:tabsel={laneTab === col.key}
+                        class:empty={col.cards.length === 0}
+                      >
+                        <div class="bcol-head">
+                          <h2 class="bcol-name">{col.label}</h2>
+                          <span class="bcol-count">{col.cards.length}</span>
+                        </div>
+                        <div class="well">
+                          {#if col.cards.length === 0}
+                            <p class="laneempty">No tasks</p>
+                          {/if}
+                          {#each col.cards as card (card.task)}
+                            <!-- A focusable div, not a <button>: the run state inside
                          it can render a PR link, which HTML does not allow
                          nested in a button. -->
-                        <div
-                          class="card col-{card.column}"
-                          class:nextup={card.nextUp && !completedTask}
-                          class:justmoved={recentlyFinished.has(card.task) ||
-                            card.task === completedTask}
-                          class:paneled={detailTask === card.task}
-                          class:failtint={card.counts.fails > 0 &&
-                            card.column !== "done"}
-                          role="button"
-                          tabindex="0"
-                          onclick={() => openTask(card.task)}
-                          onkeydown={(e) => {
-                            if (e.target !== e.currentTarget) return;
-                            if (e.key === "Enter" || e.key === " ") {
-                              e.preventDefault();
-                              openTask(card.task);
-                            }
-                          }}
-                          title="Open this task"
-                        >
-                          {#if card.nextUp && !completedTask}
-                            <span class="nextup-badge">next task</span>
-                          {/if}
-                          {#if card.task === completedTask}
-                            <span class="justmoved-badge">just completed</span>
-                          {:else if recentlyFinished.has(card.task)}
-                            <span class="justmoved-badge">just submitted</span>
-                          {/if}
-                          <div class="card-title">
-                            {#if previewPieces.length > 1}
-                              <span
-                                class="piece-dot"
-                                style="--zone: var(--zone-{zoneOf(card.task)})"
-                              ></span>
-                            {/if}{card.title}
-                          </div>
-                          <div class="card-type">
-                            {card.column === "validation"
-                              ? `${card.typeLine} · ${card.passes} of ${card.threshold} reviews`
-                              : card.typeLine}
-                            <span class="mono card-id">{card.task}</span>
-                            <button
-                              type="button"
-                              class="card-score"
-                              onclick={(e) => {
-                                e.stopPropagation();
-                                viewCardScore(card);
+                            <div
+                              class="card col-{card.column}"
+                              class:nextup={card.nextUp && !completedTask}
+                              class:justmoved={recentlyFinished.has(
+                                card.task,
+                              ) || card.task === completedTask}
+                              class:paneled={detailTask === card.task}
+                              aria-current={detailTask === card.task
+                                ? "true"
+                                : undefined}
+                              class:failtint={card.counts.fails > 0 &&
+                                card.column !== "done"}
+                              role="button"
+                              tabindex="0"
+                              onclick={() => openTask(card.task)}
+                              onkeydown={(e) => {
+                                if (e.target !== e.currentTarget) return;
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.preventDefault();
+                                  openTask(card.task);
+                                }
                               }}
-                              title="Open the score at this task's pages"
-                              >{cardPage(card)
-                                ? `p. ${cardPage(card)}`
-                                : "score"}
-                              <Icon name="arrow-right" size={11} /></button
+                              title="Open this task"
                             >
-                          </div>
-                          <TaskRunState task={card.task} />
-                          {#if card.column === "blocked"}
-                            <div class="card-foot">
-                              waits for <strong>{card.waitsFor}</strong>
-                            </div>
-                          {:else if card.column === "encoding" && card.worker}
-                            <div class="card-worker">
-                              <span class="avatar"
-                                >{initialOf(card.worker.login)}</span
-                              >
-                              <span class="worker-line"
-                                >{card.worker.login} · {card.worker
-                                  .elapsed}</span
-                              >
-                            </div>
-                          {:else if card.column === "validation"}
-                            <div class="card-dots">
-                              {#each card.dots as key, i (i)}
-                                {@render slotDot(key)}
-                              {/each}
-                            </div>
-                          {:else if card.column === "done"}
-                            <div class="card-done">
-                              <img
-                                class="hand-done"
-                                src="/green-hand.svg"
-                                alt=""
-                              />
-                              {card.doneLine}
-                            </div>
-                          {/if}
-                          {#if card.column !== "done" && card.counts.fails + card.counts.comments > 0}
-                            <div class="card-chips">
-                              {#if card.counts.fails > 0}
-                                <span class="chip chip-fail"
-                                  >{card.counts.fails} fail{card.counts
-                                    .fails === 1
-                                    ? ""
-                                    : "s"}</span
+                              {#if card.nextUp && !completedTask}
+                                <span class="nextup-badge">next task</span>
+                              {/if}
+                              {#if card.task === completedTask}
+                                <span class="justmoved-badge"
+                                  >just completed</span
+                                >
+                              {:else if recentlyFinished.has(card.task)}
+                                <span class="justmoved-badge"
+                                  >just submitted</span
                                 >
                               {/if}
-                              {#if card.counts.comments > 0}
-                                <span class="chip chip-note"
-                                  >{card.counts.comments} comment{card.counts
-                                    .comments === 1
-                                    ? ""
-                                    : "s"}</span
+                              <div class="card-title">
+                                {card.description}{#if card.scope}<span
+                                    class="card-scope"
+                                    >{` · ${card.scope}`}</span
+                                  >{/if}
+                              </div>
+                              {#if piecesListed}
+                                <div
+                                  class="card-piece"
+                                  style="--zone: var(--zone-{zoneOf(
+                                    card.task,
+                                  )})"
                                 >
+                                  <span class="piece-dot"></span>
+                                  <span class="card-pname" title={card.piece}
+                                    >{clipTitle(card.piece)}</span
+                                  >
+                                </div>
+                              {/if}
+                              {#if card.column === "validation"}
+                                <div class="card-type">
+                                  {card.passes} of {card.threshold} review{card.threshold ===
+                                  1
+                                    ? ""
+                                    : "s"}
+                                </div>
+                              {/if}
+                              <TaskRunState task={card.task} />
+                              {#if card.column === "blocked"}
+                                <div class="card-foot">
+                                  waits for <strong>{card.waitsFor}</strong>
+                                </div>
+                              {:else if card.column === "encoding" && card.worker}
+                                <div class="card-worker">
+                                  <span class="avatar"
+                                    >{initialOf(card.worker.login)}</span
+                                  >
+                                  <span class="worker-line"
+                                    >{card.worker.login} · {card.worker
+                                      .expires}</span
+                                  >
+                                </div>
+                              {:else if card.column === "validation"}
+                                <!-- Who holds each review slot, as the
+                                     encoding lane shows its worker. -->
+                                {#each card.slots.filter((s) => s.key === "review" && s.user) as slot (slot.label)}
+                                  <div class="card-worker">
+                                    <span class="avatar review"
+                                      >{initialOf(
+                                        handle(logins, slot.user),
+                                      )}</span
+                                    >
+                                    <span class="worker-line review"
+                                      >{handle(logins, slot.user)} · {reviewExpiry(
+                                        card.task,
+                                        slot.sub,
+                                        slot.user,
+                                      )}</span
+                                    >
+                                  </div>
+                                {/each}
+                                <div class="card-dots">
+                                  {#each card.slots as slot (slot.label)}
+                                    {@render slotDot(slot.key, slot.who)}
+                                  {/each}
+                                </div>
+                              {:else if card.column === "done"}
+                                <div class="card-done">
+                                  <img
+                                    class="hand-done"
+                                    src="/green-hand.svg"
+                                    alt=""
+                                  />
+                                  {doneLabel(card)}
+                                </div>
+                              {/if}
+                              {#if card.column !== "done" && card.counts.fails + card.counts.comments > 0}
+                                <div class="card-chips">
+                                  {#if card.counts.fails > 0}
+                                    <span class="chip chip-fail"
+                                      >{card.counts.fails} fail{card.counts
+                                        .fails === 1
+                                        ? ""
+                                        : "s"}</span
+                                    >
+                                  {/if}
+                                  {#if card.counts.comments > 0}
+                                    <span class="chip chip-note"
+                                      >{card.counts.comments} comment{card
+                                        .counts.comments === 1
+                                        ? ""
+                                        : "s"}</span
+                                    >
+                                  {/if}
+                                </div>
                               {/if}
                             </div>
-                          {/if}
+                          {/each}
                         </div>
-                      {/each}
-                    </div>
+                      </div>
+                    {/each}
                   </div>
-                {/each}
+                </div>
+                {#if !panelOut}
+                  {@render sidePanelFor(
+                    detailCard,
+                    "Select a task on the board to show it here.",
+                  )}
+                {/if}
               </div>
             </div>
-            {#if detailCard}
-              {@render taskSide(detailCard, panelFloats)}
-            {/if}
-          </div>
-
-          <div class="ticker">
-            <span class="ticker-label">Activity</span>
-            {#each board.ticker as t, i (i)}
-              {#if i > 0}<span class="ticker-sep" aria-hidden="true">|</span
-                >{/if}
-              <span class="ticker-entry"
-                ><strong>{t.login}</strong>
-                {t.text}
-                <span class="ticker-when">· {t.elapsed}</span></span
-              >
-            {/each}
-            {#if board.ticker.length === 0}
-              <span class="ticker-entry muted">No activity yet.</span>
+            {#if panelOut}
+              <div class="panelslot">
+                {@render sidePanelFor(
+                  detailCard,
+                  "Select a task on the board to show it here.",
+                )}
+              </div>
             {/if}
           </div>
         {/if}
@@ -1664,29 +1909,95 @@
   }
 
   /* --------------------------------------------------------------- main */
-  /* The view fills the window — the rail, board and task panel share every
+  /* The view fills the window — the rail, board and side panel share every
      available column. Its minimum height is its content's. The width minimum
      is explicit: the inline-size containment below makes the content's own
      width invisible to sizing, and the board's stacking reacts to the
      column's width instead. */
+  /* The column caps at the window: the board, the score view and the
+     volunteer view scroll inside their own regions, and where their least
+     sizes do not fit the window the column itself scrolls. */
   .viewcol {
     flex: 1;
     min-width: 340px;
+    min-height: 0;
+    overflow-y: auto;
     width: 100%;
     display: flex;
     flex-direction: column;
     container-type: inline-size;
+    container-name: view;
   }
-  /* The score view scrolls inside its panes and the volunteer view inside its
-     task column, so the column must cap at the window instead of growing to
-     its content. */
-  .viewcol.capped {
+  /* Split (portrait up to tablet width, or a short window): the content and
+     the side panel share the window, the panel docked below in portrait
+     (DOCKED_QUERY) and beside in a short window. The content scrolls as one
+     region, its sections at their content's height; a gap separates it from
+     the panel. */
+  .volsplit,
+  .boardview,
+  .boardscroll {
+    display: contents;
+  }
+  .volsplit.split,
+  .boardview.split {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .split > .volwrap,
+  .split > .boardscroll {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    container-type: inline-size;
+    container-name: view;
+  }
+  .panelslot {
+    flex: none;
+    min-height: 0;
+    display: flex;
+    padding: 12px 16px 12px 0;
+    box-sizing: border-box;
+  }
+  @media (orientation: portrait) and (max-width: 900px) {
+    .volsplit.split,
+    .boardview.split {
+      flex-direction: column;
+    }
+    .panelslot {
+      flex-direction: column;
+      padding: 10px 0 0;
+    }
+  }
+  .split .volcenter,
+  .split .volrow,
+  .split .instrow,
+  .split .board {
+    flex: none;
     min-height: 0;
   }
+  .split .board {
+    overflow-y: visible;
+  }
+  .split :global(.volunteer) {
+    overflow-y: visible;
+    padding-right: 0;
+    scrollbar-gutter: auto;
+  }
+  .split .bcol {
+    min-height: auto;
+  }
+  .split .well {
+    overflow-y: visible;
+    contain: none;
+  }
 
-  /* The volunteer view: the header row, the task column and the comments
-     panel form one centred group; the group's width is the row's content
-     width (the fixed task column plus the panel). */
+  /* The volunteer view: the header row, the task column and the side panel
+     form one centred group, at most 1750px wide with its padding, clear of
+     the footer. */
   .volwrap {
     flex: 1;
     min-height: 0;
@@ -1694,14 +2005,14 @@
     flex-direction: column;
     align-items: center;
     width: 100%;
-    padding: 18px 32px 8px;
+    padding: 18px 32px 14px;
     box-sizing: border-box;
   }
   .volcenter {
     flex: 1;
     min-height: 0;
     width: 100%;
-    max-width: calc(800px + var(--side, 0px));
+    max-width: calc(1750px - 64px);
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -1729,12 +2040,28 @@
     gap: 6px;
     min-width: 0;
   }
-  .volspacer {
-    flex: 1;
-  }
   .volstanding {
     font-size: 12px;
     color: var(--ink-soft);
+  }
+  /* The campaign's progress: a bar beside the count. */
+  .volprogress {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .vbar {
+    width: 140px;
+    height: 6px;
+    border-radius: 3px;
+    background: var(--track);
+    overflow: hidden;
+  }
+  .vbar span {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, var(--blue), var(--green));
   }
   .volcount {
     font-size: 12px;
@@ -1748,85 +2075,68 @@
     display: flex;
     gap: 14px;
   }
-  /* The comments panel's top edge lines up with the next-task card, below
-     the task column's section label. */
-  .cpholder {
+  /* The side panel's top edge lines up with the next-task card, below its
+     badge. */
+  .sideslot {
     flex: none;
     min-height: 0;
     display: flex;
-    padding-top: 26px;
+    padding-top: 9px;
     box-sizing: border-box;
   }
-  .cptoggle {
-    width: 28px;
-    height: 28px;
-    border-radius: 7px;
-    border: 1px solid var(--line-input);
-    background: var(--card);
-    color: var(--ink-soft);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex: none;
-    padding: 0;
-  }
-  /* Narrow column: the header wraps its title over the count, the task
-     column and the comments panel stack, and the wrapper scrolls the group
-     as a whole (VolunteerView.svelte stops scrolling on its own at the same
-     width). */
+  /* Narrow column: the header wraps its title over the count. */
   @container (max-width: 700px) {
     .volwrap {
-      overflow-y: auto;
-      padding: 12px 16px 8px;
+      padding: 12px 16px 14px;
     }
-    .volcenter {
-      flex: none;
-    }
+    /* Two lines: the title beside the score button, the viewer's standing
+       beside the progress. */
     .volhead {
-      flex-wrap: wrap;
-      gap: 8px 14px;
-      align-items: flex-end;
-    }
-    .volhead h1 {
-      font-size: 20px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 6px 12px;
     }
     .voltitle {
-      flex-basis: 100%;
+      display: contents;
     }
-    .volrow {
-      flex-direction: column;
+    .volhead h1 {
+      grid-area: 1 / 1;
+      align-self: center;
+      font-size: 20px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
-    .cpholder {
-      padding-top: 0;
-      height: 480px;
-      max-height: 70vh;
+    .scorebtn {
+      grid-area: 1 / 2;
     }
-    /* The panel's stored width is an inline style; here it fills the column. */
-    .cpholder :global(.cpwrap) {
-      width: auto !important;
-      min-width: 0;
-      flex: 1;
+    .volstanding {
+      grid-area: 2 / 1;
+      align-self: center;
+    }
+    .volprogress {
+      grid-area: 2 / 2;
+      justify-self: end;
+    }
+    .vbar {
+      width: 72px;
     }
   }
 
-  /* ---------------------------------------------------------- info block */
-  /* Campaign info, collapsed into the header area behind the Info toggle. */
-  .infoblock {
+  /* ---------------------------------------------------- campaign details */
+  /* The owner's side panel, above the campaign comments. */
+  .cinfo {
     flex: none;
-    padding: 14px 18px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
     display: flex;
-    flex-wrap: wrap;
-    gap: 18px 56px;
+    flex-direction: column;
+    gap: 14px;
+    padding: 2px 2px 12px;
+    border-bottom: 1px solid var(--line);
   }
   .isec {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    width: 400px;
+    gap: 6px;
     min-width: 0;
   }
   .inote {
@@ -1835,12 +2145,14 @@
   /* A fixed label column with the value directly after it, left-aligned. */
   .irow {
     display: grid;
-    grid-template-columns: 130px minmax(0, 1fr);
+    grid-template-columns: 120px minmax(0, 1fr);
     gap: 10px;
     font-size: 12px;
   }
+  /* On the recessed panel, labels take the soft ink (faint ink is for the
+     canvas and cards). */
   .irow > span:first-child {
-    color: var(--ink-faint);
+    color: var(--ink-soft);
   }
   .irow > :last-child {
     overflow-wrap: anywhere;
@@ -1854,10 +2166,8 @@
   }
   .seclabel {
     font-weight: 600;
-    font-size: 10px;
-    color: var(--ink-faint);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    font-size: 12px;
+    color: var(--ink-soft);
   }
 
   /* ---------------------------------------------------------------- hero */
@@ -1868,20 +2178,29 @@
     flex-direction: column;
     gap: 12px;
   }
+  /* The title and its repository link lead; the actions follow on the same
+     line where they fit and wrap below it, right-aligned, where they do not.
+     A title longer than the line wraps rather than being cut. */
   .hero-line {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 14px;
+    gap: 10px 14px;
     min-width: 0;
   }
   .hero-line h1 {
     margin: 0;
+    min-width: 0;
     font-size: 26px;
     line-height: 1.2;
     font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+  }
+  .hero-acts {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
   .slug {
     font-size: 13px;
@@ -1894,20 +2213,6 @@
   }
   .slug:hover {
     text-decoration: underline;
-  }
-  .infochip {
-    font: 600 12.5px var(--font);
-    color: var(--ink-soft);
-    background: var(--bg-tint);
-    border: 0;
-    border-radius: 999px;
-    padding: 5px 13px;
-    cursor: pointer;
-    flex: none;
-  }
-  .infochip:hover,
-  .infochip.on {
-    color: var(--accent);
   }
   .cspacer {
     flex: 1;
@@ -1922,19 +2227,33 @@
     color: var(--owner);
     border-color: var(--owner);
   }
+  .managechip {
+    gap: 6px;
+  }
   .hero-stats {
     display: flex;
-    gap: 14px;
+    gap: 10px;
     align-items: center;
-    flex-wrap: wrap;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 12px;
-    padding: 10px 18px;
+    padding: 5px 6px 5px 16px;
     box-shadow: var(--shadow-sm);
+  }
+  .hero-stats > * {
+    white-space: nowrap;
+  }
+  .hero-stats .seg {
+    margin-left: auto;
+  }
+  @container (max-width: 1100px) {
+    .hero-stats .m1 {
+      display: none;
+    }
   }
   .hbar {
     flex: 1;
+    min-width: 48px;
     max-width: 420px;
     height: 6px;
     border-radius: 3px;
@@ -1952,9 +2271,6 @@
   .stat {
     font-size: 13px;
     color: var(--ink-soft);
-  }
-  .stat b.c-ok {
-    color: var(--ok);
   }
   .stat b.c-info {
     color: var(--info);
@@ -2011,13 +2327,14 @@
     color: var(--ink-faint);
   }
   /* -------------------------------------------------------------- pieces */
-  /* ---------------------------------------- rail · board · task panel row */
+  /* ---------------------------------------- rail · board · side panel row */
   .instrow {
     flex: 1;
     min-height: 0;
     display: flex;
     gap: 14px;
-    padding: 0 32px;
+    /* Clear of the footer. */
+    padding: 0 32px 14px;
   }
   .railslot {
     flex: none;
@@ -2026,27 +2343,20 @@
     align-self: flex-start;
     max-height: 100%;
   }
-  /* The volunteer view's task panel floats over the view below 1100px
-     (TaskSidePanel.svelte); the board's floats as soon as docking it would
-     stack the lanes (panelFloats). */
   @media (max-width: 1100px) {
-    /* The task panel floats over the view at this width (TaskSidePanel.svelte)
-       and takes no share of the group. */
-    .volcenter {
-      max-width: 800px;
-    }
     .instrow {
-      padding: 0 20px;
+      padding: 0 20px 14px;
     }
   }
   .boardcol {
     flex: 1;
     min-width: 0;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
     /* The board's stacking query measures this column, which the rail and
-       the task panel narrow independently of the window. */
+       the side panel narrow independently of the window. */
     container-type: inline-size;
   }
   /* The scoped piece's preview over the columns. */
@@ -2108,6 +2418,41 @@
     width: auto;
     max-width: 100%;
   }
+  /* A phone-width view: the strip is the piece's name and counts. */
+  @container view (max-width: 700px) {
+    .ctxpaper,
+    .ctxincipit {
+      display: none;
+    }
+  }
+  /* The piece dots and, in a phone-width view, the board filter beside them
+     (the header's own filter then hides); with many pieces the filter moves
+     to its own line and the dots take the full width. */
+  .boardtools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .boardtools > .seg {
+    display: none;
+    margin-left: auto;
+    flex: none;
+  }
+  @container view (max-width: 700px) {
+    .boardtools > .seg {
+      display: inline-flex;
+    }
+    .hero-stats > .seg,
+    .hero-stats.quiet {
+      display: none;
+    }
+    /* The Open lane tab below carries the open count. */
+    .boardtools :global(.dotlabel) {
+      display: none;
+    }
+  }
   .ctxincnote {
     font-size: 11px;
     color: var(--ink-faint);
@@ -2129,8 +2474,12 @@
   /* A lane is the stage's colour: a solid header bar with white lettering
      over a body in the stage's wash. The three lane tokens are set per
      column key below. */
+  /* Lane lettering: the theme's inverted ink on the neutral lane, white on the
+     stage colours' deep tones in both themes (as on solid buttons). */
   .bcol {
     --lane-solid: var(--ink-soft);
+    --lane-ink: var(--invert-ink);
+    --lane-text: var(--ink-soft);
     --lane-bg: var(--bg-tint);
     --lane-line: var(--line);
     flex: 1;
@@ -2151,7 +2500,26 @@
     gap: 8px;
     padding: 7px 12px;
     background: var(--lane-solid);
-    color: var(--invert-ink);
+    color: var(--lane-ink);
+  }
+  /* An empty lane: its header in the stage's text colour on the lane's wash,
+     and a line saying so. */
+  .bcol.empty .bcol-head {
+    background: none;
+    color: var(--lane-text);
+    border-bottom: 1px solid var(--lane-line);
+  }
+  .laneempty {
+    margin: 0;
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+  /* The neutral Open lane in dark: a mid slate bar, not the light ink. */
+  :global([data-theme="dark"]) .bcol:not(.c-encoding, .c-validation, .c-done),
+  :global([data-theme="dark"])
+    .lanetab:not(.c-encoding, .c-validation, .c-done) {
+    --lane-solid: var(--line-strong);
+    --lane-ink: var(--ink);
   }
   .bcol-name {
     margin: 0;
@@ -2171,18 +2539,27 @@
     --lane-solid: var(--ink-faint);
     --lane-bg: var(--bg-inset);
   }
-  .bcol.c-encoding {
+  .bcol.c-encoding,
+  .lanetab.c-encoding {
     --lane-solid: var(--info-solid);
+    --lane-ink: #fff;
+    --lane-text: var(--info);
     --lane-bg: var(--info-bg);
     --lane-line: var(--info-line);
   }
-  .bcol.c-validation {
+  .bcol.c-validation,
+  .lanetab.c-validation {
     --lane-solid: var(--warn-solid);
+    --lane-ink: #fff;
+    --lane-text: var(--warn);
     --lane-bg: var(--warn-bg);
     --lane-line: var(--warn-line);
   }
-  .bcol.c-done {
+  .bcol.c-done,
+  .lanetab.c-done {
     --lane-solid: var(--ok-solid);
+    --lane-ink: #fff;
+    --lane-text: var(--ok);
     --lane-bg: var(--ok-bg);
     --lane-line: var(--ok-line);
   }
@@ -2219,7 +2596,7 @@
     min-height: 88px;
     box-sizing: border-box;
   }
-  /* The card whose task panel is open. */
+  /* The card the side panel shows. */
   .card.paneled {
     background: var(--info-bg);
     border-color: var(--info-line);
@@ -2284,19 +2661,38 @@
     color: #fff;
   }
   .card-title {
-    font-size: 13px;
+    font-size: 14px;
+    line-height: 1.25;
     font-weight: 600;
     overflow-wrap: anywhere;
   }
+  .card-scope {
+    color: var(--ink-soft);
+  }
+  /* The piece line, shown where several pieces share the board. A long
+     title is cut to one line; the full title is its tooltip. */
+  .card-piece {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin-top: 2px;
+    font-size: 11.5px;
+    color: var(--ink-soft);
+  }
+  .card-pname {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   /* The piece's colour, as on its dot in the piece rail. */
   .piece-dot {
-    display: inline-block;
+    flex: none;
     width: 8px;
     height: 8px;
-    margin-right: 6px;
     border-radius: 50%;
     background: var(--zone);
-    vertical-align: 1px;
   }
   .card.col-blocked .card-title,
   .card.col-done .card-title {
@@ -2307,20 +2703,10 @@
     color: var(--ink-faint);
     margin-top: 3px;
   }
-  .card-id {
-    font-size: 10px;
-    opacity: 0.8;
-    margin-left: 4px;
-  }
-  .card-score {
-    font: 600 11px var(--font);
-    color: var(--info);
-    background: none;
-    border: 0;
-    padding: 6px 0;
-    margin: -6px 0 -6px 6px;
-    cursor: pointer;
-    white-space: nowrap;
+  .boardnote {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-soft);
   }
   .card-foot {
     font-size: 11.5px;
@@ -2358,6 +2744,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* A held review slot, in the review stage's colour. */
+  .avatar.review {
+    background: var(--warn-solid);
+  }
+  .worker-line.review {
+    color: var(--warn);
   }
   .card-dots {
     display: flex;
@@ -2420,41 +2813,6 @@
     height: 12px;
     flex: none;
   }
-  /* -------------------------------------------------------------- ticker */
-  .ticker {
-    flex: none;
-    margin: 16px 32px 24px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
-    height: 56px;
-    display: flex;
-    align-items: center;
-    padding: 0 18px;
-    gap: 18px;
-    overflow: hidden;
-  }
-  .ticker-label {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
-    flex: none;
-  }
-  .ticker-entry {
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    white-space: nowrap;
-  }
-  .ticker-when {
-    color: var(--ink-faint);
-  }
-  .ticker-sep {
-    color: var(--line-strong);
-    flex: none;
-  }
   /* ----------------------------------------------- manage takeover chrome */
   .crumbrow {
     flex: none;
@@ -2510,28 +2868,147 @@
     text-overflow: ellipsis;
   }
   /* --------------------------------------------------------- responsive */
-  /* Measured on the board column, so the board also stacks when a side
-     panel narrows it, not only when the window itself is narrow. The
-     threshold is four 200px lanes with their 1px borders and three 12px
-     gaps. Stacked, the board
-     scrolls as a whole instead of per column — the containment moves up
-     with the scrolling, so the stack can't grow the view past the window
-     either. */
+  /* Measured on the board column, which the rail and the side panel narrow
+     independently of the window. Four lanes need four 200px lanes with their
+     borders and three 12px gaps (LANES_WIDTH); below that the lanes stack in
+     one column, each as tall as its cards, and the board scrolls as a whole;
+     below 420px one lane shows at a time, chosen by the lane tabs, and the
+     tab replaces its head. */
+  .lanetabs {
+    display: none;
+  }
   @container (max-width: 843px) {
     .board {
       flex-direction: column;
+      min-height: 240px;
       overflow-y: auto;
-      contain: size;
     }
     .board > .bcol {
+      flex: none;
       min-width: 0;
-    }
-    .bcol {
       min-height: auto;
     }
     .well {
+      flex: none;
       overflow-y: visible;
       contain: none;
+    }
+  }
+  @container (max-width: 419px) {
+    .lanetabs {
+      flex: none;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 6px;
+    }
+    .board {
+      display: flex;
+      flex-direction: column;
+      min-height: 170px;
+    }
+    .bcol:not(.tabsel),
+    .bcol-head {
+      display: none;
+    }
+    /* One lane on a phone: cards are short rows. */
+    .well {
+      gap: 8px;
+      padding: 8px;
+    }
+    .card {
+      min-height: 0;
+      padding: 9px 12px;
+    }
+  }
+  .lanetab {
+    --lane-solid: var(--ink-soft);
+    --lane-ink: var(--invert-ink);
+    --lane-text: var(--ink-soft);
+    --lane-bg: var(--bg-tint);
+    --lane-line: var(--line);
+    min-height: 36px;
+    padding: 2px 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 2px 6px;
+    font: 700 12px var(--font);
+    line-height: 1.15;
+    text-align: center;
+    color: var(--lane-text);
+    background: var(--lane-bg);
+    border: 1px solid var(--lane-line);
+    border-radius: 10px;
+    cursor: pointer;
+  }
+  .lanetab.on {
+    color: var(--lane-ink);
+    background: var(--lane-solid);
+    border-color: var(--lane-solid);
+  }
+  .lanetab-count {
+    font-size: 11px;
+  }
+  /* A narrow view column (a phone): the title takes one line over the
+     controls (the full title is its tooltip, the repository link moves to
+     the campaign details in the side panel), the controls grow to 36px, and
+     the side margins shrink. */
+  @container (max-width: 700px) {
+    .hero {
+      padding: 10px 16px 8px;
+      gap: 8px;
+    }
+    .hero-line {
+      flex-wrap: wrap;
+      gap: 8px 10px;
+    }
+    .hero-line h1 {
+      flex-basis: 100%;
+      font-size: 20px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .slug {
+      display: none;
+    }
+    .hero-line .btn {
+      min-height: 36px;
+    }
+    /* The actions take their own full-width line, the claim the most room;
+       Manage is its gear only. */
+    .hero-acts {
+      flex-basis: 100%;
+    }
+    .claimbtn {
+      flex: 1;
+    }
+    .managechip {
+      width: 36px;
+      padding: 0;
+      justify-content: center;
+    }
+    .managelabel {
+      display: none;
+    }
+    /* The stats reduce to the attention count when there is one and the
+       filter, on one plain line without the card. */
+    .hero-stats {
+      flex-wrap: wrap;
+      gap: 6px 10px;
+      padding: 0;
+      background: none;
+      border: 0;
+      box-shadow: none;
+    }
+    .hero-stats .m2,
+    .hbar,
+    .hbarlabel {
+      display: none;
+    }
+    .instrow {
+      padding: 0 16px 14px;
     }
   }
 </style>
