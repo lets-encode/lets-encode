@@ -361,7 +361,7 @@
         <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your
         attention
       </h2>
-      <div class="rows">
+      <div class="rows attn">
         {#each fix as t (t.campaignSlug + t.task)}
           <a class="row attention" href={taskHref(t.campaignSlug, t.task)}>
             <span class="pill red">Changes requested</span>
@@ -749,6 +749,29 @@
     }
     .rowmeta {
       white-space: normal;
+    }
+  }
+  /* Phones: an attention row takes two lines, the label and the task's
+     name above, the comment and the link to the task below. */
+  @media (max-width: 560px) {
+    .attn .row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 4px 10px;
+      padding: 8px 14px;
+    }
+    .attn .rowtitle {
+      grid-column: 2 / 4;
+      max-width: none;
+    }
+    .attn .excerpt {
+      grid-column: 1 / 3;
+    }
+    .attn .spacer {
+      display: none;
+    }
+    .attn .golink {
+      grid-column: 3;
     }
   }
   .spacer {

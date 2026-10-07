@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-07
 
+- On phones a change request or comment on the campaigns page takes two lines.
 - Done tasks in the volunteer view show their review count and when they finished.
 - Reviews read Approve and Request changes instead of Pass and Fail.
 - The unused status pill labels are removed.
