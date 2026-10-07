@@ -194,8 +194,10 @@
   .linkish.danger {
     color: var(--danger);
   }
-  .linkish:hover:not(:disabled) {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .linkish:hover:not(:disabled) {
+      text-decoration: underline;
+    }
   }
   .linkish:disabled {
     opacity: 0.6;

@@ -14,7 +14,7 @@
      .btn-finish    the solid green Pass/complete action (the only solid green)
      .btn-secondary / .btn-soft   tinted fill, medium emphasis
      .btn-danger    outline only — danger actions are never solid
-     .btn-icon      square icon-only button (28×28, radius 8px)
+     .btn-icon      square icon-only button (32×32, radius 8px)
      .btn-lg        the larger wizard-footer size
    Sizing beyond .btn-lg comes from context, not new classes. */
 .btn {
@@ -25,7 +25,7 @@
   gap: 6px;
   font: 600 12.5px var(--font);
   padding: 6px 14px;
-  min-height: 30px;
+  min-height: 32px;
   box-sizing: border-box;
   color: var(--ink);
   background: var(--card);
@@ -37,9 +37,11 @@
 a.btn {
   text-decoration: none;
 }
-.btn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
+@media (hover: hover) {
+  .btn:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
 }
 .btn:disabled {
   opacity: 0.5;
@@ -63,17 +65,21 @@ a.btn[aria-disabled="true"] {
   border-color: transparent;
   box-shadow: var(--shadow-sm);
 }
-.btn-primary:hover:not(:disabled) {
-  color: #fff;
-  background: var(--accent-btn-hover);
-  border-color: transparent;
+@media (hover: hover) {
+  .btn-primary:hover:not(:disabled) {
+    color: #fff;
+    background: var(--accent-btn-hover);
+    border-color: transparent;
+  }
 }
 /* The solid green completing action: Pass, or the wizard's final step. */
 .btn-primary.btn-finish {
   background: var(--ok-btn);
 }
-.btn-primary.btn-finish:hover:not(:disabled) {
-  background: var(--ok-btn-hover);
+@media (hover: hover) {
+  .btn-primary.btn-finish:hover:not(:disabled) {
+    background: var(--ok-btn-hover);
+  }
 }
 
 .btn-secondary,
@@ -81,11 +87,13 @@ a.btn[aria-disabled="true"] {
   background: var(--bg-tint);
   border-color: transparent;
 }
-.btn-secondary:hover:not(:disabled),
-.btn-soft:hover:not(:disabled) {
-  color: var(--ink);
-  background: var(--line);
-  border-color: transparent;
+@media (hover: hover) {
+  .btn-secondary:hover:not(:disabled),
+  .btn-soft:hover:not(:disabled) {
+    color: var(--ink);
+    background: var(--line);
+    border-color: transparent;
+  }
 }
 
 /* Claim buttons carry the colour of the stage they start: purple for
@@ -93,39 +101,49 @@ a.btn[aria-disabled="true"] {
 .btn-primary.btn-pre {
   background: var(--pre-btn);
 }
-.btn-primary.btn-pre:hover:not(:disabled) {
-  background: var(--pre-btn-hover);
+@media (hover: hover) {
+  .btn-primary.btn-pre:hover:not(:disabled) {
+    background: var(--pre-btn-hover);
+  }
 }
 .btn-primary.btn-review {
   background: var(--warn-solid);
 }
-.btn-primary.btn-review:hover:not(:disabled) {
-  background: var(--warn-btn-hover);
+@media (hover: hover) {
+  .btn-primary.btn-review:hover:not(:disabled) {
+    background: var(--warn-btn-hover);
+  }
 }
 .btn.btn-pre:not(.btn-primary) {
   color: var(--pre);
   border-color: var(--pre);
 }
-.btn.btn-pre:not(.btn-primary):hover:not(:disabled) {
-  color: var(--pre);
-  border-color: var(--pre);
-  background: var(--pre-wash);
+@media (hover: hover) {
+  .btn.btn-pre:not(.btn-primary):hover:not(:disabled) {
+    color: var(--pre);
+    border-color: var(--pre);
+    background: var(--pre-wash);
+  }
 }
 .btn.btn-review:not(.btn-primary) {
   color: var(--warn);
   border-color: var(--warn);
 }
-.btn.btn-review:not(.btn-primary):hover:not(:disabled) {
-  color: var(--warn);
-  border-color: var(--warn);
-  background: var(--warn-wash);
+@media (hover: hover) {
+  .btn.btn-review:not(.btn-primary):hover:not(:disabled) {
+    color: var(--warn);
+    border-color: var(--warn);
+    background: var(--warn-wash);
+  }
 }
 .btn.btn-enc:not(.btn-primary) {
   color: var(--info);
   border-color: var(--info);
 }
-.btn.btn-enc:not(.btn-primary):hover:not(:disabled) {
-  background: var(--info-bg);
+@media (hover: hover) {
+  .btn.btn-enc:not(.btn-primary):hover:not(:disabled) {
+    background: var(--info-bg);
+  }
 }
 
 /* Danger actions are outlines, never solid fills. */
@@ -133,17 +151,19 @@ a.btn[aria-disabled="true"] {
   color: var(--danger);
   border-color: var(--danger-line);
 }
-.btn-danger:hover:not(:disabled) {
-  color: var(--danger);
-  background: var(--danger-bg);
-  border-color: var(--danger);
+@media (hover: hover) {
+  .btn-danger:hover:not(:disabled) {
+    color: var(--danger);
+    background: var(--danger-bg);
+    border-color: var(--danger);
+  }
 }
 
 /* A square icon-only button: paging arrows, row reorder, steppers. Always
    carries an aria-label. */
 .btn-icon {
-  width: 28px;
-  min-height: 28px;
+  width: 32px;
+  min-height: 32px;
   padding: 0;
   font-size: 14px;
   line-height: 1;
@@ -179,8 +199,10 @@ a.btn[aria-disabled="true"] {
   border-radius: 999px;
   white-space: nowrap;
 }
-.seg > button:hover:not(:disabled):not(.on) {
-  color: var(--ink);
+@media (hover: hover) {
+  .seg > button:hover:not(:disabled):not(.on) {
+    color: var(--ink);
+  }
 }
 .seg > button.on {
   color: var(--ink);
@@ -204,9 +226,11 @@ button.pill {
   border: 1px solid var(--line);
   border-radius: 999px;
 }
-button.pill:hover:not(:disabled):not(.on) {
-  color: var(--accent);
-  border-color: var(--accent);
+@media (hover: hover) {
+  button.pill:hover:not(:disabled):not(.on) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
 }
 button.pill.on {
   font-weight: 600;
@@ -233,9 +257,11 @@ button.pill:disabled {
   border: 1px solid var(--line);
   border-radius: 8px;
 }
-.tbtn:hover:not(:disabled) {
-  color: var(--accent);
-  border-color: var(--accent);
+@media (hover: hover) {
+  .tbtn:hover:not(:disabled) {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
 }
 .tbtn:disabled {
   opacity: 0.5;
@@ -440,6 +466,34 @@ button.chip {
   border-color: var(--info-line);
   background: var(--info-bg);
   color: var(--info);
+}
+
+/* ---- Touch screens ------------------------------------------------------
+   Buttons are 32px tall on every screen. On a coarse pointer the segmented
+   controls grow from 24px to 32px, their neighbours being too close for a
+   finger, and text fields use 16px text: iOS Safari zooms the page into a
+   focused field set smaller. */
+@media (pointer: coarse) {
+  .seg > button {
+    min-height: 32px;
+  }
+  /* The zone editor's measure label keeps its toolbar size. */
+  input:not([type="checkbox"], [type="radio"], [type="range"], .znum),
+  textarea,
+  select {
+    font-size: max(16px, 1em) !important;
+  }
+  /* A long press on an element with a title shows it (TouchTooltip.svelte)
+     instead of selecting text or opening the browser's callout. */
+  [title]:not(input, textarea, select, [contenteditable]) {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  [title] :is(input, textarea, [contenteditable]) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
 }
 
 /* ---- Form controls ----------------------------------------------------- */
@@ -685,8 +739,10 @@ textarea.input {
   opacity: 0.6;
   flex: none;
 }
-.banner .dismiss:hover {
-  opacity: 1;
+@media (hover: hover) {
+  .banner .dismiss:hover {
+    opacity: 1;
+  }
 }
 
 /* ---- Wizard option lists --------------------------------------------
@@ -708,8 +764,10 @@ textarea.input {
   border-radius: 10px;
   cursor: pointer;
 }
-.option:hover {
-  border-color: var(--accent);
+@media (hover: hover) {
+  .option:hover {
+    border-color: var(--accent);
+  }
 }
 /* Selected: a 1.5px accent ring, the extra half pixel drawn inside so the
    card does not shift. */
@@ -777,11 +835,11 @@ textarea.input {
 /* ------------------------------------------------------------ side panel host
    A row holding a view's content and its SidePanel. On the panel's docked
    query (DOCKED_QUERY in side-panels.ts) the row stacks: the content above,
-   the panel below, 10px apart as on the campaign page. Markup:
-   <div class="sidehost">content<SidePanel /></div> */
-@media (orientation: portrait) and (max-width: 900px) {
+   the panel below, its top border meeting the content as on the campaign
+   page. Markup: <div class="sidehost">content<SidePanel /></div> */
+@media (orientation: portrait) and (max-width: 753px) {
   .sidehost {
     flex-direction: column !important;
-    gap: 10px !important;
+    gap: 0 !important;
   }
 }

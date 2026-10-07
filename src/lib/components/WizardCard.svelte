@@ -595,16 +595,20 @@
     border: none;
     text-decoration: underline;
   }
-  .discard:hover {
-    color: var(--danger);
+  @media (hover: hover) {
+    .discard:hover {
+      color: var(--danger);
+    }
   }
   .other-draft {
     display: flex;
     margin-top: 6px;
     text-align: left;
   }
-  .other-draft:hover {
-    color: var(--accent);
+  @media (hover: hover) {
+    .other-draft:hover {
+      color: var(--accent);
+    }
   }
   .discard.danger {
     color: var(--danger);
@@ -647,8 +651,10 @@
     border-radius: 999px;
     background: var(--line);
   }
-  .grip:hover::before {
-    background: var(--accent);
+  @media (hover: hover) {
+    .grip:hover::before {
+      background: var(--accent);
+    }
   }
   .work {
     flex: none;

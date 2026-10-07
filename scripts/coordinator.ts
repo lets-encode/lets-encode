@@ -59,8 +59,8 @@ import {
   checkEncoding,
   checkResolveComment,
   checkReviewEdit,
-  checkSendBack,
   checkValidation,
+  resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
 import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
@@ -87,7 +87,6 @@ import {
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
-  taskResetFromPatch,
   touchesCampaignPaths,
   validationIntentFromPatch,
   validationVerdict,
@@ -190,8 +189,7 @@ type Verdict = { ok: boolean; reason?: string; detail?: string };
 const REASON_TEXT: Record<string, string> = {
   malformed_claim:
     "the submission does not add exactly one lock row or remove exactly one",
-  malformed_validation:
-    "the submission is neither a single verdict nor a clean send-back reset",
+  malformed_validation: "the submission is not a single verdict",
   malformed_comment:
     "the submission does not append or resolve exactly one comment row",
   malformed_review_edit:
@@ -394,8 +392,7 @@ const logPhase = (phase: string, startedAt: number): void =>
   );
 
 // Whether the PR author can push to the campaign repo — the privilege behind
-// owner-only operations (send-back without a fail of one's own, resolving
-// someone else's comment). A failed lookup means no.
+// owner-only operations (resolving someone else's comment). A failed lookup means no.
 async function authorCanPush(): Promise<boolean> {
   if (!authorLogin) return false;
   try {
@@ -1038,23 +1035,16 @@ async function decideValidation(
   // the fork's file bytes never land.
   const statePatch = prFiles.find((f) => f.filename === STATE_PATH)?.patch;
   const diff = validationIntentFromPatch(statePatch, state.header);
-  if (!diff || !state.validationColumns.includes(diff.column)) {
-    // Not a single-verdict PR — a whole-task reset is a send-back.
-    const reset = taskResetFromPatch(
-      statePatch,
-      state.header,
-      state.validationColumns,
-    );
-    if (reset)
-      return decideSendBack(reset.task_id, state, locks, changedPaths, now);
+  if (!diff || !state.validationColumns.includes(diff.column))
     return { ok: false, reason: "malformed_validation" };
-  }
   const status = validationVerdict(diff.value);
   if (!status) return { ok: false, reason: "invalid_verdict" };
 
-  // The comment table only when the PR touches it (a fail's mandatory
-  // comment), the config always (pass_threshold).
-  const wantsComments = changedPaths.includes(COMMENT_PATH);
+  // The comment table when the PR touches it (a fail's mandatory comment) or
+  // for a pass (it resolves the task's change requests), the config always
+  // (pass_threshold).
+  const wantsComments =
+    changedPaths.includes(COMMENT_PATH) || status === "pass";
   const readStart = Date.now();
   const [configText, baseCommentCsv] = await Promise.all([
     getRepoFile(token, owner, repo, CONFIG_PATH, sha),
@@ -1067,8 +1057,8 @@ async function decideValidation(
   // fork's values.
   let baseComments: CommentRow[] = [];
   let failComment: CommentRow | null = null;
-  if (wantsComments) {
-    baseComments = parseCommentCsv(baseCommentCsv ?? "");
+  if (wantsComments) baseComments = parseCommentCsv(baseCommentCsv ?? "");
+  if (changedPaths.includes(COMMENT_PATH)) {
     const added = appendedCommentsFromPatch(
       prFiles.find((f) => f.filename === COMMENT_PATH)?.patch,
     );
@@ -1121,51 +1111,17 @@ async function decideValidation(
       path: COMMENT_PATH,
       content: serializeCommentCsv([...baseComments, authoredComment]),
     });
+  } else {
+    const resolved = resolveChangeRequests(baseComments, diff.task_id);
+    if (resolved)
+      files.push({
+        path: COMMENT_PATH,
+        content: serializeCommentCsv(resolved),
+      });
   }
   const message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${authorLabel}`;
 
   return { ok: true, history, files, message };
-}
-
-// A send-back PR: state.csv reset of one failed task, returning it to
-// encoding. Allowed for a validator who recorded one of the task's fails, or
-// anyone with push access.
-async function decideSendBack(
-  task_id: string,
-  state: ParsedState,
-  locks: LockRow[],
-  changedPaths: string[],
-  now: string,
-): Promise<
-  Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
-> {
-  const verdict = checkSendBack({
-    state,
-    locks,
-    intent: { task_id },
-    author,
-    changedPaths,
-    isCollaborator: await authorCanPush(),
-  });
-  const history: HistoryRow = {
-    timestamp: now,
-    task_id,
-    subtask_id: "",
-    user_id: author,
-    action: "send_back",
-    outcome: verdict.ok ? "accepted" : "rejected",
-    detail: verdict.ok ? "" : verdict.reason,
-  };
-  if (!verdict.ok) return { ok: false, reason: verdict.reason, history };
-  return {
-    ok: true,
-    history,
-    files: [
-      { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
-      { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
-    ],
-    message: `Send ${task_id} back for encoding (by ${authorLabel})`,
-  };
 }
 
 // One decide-and-apply pass, pinned to the branch head we read. Throws only if
@@ -1460,7 +1416,7 @@ async function runReap(): Promise<void> {
 // ---------------------------------------------------------------------------
 // Entry: route by event, then (for PRs) by the operation the changed paths imply
 // — lock.csv with comment.csv → review edit, lock.csv → claim (or release),
-// state.csv → validation (or send-back), comment.csv alone → comment, anything
+// state.csv → validation, comment.csv alone → comment, anything
 // else → encoding. The boundary check inside each decision
 // rejects mixed or out-of-bounds PRs.
 

@@ -12,7 +12,7 @@
     Result,
   } from "$lib/commands.ts";
   import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
-  import { workStage, taskDescription } from "$lib/campaign-graph.ts";
+  import { taskDescription } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
@@ -32,9 +32,8 @@
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
-  import TaskHeading from "$lib/components/TaskHeading.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import PreTaskReview from "$lib/components/PreTaskReview.svelte";
+  import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
@@ -177,7 +176,6 @@
   // The task's kind: measure correction, which for an OMR-prepared piece
   // (omr-layout) also corrects the staff and grand-staff boxes.
   const taskTitle = $derived(taskDescription(data?.locator ?? "measure-zones"));
-  const stage = $derived(workStage(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
   // A layout task's three steps: the staff boxes, the grand-staff boxes, the measures.
   let layoutStep = $state<1 | 2 | 3>(1);
@@ -200,6 +198,11 @@
   // in this session for the submission; outside the edit history.
   let rawLayouts = $state<Record<number, CocoLayout>>({});
   let selected = $state<{ p: number; z: number } | null>(null);
+  /** The selected measure's number, prefilling a change request; '' for none. */
+  const selectedLabel = $derived.by(() => {
+    const zone = selected ? pages[selected.p]?.zones[selected.z] : undefined;
+    return zone ? String(zone.override ?? zone.label) : "";
+  });
   // The zone whose controls show: the selected one.
   const active = $derived(selected);
 
@@ -757,11 +760,12 @@
   // Each visible page's rendered canvas width (px), so the SVG number labels can
   // be sized to a near-constant on-screen size across zoom and 1-/2-page view.
   let canvasW = $state<number[]>([]);
-  // On-screen height (px) for the number label at 100%; it grows a little with
-  // zoom (damped) so it does not feel oversized zoomed out or small zoomed in.
+  // Labels and box borders grow a little with zoom (damped) so they do not
+  // feel oversized zoomed out or small zoomed in.
+  const damp = $derived(Math.min(1.7, Math.max(0.8, 0.7 + 0.3 * zoom)));
+  // On-screen height (px) for the number label at 100%.
   const LABEL_PX = 11;
   const labelFont = (p: number, pageW: number) => {
-    const damp = Math.min(1.7, Math.max(0.8, 0.7 + 0.3 * zoom));
     const target = LABEL_PX * damp;
     return canvasW[p] ? (target * pageW) / canvasW[p] : target;
   };
@@ -1026,6 +1030,32 @@
     return entries;
   }
 
+  let showOverlaps = $state(true);
+
+  // Intersections of every pair of boxes on the layer the current tool edits.
+  function overlaps(pg: EditPage): MeasureBox[] {
+    const boxes = (
+      tool === "measures"
+        ? pg.zones
+        : tool === "grandstaves"
+          ? pg.grandstaves
+          : pg.staves
+    ).map((b) => b.box);
+    const out: MeasureBox[] = [];
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i];
+        const b = boxes[j];
+        const ulx = Math.max(a.ulx, b.ulx);
+        const uly = Math.max(a.uly, b.uly);
+        const lrx = Math.min(a.lrx, b.lrx);
+        const lry = Math.min(a.lry, b.lry);
+        if (lrx > ulx && lry > uly) out.push({ ulx, uly, lrx, lry });
+      }
+    }
+    return out;
+  }
+
   const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
   const staffCount = $derived(pages.reduce((n, p) => n + p.staves.length, 0));
   const grandstaffCount = $derived(
@@ -1180,6 +1210,14 @@
             <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
           </label>
         {/if}
+        <button
+          type="button"
+          class="chip-switch"
+          class:on={showOverlaps}
+          onclick={() => (showOverlaps = !showOverlaps)}
+          title="Show or hide the colour on areas where two boxes overlap"
+          ><span class="sw"></span>Show overlaps</button
+        >
         <span class="tspacer"></span>
         <input
           class="zoomslider"
@@ -1286,7 +1324,7 @@
         <div
           class="pages"
           class:double={shownView === "double"}
-          style={`--zoom:${zoom}`}
+          style={`--zoom:${zoom}; --stroke-scale:${damp}`}
         >
           {#each spreads as sp, r (r)}
             <div class="row" bind:this={rowEls[r]}>
@@ -1407,6 +1445,15 @@
                               inset + ZC_H_PX / sc,
                             )}
                           {/if}
+                        {/each}
+                        {#each showOverlaps ? overlaps(pg) : [] as o, i (i)}
+                          <rect
+                            class="overlap"
+                            x={o.ulx}
+                            y={o.uly}
+                            width={o.lrx - o.ulx}
+                            height={o.lry - o.uly}
+                          />
                         {/each}
                       {/if}
                     </svg>
@@ -1557,87 +1604,94 @@
       </g>
     {/snippet}
 
-    {#snippet taskBox()}
+    {#snippet tools()}
       <!-- The snippet renders only while `data` is loaded (see its host). -->
       {@const d = data!}
-      <div class="taskbox">
-        <div class="tbhead">
-          <TaskHeading
-            description={taskTitle}
-            piece={session.pieceName}
-            task={taskId}
-          />
-        </div>
-        <div class="tbsection">
-          <span class="abcount">
-            {#if omr}{staffCount}
-              {staffCount === 1 ? "staff" : "staves"} · {grandstaffCount} grand
-              {grandstaffCount === 1
-                ? "staff"
-                : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1
-              ? ""
-              : "s"}
-            · {movementCount} movement{movementCount === 1 ? "" : "s"}
-          </span>
-          <PreTaskStatus {session} />
-          {#if omr}
-            <div
-              class="seg steps"
-              title="The three steps of the measure correction. Each step shows only its own boxes."
-            >
-              <button
-                type="button"
-                class:on={layoutStep === 1}
-                onclick={() => setLayoutStep(1)}>1 · Staff boxes</button
-              >
-              <button
-                type="button"
-                class:on={layoutStep === 2}
-                onclick={() => setLayoutStep(2)}>2 · Grand staves</button
-              >
-              <button
-                type="button"
-                class:on={layoutStep === 3}
-                onclick={() => setLayoutStep(3)}>3 · Measures</button
-              >
-            </div>
-          {/if}
-          {#if omr && layoutStep === 1}
+      <div class="tbsection">
+        <span class="abcount">
+          {#if omr}{staffCount}
+            {staffCount === 1 ? "staff" : "staves"} · {grandstaffCount} grand
+            {grandstaffCount === 1
+              ? "staff"
+              : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1
+            ? ""
+            : "s"}
+          · {movementCount} movement{movementCount === 1 ? "" : "s"}
+        </span>
+        <PreTaskStatus {session} />
+        {#if omr}
+          <div
+            class="seg steps"
+            title="The three steps of the measure correction. Each step shows only its own boxes."
+          >
             <button
               type="button"
-              class="btn btn-secondary submitbtn"
-              onclick={() => setLayoutStep(2)}
-              title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
+              class:on={layoutStep === 1}
+              onclick={() => setLayoutStep(1)}>1 · Staff boxes</button
             >
-              Next: grand staves
-            </button>
-          {:else if omr && layoutStep === 2}
             <button
               type="button"
-              class="btn btn-secondary submitbtn"
-              onclick={() => setLayoutStep(3)}
-              title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
+              class:on={layoutStep === 2}
+              onclick={() => setLayoutStep(2)}>2 · Grand staves</button
             >
-              Next: measures
-            </button>
-          {:else}
             <button
               type="button"
-              class="btn btn-primary submitbtn"
-              onclick={() => submit()}
-              disabled={busy || !canEdit || submitBlock !== null}
-              title={submitBlock ??
-                (omr
-                  ? "Submit the corrected staves, grand staves, measures, breaks and movements for review"
-                  : "Submit the corrected measures, breaks and movements for review")}
+              class:on={layoutStep === 3}
+              onclick={() => setLayoutStep(3)}>3 · Measures</button
             >
-              Submit corrections
-            </button>
-          {/if}
-        </div>
-
-        <PreTaskReview {session} {stage} />
+          </div>
+        {/if}
+        {#if d.status === "completed"}
+          <!-- A done task is shown for viewing only. -->
+        {:else if omr && layoutStep === 1}
+          <button
+            type="button"
+            class="btn btn-secondary submitbtn"
+            onclick={() => setLayoutStep(2)}
+            title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
+          >
+            Next: grand staves
+          </button>
+        {:else if omr && layoutStep === 2}
+          <button
+            type="button"
+            class="btn btn-secondary submitbtn"
+            onclick={() => setLayoutStep(3)}
+            title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
+          >
+            Next: measures
+          </button>
+        {:else if d.status === "encoding_required"}
+          <button
+            type="button"
+            class="btn btn-primary submitbtn"
+            onclick={() => submit()}
+            disabled={busy || !canEdit || submitBlock !== null}
+            title={submitBlock ??
+              (omr
+                ? "Submit the corrected staves, grand staves, measures, breaks and movements for review"
+                : "Submit the corrected measures, breaks and movements for review")}
+          >
+            Submit corrections
+          </button>
+        {/if}
       </div>
+    {/snippet}
+
+    {#snippet taskBox()}
+      {#if session.card}
+        <PreTaskBox
+          {session}
+          {campaign}
+          card={session.card}
+          {tools}
+          prefill={() => ({
+            page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
+            m1: selectedLabel,
+            m2: selectedLabel,
+          })}
+        />
+      {/if}
     {/snippet}
 
     {#if tables}
@@ -1670,8 +1724,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .linkish:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .linkish:hover {
+      text-decoration: underline;
+    }
   }
 
   /* The whole tool: the desk the page sheets float on (the only scrolling
@@ -1694,24 +1750,13 @@
   /* --------------------------------------------------------------- task box
      The task's status, actions and validation controls, pinned at the top of
      the side panel. The tint follows the panel's piece colour (--zone). */
-  .taskbox {
-    background: var(--card);
-    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: var(--shadow-sm);
-  }
-  .tbhead {
-    background: color-mix(in srgb, var(--zone) 10%, var(--card));
-    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
-    padding: 9px 12px;
-  }
   .tbsection {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
     padding: 10px 12px;
+    border-top: 1px solid var(--hairline, var(--line));
   }
   .abcount {
     font-size: 12.5px;
@@ -1779,8 +1824,8 @@
   }
   /* Narrow tool column (NARROW_TOOL): the page navigation leads, then fit
      width, undo and redo at touch size; the page-count switch, "Page 1
-     right", the zoom slider, fit page and the help mark are hidden. Zoom
-     stays reachable by pinch and Ctrl/Cmd + scroll. */
+     right", the overlap switch, the zoom slider, fit page and the help mark
+     are hidden. Zoom stays reachable by pinch and Ctrl/Cmd + scroll. */
   @container (max-width: 559px) {
     .ctoolbar {
       gap: 4px;
@@ -1788,6 +1833,7 @@
     }
     .ctoolbar > .seg,
     .ctoolbar > .checkline,
+    .ctoolbar > .chip-switch,
     .ctoolbar > .tspacer,
     .ctoolbar > .zoomslider,
     .ctoolbar > .zval,
@@ -1886,32 +1932,44 @@
   /* Teal for measures, purple for movement starts: both hues sit outside the
      piece-region palette (--zone-1…8), so a colour never carries two meanings. */
   /* Strokes are screen pixels — the markup sets
-     vector-effect="non-scaling-stroke" — so they stay even at every zoom. */
+     vector-effect="non-scaling-stroke" — scaled by the damped zoom factor
+     --stroke-scale. */
   .zone {
-    fill: rgba(14, 129, 149, 0.12);
+    fill: rgba(14, 129, 149, 0.2);
     stroke: rgba(14, 129, 149, 0.85);
-    stroke-width: 1.5;
+    stroke-width: calc(2px * var(--stroke-scale, 1));
     cursor: pointer;
   }
   .zone.selected {
     fill-opacity: 1;
-    stroke-width: 2.5;
+    stroke-width: calc(3px * var(--stroke-scale, 1));
   }
   .zone.mdivstart {
     stroke: rgba(139, 95, 191, 0.9);
-    fill: rgba(139, 95, 191, 0.14);
-    stroke-width: 3.5;
+    fill: rgba(139, 95, 191, 0.22);
+    stroke-width: calc(4px * var(--stroke-scale, 1));
   }
   /* Red for staff boxes: a third hue outside the region palette. */
   .staff {
-    fill: rgba(214, 40, 40, 0.08);
+    fill: rgba(214, 40, 40, 0.2);
     stroke: rgba(214, 40, 40, 0.9);
-    stroke-width: 1.5;
+    stroke-width: calc(2px * var(--stroke-scale, 1));
     cursor: pointer;
   }
   .staff.selected {
-    fill: rgba(214, 40, 40, 0.18);
-    stroke-width: 2.5;
+    fill: rgba(214, 40, 40, 0.28);
+    stroke-width: calc(3px * var(--stroke-scale, 1));
+  }
+  /* The intersection of two boxes takes the inverse of the box colour. */
+  .overlap {
+    fill: rgba(255, 100, 70, 0.6);
+    pointer-events: none;
+  }
+  .staves .overlap {
+    fill: rgba(0, 235, 235, 0.6);
+  }
+  .grandstaves .overlap {
+    fill: rgba(255, 70, 200, 0.6);
   }
   .labelbg {
     fill: rgba(255, 255, 255, 0.88);
@@ -1933,11 +1991,11 @@
   }
   /* Green for grand-staff boxes, the complement of the staff red. */
   .staff.grand {
-    fill: rgba(30, 150, 70, 0.08);
+    fill: rgba(30, 150, 70, 0.2);
     stroke: rgba(30, 150, 70, 0.9);
   }
   .staff.grand.selected {
-    fill: rgba(30, 150, 70, 0.18);
+    fill: rgba(30, 150, 70, 0.28);
   }
   .grandstaves .handle {
     stroke: rgba(30, 150, 70, 0.9);
@@ -2027,8 +2085,10 @@
     background: transparent;
     color: var(--ink-soft);
   }
-  .zc-inner button:hover:not(:disabled) {
-    border-color: var(--line-input);
+  @media (hover: hover) {
+    .zc-inner button:hover:not(:disabled) {
+      border-color: var(--line-input);
+    }
   }
   .zc-inner button.on {
     background: var(--accent);
@@ -2051,9 +2111,13 @@
     fill: var(--card);
     stroke: var(--line-input);
   }
-  .delbtn:hover rect,
   .delbtn:focus-visible rect {
     stroke: var(--danger);
+  }
+  @media (hover: hover) {
+    .delbtn:hover rect {
+      stroke: var(--danger);
+    }
   }
   .delbtn path {
     fill: none;

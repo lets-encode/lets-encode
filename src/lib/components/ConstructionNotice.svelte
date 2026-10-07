@@ -4,6 +4,7 @@
   it has; every other page shows the banner. The banner's Details link opens
   the same dialog. Only "I understand" marks
   the notice as seen; Escape or a click outside closes it for this visit.
+  The banner's close button hides it for the browser session.
 -->
 <script lang="ts">
   import { page } from "$app/state";
@@ -11,6 +12,7 @@
   import { bugReportHref } from "$lib/bug-report.ts";
 
   const SEEN_KEY = "construction-notice-seen";
+  const CLOSED_KEY = "construction-banner-closed";
 
   let dialog = $state<HTMLDialogElement>();
   const withDialog = $derived(
@@ -27,6 +29,24 @@
     }
   }
   let confirmed = $state(seen());
+
+  function readClosed(): boolean {
+    try {
+      return sessionStorage.getItem(CLOSED_KEY) === "1";
+    } catch (e) {
+      return false;
+    }
+  }
+  let closed = $state(readClosed());
+
+  function closeBanner() {
+    try {
+      sessionStorage.setItem(CLOSED_KEY, "1");
+    } catch (e) {
+      /* storage unavailable — the banner shows again on the next page load */
+    }
+    closed = true;
+  }
 
   function open() {
     if (dialog && !dialog.open) dialog.showModal();
@@ -48,7 +68,7 @@
 
   // Surfaces fixed below the top bar offset themselves by the banner's
   // current height, read as --notice-h.
-  const withBanner = $derived(!withDialog || confirmed);
+  const withBanner = $derived((!withDialog || confirmed) && !closed);
   let bannerHeight = $state(0);
   $effect(() => {
     document.documentElement.style.setProperty(
@@ -75,6 +95,13 @@
           >Report a bug</a
         >
       </span></span
+    >
+    <button
+      type="button"
+      class="close"
+      aria-label="Hide this notice until the browser is closed"
+      title="Hide this notice until the browser is closed"
+      onclick={closeBanner}><Icon name="close" size={14} /></button
     >
   </div>
 {/if}
@@ -170,6 +197,28 @@
   .banner strong {
     font-weight: 600;
   }
+  /* 32px to tap, without growing the banner. */
+  .close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin: -6px -8px -6px 0;
+    padding: 0;
+    background: none;
+    border: none;
+    border-radius: 6px;
+    color: var(--ink-soft);
+    cursor: pointer;
+  }
+  @media (hover: hover) {
+    .close:hover {
+      color: var(--ink);
+      background: color-mix(in srgb, var(--warn) 12%, transparent);
+    }
+  }
   .banner-links {
     display: inline-flex;
     gap: 16px;
@@ -220,7 +269,9 @@
     text-decoration: underline;
     background: none;
     border: none;
-    padding: 0;
+    /* 24px tall to tap, without growing the banner. */
+    padding: 3px 0;
+    margin: -3px 0;
     cursor: pointer;
   }
 

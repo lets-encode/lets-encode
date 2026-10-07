@@ -17,11 +17,16 @@ import type {
   CommandContext,
   DraftInput,
   FacsimileTaskData,
+  FailComment,
   Result,
 } from "./commands.ts";
-import { handle } from "./campaign-graph.ts";
-import { fragmentPieceName } from "./campaign-board.ts";
-import { findRow, pieceNamesOf } from "./campaign-tables.ts";
+import { buildBoard, fragmentPieceName } from "./campaign-board.ts";
+import {
+  findRow,
+  pieceNamesOf,
+  piecePreparationsOf,
+} from "./campaign-tables.ts";
+import { liveLocks } from "./campaign-reaper.ts";
 import { CampaignResolution } from "./campaign-resolution.svelte.ts";
 import { CommandRunner, viewerId } from "./command-runner.svelte.ts";
 import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
@@ -47,10 +52,6 @@ export class PreTaskSession {
   data = $state<FacsimileTaskData | null>(null);
   /** The campaign tables behind the side panel, refreshed on their own. */
   tables = $state<CampaignTables | null>(null);
-  /** A fail carries a mandatory comment; the box is open while one is typed. */
-  failOpen = $state(false);
-  /** The same box, for the note a switch from review to editing carries. */
-  editOpen = $state(false);
   /** The last draft save: '' before any, "saving", "saved", or its error. */
   draftState = $state("");
 
@@ -59,7 +60,6 @@ export class PreTaskSession {
   #draftKey: string | null = null;
   #draftTimer: ReturnType<typeof setTimeout> | null = null;
   #draftInput: DraftInput | null = null;
-  failText = $state("");
 
   // Whether a load has been attempted for the current params; a failed load
   // stays on its error banner instead of retrying.
@@ -90,7 +90,7 @@ export class PreTaskSession {
   );
   canEdit = $derived(this.holds && !this.submitting);
   // Any submission on the task still being processed (claim, encoding,
-  // verdict, send-back) holds the editor's actions until it lands.
+  // verdict) holds the editor's actions until it lands.
   busy = $derived.by(
     () => this.runner.busy || pendingVerdicts.taskProcessing(this.#taskId()),
   );
@@ -105,75 +105,28 @@ export class PreTaskSession {
     return fragment ? fragmentPieceName(fragment, pieceNamesOf(t!.pieces)) : "";
   });
 
-  // The review happens in the editor too: the same claim/pass/fail the
-  // console offers, against the task's validation subtask.
-  validation = $derived(this.data?.validation ?? null);
-  // A verdict already submitted here and still being processed: the verdict
-  // controls hold until it lands — a repeat would only be rejected.
-  verdictPending = $derived.by(
-    () =>
-      !!this.validation &&
-      pendingVerdicts.isProcessing(
-        `validate:${this.#taskId()}/${this.validation.subtask_id}`,
-      ),
-  );
-  submitted = $derived(
-    this.data?.status === "validation_required" ||
-      this.data?.status === "completed",
-  );
-  /** The viewer's review claim ran out while the editor was open. */
-  reviewRanOut = $derived(
-    this.viewer !== "" &&
-      this.validation?.lockUser === this.viewer &&
-      this.#past(this.validation.lockExpires),
-  );
-  holdsValidation = $derived(
-    this.viewer !== "" &&
-      this.validation?.lockUser === this.viewer &&
-      !this.reviewRanOut,
-  );
-  lockUserLogin = $derived(
-    handle(this.logins, this.validation?.lockUser ?? ""),
-  );
-  selfValidation = $derived(
-    !!this.data &&
-      this.data.encoder !== "" &&
-      this.data.encoder === this.viewer &&
-      !this.data.allowSelfValidation,
-  );
-  // One verdict per person: a validator who already recorded pass/fail here
-  // cannot claim another slot (matching the campaign automation's rule).
-  alreadyValidated = $derived(
-    !!this.data &&
-      !this.data.allowSelfValidation &&
-      (this.validation?.verdicts ?? []).some((v) => v.user === this.viewer),
-  );
-  canClaimValidation = $derived(
-    !!this.validation &&
-      this.validation.status === "validation_required" &&
-      this.validation.openSlots > 0 &&
-      (!this.validation.lockUser || this.reviewRanOut) &&
-      !this.selfValidation &&
-      !this.alreadyValidated &&
-      !this.verdictPending,
-  );
-  failComments = $derived(this.data?.failComments ?? []);
-  failedVerdicts = $derived(
-    (this.validation?.verdicts ?? []).filter((v) => v.verdict === "fail"),
-  );
-  // Sending a failed task back is open to a failing validator or push
-  // access — the same rule the automation enforces.
-  canSendBack = $derived(
-    this.viewer !== "" &&
-      this.data?.status === "validation_required" &&
-      this.failedVerdicts.length > 0 &&
-      (this.data.canPush ||
-        this.failedVerdicts.some((v) => v.user === this.viewer)),
-  );
-  // Same hold for a send-back already on its way.
-  sendBackPending = $derived.by(() =>
-    pendingVerdicts.isProcessing(`sendback:${this.#taskId()}`),
-  );
+  /** The claims in the tables, without those past their expiry. */
+  locks = $derived(liveLocks(this.tables?.locks ?? [], this.now));
+  /** The task's card on the campaign board, for the task box; null until
+      the tables load. */
+  card = $derived.by(() => {
+    const t = this.tables;
+    if (!t) return null;
+    const board = buildBoard(
+      { ...t, locks: this.locks },
+      t.comments,
+      t.history,
+      this.viewer,
+      t.logins,
+      pieceNamesOf(t.pieces),
+      undefined,
+      piecePreparationsOf(t.pieces),
+    );
+    const task = this.#taskId();
+    return (
+      board.columns.flatMap((c) => c.cards).find((c) => c.task === task) ?? null
+    );
+  });
 
   constructor(name: () => string, taskId: () => string, hooks: PreTaskHooks) {
     this.#name = name;
@@ -394,12 +347,6 @@ export class PreTaskSession {
     });
   }
 
-  sendBack() {
-    return this.run((c) =>
-      invoke(commands.sendBack, { task_id: this.#taskId() }, c),
-    );
-  }
-
   /**
    * Abandon the viewer's claim: the task's encoding ('' subtask), which
    * returns to the campaign, or its review slot, which reloads in place.
@@ -412,74 +359,46 @@ export class PreTaskSession {
     );
   }
 
-  claimValidation() {
+  claimValidation(subtask_id: string) {
     return this.run((c) =>
       invoke(
         commands.claimValidation,
-        { task_id: this.#taskId(), subtask_id: this.validation!.subtask_id },
+        { task_id: this.#taskId(), subtask_id },
         c,
       ),
     );
   }
 
-  async validate(verdict: string) {
-    const result = await this.run(
+  validate(subtask_id: string, verdict: string, comment?: FailComment) {
+    return this.run(
       (c) =>
         invoke(
           commands.submitValidation,
           {
             task_id: this.#taskId(),
-            subtask_id: this.validation!.subtask_id,
+            subtask_id,
             verdict,
-            ...(verdict === "fail"
-              ? {
-                  comment: {
-                    body: this.failText,
-                    page: "",
-                    measure_start: "",
-                    measure_end: "",
-                  },
-                }
-              : {}),
+            ...(comment ? { comment } : {}),
           },
           c,
         ),
       { overviewOnSuccess: true },
     );
-    // A failed or unstarted submission keeps the typed comment for the retry.
-    if (result?.ok) {
-      this.failOpen = false;
-      this.failText = "";
-    }
   }
 
   /**
-   * Switch the viewer's review to editing: a fail with the typed note and a
+   * Switch the viewer's review to editing: a fail with the note and a
    * send-back in one step, after which the viewer holds the task and the
    * reload makes the editor editable.
    */
-  async reviewEdit() {
-    const result = await this.run((c) =>
+  reviewEdit(subtask_id: string, comment: FailComment) {
+    return this.run((c) =>
       invoke(
         commands.reviewEdit,
-        {
-          task_id: this.#taskId(),
-          subtask_id: this.validation!.subtask_id,
-          comment: {
-            body: this.failText,
-            page: "",
-            measure_start: "",
-            measure_end: "",
-          },
-        },
+        { task_id: this.#taskId(), subtask_id, comment },
         c,
       ),
     );
-    // A failed submission keeps the typed note for the retry.
-    if (result?.ok && !result.warn) {
-      this.editOpen = false;
-      this.failText = "";
-    }
   }
 
   // Posting and resolving comments refresh the tables only: a full reload
