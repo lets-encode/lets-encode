@@ -52,6 +52,7 @@
   } from "$lib/campaign-graph.ts";
   import {
     buildBoard,
+    doneLabel,
     elapsed,
     expiresIn,
     initialOf,
@@ -1813,9 +1814,7 @@
                                     src="/green-hand.svg"
                                     alt=""
                                   />
-                                  {card.doneLine || "done"}{card.finishedAt
-                                    ? ` · ${elapsedLabel(card.finishedAt)}`
-                                    : ""}
+                                  {doneLabel(card)}
                                 </div>
                               {/if}
                               {#if card.column !== "done" && card.counts.fails + card.counts.comments > 0}

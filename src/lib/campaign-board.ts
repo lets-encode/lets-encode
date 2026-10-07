@@ -265,6 +265,17 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   done: "Done",
 };
 
+/** A finished card's line: its review count, or "done" where it has none,
+    and when it finished ("1 of 1 review · 7 d ago", "done · just now"). */
+export function doneLabel(
+  card: Pick<BoardCard, "doneLine" | "finishedAt">,
+  now = Date.now(),
+): string {
+  const e = card.finishedAt ? elapsed(card.finishedAt, now) : "";
+  const when = e === "" ? "" : e === "now" ? " · just now" : ` · ${e} ago`;
+  return `${card.doneLine || "done"}${when}`;
+}
+
 /**
  * The one-line status pill of a card: the current stage (the task's heading
  * names its kind), the worker on a claimed task, and numeric pass progress
@@ -290,7 +301,7 @@ export function cardPill(card: BoardCard, viewer = ""): string {
     }
     case "done":
       return card.threshold > 0
-        ? `done · ${card.passes} of ${card.threshold}`
+        ? `done · ${card.passes} of ${card.threshold} review${card.threshold === 1 ? "" : "s"}`
         : "done";
   }
 }

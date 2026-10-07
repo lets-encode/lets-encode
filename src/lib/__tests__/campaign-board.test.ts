@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   buildBoard,
   cardTitle,
+  doneLabel,
   expiresIn,
   orphanedFails,
 } from "../campaign-board.ts";
@@ -179,6 +180,27 @@ test("a card in review knows whether the viewer submitted it", () => {
   assert.equal(
     card("9").slots.some((s) => s.claimable),
     true,
+  );
+});
+
+test("doneLabel gives the review count, or done, and when the task finished", () => {
+  const now = Date.parse("2026-10-06T12:00:00Z");
+  const at = "2026-09-29T12:00:00Z";
+  assert.equal(
+    doneLabel({ doneLine: "1 of 1 review", finishedAt: at }, now),
+    "1 of 1 review · 7 d ago",
+  );
+  assert.equal(
+    doneLabel({ doneLine: "", finishedAt: at }, now),
+    "done · 7 d ago",
+  );
+  assert.equal(
+    doneLabel({ doneLine: "", finishedAt: "2026-10-06T12:00:00Z" }, now),
+    "done · just now",
+  );
+  assert.equal(
+    doneLabel({ doneLine: "2 of 2 reviews", finishedAt: "" }, now),
+    "2 of 2 reviews",
   );
 });
 

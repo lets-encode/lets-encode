@@ -5,8 +5,11 @@ parentheses.
 
 ## 2026-10-07
 
+- Done tasks in the volunteer view show their review count and when they finished.
 - Reviews read Approve and Request changes instead of Pass and Fail.
 - The unused status pill labels are removed.
+- The task panel of a done task names its reviews, as in "done · 1 of 1 review".
+- Done tasks in the volunteer view open their task panel.
 
 ## 2026-10-06
 

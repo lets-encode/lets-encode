@@ -15,7 +15,7 @@
     pieceZone,
   } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
-  import { cardName, cardPill } from "$lib/campaign-board.ts";
+  import { cardName, cardPill, doneLabel } from "$lib/campaign-board.ts";
   import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
@@ -553,19 +553,31 @@
               {#if open}
                 <div class="piecetasks">
                   {#each pieceTasks(index) as card (card.task)}
-                    {#if card.column === "blocked" || card.column === "done"}
+                    {#if card.column === "blocked"}
                       <div class="taskrow still">
                         <span class="tasktitle">{cardName(card)}</span>
                         <span class="ttype">{typeOf(card)}</span>
                         <TaskRunState task={card.task} />
                         <span class="vspacer"></span>
-                        {#if card.column === "done"}
-                          <span class="merged"
-                            ><Icon name="check" size={12} /> done</span
-                          >
-                        {:else}
-                          <span class="waits">waits for {card.waitsFor}</span>
-                        {/if}
+                        <span class="waits">waits for {card.waitsFor}</span>
+                      </div>
+                    {:else if card.column === "done"}
+                      <div class="taskrow">
+                        <button
+                          type="button"
+                          class="tasktitle"
+                          onclick={() => onopen(card.task)}
+                          title="Open this task">{cardName(card)}</button
+                        >
+                        <span class="ttype">{typeOf(card)}</span>
+                        <TaskRunState task={card.task} />
+                        <span class="vspacer"></span>
+                        {@render chips(card)}
+                        <span class="merged"
+                          ><Icon name="check" size={12} />
+                          {doneLabel(card)}</span
+                        >
+                        <span class="tchev"><Icon name="chevron-right" /></span>
                       </div>
                     {:else}
                       <div class="taskrow">
