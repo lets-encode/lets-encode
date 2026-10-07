@@ -5,6 +5,27 @@ parentheses.
 
 ## 2026-10-07
 
+- On phones the task panel snaps to three heights when dragged.
+- A tap on the panel's drag handle moves it to the next height.
+- At the lowest panel height a Comment button replaces the comment field.
+- The task panel's buttons, header row and comment cards take less height.
+- Buttons are 32px tall in every view; only the volunteer's main action is larger.
+- Task cards on the board are more compact and show their review dots beside the review count.
+- The selected task card has a blue outline and is scrolled into view; the next task is marked by its badge only.
+- A volunteer's task actions in the panel are 44px, as on the next-task card.
+- The side panel docks below the board only where the board beside it would show one lane at a time.
+- The owner view no longer has a Claim the next task button; the task panel's action is the primary one.
+- Task panel buttons that do not fit side by side take a row each.
+- Comment links use 12px text and are 32px tall on touch screens.
+- On phones and tablets the docked panel meets the content above without a gap.
+- Approving a review resolves the task's open change requests.
+- The under-construction banner can be hidden until the browser is closed.
+- The panel's drag handle is easier to hit on touch screens.
+- Change requests are listed and counted with the task's comments.
+- On phones a task's submission and reviews fold behind a disclosure.
+- Holding a finger on a control shows its tooltip.
+- On touch screens buttons are taller and text fields no longer zoom the page.
+- Hover colours no longer stay on after a tap.
 - The side panel task box no longer scrolls on its own; the whole panel scrolls when needed.
 - Edit yourself moved from the review buttons into the change request form.
 - The score setup and measure correction editors use the same task box and review controls as the campaign page.

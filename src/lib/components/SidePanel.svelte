@@ -3,10 +3,14 @@
   the host's task box pinned on top, the task's comments and the composer;
   without one (task '') it holds the campaign comments. Beside the content
   it is resizable by its left edge; in portrait on a narrow screen
-  (DOCKED_QUERY) it docks below the content, resizable by its top edge, and
-  below PANEL_LOWERED shows only its task box. Docked without a task it starts
-  as a bar holding the campaign comment field, with a button that opens the
-  list. Sizes persist per browser (side-panels.ts).
+  (DOCKED_QUERY) it docks below the content at one of three heights
+  (PANEL_SNAPS), dragged by its top edge and snapped on release, a tap on
+  the edge moving to the next height. At the lowest height a task's comment
+  field gives way to a Comment button in the header that raises the panel. Docked
+  without a task it starts as a bar holding the campaign comment field, with
+  a button that opens the list; dragging the bar up opens it too, dragging
+  the open list below its lowest height closes it. Sizes persist per browser
+  (side-panels.ts).
 -->
 <script module lang="ts">
   // Whether resolved threads are hidden; held for the session across views.
@@ -15,18 +19,21 @@
 
 <script lang="ts">
   import { MediaQuery } from "svelte/reactivity";
-  import type { Snippet } from "svelte";
+  import { tick, type Snippet } from "svelte";
+  import { auth } from "$lib/auth.svelte.ts";
   import type { Result } from "$lib/commands.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { buildThreads } from "$lib/campaign-board.ts";
   import {
     DOCKED_QUERY,
-    PANEL_LOWERED,
-    defaultPanelHeight,
+    PANEL_SNAPS,
+    SNAP_CSS,
     defaultPanelWidth,
-    hasStoredPanelHeight,
     hasStoredPanelWidth,
+    nearestSnap,
+    snapHeight,
+    stepSnap,
     writeSidePanel,
     type SidePanelState,
   } from "$lib/side-panels.ts";
@@ -100,21 +107,66 @@
   const cramped = $derived(dockedQuery.current || shortQuery.current);
   // Docked without a task, the campaign comments open only on request.
   let campaignOpen = $state(false);
-  const collapsedCampaign = $derived(docked && !task && !campaignOpen);
-  const lowered = $derived(
-    docked && (panel.height < PANEL_LOWERED || collapsedCampaign),
+  // The docked height in pixels while the top edge is dragged.
+  let drag = $state<number | null>(null);
+  const collapsedCampaign = $derived(
+    docked && !task && !campaignOpen && drag === null,
   );
 
-  // Until the viewer sets a size, the panel keeps its default share of the
-  // window as the window changes (a resized window, a phone turned upright):
-  // its width beside the content, its height docked below it.
+  // Docked, the bar is step 0 and the snaps follow.
+  const dockLevel = $derived(
+    collapsedCampaign ? 0 : PANEL_SNAPS.indexOf(panel.snap) + 1,
+  );
+  const SNAP_TEXT = {
+    peek: "Low height",
+    half: "Half height",
+    full: "Full height",
+  } as const;
+  const dockText = $derived(
+    collapsedCampaign ? "Comment field only" : SNAP_TEXT[panel.snap],
+  );
+
+  function setSnap(snap: SidePanelState["snap"]) {
+    panel.snap = snap;
+    writeSidePanel({ ...panel }, "snap");
+  }
+  // Without a task, a release well below the lowest snap closes the list
+  // back to the bar.
+  function dockEnd(height: number) {
+    const peek = snapHeight("peek", window.innerHeight);
+    if (!task && height < peek * 0.75) {
+      campaignOpen = false;
+      return;
+    }
+    if (!task) campaignOpen = true;
+    setSnap(nearestSnap(height, window.innerHeight));
+  }
+  // A tap on the bar moves up one height, from the highest back to the
+  // lowest (without a task, back to the comment field).
+  function dockTap() {
+    if (collapsedCampaign) campaignOpen = true;
+    else if (panel.snap !== "full") setSnap(stepSnap(panel.snap, 1));
+    else if (task) setSnap("peek");
+    else campaignOpen = false;
+  }
+  function dockStep(dir: 1 | -1) {
+    if (collapsedCampaign) {
+      if (dir === 1) campaignOpen = true;
+      return;
+    }
+    if (!task && dir === -1 && panel.snap === "peek") {
+      campaignOpen = false;
+      return;
+    }
+    setSnap(stepSnap(panel.snap, dir));
+  }
+
+  // Until the viewer sets a width, the panel beside the content keeps its
+  // default share of the window as the window changes.
   $effect(() => {
-    const isDocked = docked;
+    if (docked) return;
     const fit = () => {
-      if (isDocked) {
-        if (!hasStoredPanelHeight())
-          panel.height = defaultPanelHeight(window.innerHeight);
-      } else if (!hasStoredPanelWidth())
+      if (!hasStoredPanelWidth())
         panel.width = defaultPanelWidth(window.innerWidth, window.innerHeight);
     };
     fit();
@@ -145,16 +197,25 @@
     campaignOpen = false;
   });
 
-  function raise() {
-    campaignOpen = true;
-    if (panel.height >= PANEL_LOWERED) return;
-    panel.height = defaultPanelHeight(window.innerHeight);
-    writeSidePanel({ ...panel }, "height");
+  // At the lowest docked height a task's comment field is hidden, keeping a
+  // draft, so the task box keeps the room; a reply in progress shows it.
+  const composerHidden = $derived(
+    docked && !!task && panel.snap === "peek" && drag === null && !replyTo,
+  );
+  let aside = $state<HTMLElement>();
+  async function openComposer() {
+    setSnap("half");
+    await tick();
+    aside?.querySelector<HTMLInputElement>(".composerwrap input")?.focus();
+  }
+  function startReply(c: CommentRow) {
+    replyTo = c;
+    if (docked && panel.snap === "peek") setSnap("half");
   }
 </script>
 
 {#snippet composer()}
-  <div class="composerwrap">
+  <div class="composerwrap" class:hidden={composerHidden}>
     <CommentComposer
       {task}
       {logins}
@@ -171,15 +232,30 @@
   class="spwrap"
   class:docked
   class:cramped
-  class:lowered
+  class:dragging={drag !== null}
   style={docked
-    ? lowered
-      ? ""
-      : `height: ${panel.height}px`
+    ? drag !== null
+      ? `height: ${drag}px`
+      : collapsedCampaign
+        ? ""
+        : `height: ${SNAP_CSS[panel.snap]}`
     : `width: ${panel.width}px`}
 >
-  <PanelResizeHandle label="Resize the side panel" bind:panel {docked} />
+  <PanelResizeHandle
+    label="Resize the side panel"
+    bind:panel
+    bind:drag
+    {docked}
+    {dockLevel}
+    dockMin={task ? 1 : 0}
+    dockLevels={PANEL_SNAPS.length + 1}
+    {dockText}
+    ondockend={dockEnd}
+    ondockstep={dockStep}
+    ondocktap={dockTap}
+  />
   <aside
+    bind:this={aside}
     class="sp"
     style={zone ? `--zone: var(--zone-${zone})` : ""}
     aria-label={task ? "Task" : "Campaign"}
@@ -196,8 +272,16 @@
         <span class="sep" aria-hidden="true">/</span>
       {/if}
       <h2 class="sptitle">{task ? "Task" : "Campaign"}</h2>
+      {#if composerHidden && auth.user}
+        <button type="button" class="btn showinline" onclick={openComposer}
+          >Comment</button
+        >
+      {/if}
       {#if collapsedCampaign && (count > 0 || info)}
-        <button type="button" class="btn showinline" onclick={raise}
+        <button
+          type="button"
+          class="btn showinline"
+          onclick={() => (campaignOpen = true)}
           >{info ? "Details and comments" : "Comments"} · {count}</button
         >
       {/if}
@@ -210,10 +294,6 @@
     {#if collapsedCampaign}
       <!-- The bar is the campaign's comment field; the list opens above. -->
       {@render composer()}
-    {:else if lowered}
-      <button type="button" class="btn showcomments" onclick={raise}
-        >Show comments · {count}</button
-      >
     {:else}
       <div class="clist">
         {#if !task}{@render info?.()}{/if}
@@ -245,7 +325,7 @@
               {review}
               {inScore}
               {onanchor}
-              onreply={(c) => (replyTo = c)}
+              onreply={t.root.kind === "comment" ? startReply : undefined}
               {onresolve}
             />
             {#each t.replies as reply (reply.comment_id)}
@@ -285,19 +365,28 @@
     min-height: 0;
     min-width: 0;
     align-self: stretch;
-    /* The stored width is an inline style; a narrow window caps it. */
-    max-width: 50vw;
+    /* The stored width is an inline style; a narrow window caps it as
+       clampPanelWidth does (side-panels.ts). */
+    max-width: max(280px, min(50vw, calc(100vw - 474px)));
   }
-  /* Docked below the content: full width, the grip on the top edge. */
+  /* Docked below the content: full width, the grip on the top edge. The
+     height settles on its snap after a drag. */
   .spwrap.docked {
     flex-direction: column;
     max-width: none;
-    /* A height stored on a taller screen leaves room for the content. */
-    max-height: calc(100vh - 160px);
     width: 100%;
+    transition: height 200ms cubic-bezier(0.22, 1, 0.36, 1);
     border-top: 1px solid var(--line-strong);
     box-shadow: 0 -2px 8px var(--shade);
     background: var(--bg-inset);
+  }
+  .spwrap.docked.dragging {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spwrap.docked {
+      transition: none;
+    }
   }
   .sp {
     flex: 1;
@@ -311,11 +400,12 @@
     border-radius: 12px;
     padding: 12px;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
   .docked .sp {
     border-radius: 0;
     box-shadow: none;
-    padding: 0 12px 10px;
+    padding: 4px 12px 10px;
   }
   .sp :global(.banner) {
     margin: 0;
@@ -340,33 +430,36 @@
     color: var(--ink);
   }
   /* The task box keeps its full height so its controls never scroll away
-     inside it, and the composer stays at the bottom: only the comment list
-     between them scrolls, down to its minimum height. Past that the panel
-     scrolls as a whole. */
+     inside it, and the composer stays at the bottom: beside the content only
+     the comment list between them scrolls, down to its minimum height. Past
+     that, and always when docked, the panel scrolls as a whole. */
   .pinhead {
     flex: none;
   }
   /* The shadow fills the panel's bottom padding, so content scrolling under
-     the composer does not show below it. */
+     the composer does not show below it. With room to spare the composer
+     sits at the panel's bottom. */
   .composerwrap {
     flex: none;
+    margin-top: auto;
     position: sticky;
     bottom: 0;
     background: var(--bg-inset);
     box-shadow: 0 12px 0 var(--bg-inset);
     padding-top: 6px;
   }
-  /* Docked or in a short window the list shrinks to nothing. */
+  .composerwrap.hidden {
+    display: none;
+  }
+  /* Docked or in a short window the list is no scroll area of its own: the
+     panel scrolls as one, the comments right below the task box. */
   .cramped .clist {
+    flex: none;
     min-height: 0;
+    overflow-y: visible;
   }
-  /* Docked or in a short window the panel is on a touch screen: its buttons
-     are 36px touch targets, the size of the campaign header's. */
-  .cramped :global(.btn) {
-    min-height: 36px;
-  }
-  .cramped :global(.btn-icon) {
-    min-width: 36px;
+  .sphead :global(.btn) {
+    padding: 4px 12px;
   }
   .empty {
     flex: none;
@@ -374,9 +467,6 @@
     font-size: 12.5px;
     color: var(--ink-soft);
     padding: 2px 2px;
-  }
-  .showcomments {
-    flex: none;
   }
   .showinline {
     margin-left: auto;
@@ -387,6 +477,7 @@
     /* Room for the list heading and a line below it. */
     min-height: 72px;
     overflow-y: auto;
+    overscroll-behavior: contain;
     display: flex;
     flex-direction: column;
     gap: 6px;

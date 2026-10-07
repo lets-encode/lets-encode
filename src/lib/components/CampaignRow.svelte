@@ -182,9 +182,11 @@
       border-color 0.15s ease,
       box-shadow 0.15s ease;
   }
-  .shelfrow:hover {
-    border-color: var(--info-line);
-    box-shadow: var(--shadow-md);
+  @media (hover: hover) {
+    .shelfrow:hover {
+      border-color: var(--info-line);
+      box-shadow: var(--shadow-md);
+    }
   }
   .rowlink {
     flex: 1;
@@ -372,8 +374,10 @@
     color: var(--link);
     text-decoration: none;
   }
-  .continue:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .continue:hover {
+      text-decoration: underline;
+    }
   }
   .nonote {
     font-size: 12px;

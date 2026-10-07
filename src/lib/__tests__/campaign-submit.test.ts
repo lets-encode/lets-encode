@@ -16,6 +16,7 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
+  resolveChangeRequests,
   resolveCommentThread,
 } from "../campaign-submit.ts";
 import type {
@@ -556,6 +557,19 @@ test("comments: resolving a root resolves its reply chain with it", () => {
     resolveCommentThread(comments, "c4").map((c) => c.resolved),
     ["", "", "", "true"],
   );
+});
+
+test("a pass resolves only its task's open change requests", () => {
+  const comments = [
+    comment({ comment_id: "c1", kind: "fail", task_id: "T0001" }),
+    comment({ comment_id: "c2", kind: "comment", task_id: "T0001" }),
+    comment({ comment_id: "c3", kind: "fail", task_id: "T0002" }),
+  ];
+  assert.deepEqual(
+    resolveChangeRequests(comments, "T0001")?.map((c) => c.resolved),
+    ["true", "", ""],
+  );
+  assert.equal(resolveChangeRequests(comments, "T0003"), null);
 });
 
 test("comments: resolving is author- or push-access-only", () => {

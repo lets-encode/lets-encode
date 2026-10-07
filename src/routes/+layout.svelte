@@ -5,6 +5,7 @@
   import { auth, initAuth, login, logout } from "$lib/auth.svelte.ts";
   import PendingVerdicts from "$lib/components/PendingVerdicts.svelte";
   import ConstructionNotice from "$lib/components/ConstructionNotice.svelte";
+  import TouchTooltip from "$lib/components/TouchTooltip.svelte";
   import { bugReportHref } from "$lib/bug-report.ts";
   import { campaignTitle } from "$lib/campaign-title.svelte.ts";
   import "./theme.css";
@@ -78,6 +79,7 @@
 </script>
 
 <ConstructionNotice />
+<TouchTooltip />
 
 <header bind:offsetHeight={headerHeight}>
   <a class="brand" href="/campaigns">
@@ -293,8 +295,10 @@
     color: var(--ink-soft);
     text-decoration: none;
   }
-  .nav-link:hover {
-    color: var(--accent);
+  @media (hover: hover) {
+    .nav-link:hover {
+      color: var(--accent);
+    }
   }
   .nav-link.back {
     --back-h: 24px;
@@ -337,10 +341,6 @@
     }
     header .user :global(.btn) {
       padding: 5px 11px;
-    }
-    header .theme-toggle {
-      width: 34px;
-      height: 34px;
     }
     .nav-link.back {
       --back-h: 32px;
@@ -412,8 +412,13 @@
   .fsep {
     color: var(--line);
   }
+  /* The padding makes the links 24px tall to tap; the negative margin keeps
+     it out of the footer's height. */
   footer a {
     color: inherit;
+    display: inline-block;
+    padding: 6px 0;
+    margin: -6px 0;
   }
   /* Where the long credit and date would wrap, the short credit and the
      bare date; the links stay. */
@@ -447,8 +452,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    width: 32px;
+    height: 32px;
     padding: 0;
     cursor: pointer;
     color: var(--ink-soft);
@@ -461,11 +466,13 @@
       background 0.15s ease,
       transform 0.15s ease;
   }
-  .theme-toggle:hover {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: transparent;
-    transform: translateY(-1px);
+  @media (hover: hover) {
+    .theme-toggle:hover {
+      color: var(--accent);
+      border-color: var(--accent);
+      background: transparent;
+      transform: translateY(-1px);
+    }
   }
   .theme-toggle:focus-visible {
     outline: 2px solid var(--accent);
@@ -502,10 +509,12 @@
     color: #ffdf85;
     border-color: rgba(255, 223, 133, 0.55);
   }
-  :global([data-theme="dark"]) .theme-toggle:hover {
-    color: #ffe9a6;
-    border-color: #ffdf85;
-    background: rgba(255, 223, 133, 0.14);
+  @media (hover: hover) {
+    :global([data-theme="dark"]) .theme-toggle:hover {
+      color: #ffe9a6;
+      border-color: #ffdf85;
+      background: rgba(255, 223, 133, 0.14);
+    }
   }
   :global([data-theme="dark"]) .bulb {
     filter: drop-shadow(0 0 3px rgba(255, 210, 110, 0.8));

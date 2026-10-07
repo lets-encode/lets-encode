@@ -154,8 +154,10 @@
     border: 1px solid var(--accent-line);
     border-radius: 999px;
   }
-  .picker:hover {
-    background: var(--bg-tint);
+  @media (hover: hover) {
+    .picker:hover {
+      background: var(--bg-tint);
+    }
   }
   .picker input {
     display: none;
@@ -219,8 +221,10 @@
     border: 1px solid var(--line);
     border-radius: 999px;
   }
-  .remove:hover {
-    color: var(--danger);
-    border-color: var(--danger);
+  @media (hover: hover) {
+    .remove:hover {
+      color: var(--danger);
+      border-color: var(--danger);
+    }
   }
 </style>

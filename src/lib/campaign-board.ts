@@ -436,18 +436,6 @@ export function buildRecord(
   }));
 }
 
-/** A task's unresolved fail comments (change requests), newest first. */
-export function openChangeRequests(
-  task: string,
-  comments: CommentRow[],
-): CommentRow[] {
-  return comments
-    .filter(
-      (c) => c.task_id === task && c.kind === "fail" && c.resolved !== "true",
-    )
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-}
-
 /** One discussion thread: a top-level comment and its replies, oldest first. */
 export interface Thread {
   root: CommentRow;
@@ -455,12 +443,12 @@ export interface Thread {
 }
 
 /**
- * The overlay's discussion: the task's top-level comments
- * with their replies. Fail comments live in the validation record instead.
+ * The side panel's discussion: the task's top-level comments and fail
+ * comments (change requests) in log order, the comments with their replies.
  */
 export function buildThreads(comments: CommentRow[], task: string): Thread[] {
   const ofTask = comments.filter((c) => c.task_id === task);
-  const roots = ofTask.filter((c) => c.kind === "comment");
+  const roots = ofTask.filter((c) => c.kind === "comment" || c.kind === "fail");
   return roots.map((root) => ({
     root,
     replies: ofTask.filter(

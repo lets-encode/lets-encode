@@ -667,8 +667,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .expander:hover {
-    color: var(--accent);
+  @media (hover: hover) {
+    .expander:hover {
+      color: var(--accent);
+    }
   }
   .rows {
     display: flex;
@@ -693,8 +695,10 @@
     min-height: 0;
     padding: 4px 10px;
   }
-  a.row:hover {
-    border-color: var(--info-line);
+  @media (hover: hover) {
+    a.row:hover {
+      border-color: var(--info-line);
+    }
   }
   .rowtitle {
     flex: none;
@@ -874,8 +878,10 @@
     padding: 4px 8px;
     cursor: pointer;
   }
-  .showmore:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .showmore:hover {
+      text-decoration: underline;
+    }
   }
   .login-hint {
     text-align: center;
@@ -891,8 +897,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .linkish:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .linkish:hover {
+      text-decoration: underline;
+    }
   }
   /* Banner styles are shared app-wide in ui.css. */
 </style>

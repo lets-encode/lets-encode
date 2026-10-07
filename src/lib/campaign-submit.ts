@@ -515,6 +515,21 @@ export function resolveCommentThread(
   );
 }
 
+/**
+ * The comment table with a task's open fail comments (change requests)
+ * marked resolved, or null when it has none. An accepted pass approves the
+ * resubmission those requests sent back for.
+ */
+export function resolveChangeRequests(
+  comments: CommentRow[],
+  task_id: string,
+): CommentRow[] | null {
+  const open = (c: CommentRow) =>
+    c.task_id === task_id && c.kind === "fail" && c.resolved !== "true";
+  if (!comments.some(open)) return null;
+  return comments.map((c) => (open(c) ? { ...c, resolved: "true" } : c));
+}
+
 export type ResolveCommentResult =
   | { ok: true; row: CommentRow; comments: CommentRow[] }
   | { ok: false; reason: string };

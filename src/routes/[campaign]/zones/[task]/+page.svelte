@@ -1690,7 +1690,6 @@
             m1: selectedLabel,
             m2: selectedLabel,
           })}
-          onshowanchor={showAnchorFor}
         />
       {/if}
     {/snippet}
@@ -1725,8 +1724,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .linkish:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .linkish:hover {
+      text-decoration: underline;
+    }
   }
 
   /* The whole tool: the desk the page sheets float on (the only scrolling
@@ -2084,8 +2085,10 @@
     background: transparent;
     color: var(--ink-soft);
   }
-  .zc-inner button:hover:not(:disabled) {
-    border-color: var(--line-input);
+  @media (hover: hover) {
+    .zc-inner button:hover:not(:disabled) {
+      border-color: var(--line-input);
+    }
   }
   .zc-inner button.on {
     background: var(--accent);
@@ -2108,9 +2111,13 @@
     fill: var(--card);
     stroke: var(--line-input);
   }
-  .delbtn:hover rect,
   .delbtn:focus-visible rect {
     stroke: var(--danger);
+  }
+  @media (hover: hover) {
+    .delbtn:hover rect {
+      stroke: var(--danger);
+    }
   }
   .delbtn path {
     fill: none;

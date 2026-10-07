@@ -367,7 +367,6 @@
         {card}
         pieceName={card.piece}
         {campaign}
-        {comments}
         {locks}
         {rows}
         {logins}
@@ -376,12 +375,10 @@
         {runner}
         inView
         {prefill}
-        onshowanchor={showAnchorFor}
         onclaim={claim}
         onabandon={abandon}
         onvalidate={validate}
         onreviewedit={reviewEdit}
-        onresolve={resolveCommentRow}
       />
     {/snippet}
     <div class="scorecol" bind:clientWidth={scoreW}>

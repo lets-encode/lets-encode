@@ -735,14 +735,18 @@
   .nextcard.stage-pre {
     border-color: color-mix(in srgb, var(--pre) 45%, var(--line));
   }
-  .nextcard.stage-pre:hover {
-    border-color: var(--pre);
+  @media (hover: hover) {
+    .nextcard.stage-pre:hover {
+      border-color: var(--pre);
+    }
   }
   .nextcard.stage-review {
     border-color: var(--warn-line);
   }
-  .nextcard.stage-review:hover {
-    border-color: var(--warn);
+  @media (hover: hover) {
+    .nextcard.stage-review:hover {
+      border-color: var(--warn);
+    }
   }
   .stage-pre .nextbadge,
   .stage-review .nextbadge {
@@ -773,8 +777,10 @@
     box-shadow: var(--shadow-md);
     transition: border-color 0.15s ease;
   }
-  .nextcard:hover {
-    border-color: var(--accent);
+  @media (hover: hover) {
+    .nextcard:hover {
+      border-color: var(--accent);
+    }
   }
   .runcard {
     display: flex;
@@ -891,6 +897,10 @@
     align-items: flex-start;
     margin-top: 6px;
   }
+  /* The volunteer's one main action is the only 44px button. */
+  .nextacts .btn {
+    min-height: 44px;
+  }
 
   /* ------------------------------------------------------- open-task list */
   .tlist {
@@ -910,8 +920,10 @@
   .trow + .trow {
     border-top: 1px solid var(--line);
   }
-  .trow:hover {
-    background: var(--accent-tint);
+  @media (hover: hover) {
+    .trow:hover {
+      background: var(--accent-tint);
+    }
   }
   .sdot {
     flex: none;
@@ -1081,8 +1093,10 @@
     border-radius: 8px;
     transition: border-color 0.15s ease;
   }
-  .taskrow:not(.still):hover {
-    border-color: var(--accent);
+  @media (hover: hover) {
+    .taskrow:not(.still):hover {
+      border-color: var(--accent);
+    }
   }
   .tasktitle {
     font-size: 13px;

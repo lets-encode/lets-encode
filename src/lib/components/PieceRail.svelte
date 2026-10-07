@@ -191,8 +191,10 @@
     font-weight: 600;
     color: var(--ink-soft);
   }
-  .railrow:hover {
-    border-color: var(--line-input);
+  @media (hover: hover) {
+    .railrow:hover {
+      border-color: var(--line-input);
+    }
   }
   .railrow.selected {
     border-color: var(--zone, var(--line-strong));
@@ -333,8 +335,10 @@
       height: 32px;
     }
   }
-  .dotbtn:hover {
-    background: var(--bg-tint);
+  @media (hover: hover) {
+    .dotbtn:hover {
+      background: var(--bg-tint);
+    }
   }
   .dotbtn[aria-pressed="true"] {
     background: var(--card);

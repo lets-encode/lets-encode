@@ -1,17 +1,20 @@
 <!--
   A task's box in the side panel (SidePanel.svelte) of the campaign page, the
   review view and the pre-task editors: one continuous card — piece-tinted header with the task's
-  name over its piece, status pill, submission, fails and the viewer's own
-  review slot, and the action footer. Commands run through callbacks the
+  name over its piece, status pill, submission and the viewer's own review
+  slot (on a phone, DOCKED_QUERY, the submission and others' reviews fold
+  behind a disclosure), and the action footer. Commands run through callbacks the
   host page passes in.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
+  import { DOCKED_QUERY } from "$lib/side-panels.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import { findRow } from "$lib/campaign-tables.ts";
-  import type { CommentRow, LockRow, StateRow } from "$lib/campaign-tables.ts";
+  import type { LockRow, StateRow } from "$lib/campaign-tables.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
   import {
     handle,
@@ -26,7 +29,6 @@
     cardPill,
     elapsed,
     initialOf,
-    openChangeRequests,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import AbandonButton from "./AbandonButton.svelte";
@@ -39,7 +41,6 @@
     pieceName,
     zone = 0,
     campaign,
-    comments,
     locks,
     rows,
     logins,
@@ -52,13 +53,11 @@
     tools,
     prefill,
     measures = true,
-    onshowanchor,
     onclaim,
     oneditor,
     onabandon,
     onvalidate,
     onreviewedit,
-    onresolve,
   }: {
     card: BoardCard;
     /** The display name of the task's piece. */
@@ -67,7 +66,6 @@
         surrounding side panel. */
     zone?: number;
     campaign: string;
-    comments: CommentRow[];
     locks: LockRow[];
     rows: StateRow[];
     logins: Record<string, string>;
@@ -90,8 +88,6 @@
     prefill?: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
     measures?: boolean;
-    /** Highlight a comment's measure range in the score. */
-    onshowanchor: (c: CommentRow) => void;
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     /** Claim or open the task in mei-friend; not used in the review view. */
     oneditor?: (task_id: string) => Promise<void>;
@@ -109,7 +105,6 @@
       subtask_id: string,
       comment: FailComment,
     ) => Promise<Result | null>;
-    onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
   // A submission on this task still being processed: every action in the
@@ -136,13 +131,17 @@
   /** The review slot the viewer holds a lock on, if any. */
   const myReviewSub = $derived(record.find((r) => r.mine)?.sub);
   const myReview = $derived(myReviewSub !== undefined);
-  /** What the side record shows: change requests, the viewer's own slot,
-      and for the owner the slots held and passed. */
+  /** What the side record shows: the viewer's own slot, and for the owner
+      the slots held and passed. */
   const hasRecord = $derived(
     record.some(
       (r) => r.mine || (canPush && (r.key === "review" || r.key === "pass")),
-    ) || openChangeRequests(card.task, comments).length > 0,
+    ),
   );
+  // On a phone the submission and the reviews the viewer does not hold fold
+  // away, leaving the task's comments room in the docked panel.
+  const compact = new MediaQuery(DOCKED_QUERY, false);
+  const foldRecord = $derived(compact.current && hasRecord && !myReview);
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
   const editorName = $derived(workPlace(card.locator));
 
@@ -150,6 +149,15 @@
   const taskState = $derived(findRow(rows, card.task, ""));
   const encoderLogin = $derived(
     taskState?.encoder ? handle(logins, taskState.encoder) : "",
+  );
+  const foldLabel = $derived(
+    encoderLogin && foldRecord
+      ? "Submission and reviews"
+      : encoderLogin
+        ? "Submission"
+        : foldRecord
+          ? "Reviews"
+          : "",
   );
 
   // What the task asks of the volunteer, in one line: the panel is where a
@@ -179,7 +187,11 @@
   const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
 </script>
 
-<div class="taskcard" style={zone ? `--zone: var(--zone-${zone})` : ""}>
+<div
+  class="taskcard"
+  class:volunteer={!canPush}
+  style={zone ? `--zone: var(--zone-${zone})` : ""}
+>
   <div class="tsphead">
     <TaskHeading
       description={card.description}
@@ -215,7 +227,7 @@
     {/if}
   </div>
   {@render tools?.()}
-  {#if encoderLogin}
+  {#snippet submission()}
     <div class="section">
       <span class="seclbl">Submission</span>
       <div class="subline">
@@ -229,12 +241,11 @@
         >
       </div>
     </div>
-  {/if}
-  {#if hasRecord}
+  {/snippet}
+  {#snippet reviewRecord()}
     <div class="section">
       <ValidationRecord
         {card}
-        {comments}
         {locks}
         {viewer}
         {logins}
@@ -242,12 +253,21 @@
         {runner}
         prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
         {measures}
-        {onshowanchor}
         {onvalidate}
         {onreviewedit}
-        {onresolve}
       />
     </div>
+  {/snippet}
+  {#if compact.current && foldLabel}
+    <details class="more">
+      <summary><span>{foldLabel}</span><Icon name="chevron-down" /></summary>
+      {#if encoderLogin}{@render submission()}{/if}
+      {#if foldRecord}{@render reviewRecord()}{/if}
+    </details>
+    {#if hasRecord && !foldRecord}{@render reviewRecord()}{/if}
+  {:else}
+    {#if encoderLogin}{@render submission()}{/if}
+    {#if hasRecord}{@render reviewRecord()}{/if}
   {/if}
   <!-- The one action the viewer can take on this task in its current
            state; a task the viewer cannot work on gets no footer. -->
@@ -407,6 +427,35 @@
     flex-direction: column;
     gap: 6px;
   }
+  .more {
+    border-top: 1px solid var(--hairline, var(--line));
+  }
+  .more summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 32px;
+    padding: 0 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    cursor: pointer;
+    list-style: none;
+  }
+  .more summary::-webkit-details-marker {
+    display: none;
+  }
+  .more summary :global(svg) {
+    transition: transform 160ms ease-out;
+  }
+  .more[open] summary :global(svg) {
+    transform: rotate(180deg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .more summary :global(svg) {
+      transition: none;
+    }
+  }
   .seclbl {
     font-size: 12px;
     font-weight: 600;
@@ -444,10 +493,20 @@
     gap: 8px;
     flex-wrap: wrap;
   }
-  /* At the panel's narrowest a long label wraps rather than widening it. */
+  /* Buttons share the row while their labels fit on one line, else each
+     takes its own; a label longer than the panel wraps rather than widening
+     it. */
   .tspfoot .btn {
-    flex: 1;
+    flex: 1 1 auto;
     white-space: normal;
+  }
+  .tspfoot .btn {
+    padding-block: 4px;
+  }
+  /* A volunteer's task actions are their main action: 44px, as on the
+     volunteer view's next-task card. */
+  .volunteer .tspfoot .btn {
+    min-height: 44px;
   }
 
   /* ---------------------------------------------------------------- pills */

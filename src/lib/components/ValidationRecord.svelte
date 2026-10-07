@@ -1,28 +1,22 @@
 <!--
-  A task's validation record in its task box: the open change requests with
-  their notes and anchors, the viewer's own slot with its approve/request-changes/edit controls and the note form a
-  change request or an edit fills in, and for the owner (canPush) also the
-  slots held and passed under a "Reviews" heading. The host's status pill
+  A task's validation record in its task box: the viewer's own slot with its
+  approve/request-changes/edit controls and the note form a change request or
+  an edit fills in, and for the owner (canPush) also the slots held and
+  passed under a "Reviews" heading. Change requests are listed with the
+  task's comments in the side panel. The host's status pill
   carries the slot count and its footer the claim. Commands run through
   callbacks the host passes in.
 -->
 <script lang="ts">
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
-  import type { CommentRow, LockRow } from "$lib/campaign-tables.ts";
+  import type { LockRow } from "$lib/campaign-tables.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
-  import { handle } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import {
-    buildRecord,
-    elapsed,
-    expiresIn,
-    openChangeRequests,
-  } from "$lib/campaign-board.ts";
+  import { buildRecord, expiresIn } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
 
   let {
     card,
-    comments,
     locks = [],
     viewer,
     logins,
@@ -30,13 +24,10 @@
     runner,
     prefill,
     measures = true,
-    onshowanchor,
     onvalidate,
     onreviewedit,
-    onresolve,
   }: {
     card: BoardCard;
-    comments: CommentRow[];
     /** The claim locks, for when a held slot's claim expires. */
     locks?: LockRow[];
     logins: Record<string, string>;
@@ -47,8 +38,6 @@
     prefill: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
     measures?: boolean;
-    /** Highlight a comment's measure range in the preview. */
-    onshowanchor: (c: CommentRow) => void;
     onvalidate: (
       task_id: string,
       subtask_id: string,
@@ -61,7 +50,6 @@
       subtask_id: string,
       comment: FailComment,
     ) => Promise<Result | null>;
-    onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
   /** How a slot's state reads in the record. */
@@ -96,7 +84,6 @@
   // the slot controls hold until it lands — a repeat would only
   // be rejected.
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
-  const changeRequests = $derived(openChangeRequests(card.task, comments));
 
   // The inline form a fail verdict or an edit from review fills in (its
   // mandatory comment).
@@ -107,20 +94,6 @@
     m1: string;
     m2: string;
   } | null>(null);
-
-  const anchorLabel = (c: CommentRow): string => {
-    const parts: string[] = [];
-    if (c.page) parts.push(`p. ${c.page}`);
-    if (c.measure_start)
-      parts.push(
-        c.measure_end && c.measure_end !== c.measure_start
-          ? `m. ${c.measure_start}–${c.measure_end}`
-          : `m. ${c.measure_start}`,
-      );
-    return parts.join(" · ");
-  };
-  const hasAnchor = (c: CommentRow): boolean =>
-    c.measure_start !== "" || c.page !== "";
 
   async function submitFail(edit: boolean) {
     if (!failForm || !failForm.body.trim()) return;
@@ -136,27 +109,6 @@
       : await onvalidate(card.task, form.sub, "fail", comment);
     if (result?.ok) failForm = null;
   }
-
-  const canResolve = (c: CommentRow) =>
-    viewer !== "" && (canPush || c.author_id === viewer);
-
-  let resolving = $state<string | null>(null);
-  // Pending from the click until the resolution PR's verdict lands: first the
-  // foreground command, then its background entry in the verdict store.
-  const resolvePending = (comment_id: string) =>
-    resolving === comment_id ||
-    pendingVerdicts.isProcessing(`resolve:${comment_id}`);
-
-  async function resolve(comment_id: string) {
-    resolving = comment_id;
-    try {
-      await onresolve(comment_id);
-    } finally {
-      resolving = null;
-    }
-  }
-
-  const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
 </script>
 
 {#snippet slotDot(key: string)}
@@ -173,7 +125,7 @@
   {/if}
 {/snippet}
 
-{#if rows.length > 0 || changeRequests.length > 0}
+{#if rows.length > 0}
   <div class="rsec">
     {#if canPush}
       <div class="rlabel">Reviews</div>
@@ -271,50 +223,6 @@
         </div>
       {/if}
     {/each}
-    {#each changeRequests as c (c.comment_id)}
-      <div class="failbox">
-        <div class="failhead">
-          {@render slotDot("fail")}
-          <span
-            class="failtitle"
-            title="The task was sent back with this request."
-            >Changes requested</span
-          >
-          <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
-        </div>
-        <div class="failbody">“{c.body}”</div>
-        {#if hasAnchor(c) || canResolve(c)}
-          <div class="failacts">
-            {#if hasAnchor(c)}
-              <button
-                type="button"
-                class="chip chip-question anchorchip"
-                onclick={() => onshowanchor(c)}
-                title="Highlight this place in the preview"
-                >{anchorLabel(c)} — show in the preview</button
-              >
-            {/if}
-            {#if !canResolve(c)}
-              <!-- Resolving is open to the author and push access. -->
-            {:else if resolvePending(c.comment_id)}
-              <span class="resolving">
-                <span class="spinner" aria-hidden="true"></span>
-                Resolving…
-              </span>
-            {:else}
-              <button
-                type="button"
-                class="linkish"
-                onclick={() => resolve(c.comment_id)}
-                disabled={runner.busy || resolving !== null}
-                title="Mark this request as handled — it leaves the attention counts."
-                >Resolve</button
-              >
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/each}
   </div>
 {/if}
 
@@ -322,35 +230,8 @@
   .muted {
     color: var(--ink-faint);
   }
-  .linkish {
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-  }
-  .linkish:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .mspacer {
     flex: 1;
-  }
-  .chip {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 8px;
-    white-space: nowrap;
-  }
-  .chip-question {
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
   }
   .dot {
     width: 10px;
@@ -415,75 +296,6 @@
   .failbtn.on {
     background: var(--danger-bg);
     border-color: var(--danger);
-  }
-  .failbox {
-    margin: 6px 0;
-    border: 1px solid var(--danger-line);
-    border-radius: 10px;
-    background: var(--danger-wash);
-    padding: 8px 10px;
-  }
-  .failhead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .failtitle {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--danger);
-  }
-  .failbody {
-    font-size: 12.5px;
-    color: var(--ink);
-    margin-top: 4px;
-    line-height: 1.4;
-    overflow-wrap: anywhere;
-  }
-  .failchips {
-    display: flex;
-    gap: 6px;
-    margin-top: 6px;
-    flex-wrap: wrap;
-  }
-  .anchorchip {
-    font-family: inherit;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .failacts {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-    margin-top: 6px;
-    align-items: center;
-  }
-  .resolving {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    font-weight: 600;
-    color: var(--ink-faint);
-  }
-  .spinner {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
   }
   .failform {
     border: 1px solid var(--danger-line);

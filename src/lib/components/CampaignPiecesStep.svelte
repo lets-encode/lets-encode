@@ -498,8 +498,10 @@
     border-radius: 8px;
     overflow: hidden;
   }
-  .piece:hover:not(.selected) {
-    border-color: var(--accent);
+  @media (hover: hover) {
+    .piece:hover:not(.selected) {
+      border-color: var(--accent);
+    }
   }
   .piece.selected {
     border: 1.5px solid var(--piece);
@@ -565,10 +567,12 @@
     border-color: transparent;
     background: transparent;
   }
-  .delete.btn-icon:hover:not(:disabled) {
-    color: var(--danger);
-    border-color: var(--danger-line);
-    background: var(--danger-bg);
+  @media (hover: hover) {
+    .delete.btn-icon:hover:not(:disabled) {
+      color: var(--danger);
+      border-color: var(--danger-line);
+      background: var(--danger-bg);
+    }
   }
   .piece-actions {
     display: flex;
@@ -576,9 +580,11 @@
     flex-wrap: wrap;
     padding: 0 12px 10px 35px;
   }
-  .piece-actions .pill:hover:not(:disabled):not(.confirming) {
-    color: var(--piece);
-    border-color: var(--piece);
+  @media (hover: hover) {
+    .piece-actions .pill:hover:not(:disabled):not(.confirming) {
+      color: var(--piece);
+      border-color: var(--piece);
+    }
   }
   /* The on state is an outline in the piece's colour, not the solid blue of
      a selected view pill, which clashes with the piece tints. */

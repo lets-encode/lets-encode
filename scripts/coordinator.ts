@@ -60,6 +60,7 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
+  resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
 import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
@@ -1039,9 +1040,11 @@ async function decideValidation(
   const status = validationVerdict(diff.value);
   if (!status) return { ok: false, reason: "invalid_verdict" };
 
-  // The comment table only when the PR touches it (a fail's mandatory
-  // comment), the config always (pass_threshold).
-  const wantsComments = changedPaths.includes(COMMENT_PATH);
+  // The comment table when the PR touches it (a fail's mandatory comment) or
+  // for a pass (it resolves the task's change requests), the config always
+  // (pass_threshold).
+  const wantsComments =
+    changedPaths.includes(COMMENT_PATH) || status === "pass";
   const readStart = Date.now();
   const [configText, baseCommentCsv] = await Promise.all([
     getRepoFile(token, owner, repo, CONFIG_PATH, sha),
@@ -1054,8 +1057,8 @@ async function decideValidation(
   // fork's values.
   let baseComments: CommentRow[] = [];
   let failComment: CommentRow | null = null;
-  if (wantsComments) {
-    baseComments = parseCommentCsv(baseCommentCsv ?? "");
+  if (wantsComments) baseComments = parseCommentCsv(baseCommentCsv ?? "");
+  if (changedPaths.includes(COMMENT_PATH)) {
     const added = appendedCommentsFromPatch(
       prFiles.find((f) => f.filename === COMMENT_PATH)?.patch,
     );
@@ -1108,6 +1111,13 @@ async function decideValidation(
       path: COMMENT_PATH,
       content: serializeCommentCsv([...baseComments, authoredComment]),
     });
+  } else {
+    const resolved = resolveChangeRequests(baseComments, diff.task_id);
+    if (resolved)
+      files.push({
+        path: COMMENT_PATH,
+        content: serializeCommentCsv(resolved),
+      });
   }
   const message = `Record ${status} validation of ${diff.task_id}/${diff.subtask_id} by ${authorLabel}`;
 

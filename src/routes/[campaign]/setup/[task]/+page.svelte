@@ -1107,7 +1107,6 @@
             m2: "",
           })}
           measures={false}
-          onshowanchor={showAnchorFor}
         />
       {/if}
     {/snippet}
@@ -1142,8 +1141,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .linkish:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .linkish:hover {
+      text-decoration: underline;
+    }
   }
 
   /* The whole tool: the form and its preview on the desk, with the comments
