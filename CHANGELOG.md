@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-07
 
+- Done measure corrections and score setups can be opened read-only from their task box.
 - Overlaps of staff and measure boxes are coloured, box fills are darker and borders are thicker and grow with zoom.
 - A Show overlaps switch in the layout correction toolbar hides the overlap colouring.
 - On phones a change request or comment on the campaigns page takes two lines.

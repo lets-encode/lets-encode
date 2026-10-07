@@ -1646,7 +1646,9 @@
               >
             </div>
           {/if}
-          {#if omr && layoutStep === 1}
+          {#if d.status === "completed"}
+            <!-- A done task is shown for viewing only. -->
+          {:else if omr && layoutStep === 1}
             <button
               type="button"
               class="btn btn-secondary submitbtn"

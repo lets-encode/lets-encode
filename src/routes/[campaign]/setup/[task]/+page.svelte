@@ -231,6 +231,8 @@
   const data = $derived(session.data);
   const holds = $derived(session.holds);
   const canEdit = $derived(session.canEdit);
+  // A done task is shown for viewing only: its editing buttons are hidden.
+  const done = $derived(data?.status === "completed");
   const busy = $derived(session.busy);
   const owner = $derived(session.campaign.owner);
   const repo = $derived(session.campaign.repo);
@@ -825,50 +827,54 @@
                         title="The instrument or voice name printed in front of this staff. Leave empty for none."
                       />
                     </label>
-                    <div class="rowbtns">
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => moveStaff(i, -1)}
-                        disabled={i === 0}
-                        aria-label={`Move staff ${i + 1} up`}
-                        title="Move this staff up"
-                        ><Icon name="arrow-up" /></button
-                      >
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => moveStaff(i, 1)}
-                        disabled={i === staves.length - 1}
-                        aria-label={`Move staff ${i + 1} down`}
-                        title="Move this staff down"
-                        ><Icon name="arrow-down" /></button
-                      >
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => removeStaff(i)}
-                        disabled={staves.length <= 1 ||
-                          (omr && data?.hasNotation)}
-                        aria-label={`Remove staff ${i + 1}`}
-                        title={omr && data?.hasNotation
-                          ? "The staff count is fixed once the piece holds notation"
-                          : "Remove this staff"}><Icon name="close" /></button
-                      >
-                    </div>
+                    {#if !done}
+                      <div class="rowbtns">
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => moveStaff(i, -1)}
+                          disabled={i === 0}
+                          aria-label={`Move staff ${i + 1} up`}
+                          title="Move this staff up"
+                          ><Icon name="arrow-up" /></button
+                        >
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => moveStaff(i, 1)}
+                          disabled={i === staves.length - 1}
+                          aria-label={`Move staff ${i + 1} down`}
+                          title="Move this staff down"
+                          ><Icon name="arrow-down" /></button
+                        >
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => removeStaff(i)}
+                          disabled={staves.length <= 1 ||
+                            (omr && data?.hasNotation)}
+                          aria-label={`Remove staff ${i + 1}`}
+                          title={omr && data?.hasNotation
+                            ? "The staff count is fixed once the piece holds notation"
+                            : "Remove this staff"}><Icon name="close" /></button
+                        >
+                      </div>
+                    {/if}
                   </li>
                 {/each}
               </ol>
-              <button
-                type="button"
-                class="btn addbtn"
-                onclick={() => addStaff()}
-                disabled={staves.length >= MAX_STAVES ||
-                  (omr && data?.hasNotation)}
-                title={omr && data?.hasNotation
-                  ? "The staff count is fixed once the piece holds notation"
-                  : "Add a staff below the last one."}>Add staff</button
-              >
+              {#if !done}
+                <button
+                  type="button"
+                  class="btn addbtn"
+                  onclick={() => addStaff()}
+                  disabled={staves.length >= MAX_STAVES ||
+                    (omr && data?.hasNotation)}
+                  title={omr && data?.hasNotation
+                    ? "The staff count is fixed once the piece holds notation"
+                    : "Add a staff below the last one."}>Add staff</button
+                >
+              {/if}
 
               {#if staves.length > 1 || groups.length > 0}
                 <p class="grouphead sub">Groups</p>
@@ -915,24 +921,29 @@
                         title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
                       />
                     </label>
-                    <div class="rowbtns">
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => removeGroup(i)}
-                        aria-label={`Remove group ${i + 1}`}
-                        title="Remove this group"><Icon name="close" /></button
-                      >
-                    </div>
+                    {#if !done}
+                      <div class="rowbtns">
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => removeGroup(i)}
+                          aria-label={`Remove group ${i + 1}`}
+                          title="Remove this group"
+                          ><Icon name="close" /></button
+                        >
+                      </div>
+                    {/if}
                   </div>
                 {/each}
-                <button
-                  type="button"
-                  class="btn addbtn"
-                  onclick={() => addGroup()}
-                  title="Join a run of staves with a brace or bracket."
-                  >Add group</button
-                >
+                {#if !done}
+                  <button
+                    type="button"
+                    class="btn addbtn"
+                    onclick={() => addGroup()}
+                    title="Join a run of staves with a brace or bracket."
+                    >Add group</button
+                  >
+                {/if}
                 {#if !groupsValid}
                   <p class="groupwarn">
                     Groups must fit the staves and must not overlap.
@@ -1078,21 +1089,23 @@
               Transcribe the staves again
             </button>
           {/if}
-          <button
-            type="button"
-            class="btn btn-primary submitbtn"
-            onclick={() => submit()}
-            disabled={busy ||
-              !canEdit ||
-              !meterValid ||
-              !groupsValid ||
-              (omr && !recognition)}
-            title={omr && canEdit && !recognition
-              ? "The staves have to be transcribed before the setup can be submitted"
-              : "Submit the staves, clefs, key signature and meter for review"}
-          >
-            Submit setup
-          </button>
+          {#if !done}
+            <button
+              type="button"
+              class="btn btn-primary submitbtn"
+              onclick={() => submit()}
+              disabled={busy ||
+                !canEdit ||
+                !meterValid ||
+                !groupsValid ||
+                (omr && !recognition)}
+              title={omr && canEdit && !recognition
+                ? "The staves have to be transcribed before the setup can be submitted"
+                : "Submit the staves, clefs, key signature and meter for review"}
+            >
+              Submit setup
+            </button>
+          {/if}
         </div>
 
         <PreTaskReview {session} stage={workStage("score-setup")} />

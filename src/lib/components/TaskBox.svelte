@@ -355,6 +355,15 @@
         />
       </div>
     {/if}
+  {:else if card.column === "done" && card.pre}
+    <div class="tspfoot">
+      <a
+        class="btn"
+        href={editorRoute}
+        title={`Open the accepted work in the ${editorName}, read-only.`}
+        >View {editorName}</a
+      >
+    </div>
   {/if}
 </div>
 
