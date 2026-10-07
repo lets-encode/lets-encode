@@ -14,7 +14,12 @@ import type {
 import { resetTaskRows } from "./campaign-submit.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
 
-export type PullRequestKind = "claim" | "validation" | "comment" | "encoding";
+export type PullRequestKind =
+  | "claim"
+  | "review_edit"
+  | "validation"
+  | "comment"
+  | "encoding";
 
 /**
  * One quoted scalar field (`kind`, `preparation`, …) of the config.yaml piece
@@ -287,10 +292,91 @@ export function touchesCampaignPaths(changedPaths: string[]): boolean {
 }
 
 export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
+  // A switch from review to editing gives up the review lock and carries the
+  // fail comment.
+  if (changedPaths.includes(LOCK_PATH) && changedPaths.includes(COMMENT_PATH))
+    return "review_edit";
   if (changedPaths.includes(LOCK_PATH)) return "claim";
   if (changedPaths.includes(STATE_PATH)) return "validation";
   if (changedPaths.includes(COMMENT_PATH)) return "comment";
   return "encoding";
+}
+
+/**
+ * Whether the author's current encoding claim on the task came from a switch
+ * from review to editing: the task's latest accepted encoding claim or
+ * review edit is the author's review edit.
+ */
+export function isReviewEdit(
+  history: HistoryRow[],
+  task_id: string,
+  author: string,
+): boolean {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (h.task_id !== task_id || h.outcome !== "accepted") continue;
+    if (h.action === "review_edit") return h.user_id === author;
+    if (h.action === "claim_encoding") return false;
+  }
+  return false;
+}
+
+/** The campaign branch holding the unsubmitted work of a task's expired claims. */
+export const keptWorkBranch = (task_id: string): string => `wip-${task_id}`;
+
+/**
+ * Whether a commit on a task branch was made by the console rather than by
+ * the claimer: an OMR page draft, the start from kept work, or the commit of
+ * a task completed without changes.
+ */
+export const isAutomaticCommit = (message: string): boolean =>
+  /^(Transcription draft of page |Let's Encode: )/.test(message);
+
+/**
+ * The pull request that gave `user_id` their current encoding claim on the
+ * task — a claim or a review edit — as a number; null when the history has
+ * none.
+ */
+export function claimPullRequest(
+  history: HistoryRow[],
+  task_id: string,
+  user_id: string,
+): number | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (
+      h.task_id === task_id &&
+      h.user_id === user_id &&
+      h.outcome === "accepted" &&
+      (h.action === "claim_encoding" || h.action === "review_edit")
+    )
+      return h.pr ? Number(h.pr) : null;
+  }
+  return null;
+}
+
+/**
+ * The expired claims whose unsubmitted work the task carries: the
+ * `released_with_work` rows since the task's last accepted submission,
+ * send-back or review edit, oldest first.
+ */
+export function keptWorkSince(
+  history: HistoryRow[],
+  task_id: string,
+): HistoryRow[] {
+  const rows: HistoryRow[] = [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (h.task_id !== task_id) continue;
+    if (
+      h.outcome === "accepted" &&
+      ["submit_encoding", "send_back", "review_edit"].includes(h.action)
+    )
+      break;
+    if (h.action === "reap" && h.outcome === "released_with_work")
+      rows.unshift(h);
+  }
+  return rows;
 }
 
 export function shouldCleanupSubmission(

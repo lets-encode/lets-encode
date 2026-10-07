@@ -354,6 +354,20 @@
     recognition = null;
   });
 
+  // While the task is held, its definition (and the recognition record this
+  // session made) is saved as a draft after each pause in editing.
+  $effect(() => {
+    if (!session.canEdit || staves.length === 0) return;
+    session.draft({
+      scoreDef,
+      ...(omr && recognition
+        ? {
+            omr: serializeOmrRecord(withClefCorrections(recognition.record)),
+          }
+        : {}),
+    });
+  });
+
   /** Clef tokens of the form's staves for placing the boxes. */
   const formParts = () =>
     staves.map((s) => ({
@@ -516,10 +530,18 @@
     const task = taskId;
     try {
       runner.log.step("Reading the recognition record");
+      // A record saved with the work, or kept from an expired claim, comes
+      // before the campaign's.
+      const from = d.workSource ?? { owner, repo, ref: undefined };
       const existing =
         recognition?.record ??
         parseOmrRecord(
-          await f.getRepoFile(owner, repo, omrRecordPath(d.fragment)),
+          await f.getRepoFile(
+            from.owner,
+            from.repo,
+            omrRecordPath(d.fragment),
+            from.ref,
+          ),
         );
       const result = await recognisePiece({
         forge: f,

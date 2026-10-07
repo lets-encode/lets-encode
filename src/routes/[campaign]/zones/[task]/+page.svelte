@@ -482,6 +482,17 @@
         )
       : undefined;
 
+  // While the task is held, its boxes are saved as a draft after each pause
+  // in editing.
+  $effect(() => {
+    if (!session.canEdit || pages.length === 0) return;
+    session.draft(
+      omr
+        ? { pages: toPageModels(), layout: true, rawLayout: rawLayoutRecord() }
+        : { pages: toPageModels() },
+    );
+  });
+
   const submit = () =>
     run(
       (c) =>

@@ -19,6 +19,7 @@ import {
   findRow,
   isFinalValidation,
   COMMENT_PATH,
+  LOCK_PATH,
   STATE_PATH,
 } from "./campaign-tables.ts";
 import type {
@@ -361,6 +362,98 @@ export function checkSendBack({
     ok: true,
     state: next,
     locks: locks.filter((l) => l.task_id !== intent.task_id),
+  };
+}
+
+/** Edit-from-review intent: the subtask whose review switches to editing. */
+export interface ReviewEditIntent {
+  task_id: string;
+  subtask_id: string;
+}
+
+export interface CheckReviewEditArgs {
+  state: ParsedState;
+  locks: LockRow[];
+  intent: ReviewEditIntent;
+  author: string;
+  changedPaths: string[];
+  /** The fail comment row the PR adds to comment.csv; null when it adds none or several. */
+  failComment: CommentRow | null;
+  now: string;
+  /** Lock lifetime (locking.stale_after_minutes); sets the new lock's `expires`. */
+  staleAfterMinutes: number;
+  /**
+   * Locks dropped as expired before this decision; the author's own review
+   * lock among them rejects the switch as `claim_expired`.
+   */
+  expired?: LockRow[];
+}
+
+/**
+ * A reviewer switching to editing: a fail and a send-back in one step, with
+ * the task's encoding claim going to the reviewer. The PR may change only
+ * lock.csv (removing the reviewer's own review lock) and comment.csv (one
+ * added fail comment saying what the edit is for). The author must hold the
+ * subtask's review lock while it is in review. On accept: the task is reset
+ * as by a send-back (checkSendBack), every lock on it is released, and the
+ * author holds a fresh encoding lock.
+ */
+export function checkReviewEdit({
+  state,
+  locks,
+  intent,
+  author,
+  changedPaths,
+  failComment,
+  now,
+  staleAfterMinutes,
+  expired = [],
+}: CheckReviewEditArgs): SubmitResult {
+  if (!boundaryCheck(changedPaths, [LOCK_PATH, COMMENT_PATH]))
+    return reject("out_of_bounds");
+  const row = findRow(state.rows, intent.task_id, intent.subtask_id);
+  if (!row || intent.subtask_id === "") return reject("unknown_task");
+  if (
+    !failComment ||
+    failComment.kind !== "fail" ||
+    failComment.task_id !== intent.task_id ||
+    failComment.subtask_id !== intent.subtask_id ||
+    failComment.body.trim() === ""
+  )
+    return reject("fail_without_comment");
+  if (row.status !== "validation_required") return reject("wrong_state");
+  const holdsLock = locks.some(
+    (l) =>
+      l.task_id === intent.task_id &&
+      l.subtask_id === intent.subtask_id &&
+      l.kind === "validation" &&
+      l.user_id === author,
+  );
+  if (!holdsLock)
+    return reject(
+      claimRanOut(expired, { ...intent, kind: "validation" }, author)
+        ? "claim_expired"
+        : "not_lock_holder",
+    );
+
+  const next = cloneState(state);
+  resetTaskRows(next.rows, next.validationColumns, intent.task_id);
+  return {
+    ok: true,
+    state: next,
+    locks: [
+      ...locks.filter((l) => l.task_id !== intent.task_id),
+      {
+        task_id: intent.task_id,
+        subtask_id: "",
+        user_id: author,
+        timestamp: now,
+        kind: "encoding",
+        expires: new Date(
+          Date.parse(now) + staleAfterMinutes * 60_000,
+        ).toISOString(),
+      },
+    ],
   };
 }
 

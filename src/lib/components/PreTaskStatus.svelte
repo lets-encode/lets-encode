@@ -1,13 +1,13 @@
 <!--
-  A pre-task editor's lock state as a pill: held (with its expiry and a
-  give-back button), run out (with a claim button), done, awaiting or
-  failing review, blocked, claimed by someone else, or unclaimed with a
-  claim button.
+  A pre-task editor's lock state as a pill: held (with its expiry, the draft
+  save state and an abandon button), run out (with a claim button), done,
+  awaiting or failing review, blocked, claimed by someone else, or unclaimed
+  with a claim button.
 -->
 <script lang="ts">
   import { handle } from "$lib/campaign-graph.ts";
   import { expiresIn } from "$lib/campaign-board.ts";
-  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
+  import AbandonButton from "$lib/components/AbandonButton.svelte";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
   let { session }: { session: PreTaskSession } = $props();
@@ -22,9 +22,20 @@
       ? ` · ${expiresIn(d.encodingLockExpires, session.now)}`
       : ""}</span
   >
-  <GiveBackButton
+  {#if session.draftState === "saving"}
+    <span class="draftnote">saving draft…</span>
+  {:else if session.draftState === "saved"}
+    <span
+      class="draftnote"
+      title="Your changes are saved. They stay when you leave the page and are kept if your claim runs out."
+      >draft saved</span
+    >
+  {:else if session.draftState}
+    <span class="draftnote err">{session.draftState}</span>
+  {/if}
+  <AbandonButton
     disabled={session.busy}
-    ongiveback={() => session.giveBack("")}
+    onabandon={() => session.abandon("")}
   />
 {:else if session.claimRanOut}
   <span class="lockpill red">your claim has run out — read-only</span>
@@ -38,7 +49,7 @@
   <span class="lockpill grey">done — read-only</span>
 {:else if d.status !== "encoding_required"}
   {#if session.failedVerdicts.length > 0 && session.validation?.openSlots === 0}
-    <span class="lockpill red">review failed — read-only</span>
+    <span class="lockpill red">changes requested — read-only</span>
   {:else}
     <span class="lockpill amber">submitted — awaiting review, read-only</span>
   {/if}
@@ -81,6 +92,13 @@
     color: var(--ink-faint);
     background: var(--bg-tint);
     border: 1px solid var(--line);
+  }
+  .draftnote {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .draftnote.err {
+    color: var(--danger);
   }
   .lockpill.red {
     color: var(--danger);

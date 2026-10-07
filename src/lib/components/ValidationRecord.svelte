@@ -1,10 +1,11 @@
 <!--
-  A task's validation record in its task box: the fails with their comments,
-  anchors and the send-back action, the viewer's own slot with its pass/fail
-  controls and fail form, and for the owner (canPush) also the slots held and
-  passed under a "Reviews" heading. The host's status pill carries the slot
-  count and its footer the claim. Commands run through callbacks the host
-  passes in.
+  A task's validation record in its task box: the fails (shown as change
+  requests) with their notes, anchors and the send-back action, the viewer's
+  own slot with its approve/request-changes/edit controls and the note form a
+  change request or an edit fills in, and for the owner (canPush) also the
+  slots held and passed under a "Reviews" heading. The host's status pill
+  carries the slot count and its footer the claim. Commands run through
+  callbacks the host passes in.
 -->
 <script lang="ts">
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
@@ -31,6 +32,7 @@
     prefill,
     onshowanchor,
     onvalidate,
+    onreviewedit,
     onresolve,
     onsendback,
   }: {
@@ -52,9 +54,23 @@
       verdict: string,
       comment?: FailComment,
     ) => Promise<Result | null>;
+    /** Switch the viewer's review to editing; no Edit button without it. */
+    onreviewedit?: (
+      task_id: string,
+      subtask_id: string,
+      comment: FailComment,
+    ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
     onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
+
+  /** How a slot's state reads in the record. */
+  const slotLabel = (key: string): string =>
+    ({
+      pass: "approved",
+      fail: "changes requested",
+      review: "in review",
+    })[key] ?? key;
 
   // With one slot in all, its rows need no slot number.
   const slotName = (slot: number) =>
@@ -85,9 +101,11 @@
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
   const orphanFails = $derived(orphanedFails(card, comments));
 
-  // The inline form a fail verdict fills in (its mandatory comment).
+  // The inline form a fail verdict or an edit from review fills in (its
+  // mandatory comment).
   let failForm = $state<{
     sub: string;
+    edit: boolean;
     body: string;
     page: string;
     m1: string;
@@ -111,12 +129,15 @@
   async function submitFail() {
     if (!failForm || !failForm.body.trim()) return;
     const form = failForm;
-    const result = await onvalidate(card.task, form.sub, "fail", {
+    const comment = {
       body: form.body,
       page: form.page.trim(),
       measure_start: form.m1.trim(),
       measure_end: form.m2.trim(),
-    });
+    };
+    const result = form.edit
+      ? await onreviewedit?.(card.task, form.sub, comment)
+      : await onvalidate(card.task, form.sub, "fail", comment);
     if (result?.ok) failForm = null;
   }
 
@@ -144,9 +165,15 @@
 
 {#snippet slotDot(key: string)}
   {#if key === "pass"}
-    <img class="hand-pass" src="/green-hand.svg" alt="pass" title="pass" />
+    <img
+      class="hand-pass"
+      src="/green-hand.svg"
+      alt={slotLabel(key)}
+      title={slotLabel(key)}
+    />
   {:else}
-    <span class="dot {key}" aria-label={key} title={key}></span>
+    <span class="dot {key}" aria-label={slotLabel(key)} title={slotLabel(key)}
+    ></span>
   {/if}
 {/snippet}
 
@@ -160,7 +187,7 @@
         <div class="failbox">
           <div class="failhead">
             {@render slotDot("fail")}
-            <span class="failtitle">{slotName(r.slot)}fail</span>
+            <span class="failtitle">{slotName(r.slot)}changes requested</span>
             <span class="rwho">{r.login} · {r.elapsed}</span>
           </div>
           {#if r.comment}
@@ -178,7 +205,7 @@
             {/if}
           {:else}
             <div class="failbody muted">
-              No comment was recorded with this fail.
+              No note was recorded with this request.
             </div>
           {/if}
           <div class="failacts">
@@ -194,7 +221,7 @@
                   class="linkish"
                   onclick={() => resolve(r.comment!.comment_id)}
                   disabled={runner.busy || resolving !== null}
-                  title="Mark this fail's comment as handled — it leaves the attention counts."
+                  title="Mark this request as handled — it leaves the attention counts."
                   >Resolve</button
                 >
               {/if}
@@ -217,9 +244,7 @@
       {:else}
         <div class="rrow">
           {@render slotDot(r.key)}
-          <span class="rslot"
-            >{slotName(r.slot)}{r.key === "review" ? "in review" : r.key}</span
-          >
+          <span class="rslot">{slotName(r.slot)}{slotLabel(r.key)}</span>
           {#if r.login}
             <span class="rwho"
               >{r.login} · {r.key === "review"
@@ -237,21 +262,36 @@
                 class="btn btn-primary btn-finish"
                 onclick={() => onvalidate(card.task, r.sub, "pass")}
                 disabled={runner.busy || processing}
-                title="Record a passing verdict.">Pass</button
+                title="Approve the submitted work.">Approve</button
               >
               <button
                 type="button"
                 class="btn btn-danger failbtn"
-                class:on={failForm?.sub === r.sub}
+                class:on={failForm?.sub === r.sub && !failForm.edit}
                 onclick={() =>
                   (failForm =
-                    failForm?.sub === r.sub
+                    failForm?.sub === r.sub && !failForm.edit
                       ? null
-                      : { sub: r.sub, body: "", ...prefill() })}
+                      : { sub: r.sub, edit: false, body: "", ...prefill() })}
                 disabled={runner.busy || processing}
-                title="Record a failing verdict — a fail carries a comment saying why."
-                >Fail</button
+                title="Ask for changes — a request carries a note saying what needs to change."
+                >Request changes</button
               >
+              {#if onreviewedit}
+                <button
+                  type="button"
+                  class="btn"
+                  class:on={failForm?.sub === r.sub && failForm.edit}
+                  onclick={() =>
+                    (failForm =
+                      failForm?.sub === r.sub && failForm.edit
+                        ? null
+                        : { sub: r.sub, edit: true, body: "", ...prefill() })}
+                  disabled={runner.busy || processing}
+                  title="Correct the work yourself: requests changes with your note and gives you the task to edit. Your edit is then reviewed by someone else."
+                  >Edit</button
+                >
+              {/if}
             </span>
           {/if}
         </div>
@@ -260,7 +300,9 @@
             <textarea
               rows="3"
               bind:value={failForm.body}
-              placeholder="Why does this fail? (required)"
+              placeholder={failForm.edit
+                ? "What will you correct? (required)"
+                : "What needs to change? (required)"}
             ></textarea>
             <div class="failform-anchor">
               <label>p. <input size="3" bind:value={failForm.page} /></label>
@@ -281,12 +323,17 @@
               <span class="mspacer"></span>
               <button
                 type="button"
-                class="btn btn-danger"
+                class={failForm.edit ? "btn" : "btn btn-danger"}
                 onclick={submitFail}
                 disabled={runner.busy || !failForm.body.trim() || processing}
-                >Submit fail</button
+                title={failForm.edit
+                  ? "Requests changes with this note and opens the task for you to edit."
+                  : undefined}>{failForm.edit ? "Edit" : "Send request"}</button
               >
             </div>
+            {#if failForm.edit}
+              <p class="editnote">Your edit is reviewed again afterwards.</p>
+            {/if}
           </div>
         {/if}
       {/if}
@@ -297,8 +344,8 @@
           {@render slotDot("fail")}
           <span
             class="failtitle"
-            title="This fail was recorded before the task was sent back."
-            >Fail · before send-back</span
+            title="This request was recorded before the task was sent back."
+            >Changes requested · before send-back</span
           >
           <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
         </div>
@@ -327,7 +374,7 @@
                 class="linkish"
                 onclick={() => resolve(c.comment_id)}
                 disabled={runner.busy || resolving !== null}
-                title="Mark this fail's comment as handled — it leaves the attention counts."
+                title="Mark this request as handled — it leaves the attention counts."
                 >Resolve</button
               >
             {/if}
@@ -524,6 +571,11 @@
     background: var(--card);
     color: var(--ink);
     resize: vertical;
+  }
+  .editnote {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--ink-soft);
   }
   .failform-anchor {
     display: flex;

@@ -969,6 +969,8 @@ export async function getPullRequestDetails(
   state: string;
   headSha: string;
   baseSha: string;
+  /** "owner/repo" of the head branch's repo; '' when that repo is gone. */
+  headRepo: string;
 }> {
   const data = await ghSend<{
     body?: string | null;
@@ -976,7 +978,7 @@ export async function getPullRequestDetails(
     commits?: number;
     created_at?: string;
     state?: string;
-    head?: { sha?: string };
+    head?: { sha?: string; repo?: { full_name?: string } | null };
     base?: { sha?: string };
   }>("GET", `/repos/${owner}/${repo}/pulls/${number}`, token);
   return {
@@ -987,7 +989,34 @@ export async function getPullRequestDetails(
     state: data.state ?? "open",
     headSha: data.head?.sha ?? "",
     baseSha: data.base?.sha ?? "",
+    headRepo: data.head?.repo?.full_name ?? "",
   };
+}
+
+/**
+ * The messages of the commits `head` has beyond `base`, compared in
+ * owner/repo; `head` may name a fork's branch as `fork-owner:branch`. Null
+ * when either side does not exist.
+ */
+export async function compareCommitMessages(
+  token: string,
+  owner: string,
+  repo: string,
+  base: string,
+  head: string,
+): Promise<string[] | null> {
+  const { status, ok, data } = await ghGet<{
+    commits?: { commit?: { message?: string } }[];
+    message?: string;
+  }>(
+    `${apiRoot(token)}/repos/${owner}/${repo}/compare/${base}...${head}`,
+    token,
+    { cache: false },
+  );
+  if (status === 404) return null;
+  if (!ok)
+    throw new Error(data?.message || `Failed to compare ${base}...${head}`);
+  return (data?.commits ?? []).map((c) => c.commit?.message ?? "");
 }
 
 /** One changed file of a pull request, with its unified-diff patch when GitHub supplies one. */

@@ -14,12 +14,14 @@ import {
   checkComment,
   checkEncoding,
   checkResolveComment,
+  checkReviewEdit,
   checkSendBack,
   checkValidation,
   resolveCommentThread,
 } from "../campaign-submit.ts";
 import type {
   CheckEncodingArgs,
+  CheckReviewEditArgs,
   CheckValidationArgs,
 } from "../campaign-submit.ts";
 
@@ -811,4 +813,56 @@ test("validation: rejects when no open slot remains", () => {
     now: NOW,
   });
   assert.equal(v.reason, "no_open_validation_slot");
+});
+
+// --- Edit from review ------------------------------------------------------
+
+test("review edit: resets the task and hands the reviewer the encoding claim", () => {
+  const base: CheckReviewEditArgs = {
+    state: validationState(),
+    locks: [...validationLock, ...encodingLock],
+    intent: { task_id: "T0001", subtask_id: "S0001" },
+    author: "carol",
+    changedPaths: ["tracking/lock.csv", "tracking/comment.csv"],
+    failComment: comment({}),
+    now: NOW,
+    staleAfterMinutes: 60,
+  };
+  const v = checkReviewEdit(base) as SubmitView;
+  assert.equal(v.ok, true);
+  assert.equal(
+    findRow(v.state!.rows, "T0001", "")!.status,
+    "encoding_required",
+  );
+  assert.equal(findRow(v.state!.rows, "T0001", "")!.encoder, "");
+  assert.equal(findRow(v.state!.rows, "T0001", "S0001")!.status, "pending");
+  assert.deepEqual(v.locks, [
+    {
+      task_id: "T0001",
+      subtask_id: "",
+      user_id: "carol",
+      timestamp: NOW,
+      kind: "encoding",
+      expires: "2026-06-25T11:00:00.000Z",
+    },
+  ]);
+
+  const reason = (over: Partial<CheckReviewEditArgs>) =>
+    (checkReviewEdit({ ...base, ...over }) as SubmitView).reason;
+  assert.equal(reason({ failComment: null }), "fail_without_comment");
+  assert.equal(
+    reason({ failComment: comment({ body: " " }) }),
+    "fail_without_comment",
+  );
+  assert.equal(reason({ author: "dave" }), "not_lock_holder");
+  assert.equal(reason({ locks: [], expired: validationLock }), "claim_expired");
+  assert.equal(reason({ state: encodingState() }), "wrong_state");
+  assert.equal(
+    reason({ changedPaths: ["tracking/lock.csv", "tracking/state.csv"] }),
+    "out_of_bounds",
+  );
+  assert.equal(
+    reason({ intent: { task_id: "T0001", subtask_id: "" } }),
+    "unknown_task",
+  );
 });

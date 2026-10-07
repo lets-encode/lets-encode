@@ -24,12 +24,11 @@
     buildRecord,
     cardPill,
     elapsed,
-    expiresIn,
     initialOf,
     orphanedFails,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
-  import GiveBackButton from "./GiveBackButton.svelte";
+  import AbandonButton from "./AbandonButton.svelte";
   import TaskHeading from "./TaskHeading.svelte";
   import TaskRunState from "./TaskRunState.svelte";
   import ValidationRecord from "./ValidationRecord.svelte";
@@ -53,8 +52,9 @@
     onshowanchor,
     onclaim,
     oneditor,
-    ongiveback,
+    onabandon,
     onvalidate,
+    onreviewedit,
     onresolve,
     onsendback,
   }: {
@@ -88,13 +88,19 @@
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     /** Claim or open the task in mei-friend; not used in the review view. */
     oneditor?: (task_id: string) => Promise<void>;
-    /** Give back the viewer's claim: the task's encoding ('' subtask) or a review slot. */
-    ongiveback: (task_id: string, subtask_id: string) => Promise<unknown>;
+    /** Abandon the viewer's claim: the task's encoding ('' subtask) or a review slot. */
+    onabandon: (task_id: string, subtask_id: string) => Promise<unknown>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
       verdict: string,
       comment?: FailComment,
+    ) => Promise<Result | null>;
+    /** Switch the viewer's review to editing, with the fail comment. */
+    onreviewedit: (
+      task_id: string,
+      subtask_id: string,
+      comment: FailComment,
     ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
     onsendback: (task_id: string) => Promise<unknown>;
@@ -149,10 +155,10 @@
     if (card.column === "done") return "";
     if (card.column === "validation")
       return card.pre
-        ? `Check the submitted work in the ${editorName} and record a pass or a fail.`
+        ? `Check the submitted work in the ${editorName} and approve it or request changes.`
         : inReview
-          ? "Compare the encoding with the scan and record a pass or a fail."
-          : "Compare the encoding with the scan in the review view and record a pass or a fail.";
+          ? "Compare the encoding with the scan and approve it or request changes."
+          : "Compare the encoding with the scan in the review view and approve it or request changes.";
     if (card.locator === "score-setup")
       return "Set the score's staves, clefs, key signature and time signature from the source.";
     if (card.locator === "omr-layout")
@@ -195,18 +201,14 @@
         ? `Waits for ${card.waitsFor}.`
         : card.column === "done"
           ? card.doneLine
-          : undefined}>{cardPill(card, viewer)}</span
+          : card.keptFrom
+            ? `${card.keptFrom}'s claim ran out with unsubmitted changes. The next claim continues from them.`
+            : myEncodingLock && card.column === "encoding"
+              ? `Your claim ends ${new Date(myEncodingLock.expires).toLocaleString()}. Submit before then; afterwards the task is open to others.`
+              : undefined}>{cardPill(card, viewer)}</span
     >
     {#if help}
       <p class="help">{help}</p>
-    {/if}
-    {#if myEncodingLock && card.column === "encoding" && expiresIn(myEncodingLock.expires)}
-      <p
-        class="help"
-        title={`Your claim ends ${new Date(myEncodingLock.expires).toLocaleString()}. Submit before then; afterwards the task is open to others.`}
-      >
-        Your claim {expiresIn(myEncodingLock.expires)}.
-      </p>
     {/if}
   </div>
   {#if encoderLogin}
@@ -237,6 +239,7 @@
         prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
         {onshowanchor}
         {onvalidate}
+        {onreviewedit}
         {onresolve}
         {onsendback}
       />
@@ -282,9 +285,9 @@
           title={`Continue your work in the ${editorName}.`}
           >Continue in {editorName}</a
         >
-        <GiveBackButton
+        <AbandonButton
           disabled={runner.busy || processing}
-          ongiveback={() => ongiveback(card.task, "")}
+          onabandon={() => onabandon(card.task, "")}
         />
       </div>
     {:else if mineEncoding}
@@ -298,9 +301,9 @@
           title="Opens the score in mei-friend. Completing the task there submits it for review."
           >Open in mei-friend <Icon name="external" /></button
         >
-        <GiveBackButton
+        <AbandonButton
           disabled={runner.busy || processing}
-          ongiveback={() => ongiveback(card.task, "")}
+          onabandon={() => onabandon(card.task, "")}
         />
       </div>
     {/if}
@@ -345,9 +348,10 @@
             >Open review view</a
           >
         {/if}
-        <GiveBackButton
+        <AbandonButton
+          review
           disabled={runner.busy || processing}
-          ongiveback={() => ongiveback(card.task, myReviewSub ?? "")}
+          onabandon={() => onabandon(card.task, myReviewSub ?? "")}
         />
       </div>
     {/if}

@@ -42,27 +42,19 @@ export type StatusKey =
   | "review"
   | "open";
 
-const STATUS_LABELS: Record<StatusKey, string> = {
-  completed: "✓ done",
-  encoding_required: "encoding required",
-  encoding: "● encoding",
-  claimed: "● claimed",
-  validation_required: "review",
-  pending: "pending",
-  blocked: "blocked",
-  pass: "✓ pass",
-  fail: "✗ fail",
-  review: "review",
-  open: "○ open",
-};
-
-/**
- * The pill label for a status key, aware of measure-correction (pre) tasks:
- * an unclaimed pre-task reads as "action required" rather than "encoding
- * required", since no encoding happens at that stage.
- */
-export const statusPill = (key: StatusKey, pre = false): string =>
-  pre && key === "encoding_required" ? "action required" : STATUS_LABELS[key];
+const STATUS_KEYS = new Set<string>([
+  "completed",
+  "encoding_required",
+  "encoding",
+  "claimed",
+  "validation_required",
+  "pending",
+  "blocked",
+  "pass",
+  "fail",
+  "review",
+  "open",
+]);
 
 /** One validation slot on its task node. */
 export interface NodeSlot {
@@ -309,7 +301,7 @@ function mainStatusKey(d: GraphData, task: string): StatusKey {
   if (status === "encoding_required" && encodingLock(d, task)) {
     return isPreTask(taskDef(d, task)?.locator ?? "") ? "claimed" : "encoding";
   }
-  if (status in STATUS_LABELS) return status as StatusKey;
+  if (STATUS_KEYS.has(status)) return status as StatusKey;
   return "pending";
 }
 
@@ -425,8 +417,9 @@ export function buildGraph(
             row.status === "validation_required" &&
             (d.allowSelfValidation ||
               (state?.encoder !== viewer && !hasVerdictBy(d, row, viewer))) &&
-            !validationLocks(d, row.task_id, row.subtask_id).some(
-              (l) => l.user_id === viewer,
+            // Reviews of a task run one at a time (mirrors checkClaim).
+            !d.locks.some(
+              (l) => l.task_id === row.task_id && l.kind === "validation",
             ) &&
             slot === nextUnreservedSlot(d, row) &&
             // Claimable only while the verdict can still land: passes plus

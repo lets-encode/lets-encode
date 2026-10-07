@@ -3,8 +3,18 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-07
+
+- Reviews read Approve and Request changes instead of Pass and Fail.
+- The unused status pill labels are removed.
+
 ## 2026-10-06
 
+- Give back is now Abandon and warns that unsubmitted changes are deleted.
+- Reviews of a task run one at a time.
+- Reviewers can switch to editing a task, recorded as a change request with a note.
+- The unsubmitted work of an expired claim is kept for the next claim.
+- Measure correction, layout and score setup save a draft while the task is held.
 - Claims last 24 hours and end exactly at their expiry time.
 - The task side panel shows when your claim expires.
 - The back link names the campaign where it fits and shows only its arrow where it does not.

@@ -127,17 +127,17 @@ test("buildGraph assigns concurrent validation locks to separate slots", () => {
     ],
   );
 
-  // With one of two slots reserved, the other remains available to a different
-  // reviewer. Parsed tables are replaced, never mutated — lookups are indexed
-  // per array identity.
+  // With one of two slots reserved, the other is open but not claimable:
+  // reviews of a task run one at a time. Parsed tables are replaced, never
+  // mutated — lookups are indexed per array identity.
   d.locks = d.locks.slice(0, -1);
   const available = buildGraph(d, "you").find((n) => n.task === "T0001")!;
   assert.deepEqual(
     available.slots.map((slot) => slot.key),
     ["review", "open"],
   );
-  assert.equal(available.slots[1].claimable, true);
-  assert.equal(available.nextUp, true);
+  assert.equal(available.slots[1].claimable, false);
+  assert.equal(available.nextUp, false);
   // carol, holding the first slot, is not offered the second.
   assert.equal(
     buildGraph(d, "carol")

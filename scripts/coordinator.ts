@@ -58,6 +58,7 @@ import {
   checkComment,
   checkEncoding,
   checkResolveComment,
+  checkReviewEdit,
   checkSendBack,
   checkValidation,
   sideFilesOf,
@@ -74,7 +75,12 @@ import { reapLocks } from "../src/lib/campaign-reaper.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  claimPullRequest,
   classifyPullRequest,
+  isAutomaticCommit,
+  isReviewEdit,
+  keptWorkBranch,
+  keptWorkSince,
   pieceKindForPath,
   priorDecision,
   removedRowFromPatch,
@@ -87,10 +93,13 @@ import {
   validationVerdict,
 } from "../src/lib/coordinator-policy.ts";
 import {
+  compareCommitMessages,
   getCommitMessage,
+  getPullRequestDetails,
   getRepoFile,
   getRepoHead,
   getPullRequest,
+  getUserLogin,
   listOpenPullRequests,
   getCollaboratorCanPush,
   commitFiles,
@@ -185,6 +194,8 @@ const REASON_TEXT: Record<string, string> = {
     "the submission is neither a single verdict nor a clean send-back reset",
   malformed_comment:
     "the submission does not append or resolve exactly one comment row",
+  malformed_review_edit:
+    "the submission does not remove exactly one review lock and add one comment",
   out_of_bounds:
     "the submission changes files outside the ones this operation may touch",
   invalid_kind: "unknown claim or comment kind",
@@ -194,6 +205,8 @@ const REASON_TEXT: Record<string, string> = {
     "this task opens once the task it depends on is completed",
   wrong_state: "the task is not in the right state for this operation",
   already_locked: "someone already holds this claim",
+  review_in_progress:
+    "someone else is reviewing this task; reviews run one at a time",
   self_validation: "the encoder cannot review their own work",
   already_validated: "this person already recorded a verdict on this subtask",
   no_open_validation_slot: "no review slot is open",
@@ -201,10 +214,13 @@ const REASON_TEXT: Record<string, string> = {
   claim_expired:
     "the author's claim had run out when the submission was opened",
   mei_invalid: "the submitted MEI failed the machine check",
-  invalid_verdict: "a review verdict must be pass or fail",
-  fail_without_comment: "a fail must carry a comment saying why",
-  no_recorded_fail: "the task has no recorded fail to send it back for",
-  not_permitted: "only a failing reviewer or the campaign owner may do this",
+  invalid_verdict: "a review verdict must approve or request changes",
+  fail_without_comment:
+    "a change request must carry a note saying what needs to change",
+  no_recorded_fail:
+    "the task has no recorded change request to send it back for",
+  not_permitted:
+    "only a reviewer who requested changes or the campaign owner may do this",
   empty_comment: "the comment is empty",
   unknown_parent: "the reply's parent comment does not exist",
   invalid_parent:
@@ -221,6 +237,7 @@ const REASON_TEXT: Record<string, string> = {
 // to history.csv.
 const AUDIT_FREE_REJECTS = new Set([
   "malformed_claim",
+  "malformed_review_edit",
   "malformed_validation",
   "malformed_comment",
   "out_of_bounds",
@@ -255,17 +272,94 @@ function priorVerdict(
   return { ok, reason: ok ? undefined : row.detail, row };
 }
 
-// The history rows for locks dropped as expired, stamped with the run's time.
-const expiryRows = (removed: LockRow[], now: string): HistoryRow[] =>
+// The history rows for locks dropped as expired, stamped with the run's time;
+// `keptWork` holds the locks whose unsubmitted work was kept.
+const expiryRows = (
+  removed: LockRow[],
+  now: string,
+  keptWork: Set<LockRow>,
+): HistoryRow[] =>
   removed.map((lock) => ({
     timestamp: now,
     task_id: lock.task_id,
     subtask_id: lock.subtask_id,
     user_id: lock.user_id,
     action: "reap",
-    outcome: "released",
+    outcome: keptWork.has(lock) ? "released_with_work" : "released",
     detail: lock.kind,
   }));
+
+// Keep the unsubmitted work of expired encoding claims: the claimer's task
+// branch `encode-<task>` — in the repo their claim's pull request came from —
+// is copied to the campaign branch `wip-<task>` when it holds commits of
+// their own. The copy starts from `main` at `sha` and carries the task's
+// score and side files; a later expiry replaces it. Returns the locks whose
+// work was kept. A lock whose work cannot be read or copied counts as having
+// none.
+async function keepExpiredWork(
+  removed: LockRow[],
+  historyCsv: string | null,
+  mainBranch: string,
+  sha: string,
+): Promise<Set<LockRow>> {
+  const kept = new Set<LockRow>();
+  const encoding = removed.filter((l) => l.kind === "encoding");
+  if (encoding.length === 0) return kept;
+  const history = parseHistoryCsv(historyCsv ?? "");
+  const tasks = parseTaskCsv(
+    (await getRepoFile(token, owner, repo, TASK_PATH, sha)) ?? "",
+  );
+  for (const lock of encoding) {
+    try {
+      const task = tasks.find(
+        (t) => t.task_id === lock.task_id && t.subtask_id === "",
+      );
+      const claimPr = claimPullRequest(history, lock.task_id, lock.user_id);
+      if (!task || claimPr === null) continue;
+      const { headRepo: workRepo } = await getPullRequestDetails(
+        token,
+        owner,
+        repo,
+        claimPr,
+      );
+      if (!workRepo) continue;
+      const [workOwner, workName] = workRepo.split("/");
+      const ref = `encode-${lock.task_id}`;
+      const messages = await compareCommitMessages(
+        token,
+        owner,
+        repo,
+        mainBranch,
+        workOwner === owner && workName === repo ? ref : `${workOwner}:${ref}`,
+      );
+      if (!messages?.some((m) => !isAutomaticCommit(m))) continue;
+      const paths = [task.fragment, ...sideFilesOf(task)];
+      const contents = await Promise.all(
+        paths.map((path) => getRepoFile(token, workOwner, workName, path, ref)),
+      );
+      const files = paths.flatMap((path, i) =>
+        contents[i] == null ? [] : [{ path, content: contents[i]! }],
+      );
+      if (files.length === 0) continue;
+      const wip = keptWorkBranch(lock.task_id);
+      await deleteBranch(token, owner, repo, wip);
+      await commitFiles(
+        token,
+        owner,
+        repo,
+        files,
+        `Keep the unsubmitted work on ${lock.task_id} from an expired claim`,
+        { baseSha: sha, newBranch: wip },
+      );
+      kept.add(lock);
+    } catch (e) {
+      console.warn(
+        `Could not keep the work on ${lock.task_id}: ${(e as Error).message}`,
+      );
+    }
+  }
+  return kept;
+}
 
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
@@ -391,7 +485,11 @@ async function attemptClaim(
       })
     : { ok: false, reason: "malformed_claim" };
 
-  const reapedHistory = expiryRows(removed, now);
+  const reapedHistory = expiryRows(
+    removed,
+    now,
+    await keepExpiredWork(removed, historyCsv, branch, sha),
+  );
   const history: HistoryRow = {
     timestamp: now,
     task_id: intent?.task_id ?? "",
@@ -478,7 +576,7 @@ async function runClaim(
 }
 
 // ---------------------------------------------------------------------------
-// Release (a PR removing one row from lock.csv: the author gives a claim back)
+// Release (a PR removing one row from lock.csv: the author abandons a claim)
 
 async function attemptRelease(
   changedPaths: string[],
@@ -523,7 +621,11 @@ async function attemptRelease(
     {
       path: HISTORY_PATH,
       content: appendHistory(historyCsv ?? "", [
-        ...expiryRows(removed, now),
+        ...expiryRows(
+          removed,
+          now,
+          await keepExpiredWork(removed, historyCsv, branch, sha),
+        ),
         history,
       ]),
     },
@@ -566,8 +668,148 @@ async function runRelease(
   );
   const target = `\`${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}\``;
   const body = verdict.ok
-    ? `✅ Release accepted — ${authorLabel} gave back ${target}.`
+    ? `✅ Release accepted — ${authorLabel} abandoned ${target}.`
     : `❌ Release rejected: ${explainReason(verdict.reason)}. No changes were made.`;
+  const closeStart = Date.now();
+  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await cleanupHeadBranch();
+  logPhase("comment_and_close", closeStart);
+}
+
+// ---------------------------------------------------------------------------
+// Review edit (a PR removing the author's review lock from lock.csv and
+// appending one fail comment: the reviewer switches to editing the task)
+
+async function attemptReviewEdit(
+  prFiles: PullRequestFile[],
+  envelope: CommandEnvelope | null,
+): Promise<Verdict & { task?: string }> {
+  const changedPaths = prFiles.map((f) => f.filename);
+  const readStart = Date.now();
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
+  const [stateCsv, lockCsv, commentCsv, historyCsv, configText] =
+    await Promise.all([
+      getRepoFile(token, owner, repo, STATE_PATH, sha),
+      getRepoFile(token, owner, repo, LOCK_PATH, sha),
+      getRepoFile(token, owner, repo, COMMENT_PATH, sha),
+      getRepoFile(token, owner, repo, HISTORY_PATH, sha),
+      getRepoFile(token, owner, repo, CONFIG_PATH, sha),
+    ]);
+  logPhase("read_tables", readStart);
+  const prior = priorVerdict(historyCsv);
+  if (prior) return { ...prior, task: prior.row.task_id };
+
+  // The intent is the review lock the PR removes and the fail comment it
+  // appends, read from its own patches and re-applied to the fresh tables.
+  const removedRow = removedRowFromPatch(
+    prFiles.find((f) => f.filename === LOCK_PATH)?.patch,
+  );
+  const cells = removedRow?.split(",") ?? [];
+  const intent = {
+    task_id: cells[0]?.trim() ?? "",
+    subtask_id: cells[1]?.trim() ?? "",
+  };
+  if (!removedRow || cells[4]?.trim() !== "validation" || !intent.subtask_id)
+    return { ok: false, reason: "malformed_review_edit" };
+  const added = appendedCommentsFromPatch(
+    prFiles.find((f) => f.filename === COMMENT_PATH)?.patch,
+  );
+
+  const now = new Date().toISOString();
+  // A claim is judged at the time its pull request was opened.
+  const { kept: locks, removed } = reapLocks({
+    locks: parseLockCsv(lockCsv ?? ""),
+    now: submittedAt,
+  });
+  const verdict = checkReviewEdit({
+    state: parseStateCsv(stateCsv ?? ""),
+    locks,
+    intent,
+    author,
+    changedPaths,
+    failComment: added?.length === 1 ? added[0] : null,
+    now,
+    staleAfterMinutes: configNumber(
+      configText,
+      "stale_after_minutes",
+      DEFAULT_STALE_MINUTES,
+    ),
+    expired: removed,
+  });
+  if (isAuditFree(verdict)) return verdict;
+
+  const history: HistoryRow = {
+    timestamp: now,
+    task_id: intent.task_id,
+    subtask_id: intent.subtask_id,
+    user_id: author,
+    action: "review_edit",
+    outcome: verdict.ok ? "accepted" : "rejected",
+    detail: verdict.ok ? "" : verdict.reason,
+    ...envelopeColumns(envelope),
+    pr: String(prNumber),
+  };
+  const files: FileChange[] = [
+    {
+      path: HISTORY_PATH,
+      content: appendHistory(historyCsv ?? "", [
+        ...expiryRows(
+          removed,
+          now,
+          await keepExpiredWork(removed, historyCsv, branch, sha),
+        ),
+        history,
+      ]),
+    },
+  ];
+  if (verdict.ok) {
+    // The fail comment carries the edit's own timestamp, as a fail verdict's
+    // comment does.
+    files.push(
+      { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
+      { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+      {
+        path: COMMENT_PATH,
+        content: serializeCommentCsv([
+          ...parseCommentCsv(commentCsv ?? ""),
+          {
+            ...added![0],
+            comment_id: newCommentId(),
+            author_id: author,
+            timestamp: now,
+            resolved: "",
+            parent_id: "",
+          },
+        ]),
+      },
+    );
+  } else if (removed.length) {
+    files.push({ path: LOCK_PATH, content: serializeLockCsv(locks) });
+  }
+  const target = `${intent.task_id}/${intent.subtask_id}`;
+  const message = verdict.ok
+    ? coAuthored(
+        `Edit ${intent.task_id} from review of ${target} by ${authorLabel}`,
+      )
+    : `Reject review edit by ${authorLabel} (${verdict.reason})`;
+  const commitStart = Date.now();
+  await commitFiles(token, owner, repo, files, message, {
+    baseSha: sha,
+    baseTreeSha: treeSha,
+    branch,
+  });
+  logPhase("commit", commitStart);
+  return { ...verdict, task: intent.task_id };
+}
+
+async function runReviewEdit(
+  files: PullRequestFile[],
+  envelope: CommandEnvelope | null,
+): Promise<void> {
+  const verdict = await withRetry(() => attemptReviewEdit(files, envelope));
+  const body = verdict.ok
+    ? `✅ Review edit accepted — \`${verdict.task}\` is back in editing, claimed by ${authorLabel}.`
+    : `❌ Review edit rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
   await commentAndClosePr(token, owner, repo, prNumber, body);
   await cleanupHeadBranch();
@@ -593,6 +835,7 @@ async function decideEncoding(
   envelope: CommandEnvelope | null,
   now: string,
   expired: LockRow[],
+  pastHistory: HistoryRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -664,13 +907,30 @@ async function decideEncoding(
     "campaign.submitScoreSetup",
   ];
   if (mei != null) {
+    const application = consoleCommands.includes(envelope?.command ?? "")
+      ? undefined
+      : "mei-friend";
+    // The expired claims whose unsubmitted work this submission continues
+    // are recorded first, each dated at its expiry.
+    for (const row of keptWorkSince(pastHistory, task.task_id)) {
+      const login = await getUserLogin(token, Number(row.user_id)).catch(
+        () => null,
+      );
+      mei = recordContribution(mei, {
+        name: login ?? row.user_id,
+        message: `Unsubmitted work on ${task.task_id}, kept when the claim expired.`,
+        isodate: row.timestamp.slice(0, 10),
+        application,
+      });
+    }
+    const message = commitMessage ?? `Encoding of ${task.task_id} accepted.`;
     mei = recordContribution(mei, {
       name: authorLabel,
-      message: commitMessage ?? `Encoding of ${task.task_id} accepted.`,
+      message: isReviewEdit(pastHistory, task.task_id, author)
+        ? `Corrected during review: ${message}`
+        : message,
       isodate: now.slice(0, 10),
-      application: consoleCommands.includes(envelope?.command ?? "")
-        ? undefined
-        : "mei-friend",
+      application,
     });
   }
 
@@ -957,6 +1217,7 @@ async function attemptSubmit(
           envelope,
           now,
           removed,
+          parseHistoryCsv(historyCsv ?? ""),
         );
   logPhase("decide", decideStart);
   if (isAuditFree(outcome)) return outcome;
@@ -979,7 +1240,11 @@ async function attemptSubmit(
     {
       path: HISTORY_PATH,
       content: appendHistory(historyCsv ?? "", [
-        ...expiryRows(removed, now),
+        ...expiryRows(
+          removed,
+          now,
+          await keepExpiredWork(removed, historyCsv, branch, sha),
+        ),
         history,
       ]),
     },
@@ -997,6 +1262,17 @@ async function attemptSubmit(
     branch,
   });
   logPhase("commit", commitStart);
+  // The work kept from expired claims is part of the accepted submission.
+  if (kind === "encoding" && outcome.ok) {
+    await deleteBranch(
+      token,
+      owner,
+      repo,
+      keptWorkBranch(history.task_id),
+    ).catch((e: Error) =>
+      console.warn(`Kept-work branch cleanup skipped: ${e.message}`),
+    );
+  }
   return outcome;
 }
 
@@ -1156,7 +1432,11 @@ async function attemptReap(): Promise<void> {
     return;
   }
 
-  const history = expiryRows(removed, now);
+  const history = expiryRows(
+    removed,
+    now,
+    await keepExpiredWork(removed, historyCsv, branch, sha),
+  );
   const commitStart = Date.now();
   await commitFiles(
     token,
@@ -1179,8 +1459,9 @@ async function runReap(): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Entry: route by event, then (for PRs) by the operation the changed paths imply
-// — lock.csv → claim (or release), state.csv → validation (or send-back), comment.csv alone
-// → comment, anything else → encoding. The boundary check inside each decision
+// — lock.csv with comment.csv → review edit, lock.csv → claim (or release),
+// state.csv → validation (or send-back), comment.csv alone → comment, anything
+// else → encoding. The boundary check inside each decision
 // rejects mixed or out-of-bounds PRs.
 
 // Process the bound pull request. `open` is the campaign's open pull request
@@ -1238,6 +1519,7 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
   }
   const kind = classifyPullRequest(changedPaths);
   if (kind === "claim") await runClaim(files, envelope);
+  else if (kind === "review_edit") await runReviewEdit(files, envelope);
   else if (kind === "comment") await runComment(files, envelope);
   else await runSubmit(kind, files, envelope);
   return true;

@@ -44,7 +44,7 @@
   } from "$lib/campaign-stats.ts";
   import CampaignRow from "$lib/components/CampaignRow.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
-  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
+  import AbandonButton from "$lib/components/AbandonButton.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -236,9 +236,9 @@
       t.task,
       stats.find((x) => x.name === t.campaignSlug)?.repoId,
     );
-  const giveBack = (t: MyTask) =>
+  const abandon = (t: MyTask) =>
     run(t, (c) =>
-      invoke(commands.giveBack, { task_id: t.task, subtask_id: t.subtask }, c),
+      invoke(commands.abandon, { task_id: t.task, subtask_id: t.subtask }, c),
     );
 
   // Claim a campaign row's suggested next task. Encoding claims open
@@ -364,7 +364,7 @@
       <div class="rows">
         {#each fix as t (t.campaignSlug + t.task)}
           <a class="row attention" href={taskHref(t.campaignSlug, t.task)}>
-            <span class="pill red">Fix requested</span>
+            <span class="pill red">Changes requested</span>
             <span class="rowtitle">{taskLine(t)}</span>
             {#if t.failComment}
               <span class="excerpt"
@@ -449,9 +449,9 @@
                 >Open in mei-friend <Icon name="external" /></button
               >
             {/if}
-            <GiveBackButton
+            <AbandonButton
               disabled={runner.busy || processing(t)}
-              ongiveback={() => giveBack(t)}
+              onabandon={() => abandon(t)}
             />
           </div>
         {/each}
@@ -465,9 +465,10 @@
                 : ""}</span
             >
             <span class="spacer"></span>
-            <GiveBackButton
+            <AbandonButton
+              review
               disabled={runner.busy || processing(t)}
-              ongiveback={() => giveBack(t)}
+              onabandon={() => abandon(t)}
             />
             <a class="golink" href={taskHref(t.campaignSlug, t.task)}
               >Details <Icon name="arrow-right" size={12} /></a

@@ -135,6 +135,12 @@ export function checkClaim({
       return reject("no_open_validation_slot");
     if (activeSameKind.some((l) => l.user_id === author))
       return reject("already_locked");
+    // Reviews of a task run one at a time: any review claim on any of its
+    // subtasks holds the others back.
+    if (
+      locks.some((l) => l.task_id === intent.task_id && l.kind === "validation")
+    )
+      return reject("review_in_progress");
   }
 
   return {

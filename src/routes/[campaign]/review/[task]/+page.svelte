@@ -16,6 +16,7 @@
     CommandRunner,
     readForge,
     viewerId,
+    openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
   import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
@@ -251,8 +252,31 @@
       { overviewOnSuccess: true },
     );
 
-  const giveBack = (task_id: string, subtask_id: string) =>
-    run((c) => invoke(commands.giveBack, { task_id, subtask_id }, c), {
+  // Switch the held review to editing, then open the score in mei-friend.
+  const reviewEdit = async (
+    task_id: string,
+    subtask_id: string,
+    comment: FailComment,
+  ) => {
+    const result = await run(async (c) => {
+      const edit = await invoke(
+        commands.reviewEdit,
+        { task_id, subtask_id, comment },
+        c,
+      );
+      if (!edit.ok || edit.warn) return edit;
+      return invoke(
+        commands.openEditor,
+        { task_id, campaign, base: location.origin },
+        c,
+      );
+    });
+    openMeiFriend(result);
+    return result;
+  };
+
+  const abandon = (task_id: string, subtask_id: string) =>
+    run((c) => invoke(commands.abandon, { task_id, subtask_id }, c), {
       overviewOnSuccess: true,
     });
 
@@ -359,8 +383,9 @@
         {prefill}
         onshowanchor={showAnchorFor}
         onclaim={claim}
-        ongiveback={giveBack}
+        onabandon={abandon}
         onvalidate={validate}
+        onreviewedit={reviewEdit}
         onresolve={resolveCommentRow}
         onsendback={sendBackTask}
       />

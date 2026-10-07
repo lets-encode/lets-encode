@@ -45,6 +45,7 @@
   } from "$lib/commands.ts";
   import {
     handle,
+    isPreTask,
     pageOfLocator,
     preTaskHref,
     reviewHref,
@@ -727,15 +728,15 @@
   const submitpr = (task_id: string) =>
     run((c) => invoke(commands.submitEncoding, { task_id }, c));
 
-  const giveBack = (task_id: string, subtask_id: string) => {
+  const abandon = (task_id: string, subtask_id: string) => {
     actedOn(task_id);
-    return run((c) => invoke(commands.giveBack, { task_id, subtask_id }, c));
+    return run((c) => invoke(commands.abandon, { task_id, subtask_id }, c));
   };
 
   // ------------------------------------------------ the return from mei-friend
   // mei-friend returns the volunteer to /<campaign>?task=<id>&mf_status=
   // complete|failed|abandoned (with an optional mf_msg). `complete` submits the
-  // encoding, `abandoned` gives the claim back, `failed` shows mei-friend's
+  // encoding, `abandoned` abandons the claim, `failed` shows mei-friend's
   // message in the side panel.
   /** An error from the return from mei-friend, shown in the task's panel;
       `label` names mei-friend when the text is its own message. */
@@ -804,14 +805,14 @@
         text:
           status === "complete"
             ? "mei-friend reported the task complete, but you do not hold its claim, so nothing was submitted."
-            : "mei-friend reported the task given back, but you do not hold its claim.",
+            : "mei-friend reported the task abandoned, but you do not hold its claim.",
       };
       return;
     }
     if (status === "complete") {
       completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
       submitpr(task);
-    } else giveBack(task, "");
+    } else abandon(task, "");
   }
 
   const validate = (
@@ -828,6 +829,42 @@
         c,
       ),
     );
+  };
+
+  // Switch a held review to editing: a pre-task opens its editor, an
+  // encoding opens in mei-friend — both only once the switch is accepted.
+  const reviewEdit = async (
+    task_id: string,
+    subtask_id: string,
+    comment: FailComment,
+  ) => {
+    actedOn(task_id);
+    const locator =
+      taskDefs.find((t) => t.task_id === task_id && t.subtask_id === "")
+        ?.locator ?? "";
+    if (isPreTask(locator)) {
+      const result = await run((c) =>
+        invoke(commands.reviewEdit, { task_id, subtask_id, comment }, c),
+      );
+      if (result?.ok && !result.warn)
+        await goto(preTaskHref(campaign, locator, task_id));
+      return result;
+    }
+    const result = await run(async (c) => {
+      const edit = await invoke(
+        commands.reviewEdit,
+        { task_id, subtask_id, comment },
+        c,
+      );
+      if (!edit.ok || edit.warn) return edit;
+      return invoke(
+        commands.openEditor,
+        { task_id, campaign, base: location.origin },
+        c,
+      );
+    });
+    openMeiFriend(result);
+    return result;
   };
 
   const sendBackTask = (task_id: string) => {
@@ -1052,8 +1089,9 @@
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
-    ongiveback={giveBack}
+    onabandon={abandon}
     onvalidate={validate}
+    onreviewedit={reviewEdit}
     onresolve={resolveCommentRow}
     onsendback={sendBackTask}
   />
@@ -1188,7 +1226,7 @@
       </div>
       <div
         class="irow"
-        title="Passing reviews each task needs before it counts as done."
+        title="Approving reviews each task needs before it counts as done."
       >
         <span>Reviews required</span>
         <span>{passThreshold}</span>
@@ -1506,7 +1544,7 @@
                       type="button"
                       class="stat statbtn"
                       onclick={() => (showAttention = !showAttention)}
-                      title="Show the tasks with unresolved fails or comments."
+                      title="Show the tasks with unresolved change requests or comments."
                       ><b>{board.attention}</b> need{board.attention === 1
                         ? "s"
                         : ""} attention <Icon

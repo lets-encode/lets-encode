@@ -18,6 +18,7 @@ import type {
   StatusKey,
 } from "./campaign-graph.ts";
 import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { keptWorkSince } from "./coordinator-policy.ts";
 import type {
   CommentRow,
   HistoryRow,
@@ -216,6 +217,9 @@ export interface BoardCard {
   claimable: boolean;
   /** The viewer submitted the task's current encoding. */
   submittedByViewer: boolean;
+  /** Open column: who left unsubmitted work when their claim expired, which
+      the next claim continues from; '' for none. */
+  keptFrom: string;
   /** Encoding column: who holds the claim, and when it expires ("expires in 2 d"). */
   worker: { login: string; expires: string; mine: boolean } | null;
   /** Validation column: pass progress. */
@@ -271,17 +275,18 @@ export function cardPill(card: BoardCard, viewer = ""): string {
     case "blocked":
       return "blocked";
     case "ready":
-      return "open";
+      return card.keptFrom
+        ? `open · unsubmitted changes by ${card.keptFrom}`
+        : "open";
     case "encoding": {
       const w = card.worker;
       const who = w ? (w.mine ? "you" : w.login) : "";
       return `in progress${who ? ` · ${who}` : ""}${w?.expires ? ` · ${w.expires}` : ""}`;
     }
     case "validation": {
-      const reviewing =
-        viewer !== "" &&
-        card.slots.some((s) => s.key === "review" && s.user === viewer);
-      return `in review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : ""}`;
+      const held = card.slots.filter((s) => s.key === "review");
+      const reviewing = viewer !== "" && held.some((s) => s.user === viewer);
+      return `in review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : held.length ? " · being reviewed" : ""}`;
     }
     case "done":
       return card.threshold > 0
@@ -339,6 +344,10 @@ export function buildBoard(
       claimable: viewer !== "" && column === "ready" && !lock,
       submittedByViewer:
         viewer !== "" && findRow(d.rows, n.task, "")?.encoder === viewer,
+      keptFrom:
+        column === "ready"
+          ? handle(logins, keptWorkSince(history, n.task).at(-1)?.user_id ?? "")
+          : "",
       worker:
         column === "encoding" && lock
           ? {

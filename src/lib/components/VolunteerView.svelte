@@ -272,7 +272,9 @@
 {#snippet chips(card: BoardCard)}
   {#if card.counts.fails > 0}
     <span class="chip chip-fail"
-      >{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span
+      >{card.counts.fails} change request{card.counts.fails === 1
+        ? ""
+        : "s"}</span
     >
   {/if}
   {#if card.counts.comments > 0}

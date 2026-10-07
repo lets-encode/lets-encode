@@ -1,14 +1,18 @@
 <!--
-  "Give back" for a claim the viewer holds, confirmed in place: the first
+  "Abandon" for a claim the viewer holds, confirmed in place: the first
   click turns the button into a question with the two answers beside it.
+  Abandoning an edit claim deletes the viewer's unsubmitted changes; a review
+  claim (`review`) has none.
 -->
 <script lang="ts">
   let {
     disabled = false,
-    ongiveback,
+    review = false,
+    onabandon,
   }: {
     disabled?: boolean;
-    ongiveback: () => void;
+    review?: boolean;
+    onabandon: () => void;
   } = $props();
 
   let asking = $state(false);
@@ -16,18 +20,22 @@
 
 {#if asking}
   <span class="ask">
-    <span class="q">Give back this task?</span>
+    <span class="q"
+      >{review
+        ? "Abandon this review?"
+        : "Abandon this task? All your changes will be deleted."}</span
+    >
     <button
       type="button"
       class="btn btn-soft"
       {disabled}
       onclick={() => {
         asking = false;
-        ongiveback();
-      }}>Give back</button
+        onabandon();
+      }}>Abandon</button
     >
     <button type="button" class="btn" onclick={() => (asking = false)}
-      >Keep</button
+      >{review ? "Keep reviewing" : "Keep working"}</button
     >
   </span>
 {:else}
@@ -36,8 +44,10 @@
     class="btn btn-soft"
     {disabled}
     onclick={() => (asking = true)}
-    title="Releases your claim so someone else can take the task. Work not yet submitted is not kept."
-    >Give back</button
+    title={review
+      ? "Releases your review claim so someone else can review the task."
+      : "Releases your claim and deletes your unsubmitted changes. The task is open to others again."}
+    >Abandon</button
   >
 {/if}
 
