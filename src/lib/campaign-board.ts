@@ -1,17 +1,15 @@
 // The pipeline board: a pure projection of the tracking tables and the
-// comment log into five status columns with task cards, the attention counts,
-// the activity ticker and the overlay's validation record and discussion
-// threads. Builds on the task projection in campaign-graph.ts (statuses,
+// comment log into five status columns with task cards, the attention counts
+// and the overlay's validation record and discussion threads. Builds on the task projection in campaign-graph.ts (statuses,
 // slots, next-up) — no authoritative state lives here. No Svelte, no GitHub.
 
 import {
   buildGraph,
   blockedBy,
   handle,
-  isPreTask,
-  pageOfLocator,
-  workStage,
-  typeLabel,
+  taskDescription,
+  taskName,
+  taskScope,
 } from "./campaign-graph.ts";
 import type {
   GraphData,
@@ -20,6 +18,7 @@ import type {
   StatusKey,
 } from "./campaign-graph.ts";
 import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { keptWorkSince } from "./coordinator-policy.ts";
 import type {
   CommentRow,
   HistoryRow,
@@ -42,6 +41,19 @@ export function elapsed(iso: string, now = Date.now()): string {
   return `${Math.floor(hours / 24)} d`;
 }
 
+/** When a claim's lock runs out, from its `expires` time: "expires in
+    2 d", "expired", or '' when unreadable. */
+export function expiresIn(iso: string, now = Date.now()): string {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  if (t <= now) return "expired";
+  const minutes = Math.ceil((t - now) / 60_000);
+  if (minutes < 60) return `expires in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `expires in ${hours} h`;
+  return `expires in ${Math.floor(hours / 24)} d`;
+}
+
 /** The avatar initial for a display handle. */
 export const initialOf = (name: string): string =>
   name[0]?.toUpperCase() ?? "?";
@@ -51,7 +63,10 @@ export const initialOf = (name: string): string =>
  * the piece directory of the standard sources/<piece>/score.mei layout, else
  * the basename without extension.
  */
-const pieceLabel = (fragment: string, names: PieceNames): string => {
+export const fragmentPieceName = (
+  fragment: string,
+  names: PieceNames,
+): string => {
   const named = names[fragment];
   if (named) return named;
   const parts = fragment.split("/");
@@ -60,20 +75,20 @@ const pieceLabel = (fragment: string, names: PieceNames): string => {
   return base === "score" && dir && dir !== "sources" ? dir : base;
 };
 
-/** The card title: the piece plus the part of it the task addresses. */
+/** A task's one-line title: its name (description and scope), then its
+    piece. */
 export function cardTitle(
   fragment: string,
   locator: string,
   names: PieceNames = {},
+  omr = false,
 ): string {
-  const page = pageOfLocator(locator);
-  if (page) return `${pieceLabel(fragment, names)} · p. ${page}`;
-  if (locator === "score-setup")
-    return `${pieceLabel(fragment, names)} · setup`;
-  if (isPreTask(locator))
-    return `${pieceLabel(fragment, names)} · measure correction`;
-  return pieceLabel(fragment, names);
+  return `${taskName(locator, omr)} · ${fragmentPieceName(fragment, names)}`;
 }
+
+/** A card's name without its piece: description, then scope. */
+export const cardName = (card: BoardCard): string =>
+  card.scope ? `${card.description} · ${card.scope}` : card.description;
 
 // ---------------------------------------------------------------------------
 // Comments per task
@@ -181,25 +196,38 @@ const COLUMN_OF: Record<StatusKey, ColumnKey> = {
 export interface BoardCard {
   task: string;
   column: ColumnKey;
+  /** The one-line title: description, scope, piece (cardTitle). */
   title: string;
-  /** The type line under the title ("Encoding", "Measure correction", "Score setup"). */
-  typeLine: string;
+  /** What the task asks for ("Encode", "Correct the OMR draft", "Measure correction", "Score setup"). */
+  description: string;
+  /** The part of the piece the task covers ("p. 3"); '' for the whole piece. */
+  scope: string;
+  /** The display name of the task's piece. */
+  piece: string;
   pre: boolean;
+  /** A page task of an OMR-prepared piece: it starts from the OMR draft. */
+  omr: boolean;
   /** The task's locator, for routing a pre-task to its own editor. */
   locator: string;
   statusKey: StatusKey;
-  /** Blocked column: the title of the task this one waits for. */
+  /** Blocked column: the name of the task this one waits for, without its
+      piece (cardName). */
   waitsFor: string;
   /** Ready column: the viewer may claim it right now. */
   claimable: boolean;
-  /** Encoding column: who holds the claim, and for how long. */
-  worker: { login: string; elapsed: string; mine: boolean } | null;
-  /** Validation column: pass progress and one dot per slot. */
+  /** The viewer submitted the task's current encoding. */
+  submittedByViewer: boolean;
+  /** Open column: who left unsubmitted work when their claim expired, which
+      the next claim continues from; '' for none. */
+  keptFrom: string;
+  /** Encoding column: who holds the claim, and when it expires ("expires in 2 d"). */
+  worker: { login: string; expires: string; mine: boolean } | null;
+  /** Validation column: pass progress. */
   passes: number;
   threshold: number;
-  dots: StatusKey[];
   counts: TaskCounts;
-  /** Done column: the completion line ("3 of 3 validations"), rendered behind a pass icon. */
+  /** Done column: the completion line ("3 of 3 reviews"), rendered behind a
+      pass icon; '' for a task without reviews. */
   doneLine: string;
   /** Done column: when the last pass verdict landed (else the encoding time); '' elsewhere. */
   finishedAt: string;
@@ -215,13 +243,6 @@ export interface BoardColumn {
   cards: BoardCard[];
 }
 
-/** One activity-ticker entry: "login text · elapsed". */
-export interface TickerEntry {
-  login: string;
-  text: string;
-  elapsed: string;
-}
-
 export interface Board {
   columns: BoardColumn[];
   /** Tasks done, of all tasks. */
@@ -232,7 +253,6 @@ export interface Board {
   inFlight: number;
   /** Distinct people the history records within the last 7 days. */
   contributorsWeek: number;
-  ticker: TickerEntry[];
   /** The task of the first card the viewer can act on, or null. */
   nextUp: string | null;
 }
@@ -245,99 +265,45 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   done: "Done",
 };
 
+/** A finished card's line: its review count, or "done" where it has none,
+    and when it finished ("1 of 1 review · 7 d ago", "done · just now"). */
+export function doneLabel(
+  card: Pick<BoardCard, "doneLine" | "finishedAt">,
+  now = Date.now(),
+): string {
+  const e = card.finishedAt ? elapsed(card.finishedAt, now) : "";
+  const when = e === "" ? "" : e === "now" ? " · just now" : ` · ${e} ago`;
+  return `${card.doneLine || "done"}${when}`;
+}
+
 /**
- * The one-line status pill of a card: the current stage, a pre-task's kind as
- * prefix, the worker on a claimed task, and numeric pass progress (n/m) in
- * validation and done.
+ * The one-line status pill of a card: the current stage (the task's heading
+ * names its kind), the worker on a claimed task, and numeric pass progress
+ * ("n of m") in validation and done.
  */
 export function cardPill(card: BoardCard, viewer = ""): string {
-  const kind =
-    card.locator === "score-setup"
-      ? "setup"
-      : card.pre
-        ? "measure correction"
-        : "";
-  const prefix = kind ? `${kind} · ` : "";
   switch (card.column) {
     case "blocked":
-      return `${prefix}blocked`;
+      return "blocked";
     case "ready":
-      return `${prefix}open`;
+      return card.keptFrom
+        ? `open · unsubmitted changes by ${card.keptFrom}`
+        : "open";
     case "encoding": {
       const w = card.worker;
       const who = w ? (w.mine ? "you" : w.login) : "";
-      return `${kind || "encoding"}${who ? ` · ${who}` : ""}${w?.elapsed ? ` · ${w.elapsed}` : ""}`;
+      return `in progress${who ? ` · ${who}` : ""}${w?.expires ? ` · ${w.expires}` : ""}`;
     }
     case "validation": {
-      const reviewing =
-        viewer !== "" &&
-        card.slots.some((s) => s.key === "review" && s.user === viewer);
-      return `review · ${card.passes}/${card.threshold}${reviewing ? " · reviewing" : ""}`;
+      const held = card.slots.filter((s) => s.key === "review");
+      const reviewing = viewer !== "" && held.some((s) => s.user === viewer);
+      return `in review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : held.length ? " · being reviewed" : ""}`;
     }
     case "done":
       return card.threshold > 0
-        ? `done · ${card.passes}/${card.threshold}`
+        ? `done · ${card.passes} of ${card.threshold} review${card.threshold === 1 ? "" : "s"}`
         : "done";
   }
-}
-
-// The human line behind a history action, or null for rows the ticker skips.
-function tickerText(h: HistoryRow, title: string, locator = ""): string | null {
-  if (h.outcome !== "accepted" && h.outcome !== "released") return null;
-  switch (h.action) {
-    case "claim_encoding":
-      return `claimed ${title}`;
-    case "claim_validation":
-      return `claimed a review on ${title}`;
-    case "submit_encoding":
-      return `submitted the encoding of ${title}`;
-    case "submit_validation":
-      return h.detail === "fail"
-        ? `failed a review on ${title}`
-        : `passed a review on ${title}`;
-    case "send_back":
-      return `sent ${title} back for ${workStage(locator)}`;
-    case "submit_comment":
-      return `commented on ${title}`;
-    case "resolve_comment":
-      return `resolved a comment on ${title}`;
-    case "release_encoding":
-      return `gave back ${title}`;
-    case "release_validation":
-      return `gave back a review on ${title}`;
-    case "reap":
-      return `lost a stale claim on ${title}`;
-    default:
-      return null;
-  }
-}
-
-/** The last few history entries as ticker lines, newest first. */
-function buildTicker(
-  d: GraphData,
-  history: HistoryRow[],
-  logins: Logins = {},
-  names: PieceNames = {},
-  limit = 4,
-  now = Date.now(),
-): TickerEntry[] {
-  const entries: TickerEntry[] = [];
-  for (let i = history.length - 1; i >= 0 && entries.length < limit; i--) {
-    const h = history[i];
-    const def = findRow(d.taskDefs, h.task_id, "");
-    const text = tickerText(
-      h,
-      def ? cardTitle(def.fragment, def.locator, names) : h.task_id,
-      def?.locator ?? "",
-    );
-    if (text)
-      entries.push({
-        login: handle(logins, h.user_id),
-        text,
-        elapsed: elapsed(h.timestamp, now),
-      });
-  }
-  return entries;
 }
 
 /** Project the tables into the five-column pipeline board. */
@@ -363,7 +329,6 @@ export function buildBoard(
 
   for (const n of nodes) {
     const def = findRow(d.taskDefs, n.task, "")!;
-    const state = findRow(d.rows, n.task, "");
     const column = COLUMN_OF[n.statusKey] ?? "ready";
     const lock = d.locks.find(
       (l) =>
@@ -372,41 +337,43 @@ export function buildBoard(
     const dep = blockedBy(d, n.task);
     const depDef = dep ? findRow(d.taskDefs, dep, "") : undefined;
     const counts = taskCounts(d, comments, n.task);
+    const omr = preparations[def.fragment] === "omr";
     columnByKey.get(column)!.cards.push({
       task: n.task,
       column,
-      title: cardTitle(def.fragment, def.locator, names),
-      // A page of an OMR-prepared piece starts from a transcription draft.
-      typeLine:
-        n.kind === "pre"
-          ? typeLabel(def.locator)
-          : preparations[def.fragment] === "omr" &&
-              /^surface-\d+$/.test(def.locator)
-            ? "Correct the draft"
-            : "Encoding",
+      title: cardTitle(def.fragment, def.locator, names, omr),
+      description: taskDescription(def.locator, omr),
+      scope: taskScope(def.locator),
+      piece: fragmentPieceName(def.fragment, names),
       pre: n.kind === "pre",
+      omr: omr && n.kind !== "pre",
       locator: def.locator,
       statusKey: n.statusKey,
       waitsFor: depDef
-        ? cardTitle(depDef.fragment, depDef.locator, names)
+        ? taskName(depDef.locator, preparations[depDef.fragment] === "omr")
         : dep,
       claimable: viewer !== "" && column === "ready" && !lock,
+      submittedByViewer:
+        viewer !== "" && findRow(d.rows, n.task, "")?.encoder === viewer,
+      keptFrom:
+        column === "ready"
+          ? handle(logins, keptWorkSince(history, n.task).at(-1)?.user_id ?? "")
+          : "",
       worker:
         column === "encoding" && lock
           ? {
               login: handle(logins, lock.user_id),
-              elapsed: elapsed(lock.timestamp, now),
+              expires: expiresIn(lock.expires, now),
               mine: viewer !== "" && lock.user_id === viewer,
             }
           : null,
       passes: n.passes,
       threshold: n.threshold,
-      dots: n.slots.map((s) => s.key),
       counts,
       doneLine:
         n.kind === "pre" || n.threshold === 0
-          ? `encoded by ${handle(logins, state?.encoder ?? "") || "—"}`
-          : `${n.passes} of ${n.threshold} reviews`,
+          ? ""
+          : `${n.passes} of ${n.threshold} review${n.threshold === 1 ? "" : "s"}`,
       finishedAt: column === "done" ? finishedAt(d, n.task) : "",
       nextUp: n.nextUp,
       slots: n.slots,
@@ -451,7 +418,6 @@ export function buildBoard(
     attention,
     inFlight,
     contributorsWeek,
-    ticker: buildTicker(d, history, logins, names, 4, now),
     nextUp: nodes.find((n) => n.nextUp)?.task ?? null,
   };
 }
@@ -474,8 +440,6 @@ export interface RecordRow {
   claimable: boolean;
   /** The viewer holds this slot's review lock. */
   mine: boolean;
-  /** The open-slot explanation ("waiting for encoding", "open — claim to review"). */
-  note: string;
 }
 
 /** The validation record for a task card, one row per slot. */
@@ -505,7 +469,6 @@ export function buildRecord(
         : null,
     claimable: s.claimable,
     mine: viewer !== "" && s.key === "review" && s.user === viewer,
-    note: s.key === "open" ? s.who : "",
   }));
 }
 

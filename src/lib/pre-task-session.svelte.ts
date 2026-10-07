@@ -7,6 +7,7 @@
 // Constructed during a component's initialisation: the effects run for the
 // component's lifetime and start over when the campaign or task changes.
 
+import { untrack } from "svelte";
 import { goto } from "$app/navigation";
 import { auth, forge } from "./auth.svelte.ts";
 import type { ForgeClient } from "./forge/types.ts";
@@ -14,10 +15,13 @@ import { commands, invoke, commentInput } from "./commands.ts";
 import type {
   CampaignTables,
   CommandContext,
+  DraftInput,
   FacsimileTaskData,
   Result,
 } from "./commands.ts";
 import { handle } from "./campaign-graph.ts";
+import { fragmentPieceName } from "./campaign-board.ts";
+import { findRow, pieceNamesOf } from "./campaign-tables.ts";
 import { CampaignResolution } from "./campaign-resolution.svelte.ts";
 import { CommandRunner, viewerId } from "./command-runner.svelte.ts";
 import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
@@ -41,10 +45,20 @@ export class PreTaskSession {
   loading = $state(false);
   loadError = $state<string | null>(null);
   data = $state<FacsimileTaskData | null>(null);
-  /** The campaign tables behind the comments panel, refreshed on their own. */
+  /** The campaign tables behind the side panel, refreshed on their own. */
   tables = $state<CampaignTables | null>(null);
   /** A fail carries a mandatory comment; the box is open while one is typed. */
   failOpen = $state(false);
+  /** The same box, for the note a switch from review to editing carries. */
+  editOpen = $state(false);
+  /** The last draft save: '' before any, "saving", "saved", or its error. */
+  draftState = $state("");
+
+  // The editor state last saved (or loaded) as a draft, and the save waiting
+  // for a pause in editing.
+  #draftKey: string | null = null;
+  #draftTimer: ReturnType<typeof setTimeout> | null = null;
+  #draftInput: DraftInput | null = null;
   failText = $state("");
 
   // Whether a load has been attempted for the current params; a failed load
@@ -57,8 +71,17 @@ export class PreTaskSession {
 
   /** The acting user's stable numeric id; login is display-only. */
   viewer = $derived(viewerId());
+  /** The clock claim expiries count against, a minute at a time. */
+  now = $state(Date.now());
+  /** The viewer's encoding claim ran out while the editor was open. */
+  claimRanOut = $derived(
+    Boolean(this.data?.holdsLock) &&
+      this.#past(this.data?.encodingLockExpires ?? ""),
+  );
   holds = $derived(
-    Boolean(this.data?.holdsLock) && this.data?.status === "encoding_required",
+    Boolean(this.data?.holdsLock) &&
+      this.data?.status === "encoding_required" &&
+      !this.claimRanOut,
   );
   // The submission runs in the background; the editor holds until its
   // verdict lands, since a repeat would only be rejected.
@@ -73,6 +96,14 @@ export class PreTaskSession {
   );
   /** id → login for every user the tables mention. */
   logins = $derived(this.tables?.logins ?? {});
+  /** The display name of the task's piece; '' until the tables load. */
+  pieceName = $derived.by(() => {
+    const t = this.tables;
+    const fragment = t
+      ? (findRow(t.taskDefs, this.#taskId(), "")?.fragment ?? "")
+      : "";
+    return fragment ? fragmentPieceName(fragment, pieceNamesOf(t!.pieces)) : "";
+  });
 
   // The review happens in the editor too: the same claim/pass/fail the
   // console offers, against the task's validation subtask.
@@ -90,8 +121,16 @@ export class PreTaskSession {
     this.data?.status === "validation_required" ||
       this.data?.status === "completed",
   );
+  /** The viewer's review claim ran out while the editor was open. */
+  reviewRanOut = $derived(
+    this.viewer !== "" &&
+      this.validation?.lockUser === this.viewer &&
+      this.#past(this.validation.lockExpires),
+  );
   holdsValidation = $derived(
-    this.viewer !== "" && this.validation?.lockUser === this.viewer,
+    this.viewer !== "" &&
+      this.validation?.lockUser === this.viewer &&
+      !this.reviewRanOut,
   );
   lockUserLogin = $derived(
     handle(this.logins, this.validation?.lockUser ?? ""),
@@ -113,7 +152,7 @@ export class PreTaskSession {
     !!this.validation &&
       this.validation.status === "validation_required" &&
       this.validation.openSlots > 0 &&
-      !this.validation.lockUser &&
+      (!this.validation.lockUser || this.reviewRanOut) &&
       !this.selfValidation &&
       !this.alreadyValidated &&
       !this.verdictPending,
@@ -142,15 +181,33 @@ export class PreTaskSession {
     this.#hooks = hooks;
     this.campaign = new CampaignResolution(name);
 
+    $effect(() => {
+      const timer = setInterval(() => (this.now = Date.now()), 60_000);
+      return () => clearInterval(timer);
+    });
+
     // A same-route navigation to another campaign or task starts over: the
-    // loaded task belongs to the previous params.
+    // loaded task belongs to the previous params, its waiting draft is saved.
     $effect(() => {
       void name();
       void taskId();
+      untrack(() => void this.flushDraft());
       this.data = null;
       this.loadError = null;
       this.#attempted = false;
       hooks.reset();
+    });
+
+    // A pending draft is saved when the page is hidden or left.
+    $effect(() => {
+      const flush = () => {
+        if (document.visibilityState === "hidden") void this.flushDraft();
+      };
+      document.addEventListener("visibilitychange", flush);
+      return () => {
+        document.removeEventListener("visibilitychange", flush);
+        void this.flushDraft();
+      };
     });
 
     // One load per param set, once the campaign is resolved: a failed attempt
@@ -206,6 +263,56 @@ export class PreTaskSession {
     );
   }
 
+  /**
+   * Save the editor's state as a draft once editing pauses. The first state
+   * after a load is the loaded one and is not saved; an unchanged state is
+   * not saved again.
+   */
+  draft(input: Omit<DraftInput, "task_id">) {
+    const key = JSON.stringify(input);
+    if (this.#draftKey === null) {
+      this.#draftKey = key;
+      return;
+    }
+    if (key === this.#draftKey) return;
+    this.#draftInput = { task_id: this.#taskId(), ...input };
+    if (this.#draftTimer) clearTimeout(this.#draftTimer);
+    this.#draftTimer = setTimeout(() => void this.flushDraft(), 5000);
+  }
+
+  /** Save the waiting draft now, if there is one. */
+  async flushDraft() {
+    const input = this.#draftInput;
+    const f = forge();
+    this.#cancelDraft();
+    if (!input || !f) return;
+    const { task_id, ...state } = input;
+    this.draftState = "saving";
+    const result = await invoke(commands.saveDraft, input, {
+      ...this.ctx(f),
+      progress: () => {},
+    });
+    if (task_id !== this.#taskId()) return;
+    if (result.error) {
+      this.draftState = result.error;
+      return;
+    }
+    this.#draftKey = JSON.stringify(state);
+    this.draftState = "saved";
+  }
+
+  #cancelDraft() {
+    if (this.#draftTimer) clearTimeout(this.#draftTimer);
+    this.#draftTimer = null;
+    this.#draftInput = null;
+  }
+
+  /** Whether an ISO time lies before the clock; false when unreadable. */
+  #past(iso: string): boolean {
+    const t = Date.parse(iso);
+    return Number.isFinite(t) && this.now > t;
+  }
+
   ctx(f: ForgeClient): CommandContext {
     const { repoId, owner, repo } = this.campaign;
     return this.runner.context(f, { repoId, owner, repo });
@@ -228,6 +335,8 @@ export class PreTaskSession {
       if (stale()) return;
       this.data = d;
       this.tables = t;
+      this.#cancelDraft();
+      this.#draftKey = null;
       this.#hooks.loaded(d);
     } catch (e) {
       if (!stale())
@@ -292,13 +401,13 @@ export class PreTaskSession {
   }
 
   /**
-   * Give back the viewer's claim: the task's encoding ('' subtask), which
+   * Abandon the viewer's claim: the task's encoding ('' subtask), which
    * returns to the campaign, or its review slot, which reloads in place.
    */
-  giveBack(subtask_id: string) {
+  abandon(subtask_id: string) {
     return this.run(
       (c) =>
-        invoke(commands.giveBack, { task_id: this.#taskId(), subtask_id }, c),
+        invoke(commands.abandon, { task_id: this.#taskId(), subtask_id }, c),
       { overviewOnSuccess: subtask_id === "" },
     );
   }
@@ -340,6 +449,35 @@ export class PreTaskSession {
     // A failed or unstarted submission keeps the typed comment for the retry.
     if (result?.ok) {
       this.failOpen = false;
+      this.failText = "";
+    }
+  }
+
+  /**
+   * Switch the viewer's review to editing: a fail with the typed note and a
+   * send-back in one step, after which the viewer holds the task and the
+   * reload makes the editor editable.
+   */
+  async reviewEdit() {
+    const result = await this.run((c) =>
+      invoke(
+        commands.reviewEdit,
+        {
+          task_id: this.#taskId(),
+          subtask_id: this.validation!.subtask_id,
+          comment: {
+            body: this.failText,
+            page: "",
+            measure_start: "",
+            measure_end: "",
+          },
+        },
+        c,
+      ),
+    );
+    // A failed submission keeps the typed note for the retry.
+    if (result?.ok && !result.warn) {
+      this.editOpen = false;
       this.failText = "";
     }
   }

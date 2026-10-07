@@ -62,7 +62,8 @@ export interface HistoryRow {
 /**
  * A comment row from comment.csv: the campaign's comment log. A `fail`
  * comment is the mandatory explanation of a fail validation; `comment`
- * and `reply` carry the discussion. Comments are anchored to
+ * and `reply` carry the discussion. A discussion comment with an empty
+ * task_id belongs to the campaign rather than a task. Comments are anchored to
  * measures (page + measure range), not pixels, so they survive re-encoding.
  */
 export interface CommentRow {
@@ -84,6 +85,9 @@ export interface CommentRow {
   /** comment_id of the comment this replies to; '' for top-level comments. */
   parent_id: string;
   body: string;
+  /** The piece's score path a campaign comment's measure anchor refers to;
+   *  '' on task comments, whose task names the piece. */
+  fragment: string;
 }
 
 /**
@@ -166,6 +170,7 @@ export const COMMENT_COLUMNS = [
   "resolved",
   "parent_id",
   "body",
+  "fragment",
 ];
 
 // RFC-4180 field: quote only when it contains a comma, quote or newline.
@@ -444,6 +449,19 @@ export function pieceNamesOf(pieces: PieceRef[]): PieceNames {
 export const pieceLabel = (p: { title: string; id: string }): string =>
   p.title || p.id;
 
+/** Display titles longer than this are shortened (clipTitle). */
+export const TITLE_MAX = 40;
+
+/** A title cut to at most `max` characters at a word boundary, with an
+    ellipsis; a title that fits is returned unchanged. */
+export function clipTitle(title: string, max = TITLE_MAX): string {
+  if (title.length <= max) return title;
+  const cut = title.slice(0, max - 1);
+  const space = cut.lastIndexOf(" ");
+  const head = space >= max / 2 ? cut.slice(0, space) : cut;
+  return `${head.replace(/[\s.,;:!?–-]+$/, "")}…`;
+}
+
 /** The colour zone (1–8) of the piece at `index` in config order. */
 export const pieceZone = (index: number): number => (index % 8) + 1;
 
@@ -465,7 +483,7 @@ export function commentAnchor(c: CommentRow): MeasureAnchor {
 }
 
 /** locking.stale_after_minutes when config.yaml does not set it. */
-export const DEFAULT_STALE_MINUTES = 120;
+export const DEFAULT_STALE_MINUTES = 1440;
 
 /** A positive-integer scalar from config.yaml by key, or `fallback`. */
 export function configNumber(

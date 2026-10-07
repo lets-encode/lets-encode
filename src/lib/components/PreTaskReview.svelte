@@ -1,14 +1,14 @@
 <!--
   A pre-task editor's review sections below its toolbar: the fail comments,
   and for a submitted task its review — status, verdicts, the claim and
-  pass/fail controls, the fail comment box, giving the review back and the
-  send-back action.
+  pass/fail/edit controls, the note box a fail or an edit fills in,
+  abandoning the review and the send-back action.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
-  import GiveBackButton from "$lib/components/GiveBackButton.svelte";
+  import AbandonButton from "$lib/components/AbandonButton.svelte";
   import { handle } from "$lib/campaign-graph.ts";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
   let {
@@ -24,7 +24,7 @@
 
 {#if session.failComments.length > 0}
   <div class="tbsection">
-    <span class="sb-label">Fail comments</span>
+    <span class="sb-label">Requested changes</span>
     {#each session.failComments as c (c.comment_id)}
       <div class="failnote" class:resolved={c.resolved === "true"}>
         <span class="failwho"
@@ -46,12 +46,14 @@
         Review done
       {:else if session.verdictPending}
         Your verdict is being processed…
+      {:else if session.reviewRanOut}
+        Your review claim has run out
       {:else if validation.lockUser}
         {session.holdsValidation
-          ? "You are reviewing"
+          ? `You are reviewing${expiresIn(validation.lockExpires, session.now) ? ` · claim ${expiresIn(validation.lockExpires, session.now)}` : ""}`
           : `@${session.lockUserLogin} reviewing`}
       {:else if session.failedVerdicts.length > 0 && validation.openSlots === 0}
-        Failed — send it back to redo the {stage}
+        Changes requested — send it back to redo the {stage}
       {:else if session.selfValidation}
         Your own submission
       {:else if session.alreadyValidated}
@@ -66,10 +68,8 @@
             class="hand-pass"
             src="/green-hand.svg"
             alt=""
-          /> pass{:else}<Icon name="close" size={11} /> fail{/if} · @{handle(
-          session.logins,
-          v.user,
-        )} · {elapsed(v.ts)}</span
+          /> approved{:else}<Icon name="close" size={11} /> changes requested{/if}
+        · @{handle(session.logins, v.user)} · {elapsed(v.ts)}</span
       >
     {/each}
     {#if session.canClaimValidation}
@@ -83,30 +83,67 @@
         >
       </div>
     {:else if session.holdsValidation && !session.verdictPending}
-      <div class="sb-row two">
+      <div class="sb-row three">
         <button
           type="button"
           class="btn btn-primary btn-finish"
           onclick={() => session.validate("pass")}
           disabled={session.busy}
-          title="Record a passing verdict.">Pass</button
+          title="Approve the submitted work.">Approve</button
         >
         <button
           type="button"
           class="btn btn-danger vfail"
           class:on={session.failOpen}
-          onclick={() => (session.failOpen = !session.failOpen)}
+          onclick={() => {
+            session.failOpen = !session.failOpen;
+            session.editOpen = false;
+          }}
           disabled={session.busy}
-          title="Record a failing verdict — a fail carries a comment saying why."
-          >Fail</button
+          title="Ask for changes — a request carries a note saying what needs to change."
+          >Request changes</button
+        >
+        <button
+          type="button"
+          class="btn"
+          class:on={session.editOpen}
+          onclick={() => {
+            session.editOpen = !session.editOpen;
+            session.failOpen = false;
+          }}
+          disabled={session.busy}
+          title="Correct the work yourself: requests changes with your note and gives you the task to edit. Your edit is then reviewed by someone else."
+          >Edit</button
         >
       </div>
+    {/if}
+    {#if session.editOpen && session.holdsValidation}
+      <input
+        class="fail-note"
+        bind:value={session.failText}
+        placeholder="What will you correct?"
+        onkeydown={(e) => {
+          if (e.key === "Enter" && session.failText.trim() && !session.busy)
+            session.reviewEdit();
+        }}
+      />
+      <div class="sb-row one">
+        <button
+          type="button"
+          class="btn"
+          onclick={() => session.reviewEdit()}
+          disabled={session.busy || !session.failText.trim()}
+          title="Requests changes with this note and opens the task for you to edit."
+          >Edit</button
+        >
+      </div>
+      <p class="editnote">Your edit is reviewed again afterwards.</p>
     {/if}
     {#if session.failOpen && session.holdsValidation}
       <input
         class="fail-note"
         bind:value={session.failText}
-        placeholder="Why does this fail?"
+        placeholder="What needs to change?"
         onkeydown={(e) => {
           if (
             e.key === "Enter" &&
@@ -125,16 +162,16 @@
           disabled={session.busy ||
             !session.failText.trim() ||
             session.verdictPending}
-          title="Submit the failing verdict with this comment."
-          >Submit fail</button
+          title="Send the change request with this note.">Send request</button
         >
       </div>
     {/if}
     {#if session.holdsValidation && !session.verdictPending}
       <div class="sb-row one">
-        <GiveBackButton
+        <AbandonButton
+          review
           disabled={session.busy}
-          ongiveback={() => session.giveBack(validation.subtask_id)}
+          onabandon={() => session.abandon(validation.subtask_id)}
         />
       </div>
     {/if}
@@ -180,8 +217,8 @@
   .sb-row.one {
     --cells: 1;
   }
-  .sb-row.two {
-    --cells: 2;
+  .sb-row.three {
+    --cells: 3;
   }
   .failnote {
     align-self: stretch;
@@ -204,6 +241,11 @@
     margin-top: 4px;
     line-height: 1.45;
     overflow-wrap: anywhere;
+  }
+  .editnote {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--ink-soft);
   }
   .vstatus {
     font-size: 12.5px;

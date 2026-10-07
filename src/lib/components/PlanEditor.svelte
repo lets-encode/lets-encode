@@ -8,7 +8,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
-  import { typeLabel, handle } from "$lib/campaign-graph.ts";
+  import { taskDescription, handle } from "$lib/campaign-graph.ts";
   import type { Logins } from "$lib/campaign-graph.ts";
   import { nextTaskId, taskStarted } from "$lib/campaign-plan.ts";
   import type {
@@ -17,6 +17,7 @@
     TaskRow,
     ParsedState,
     PieceNames,
+    PiecePreparations,
   } from "$lib/campaign-tables.ts";
 
   let {
@@ -26,6 +27,7 @@
     locks,
     logins,
     pieceNames,
+    preparations,
     busy,
     onsave,
     oncancel,
@@ -36,6 +38,8 @@
     locks: LockRow[];
     logins: Logins;
     pieceNames: PieceNames;
+    /** Fragment path → the piece's preparation ("omr"). */
+    preparations: PiecePreparations;
     busy: boolean;
     onsave: (tasks: TaskRow[]) => void;
     oncancel: () => void;
@@ -94,7 +98,12 @@
   };
   const titleOf = (g: Group) =>
     g.task.fragment
-      ? cardTitle(g.task.fragment, g.task.locator, pieceNames)
+      ? cardTitle(
+          g.task.fragment,
+          g.task.locator,
+          pieceNames,
+          preparations[g.task.fragment] === "omr",
+        )
       : g.task.task_id;
   const sizeOf = (g: Group): string => {
     if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
@@ -253,7 +262,12 @@
             </div>
           {/if}
         </div>
-        <span class="ptype">{typeLabel(g.task.locator)}</span>
+        <span class="ptype"
+          >{taskDescription(
+            g.task.locator,
+            preparations[g.task.fragment] === "omr",
+          )}</span
+        >
         <span class="psize"
           >{sizeOf(g)}{#if !g.editable}<span class="lockmark">
               · locked</span

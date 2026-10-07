@@ -1,12 +1,15 @@
 <!--
   The instigator's piece rail: "All pieces" plus one bordered card per piece —
   the name with an unresolved-comment count, and its task counts per board
-  category as labelled cells. Compact, the rail is a strip of dots, one per
-  piece in its colour, with the name and counts in the dot's tooltip.
+  category as labelled cells. Compact (`chips`), the rail is a "Pieces"
+  label and a strip of dots above the board: a ring for "All pieces" and one
+  dot per piece in its colour, a red mark for unresolved comments, "All
+  pieces" with the open count beside the strip while no piece is selected,
+  and each dot's name and counts in its tooltip.
   Selecting a card or dot scopes the board to that piece.
 -->
 <script lang="ts">
-  import { pieceLabel, pieceZone } from "$lib/campaign-tables.ts";
+  import { clipTitle, pieceLabel, pieceZone } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
   import type { PieceRef } from "$lib/campaign-tables.ts";
 
@@ -17,7 +20,7 @@
     attention,
     openCount,
     selected,
-    compact,
+    chips,
     onselect,
   }: {
     pieces: PieceRef[];
@@ -27,12 +30,14 @@
     counts: Map<string, { open: number; encoding: number; validation: number }>;
     /** Fragment path → unresolved fails and comments on its tasks. */
     attention: Map<string, number>;
-    /** Tasks open to claim across the campaign, for the "All pieces" row. */
+    /** Tasks in the board's Open column across the campaign, open and
+        waiting alike, for the "All pieces" row. */
     openCount: number;
     /** The piece path the board is scoped to, or "all". */
     selected: "all" | string;
-    /** Dots only; the page decides from the board row's width. */
-    compact: boolean;
+    /** A strip of dots above the board; the page decides from the board
+        row's width. */
+    chips: boolean;
     onselect: (selected: "all" | string) => void;
   } = $props();
 
@@ -46,7 +51,7 @@
     return [
       { key: "open", label: "open", n: n?.open ?? 0 },
       { key: "encoding", label: "encoding", n: n?.encoding ?? 0 },
-      { key: "validation", label: "review", n: n?.validation ?? 0 },
+      { key: "validation", label: "in review", n: n?.validation ?? 0 },
       { key: "done", label: "done", n: progress.get(path)?.done ?? 0 },
     ];
   };
@@ -58,61 +63,96 @@
   };
 </script>
 
-<div class="rail" class:compact>
-  <button
-    type="button"
-    class="railrow all"
-    class:selected={selected === "all"}
-    onclick={() => onselect("all")}
-    title="All pieces · {openCount} open"
-  >
-    <span class="dot"></span>
-    <span class="railname">All pieces</span>
-    <span class="openpill">{openCount} open</span>
-  </button>
-  {#each pieces as piece, index (piece.path)}
-    {@const count = attention.get(piece.path) ?? 0}
+{#if chips}
+  <div class="dotrow">
+    <span class="dotsname" id="piece-dots-label">Pieces</span>
+    <div class="dots" role="group" aria-labelledby="piece-dots-label">
+      <button
+        type="button"
+        class="dotbtn all"
+        aria-pressed={selected === "all"}
+        aria-label="All pieces · {openCount} open"
+        title="All pieces · {openCount} open"
+        onclick={() => onselect("all")}><span class="dot"></span></button
+      >
+      {#each pieces as piece, i (piece.path)}
+        <button
+          type="button"
+          class="dotbtn"
+          style="--zone: var(--zone-{pieceZone(i)})"
+          aria-pressed={selected === piece.path}
+          aria-label={tooltip(piece)}
+          title={tooltip(piece)}
+          onclick={() => onselect(piece.path)}
+          ><span class="dot"
+          ></span>{#if (attention.get(piece.path) ?? 0) > 0}<span
+              class="attnmark"
+            ></span>{/if}</button
+        >
+      {/each}
+    </div>
+    <!-- A selected piece is named by the strip the page shows below. -->
+    {#if !pieces.some((p) => p.path === selected)}
+      <span class="dotlabel">All pieces · {openCount} open</span>
+    {/if}
+  </div>
+{:else}
+  <div class="rail">
     <button
       type="button"
-      class="railrow"
-      class:selected={selected === piece.path}
-      style="--zone: var(--zone-{pieceZone(index)})"
-      onclick={() => onselect(piece.path)}
-      title={tooltip(piece)}
+      class="railrow all"
+      class:selected={selected === "all"}
+      onclick={() => onselect("all")}
+      title="All pieces · {openCount} open"
     >
-      <span class="railtop">
-        <span class="dot"></span>
-        <span class="railname">{pieceLabel(piece)}</span>
-        {#if count > 0}
-          <span class="attn">
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              ><path
-                d="M14 7.7c0 2.9-2.7 5.2-6 5.2-.8 0-1.6-.1-2.3-.4L2.5 13.7l.9-2.6C2.5 10.2 2 9 2 7.7 2 4.8 4.7 2.5 8 2.5s6 2.3 6 5.2z"
-              /></svg
-            >{count}</span
-          >
-        {:else if complete(piece.path)}
-          <span class="alldone"><Icon name="check" size={11} /></span>
-        {/if}
-      </span>
-      <span class="railgrid">
-        {#each cells(piece.path) as cell (cell.key)}
-          <span class="rc rc-{cell.key}" class:zero={cell.n === 0}
-            ><b>{cell.n}</b> {cell.label}</span
-          >
-        {/each}
-      </span>
+      <span class="dot"></span>
+      <span class="railname">All pieces</span>
+      <span class="openpill">{openCount} open</span>
     </button>
-  {/each}
-</div>
+    {#each pieces as piece, index (piece.path)}
+      {@const count = attention.get(piece.path) ?? 0}
+      <button
+        type="button"
+        class="railrow"
+        class:selected={selected === piece.path}
+        style="--zone: var(--zone-{pieceZone(index)})"
+        onclick={() => onselect(piece.path)}
+        title={tooltip(piece)}
+      >
+        <span class="railtop">
+          <span class="dot"></span>
+          <span class="railname">{clipTitle(pieceLabel(piece))}</span>
+          {#if count > 0}
+            <span class="attn">
+              <svg
+                width="10"
+                height="10"
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><path
+                  d="M14 7.7c0 2.9-2.7 5.2-6 5.2-.8 0-1.6-.1-2.3-.4L2.5 13.7l.9-2.6C2.5 10.2 2 9 2 7.7 2 4.8 4.7 2.5 8 2.5s6 2.3 6 5.2z"
+                /></svg
+              >{count}</span
+            >
+          {:else if complete(piece.path)}
+            <span class="alldone"><Icon name="check" size={11} /></span>
+          {/if}
+        </span>
+        <span class="railgrid">
+          {#each cells(piece.path) as cell (cell.key)}
+            <span class="rc rc-{cell.key}" class:zero={cell.n === 0}
+              ><b>{cell.n}</b> {cell.label}</span
+            >
+          {/each}
+        </span>
+      </button>
+    {/each}
+  </div>
+{/if}
 
 <style>
   .rail {
@@ -249,55 +289,87 @@
     display: inline-flex;
     color: var(--ok);
   }
-  /* Compact: a strip of dots, one per piece in its colour, a ring for
-     "All pieces", a red mark for unresolved comments. Names and counts are
-     in the tooltips. */
-  .rail.compact {
-    width: auto;
+  /* Compact: the "Pieces" label, then a recessed strip of dots, a ring for
+     "All pieces", the selection outlined in its colour; each dot is a 26px
+     target, 32px on a touch screen. */
+  /* Many pieces wrap the strip onto further rows within the space the row
+     leaves it. */
+  .dotrow {
+    flex: 0 1 auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .dots {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    display: flex;
+    flex-wrap: wrap;
     gap: 2px;
-    padding: 5px;
+    padding: 2px;
+    background: var(--bg-inset);
+    box-shadow: var(--shadow-inset);
+    border-radius: 9px;
+    box-sizing: border-box;
   }
-  .compact .railrow,
-  .compact .railrow.all {
+  .dotbtn {
     position: relative;
-    padding: 6px;
-    border-color: transparent;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     background: none;
+    border: 1.5px solid transparent;
+    border-radius: 7px;
+    cursor: pointer;
   }
-  .compact .railrow:hover {
+  @media (pointer: coarse) {
+    .dotbtn {
+      width: 32px;
+      height: 32px;
+    }
+  }
+  .dotbtn:hover {
     background: var(--bg-tint);
   }
-  .compact .railrow.selected {
+  .dotbtn[aria-pressed="true"] {
     background: var(--card);
     border-color: var(--zone, var(--line-strong));
-    box-shadow: none;
   }
-  .compact .railname,
-  .compact .openpill,
-  .compact .railgrid,
-  .compact .alldone,
-  .compact .attn svg {
-    display: none;
-  }
-  .compact .dot,
-  .compact .all .dot {
+  .dotbtn .dot,
+  .dotbtn.all .dot {
     display: block;
-    width: 14px;
-    height: 14px;
+    width: 12px;
+    height: 12px;
   }
-  .compact .all .dot {
+  .dotbtn.all .dot {
     box-sizing: border-box;
     background: none;
-    border: 3px solid var(--ink-soft);
+    border: 2.5px solid var(--ink-soft);
   }
-  .compact .attn {
+  .attnmark {
     position: absolute;
     top: 3px;
     right: 3px;
-    width: 7px;
-    height: 7px;
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
     background: var(--danger);
-    font-size: 0;
+  }
+  .dotsname {
+    flex: none;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .dotlabel {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-soft);
+    white-space: nowrap;
   }
 </style>

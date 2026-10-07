@@ -2,16 +2,20 @@
   The campaign page for viewers without push access: the viewer's next task
   as the one action card, every other open task as a list filtered by kind,
   and every piece as a table row that expands to its tasks. Rows only
-  navigate — the actions live on the next-task card, the list rows and the
-  task panel.
+  navigate — the actions live on the next-task card and the side panel.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { login } from "$lib/auth.svelte.ts";
   import { readForge } from "$lib/command-runner.svelte.ts";
-  import { findRow, pieceLabel, pieceZone } from "$lib/campaign-tables.ts";
+  import {
+    clipTitle,
+    findRow,
+    pieceLabel,
+    pieceZone,
+  } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
-  import { cardPill } from "$lib/campaign-board.ts";
+  import { cardName, cardPill, doneLabel } from "$lib/campaign-board.ts";
   import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
@@ -32,11 +36,10 @@
     progress,
     pieceIndex,
     busy,
-    panelOpen,
+    shownTask,
     expandedPiece = $bindable(null),
     onact,
     onopen,
-    onviewscore,
   }: {
     owner: string;
     repo: string;
@@ -56,17 +59,14 @@
     /** Task id → index into `pieces`, for grouping and tinting by piece. */
     pieceIndex: Map<string, number>;
     busy: boolean;
-    /** A task panel is open beside the view. Its action is then the one solid
-        button; the next-task card's action becomes an outline. */
-    panelOpen: boolean;
-    /** The piece row expanded to its task list; the comments panel follows it. */
-    expandedPiece: string | null;
+    /** The task the side panel shows, or null. */
+    shownTask: string | null;
+    /** The piece row expanded to its task list. */
+    expandedPiece?: string | null;
     /** Perform a card's action (claim, or open its detail). */
     onact: (card: BoardCard) => void;
     /** Open a task's panel. */
     onopen: (task: string) => void;
-    /** Open the score on the piece at this index, optionally at a 0-based page. */
-    onviewscore: (index: number, page?: number) => void;
   } = $props();
 
   const completedCard = $derived(
@@ -80,15 +80,23 @@
   const mine = (c: BoardCard) =>
     viewer !== "" &&
     locks.some((l) => l.task_id === c.task && l.user_id === viewer);
-  /** Tasks anyone could pick up: open ones, and validations with a free slot. */
+  /** Tasks the viewer can pick up now: open ones, and reviews with a slot
+      they may claim. Logged out, every open task and free review slot. */
   const openCards = $derived(
     cards.filter(
       (c) =>
         c.task !== featured?.task &&
         !mine(c) &&
-        (c.column === "ready" ||
-          (c.column === "validation" && c.slots.some((s) => s.key === "open"))),
+        (viewer === ""
+          ? c.column === "ready" ||
+            (c.column === "validation" && c.slots.some((s) => s.key === "open"))
+          : (c.column === "ready" && c.claimable) ||
+            (c.column === "validation" && c.slots.some((s) => s.claimable))),
     ),
+  );
+  /** The viewer's own submissions waiting for another volunteer's review. */
+  const waitingCards = $derived(
+    cards.filter((c) => c.column === "validation" && c.submittedByViewer),
   );
 
   /** Tasks other than the next-task card (which shows its own) with a
@@ -107,7 +115,7 @@
   const KINDS: { key: Kind; label: string }[] = [
     { key: "enc", label: "Encoding" },
     { key: "review", label: "Review" },
-    { key: "pre", label: "Setup" },
+    { key: "pre", label: "Preparation" },
   ];
   let kinds = $state<Record<Kind, boolean>>({
     enc: true,
@@ -119,11 +127,6 @@
   const presentKinds = $derived(new Set(openCards.map(kindOf)));
 
   const tintOf = (i: number) => `--piece-tint: var(--zone-${pieceZone(i)})`;
-  // A card title without its leading piece name, for rows under the piece.
-  const partTitle = (title: string, piece: PieceRef) => {
-    const prefix = `${pieceLabel(piece)} · `;
-    return title.startsWith(prefix) ? title.slice(prefix.length) : title;
-  };
   // A single-piece campaign keeps its one piece expanded.
   const lone = $derived(pieces.length === 1);
 
@@ -143,17 +146,12 @@
     return "Claims this task for you and opens the score in mei-friend.";
   };
 
-  /** The viewer may claim this card now: an open task, or a review slot that
-      is free and not on their own submission. */
-  const claimable = (c: BoardCard) =>
-    c.column === "validation" ? c.slots.some((s) => s.claimable) : c.claimable;
-
   // The stage a claim starts, as the button's colour class.
   const stageClass = (c: BoardCard) =>
     c.column === "validation" ? "btn-review" : c.pre ? "btn-pre" : "btn-enc";
 
-  const typeOf = (c: BoardCard) =>
-    c.column === "validation" ? "validation" : c.typeLine.toLowerCase();
+  // The stage beside a task's name where the name does not say it.
+  const typeOf = (c: BoardCard) => (c.column === "validation" ? "review" : "");
 
   const startPage = (c: BoardCard): number | null => pageOfLocator(c.locator);
 
@@ -182,12 +180,19 @@
     nextPreview?.pages[(nextPage ?? 1) - 1],
   );
 
-  // The next-task card's context line: the task's kind (the title names the
-  // piece and page), the page's size, and for an encoding section whose
-  // preceding section is done, where it picks up.
+  // The next-task card's context line: a review's stage (the title names the
+  // task and page); for an open encoding from an OMR draft, what the draft
+  // is; for a preparation task, the piece's pages; the
+  // page's size; and for an encoding section whose preceding section is
+  // done, where it picks up.
   const nextContext = $derived.by(() => {
     if (!featured) return "";
-    const parts = [typeOf(featured)];
+    const parts = typeOf(featured) ? [typeOf(featured)] : [];
+    if (featured.column === "ready" && featured.omr)
+      parts.push("starts from an OMR draft (optical music recognition)");
+    const pageCount = nextPreview?.pages.length ?? 0;
+    if (featured.pre && pageCount)
+      parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
     const measures = nextPage
       ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0)
       : 0;
@@ -241,10 +246,7 @@
     const counts = { pre: 0, enc: 0, review: 0 };
     for (const c of pieceTasks(index)) {
       if (c.column === "ready") counts[c.pre ? "pre" : "enc"]++;
-      else if (
-        c.column === "validation" &&
-        c.slots.some((s) => s.key === "open")
-      )
+      else if (c.column === "validation" && c.slots.some((s) => s.claimable))
         counts.review++;
     }
     return counts;
@@ -270,7 +272,9 @@
 {#snippet chips(card: BoardCard)}
   {#if card.counts.fails > 0}
     <span class="chip chip-fail"
-      >{card.counts.fails} fail{card.counts.fails === 1 ? "" : "s"}</span
+      >{card.counts.fails} change request{card.counts.fails === 1
+        ? ""
+        : "s"}</span
     >
   {/if}
   {#if card.counts.comments > 0}
@@ -286,12 +290,19 @@
   <div class="vcol">
     {#if featured}
       <div class="vsec">
-        <h2 class="seclabel c-next">
+        <h2 class="vh">
           {completedCard ? "Just completed" : "Your next task"}
         </h2>
         <!-- The title button's hit area covers the card; the action buttons
-             sit above it. -->
-        <div class="nextcard">
+             sit above it. The badge on its top edge names the card, as the
+             board's "next task" badge does. -->
+        <div class="nextcard stage-{kindOf(featured)}">
+          <span
+            class="nextbadge"
+            class:done={!!completedCard}
+            aria-hidden="true"
+            >{completedCard ? "just completed" : "your next task"}</span
+          >
           <!-- The task's own page, cropped to its measures; a page without
                zones shows from its top; a piece without pages shows its
                opening system. -->
@@ -315,38 +326,36 @@
               type="button"
               class="nexttitle"
               onclick={() => onopen(featured.task)}
-              title="Open this task">{featured.title}</button
+              title="Open this task"
+              >{featured.description}{#if featured.scope}<span class="scope"
+                  >{` · ${featured.scope}`}</span
+                >{/if}</button
+            >
+            <span class="nextpiece" title={featured.piece}
+              >{clipTitle(featured.piece)}</span
             >
             <span class="nextcontext">{nextContext}</span>
             <TaskRunState task={featured.task} large />
+            <!-- A card whose action only opens the task leaves it to the task's
+                 panel while that shows it. -->
+            {#if !completedCard && !(featured.task === shownTask && actLabel(featured) === "Open task")}
+              <div class="nextacts">
+                <button
+                  type="button"
+                  class="btn btn-lg btn-primary {stageClass(featured)}"
+                  onclick={() => (viewer === "" ? login() : onact(featured))}
+                  disabled={busy ||
+                    pendingVerdicts.taskProcessing(featured.task)}
+                  title={actTitle(featured)}
+                  >{actLabel(
+                    featured,
+                  )}{#if viewer !== "" && featured.column === "ready" && !featured.pre}<Icon
+                      name="external"
+                    />{/if}</button
+                >
+              </div>
+            {/if}
           </div>
-          {#if !completedCard}
-            <div class="nextacts">
-              <button
-                type="button"
-                class="btn btn-lg {stageClass(featured)}"
-                class:btn-primary={!panelOpen}
-                onclick={() => (viewer === "" ? login() : onact(featured))}
-                disabled={busy || pendingVerdicts.taskProcessing(featured.task)}
-                title={actTitle(featured)}
-                >{actLabel(
-                  featured,
-                )}{#if viewer !== "" && featured.column === "ready" && !featured.pre}<Icon
-                    name="external"
-                  />{/if}</button
-              >
-              <button
-                type="button"
-                class="previewlink"
-                onclick={() => {
-                  onviewscore(
-                    pieceIndex.get(featured.task) ?? 0,
-                    nextPage ? nextPage - 1 : undefined,
-                  );
-                }}>Preview these pages first</button
-              >
-            </div>
-          {/if}
         </div>
       </div>
     {/if}
@@ -377,27 +386,25 @@
             {@const index = pieceIndex.get(card.task) ?? 0}
             <div class="trow" style={tintOf(index)}>
               <span class="sdot"></span>
-              <button
-                type="button"
-                class="stitle"
-                onclick={() => onopen(card.task)}
-                title="Open this task">{card.title}</button
-              >
+              <span class="stext">
+                <button
+                  type="button"
+                  class="stitle"
+                  onclick={() => onopen(card.task)}
+                  title="Open this task"
+                  >{card.description}{#if card.scope}<span class="scope"
+                      >{` · ${card.scope}`}</span
+                    >{/if}</button
+                >
+                {#if !lone}
+                  <span class="spiece" title={card.piece}
+                    >{clipTitle(card.piece)}</span
+                  >
+                {/if}
+              </span>
               <span class="stype">{typeOf(card)}</span>
               <span class="vspacer"></span>
               {@render chips(card)}
-              {#if claimable(card)}
-                <button
-                  type="button"
-                  class="btn {stageClass(card)}"
-                  onclick={() => onact(card)}
-                  disabled={busy || pendingVerdicts.taskProcessing(card.task)}
-                  title={actTitle(card)}
-                  >{card.column === "validation"
-                    ? "Claim to review"
-                    : claimLabel(card.locator)}</button
-                >
-              {/if}
             </div>
           {:else}
             <span class="none">No open tasks of these kinds.</span>
@@ -406,9 +413,46 @@
       </div>
     {/if}
 
+    {#if waitingCards.length > 0}
+      <div class="vsec">
+        <h2 class="seclabel">
+          Waiting for review <span class="seccount">{waitingCards.length}</span>
+        </h2>
+        <div class="tlist">
+          {#each waitingCards as card (card.task)}
+            <div class="trow" style={tintOf(pieceIndex.get(card.task) ?? 0)}>
+              <span class="sdot"></span>
+              <span class="stext">
+                <button
+                  type="button"
+                  class="stitle"
+                  onclick={() => onopen(card.task)}
+                  title="Open this task"
+                  >{card.description}{#if card.scope}<span class="scope"
+                      >{` · ${card.scope}`}</span
+                    >{/if}</button
+                >
+                {#if !lone}
+                  <span class="spiece" title={card.piece}
+                    >{clipTitle(card.piece)}</span
+                  >
+                {/if}
+              </span>
+              <span class="vspacer"></span>
+              <span
+                class="taskpill"
+                title="You submitted it; another volunteer needs to review it."
+                >waiting for review</span
+              >
+            </div>
+          {/each}
+        </div>
+      </div>
+    {/if}
+
     {#if running.length > 0}
       <div class="vsec">
-        <h2 class="seclabel c-next">Being processed</h2>
+        <h2 class="seclabel">Being processed</h2>
         {#each running as card (card.task)}
           <div class="runcard">
             <span class="runtitle">{card.title}</span>
@@ -420,14 +464,15 @@
 
     {#if !featured && openCards.length === 0}
       <span class="none"
-        >No tasks are open right now: every task is claimed, in review, waiting
-        for an earlier task, or done.</span
+        >{waitingCards.length > 0
+          ? "No tasks are open for you right now."
+          : "No tasks are open right now: every task is claimed, in review, waiting for an earlier task, or done."}</span
       >
     {/if}
 
     {#if pieces.length > 0}
       <div class="vsec">
-        <h2 class="seclabel c-pieces">Pieces</h2>
+        <h2 class="seclabel">Pieces</h2>
         <div class="ptable">
           {#each pieces as piece, index (piece.path)}
             {@const p = progress.get(piece.path)}
@@ -438,41 +483,50 @@
               <div class="prow">
                 {@render thumb(piece.path)}
                 {#if lone}
-                  <span class="piecename">{pieceLabel(piece)}</span>
+                  <span class="piecename" title={pieceLabel(piece)}
+                    >{clipTitle(pieceLabel(piece))}</span
+                  >
                 {:else}
                   <button
                     type="button"
                     class="piecename"
                     aria-expanded={open}
                     onclick={() => toggle(piece.path)}
-                    title={open
-                      ? "Collapse this piece"
-                      : "Show this piece's tasks"}>{pieceLabel(piece)}</button
+                    title={`${pieceLabel(piece)} · ${open ? "Collapse this piece" : "Show this piece's tasks"}`}
+                    >{clipTitle(pieceLabel(piece))}</button
                   >
                 {/if}
-                <!-- Done, in review and the rest, in the stage colours. -->
-                <div class="segbar">
-                  {#if p?.done}
-                    <div class="seg done" style="flex: {p.done}"></div>
-                  {/if}
-                  {#if review}
-                    <div class="seg review" style="flex: {review}"></div>
-                  {/if}
-                  {#if p && p.total - p.done - review > 0}
-                    <div
-                      class="seg"
-                      style="flex: {p.total - p.done - review}"
-                    ></div>
-                  {/if}
-                </div>
-                {#if p && p.total > 0 && p.done === p.total}
-                  <span class="piecedone complete"
-                    ><Icon name="check" size={12} /> done</span
+                <!-- Done, in review and the rest, in the stage colours; a lone
+                     piece leaves its progress to the page header. -->
+                {#if !lone}
+                  <div
+                    class="segbar"
+                    role="img"
+                    aria-label={`${p?.done ?? 0} done, ${review} in review, ${(p?.total ?? 0) - (p?.done ?? 0) - review} to do`}
+                    title={`${p?.done ?? 0} done, ${review} in review, ${(p?.total ?? 0) - (p?.done ?? 0) - review} to do`}
                   >
-                {:else}
-                  <span class="piecedone"
-                    >{p?.done ?? 0} of {p?.total ?? 0} done</span
-                  >
+                    {#if p?.done}
+                      <div class="seg done" style="flex: {p.done}"></div>
+                    {/if}
+                    {#if review}
+                      <div class="seg review" style="flex: {review}"></div>
+                    {/if}
+                    {#if p && p.total - p.done - review > 0}
+                      <div
+                        class="seg"
+                        style="flex: {p.total - p.done - review}"
+                      ></div>
+                    {/if}
+                  </div>
+                  {#if p && p.total > 0 && p.done === p.total}
+                    <span class="piecedone complete"
+                      ><Icon name="check" size={12} /> done</span
+                    >
+                  {:else}
+                    <span class="piecedone"
+                      >{p?.done ?? 0} of {p?.total ?? 0} done</span
+                    >
+                  {/if}
                 {/if}
                 {#if counts.enc > 0}
                   <span class="scount enc">{counts.enc} open</span>
@@ -485,16 +539,9 @@
                   >
                 {/if}
                 {#if counts.pre > 0}
-                  <span class="scount pre">{counts.pre} setup</span>
+                  <span class="scount pre">{counts.pre} preparation</span>
                 {/if}
                 <span class="vspacer"></span>
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={() => onviewscore(index)}
-                  title="Show every page of this piece's score, without opening a task."
-                  >View score</button
-                >
                 {#if !lone}
                   <span class="pchev"
                     ><Icon
@@ -506,23 +553,31 @@
               {#if open}
                 <div class="piecetasks">
                   {#each pieceTasks(index) as card (card.task)}
-                    {#if card.column === "blocked" || card.column === "done"}
+                    {#if card.column === "blocked"}
                       <div class="taskrow still">
-                        <span class="tasktitle"
-                          >{partTitle(card.title, piece)}</span
+                        <span class="tasktitle">{cardName(card)}</span>
+                        <span class="ttype">{typeOf(card)}</span>
+                        <TaskRunState task={card.task} />
+                        <span class="vspacer"></span>
+                        <span class="waits">waits for {card.waitsFor}</span>
+                      </div>
+                    {:else if card.column === "done"}
+                      <div class="taskrow">
+                        <button
+                          type="button"
+                          class="tasktitle"
+                          onclick={() => onopen(card.task)}
+                          title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
                         <TaskRunState task={card.task} />
                         <span class="vspacer"></span>
-                        {#if card.column === "done"}
-                          <span class="merged"
-                            ><Icon name="check" size={12} /> done</span
-                          >
-                        {:else}
-                          <span class="waits"
-                            >waits for {partTitle(card.waitsFor, piece)}</span
-                          >
-                        {/if}
+                        {@render chips(card)}
+                        <span class="merged"
+                          ><Icon name="check" size={12} />
+                          {doneLabel(card)}</span
+                        >
+                        <span class="tchev"><Icon name="chevron-right" /></span>
                       </div>
                     {:else}
                       <div class="taskrow">
@@ -530,8 +585,7 @@
                           type="button"
                           class="tasktitle"
                           onclick={() => onopen(card.task)}
-                          title="Open this task"
-                          >{partTitle(card.title, piece)}</button
+                          title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
                         <TaskRunState task={card.task} />
@@ -539,8 +593,14 @@
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}
                           <span class="taskpill next">just completed</span>
-                        {:else if card.nextUp && !completedCard}
+                        {:else if card.nextUp && !completedCard && !lone}
                           <span class="taskpill next">your next task</span>
+                        {:else if card.column === "validation" && card.submittedByViewer}
+                          <span
+                            class="taskpill"
+                            title="You submitted it; another volunteer needs to review it."
+                            >waiting for review</span
+                          >
                         {:else if card.column === "validation"}
                           <span class="taskpill review">review</span>
                         {:else}
@@ -562,8 +622,8 @@
 
 <style>
   .volunteer {
-    /* The column takes what the host's group leaves beside the comments
-       panel (800px without one). It is the container for the narrow layout
+    /* The column takes what the host's group leaves beside the side panel
+       and scrolls on its own. It is the container for the narrow layout
        below. */
     flex: 1 1 auto;
     width: 100%;
@@ -599,20 +659,12 @@
   }
   .seclabel {
     margin: 0;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
     color: var(--ink-soft);
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .seclabel.c-next {
-    color: var(--info);
-  }
-  .seclabel.c-pieces {
-    color: var(--ok);
   }
   .seccount {
     font-size: 11px;
@@ -657,17 +709,60 @@
     outline-offset: 2px;
   }
   .nextcard .btn,
-  .previewlink,
-  .trow .btn,
-  .prow .btn,
   .scount {
     position: relative;
     z-index: 1;
   }
 
   /* ------------------------------------------------------- next-task card */
+  .nextbadge {
+    position: absolute;
+    top: -9px;
+    left: 18px;
+    z-index: 1;
+    background: var(--accent);
+    color: var(--invert-ink);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    line-height: 1;
+    padding: 4px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  /* The badge and the border take the stage of the task: encoding blue,
+     preparation purple, review orange. */
+  .nextcard.stage-pre {
+    border-color: color-mix(in srgb, var(--pre) 45%, var(--line));
+  }
+  .nextcard.stage-pre:hover {
+    border-color: var(--pre);
+  }
+  .nextcard.stage-review {
+    border-color: var(--warn-line);
+  }
+  .nextcard.stage-review:hover {
+    border-color: var(--warn);
+  }
+  .stage-pre .nextbadge,
+  .stage-review .nextbadge {
+    color: #fff;
+  }
+  .stage-pre .nextbadge {
+    background: var(--pre-solid);
+  }
+  .stage-review .nextbadge {
+    background: var(--warn-solid);
+  }
+  .nextbadge.done {
+    background: var(--ok);
+  }
+  :global([data-theme="dark"]) .nextbadge.done {
+    color: #fff;
+  }
   .nextcard {
     position: relative;
+    margin-top: 9px;
     display: flex;
     align-items: center;
     gap: 18px;
@@ -699,11 +794,12 @@
     font-weight: 600;
     overflow-wrap: anywhere;
   }
+  /* The crop grows with the card, keeping its proportions. */
   .crop {
     position: relative;
     flex: none;
-    width: 260px;
-    height: 144px;
+    width: clamp(260px, 36%, 480px);
+    aspect-ratio: 260 / 144;
     border: 1px solid var(--line);
     border-radius: 6px;
     overflow: hidden;
@@ -719,13 +815,14 @@
     top: 0;
     transform-origin: 0 0;
   }
-  /* A page without a measure box: the page from its top edge. */
+  /* A page without a measure box: the band a third down the page, below the
+     title block. */
   .crop img.whole {
     position: static;
     width: 100%;
     height: 100%;
     object-fit: cover;
-    object-position: top;
+    object-position: center 33%;
   }
   .incipit {
     height: 100%;
@@ -760,33 +857,39 @@
     flex: 1;
   }
   .nexttitle {
-    font-size: 17px;
+    font-size: 19px;
+    line-height: 1.2;
     font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .scope {
+    color: var(--ink-soft);
+  }
+  /* The task's piece under its name. A long title is cut: two lines here,
+     one in the list rows; the full title is the tooltip. */
+  .nextpiece {
+    font-size: 13px;
+    color: var(--ink-soft);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
     overflow-wrap: anywhere;
   }
   .nextcontext {
     font-size: 13px;
     color: var(--ink-soft);
   }
+  /* The action sits under the text it acts on. */
   .nextacts {
     position: relative;
     z-index: 1;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    align-items: center;
-    flex: none;
-  }
-  .previewlink {
-    display: inline-flex;
-    align-items: center;
-    min-height: 24px;
-    font: 600 12px var(--font);
-    color: var(--info);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
+    align-items: flex-start;
+    margin-top: 6px;
   }
 
   /* ------------------------------------------------------- open-task list */
@@ -817,10 +920,24 @@
     border-radius: 50%;
     background: var(--piece-tint);
   }
+  .stext {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
   .stitle {
     font-size: 13px;
     font-weight: 600;
     overflow-wrap: anywhere;
+    text-align: left;
+  }
+  .spiece {
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .stype {
     font-size: 12px;
@@ -882,6 +999,12 @@
     flex: none;
     width: 230px;
     overflow-wrap: anywhere;
+    text-align: left;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
   .segbar {
     flex: none;
@@ -961,9 +1084,6 @@
   .taskrow:not(.still):hover {
     border-color: var(--accent);
   }
-  .taskrow.still {
-    opacity: 0.75;
-  }
   .tasktitle {
     font-size: 13px;
     font-weight: 600;
@@ -1025,13 +1145,13 @@
     }
     .crop {
       width: 100%;
+      aspect-ratio: auto;
       height: 120px;
     }
     .nextbody {
       flex: 1 1 160px;
     }
     .nextacts {
-      flex-basis: 100%;
       align-items: stretch;
     }
     .sechead {
@@ -1070,8 +1190,7 @@
     }
     .segbar,
     .piecedone,
-    .scount,
-    .prow .btn {
+    .scount {
       order: 2;
     }
     .segbar {
@@ -1087,15 +1206,20 @@
       white-space: normal;
     }
   }
-  /* The host stacks the comments panel under this column below 700px of its
-     own width (the campaign page's .viewcol) and scrolls the whole view; the
-     column then stops scrolling on its own. Both values are the host's. */
-  @container (max-width: 700px) {
-    .volunteer {
-      flex: none;
-      overflow-y: visible;
-      scrollbar-gutter: auto;
-      padding-right: 0;
+  /* A short window (a phone in landscape): the card drops its crop, so its
+     action shows without scrolling. */
+  @media (max-height: 500px) {
+    .crop {
+      display: none;
+    }
+  }
+  /* Phone width: the crop shrinks to a strip of the task's first system. */
+  @container (max-width: 420px) {
+    .crop {
+      height: 96px;
+    }
+    .nexttitle {
+      font-size: 17px;
     }
   }
 </style>

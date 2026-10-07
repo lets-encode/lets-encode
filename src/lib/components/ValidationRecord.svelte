@@ -1,71 +1,111 @@
 <!--
-  A task's validation record: one row per validation slot (claim, pass/fail
-  controls on the viewer's own slot, the fail form), the fail comments with
-  their anchors, and the send-back action. Commands run through callbacks the
-  host passes in; the host decides where the record renders (the task panel's
-  rail or the review view's rail).
+  A task's validation record in its task box: the fails (shown as change
+  requests) with their notes, anchors and the send-back action, the viewer's
+  own slot with its approve/request-changes/edit controls and the note form a
+  change request or an edit fills in, and for the owner (canPush) also the
+  slots held and passed under a "Reviews" heading. The host's status pill
+  carries the slot count and its footer the claim. Commands run through
+  callbacks the host passes in.
 -->
 <script lang="ts">
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
-  import type { CommentRow } from "$lib/campaign-tables.ts";
+  import type { CommentRow, LockRow } from "$lib/campaign-tables.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
   import { handle, workStage } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { buildRecord, elapsed, orphanedFails } from "$lib/campaign-board.ts";
+  import {
+    buildRecord,
+    elapsed,
+    expiresIn,
+    orphanedFails,
+  } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
 
   let {
     card,
     comments,
+    locks = [],
     viewer,
     logins,
     canPush,
     runner,
-    variant = "full",
     prefill,
     onshowanchor,
-    onclaim,
     onvalidate,
+    onreviewedit,
     onresolve,
     onsendback,
   }: {
     card: BoardCard;
     comments: CommentRow[];
+    /** The claim locks, for when a held slot's claim expires. */
+    locks?: LockRow[];
     logins: Record<string, string>;
     viewer: string;
     canPush: boolean;
     runner: CommandRunner;
-    /**
-     * "full" renders every slot row including the claim control (the review
-     * view); "side" leaves the claim to the host's footer action (the task
-     * side panel).
-     */
-    variant?: "full" | "side";
     /** The anchor a fresh fail form opens with (page and measure range). */
     prefill: () => { page: string; m1: string; m2: string };
     /** Highlight a comment's measure range in the preview. */
     onshowanchor: (c: CommentRow) => void;
-    onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     onvalidate: (
       task_id: string,
       subtask_id: string,
       verdict: string,
       comment?: FailComment,
     ) => Promise<Result | null>;
+    /** Switch the viewer's review to editing; no Edit button without it. */
+    onreviewedit?: (
+      task_id: string,
+      subtask_id: string,
+      comment: FailComment,
+    ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
     onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
 
-  const rows = $derived(buildRecord(card, comments, viewer, logins));
+  /** How a slot's state reads in the record. */
+  const slotLabel = (key: string): string =>
+    ({
+      pass: "approved",
+      fail: "changes requested",
+      review: "in review",
+    })[key] ?? key;
+
+  // With one slot in all, its rows need no slot number.
+  const slotName = (slot: number) =>
+    card.slots.length > 1 ? `Slot ${slot + 1} · ` : "";
+  /** When the claim on a held slot expires; '' for none. */
+  const slotExpiry = (sub: string, userId: string) => {
+    const lock = locks.find(
+      (l) =>
+        l.task_id === card.task &&
+        l.subtask_id === sub &&
+        l.kind === "validation" &&
+        l.user_id === userId,
+    );
+    return lock ? expiresIn(lock.expires) : "";
+  };
+
+  const rows = $derived(
+    buildRecord(card, comments, viewer, logins).filter(
+      (r) =>
+        r.key === "fail" ||
+        r.mine ||
+        (canPush && (r.key === "review" || r.key === "pass")),
+    ),
+  );
   // A submission on this task still being processed (a claim, verdict or
   // send-back): the slot controls hold until it lands — a repeat would only
   // be rejected.
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
   const orphanFails = $derived(orphanedFails(card, comments));
 
-  // The inline form a fail verdict fills in (its mandatory comment).
+  // The inline form a fail verdict or an edit from review fills in (its
+  // mandatory comment).
   let failForm = $state<{
     sub: string;
+    edit: boolean;
     body: string;
     page: string;
     m1: string;
@@ -89,12 +129,15 @@
   async function submitFail() {
     if (!failForm || !failForm.body.trim()) return;
     const form = failForm;
-    const result = await onvalidate(card.task, form.sub, "fail", {
+    const comment = {
       body: form.body,
       page: form.page.trim(),
       measure_start: form.m1.trim(),
       measure_end: form.m2.trim(),
-    });
+    };
+    const result = form.edit
+      ? await onreviewedit?.(card.task, form.sub, comment)
+      : await onvalidate(card.task, form.sub, "fail", comment);
     if (result?.ok) failForm = null;
   }
 
@@ -122,21 +165,29 @@
 
 {#snippet slotDot(key: string)}
   {#if key === "pass"}
-    <img class="hand-pass" src="/green-hand.svg" alt="pass" title="pass" />
+    <img
+      class="hand-pass"
+      src="/green-hand.svg"
+      alt={slotLabel(key)}
+      title={slotLabel(key)}
+    />
   {:else}
-    <span class="dot {key}" aria-label={key} title={key}></span>
+    <span class="dot {key}" aria-label={slotLabel(key)} title={slotLabel(key)}
+    ></span>
   {/if}
 {/snippet}
 
 {#if rows.length > 0 || orphanFails.length > 0}
   <div class="rsec">
-    <div class="rlabel">Review record</div>
+    {#if canPush}
+      <div class="rlabel">Reviews</div>
+    {/if}
     {#each rows as r (r.sub + "/" + r.slot)}
       {#if r.key === "fail"}
         <div class="failbox">
           <div class="failhead">
             {@render slotDot("fail")}
-            <span class="failtitle">Slot {r.slot + 1} · fail</span>
+            <span class="failtitle">{slotName(r.slot)}changes requested</span>
             <span class="rwho">{r.login} · {r.elapsed}</span>
           </div>
           {#if r.comment}
@@ -154,7 +205,7 @@
             {/if}
           {:else}
             <div class="failbody muted">
-              No comment was recorded with this fail.
+              No note was recorded with this request.
             </div>
           {/if}
           <div class="failacts">
@@ -170,7 +221,7 @@
                   class="linkish"
                   onclick={() => resolve(r.comment!.comment_id)}
                   disabled={runner.busy || resolving !== null}
-                  title="Mark this fail's comment as handled — it leaves the attention counts."
+                  title="Mark this request as handled — it leaves the attention counts."
                   >Resolve</button
                 >
               {/if}
@@ -193,27 +244,17 @@
       {:else}
         <div class="rrow">
           {@render slotDot(r.key)}
-          <span class="rslot"
-            >Slot {r.slot + 1} · {r.key === "review"
-              ? "in review"
-              : r.key}</span
-          >
+          <span class="rslot">{slotName(r.slot)}{slotLabel(r.key)}</span>
           {#if r.login}
-            <span class="rwho">{r.login} · {r.elapsed}</span>
+            <span class="rwho"
+              >{r.login} · {r.key === "review"
+                ? slotExpiry(r.sub, r.userId)
+                : r.elapsed}</span
+            >
           {/if}
           <span class="mspacer"></span>
           {#if r.key === "pass"}
             <span class="muted small-note">no remarks</span>
-          {:else if r.key === "open" && r.claimable && variant !== "side"}
-            <button
-              type="button"
-              class="btn btn-review"
-              onclick={() => onclaim(card.task, r.sub)}
-              disabled={runner.busy || processing}
-              title="Reserve this review slot.">Claim to review</button
-            >
-          {:else if r.key === "open"}
-            <span class="muted small-note">{r.note}</span>
           {:else if r.mine}
             <span class="rverdict">
               <button
@@ -221,21 +262,36 @@
                 class="btn btn-primary btn-finish"
                 onclick={() => onvalidate(card.task, r.sub, "pass")}
                 disabled={runner.busy || processing}
-                title="Record a passing verdict.">Pass</button
+                title="Approve the submitted work.">Approve</button
               >
               <button
                 type="button"
                 class="btn btn-danger failbtn"
-                class:on={failForm?.sub === r.sub}
+                class:on={failForm?.sub === r.sub && !failForm.edit}
                 onclick={() =>
                   (failForm =
-                    failForm?.sub === r.sub
+                    failForm?.sub === r.sub && !failForm.edit
                       ? null
-                      : { sub: r.sub, body: "", ...prefill() })}
+                      : { sub: r.sub, edit: false, body: "", ...prefill() })}
                 disabled={runner.busy || processing}
-                title="Record a failing verdict — a fail carries a comment saying why."
-                >Fail</button
+                title="Ask for changes — a request carries a note saying what needs to change."
+                >Request changes</button
               >
+              {#if onreviewedit}
+                <button
+                  type="button"
+                  class="btn"
+                  class:on={failForm?.sub === r.sub && failForm.edit}
+                  onclick={() =>
+                    (failForm =
+                      failForm?.sub === r.sub && failForm.edit
+                        ? null
+                        : { sub: r.sub, edit: true, body: "", ...prefill() })}
+                  disabled={runner.busy || processing}
+                  title="Correct the work yourself: requests changes with your note and gives you the task to edit. Your edit is then reviewed by someone else."
+                  >Edit</button
+                >
+              {/if}
             </span>
           {/if}
         </div>
@@ -244,7 +300,9 @@
             <textarea
               rows="3"
               bind:value={failForm.body}
-              placeholder="Why does this fail? (required)"
+              placeholder={failForm.edit
+                ? "What will you correct? (required)"
+                : "What needs to change? (required)"}
             ></textarea>
             <div class="failform-anchor">
               <label>p. <input size="3" bind:value={failForm.page} /></label>
@@ -265,12 +323,17 @@
               <span class="mspacer"></span>
               <button
                 type="button"
-                class="btn btn-danger"
+                class={failForm.edit ? "btn" : "btn btn-danger"}
                 onclick={submitFail}
                 disabled={runner.busy || !failForm.body.trim() || processing}
-                >Submit fail</button
+                title={failForm.edit
+                  ? "Requests changes with this note and opens the task for you to edit."
+                  : undefined}>{failForm.edit ? "Edit" : "Send request"}</button
               >
             </div>
+            {#if failForm.edit}
+              <p class="editnote">Your edit is reviewed again afterwards.</p>
+            {/if}
           </div>
         {/if}
       {/if}
@@ -281,8 +344,8 @@
           {@render slotDot("fail")}
           <span
             class="failtitle"
-            title="This fail was recorded before the task was sent back."
-            >Fail · before send-back</span
+            title="This request was recorded before the task was sent back."
+            >Changes requested · before send-back</span
           >
           <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
         </div>
@@ -311,7 +374,7 @@
                 class="linkish"
                 onclick={() => resolve(c.comment_id)}
                 disabled={runner.busy || resolving !== null}
-                title="Mark this fail's comment as handled — it leaves the attention counts."
+                title="Mark this request as handled — it leaves the attention counts."
                 >Resolve</button
               >
             {/if}
@@ -381,9 +444,7 @@
   .rlabel {
     font-size: 12px;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     padding-bottom: 4px;
   }
   /* Wraps so the trailing controls stay visible in a narrow panel. */
@@ -510,6 +571,11 @@
     background: var(--card);
     color: var(--ink);
     resize: vertical;
+  }
+  .editnote {
+    margin: 0;
+    font-size: 11.5px;
+    color: var(--ink-soft);
   }
   .failform-anchor {
     display: flex;

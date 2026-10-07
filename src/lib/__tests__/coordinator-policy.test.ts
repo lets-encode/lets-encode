@@ -5,7 +5,11 @@ import { type TaskRow } from "../campaign-tables.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  claimPullRequest,
   classifyPullRequest,
+  isAutomaticCommit,
+  isReviewEdit,
+  keptWorkSince,
   touchesCampaignPaths,
   pieceFieldForPath,
   pieceKindForPath,
@@ -128,6 +132,11 @@ test("pull requests are classified by their mutation table", () => {
     "claim",
   );
   assert.equal(classifyPullRequest(["tracking/comment.csv"]), "comment");
+  // A switch from review to editing: the review lock and the fail comment.
+  assert.equal(
+    classifyPullRequest(["tracking/lock.csv", "tracking/comment.csv"]),
+    "review_edit",
+  );
   // A fail validation carries its comment in the same PR — still a validation.
   assert.equal(
     classifyPullRequest(["tracking/state.csv", "tracking/comment.csv"]),
@@ -249,6 +258,19 @@ test("a resolve patch flips resolved on one top-level comment (replies may ride 
   assert.equal(resolvedCommentFromPatch(undefined), null);
 });
 
+test("a resolve patch that rewrites a table without the fragment column still names its root", () => {
+  const oldHeader =
+    "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body";
+  const c1 = "c1,T0001,,comment,,,,carol,t1,,,Question?";
+  const c3 = "c3,T0001,,comment,,,,erin,t3,,,A note";
+  assert.deepEqual(
+    resolvedCommentFromPatch(
+      `@@\n-${oldHeader}\n-${c1}\n-${c3}\n+${oldHeader},fragment\n+c1,T0001,,comment,,,,carol,t1,true,,Question?,\n+${c3},`,
+    ),
+    { comment_id: "c1" },
+  );
+});
+
 test("rejected encoding branches are retained for correction", () => {
   assert.equal(shouldCleanupSubmission("encoding", false), false);
   assert.equal(shouldCleanupSubmission("encoding", true), true);
@@ -360,4 +382,80 @@ test("priorDecision: the last history row of the pull request, or null", () => {
   assert.equal(priorDecision(history, 4), history[2]);
   assert.equal(priorDecision(history, 5), null);
   assert.equal(priorDecision([row("", "released")], 0), null);
+});
+
+test("isReviewEdit: the author's latest encoding claim came from a review edit", () => {
+  const row = (action: string, user_id: string, outcome = "accepted") => ({
+    timestamp: "t",
+    task_id: "T0001",
+    subtask_id: "",
+    user_id,
+    action,
+    outcome,
+    detail: "",
+  });
+  const edit = [row("claim_encoding", "7"), row("review_edit", "8")];
+  assert.equal(isReviewEdit(edit, "T0001", "8"), true);
+  assert.equal(isReviewEdit(edit, "T0001", "7"), false);
+  assert.equal(isReviewEdit(edit, "T0002", "8"), false);
+  // Abandoned, then claimed again: an ordinary encoding.
+  assert.equal(
+    isReviewEdit(
+      [...edit, row("release_encoding", "8"), row("claim_encoding", "8")],
+      "T0001",
+      "8",
+    ),
+    false,
+  );
+  assert.equal(
+    isReviewEdit([row("review_edit", "8", "rejected")], "T0001", "8"),
+    false,
+  );
+});
+
+test("claimPullRequest and keptWorkSince read the claim and the kept work from the history", () => {
+  const row = (
+    action: string,
+    user_id: string,
+    outcome = "accepted",
+    pr = "",
+  ) => ({
+    timestamp: "t",
+    task_id: "T0001",
+    subtask_id: "",
+    user_id,
+    action,
+    outcome,
+    detail: "encoding",
+    pr,
+  });
+  const history = [
+    row("submit_encoding", "6"),
+    row("claim_encoding", "7", "accepted", "11"),
+    row("reap", "7", "released_with_work"),
+    row("review_edit", "8", "rejected", "12"),
+    row("claim_encoding", "8", "accepted", "13"),
+    row("reap", "8", "released"),
+  ];
+  assert.equal(claimPullRequest(history, "T0001", "7"), 11);
+  assert.equal(claimPullRequest(history, "T0001", "8"), 13);
+  assert.equal(claimPullRequest(history, "T0001", "9"), null);
+  assert.deepEqual(
+    keptWorkSince(history, "T0001").map((h) => h.user_id),
+    ["7"],
+  );
+  assert.deepEqual(
+    keptWorkSince([...history, row("submit_encoding", "9")], "T0001"),
+    [],
+  );
+});
+
+test("isAutomaticCommit tells the console's commits from the claimer's", () => {
+  assert.equal(isAutomaticCommit("Transcription draft of page 3 (x 1)"), true);
+  assert.equal(
+    isAutomaticCommit("Let's Encode: T0001 completed without changes"),
+    true,
+  );
+  assert.equal(isAutomaticCommit("Draft of T0001"), false);
+  assert.equal(isAutomaticCommit("Fix the slur in m. 4"), false);
 });

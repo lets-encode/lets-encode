@@ -31,3 +31,24 @@ export function reapLocks({ locks, now }: ReapLocksArgs): ReapLocksResult {
   }
   return { kept, removed };
 }
+
+/** The locks still in force at `now` (epoch milliseconds). */
+export const liveLocks = (locks: LockRow[], now = Date.now()): LockRow[] =>
+  reapLocks({ locks, now: new Date(now).toISOString() }).kept;
+
+/**
+ * Whether `expired` holds the author's lock on the row and kind: the author
+ * held the claim and it ran out, as opposed to never having held it.
+ */
+export const claimRanOut = (
+  expired: LockRow[],
+  key: { task_id: string; subtask_id: string; kind: string },
+  author: string,
+): boolean =>
+  expired.some(
+    (l) =>
+      l.task_id === key.task_id &&
+      l.subtask_id === key.subtask_id &&
+      l.kind === key.kind &&
+      l.user_id === author,
+  );
