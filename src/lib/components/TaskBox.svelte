@@ -1,11 +1,12 @@
 <!--
-  A task's box in the side panel (SidePanel.svelte) of the campaign page and
-  the score view: one continuous card — piece-tinted header with the task's
+  A task's box in the side panel (SidePanel.svelte) of the campaign page, the
+  review view and the pre-task editors: one continuous card — piece-tinted header with the task's
   name over its piece, status pill, submission, fails and the viewer's own
   review slot, and the action footer. Commands run through callbacks the
   host page passes in.
 -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
@@ -47,8 +48,10 @@
     runner,
     editorError = null,
     primary = true,
-    inReview = false,
+    inView = false,
+    tools,
     prefill,
+    measures = true,
     onshowanchor,
     onclaim,
     oneditor,
@@ -56,7 +59,6 @@
     onvalidate,
     onreviewedit,
     onresolve,
-    onsendback,
   }: {
     card: BoardCard;
     /** The display name of the task's piece. */
@@ -78,11 +80,16 @@
     /** The footer's action is the view's primary action (a solid button);
         otherwise an outline, beside a primary elsewhere in the view. */
     primary?: boolean;
-    /** The box sits in the task's review view: the footer leaves out the
-        links to that view and offers only review actions. */
-    inReview?: boolean;
+    /** The box sits in the task's own view (the review view or the
+        pre-task's editor): the footer leaves out the links to that view and
+        offers only review actions. */
+    inView?: boolean;
+    /** The view's own controls, below the status row. */
+    tools?: Snippet;
     /** The anchor a fresh fail form opens with; defaults to the task's page. */
     prefill?: () => { page: string; m1: string; m2: string };
+    /** The fail form asks for a measure range besides the page. */
+    measures?: boolean;
     /** Highlight a comment's measure range in the score. */
     onshowanchor: (c: CommentRow) => void;
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
@@ -103,7 +110,6 @@
       comment: FailComment,
     ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
-    onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
 
   // A submission on this task still being processed: every action in the
@@ -156,7 +162,7 @@
     if (card.column === "validation")
       return card.pre
         ? `Check the submitted work in the ${editorName} and approve it or request changes.`
-        : inReview
+        : inView
           ? "Compare the encoding with the scan and approve it or request changes."
           : "Compare the encoding with the scan in the review view and approve it or request changes.";
     if (card.locator === "score-setup")
@@ -211,6 +217,7 @@
       <p class="help">{help}</p>
     {/if}
   </div>
+  {@render tools?.()}
   {#if encoderLogin}
     <div class="section">
       <span class="seclbl">Submission</span>
@@ -237,17 +244,17 @@
         {canPush}
         {runner}
         prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
+        {measures}
         {onshowanchor}
         {onvalidate}
         {onreviewedit}
         {onresolve}
-        {onsendback}
       />
     </div>
   {/if}
   <!-- The one action the viewer can take on this task in its current
            state; a task the viewer cannot work on gets no footer. -->
-  {#if inReview && card.column !== "validation"}
+  {#if inView && card.column !== "validation"}
     <!-- The review view offers no work actions. -->
   {:else if card.column === "ready"}
     <div class="tspfoot">
@@ -318,7 +325,7 @@
           disabled={runner.busy || processing}
           title="Reserve this review slot.">Claim to review</button
         >
-        {#if !card.pre && !inReview}
+        {#if !card.pre && !inView}
           <a
             class="btn btn-soft"
             href={`/${campaign}/review/${card.task}`}
@@ -329,7 +336,9 @@
       </div>
     {:else if myReview}
       <div class="tspfoot">
-        {#if card.pre}
+        {#if inView}
+          <!-- The review happens in this view. -->
+        {:else if card.pre}
           <a
             class="btn"
             class:btn-primary={primary}
@@ -338,7 +347,7 @@
             title={`Review the submitted work in the ${editorName}.`}
             >Open {editorName}</a
           >
-        {:else if !inReview}
+        {:else}
           <a
             class="btn"
             class:btn-primary={primary}

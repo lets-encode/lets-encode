@@ -42,12 +42,8 @@ import {
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
-import {
-  resetTaskRows,
-  resolveCommentThread,
-  sideFilesOf,
-} from "./campaign-submit.ts";
-import { pageOfLocator, workStage } from "./campaign-graph.ts";
+import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
+import { pageOfLocator } from "./campaign-graph.ts";
 import type {
   TaskRow,
   StateRow,
@@ -1670,49 +1666,6 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
   },
 };
 
-// Open a PR that sends a failed task back to its work stage (encoding, or
-// score setup / measure correction for a pre-task): the task resets to encoding_required,
-// its subtasks to pending, and every validation cell clears. Allowed for a
-// failing validator or anyone with push access — the automation enforces it.
-const sendBack: CommandDef<{ task_id: string }, Result> = {
-  id: "campaign.sendBack",
-  version: 1,
-  log: "pr",
-  background: true,
-  async run({ task_id }, ctx, envelope) {
-    const { forge: f, owner, repo } = ctx;
-    return openAndFinishInBackground(
-      ctx,
-      `Send-back of ${task_id}`,
-      `sendback:${task_id}`,
-      async () => {
-        await muteOnce(ctx);
-        const [stateCsv, taskCsv] = await Promise.all([
-          f.getRepoFile(owner, repo, STATE_PATH),
-          f.getRepoFile(owner, repo, TASK_PATH),
-        ]);
-        const state = parseStateCsv(stateCsv ?? "");
-        const row = findRow(state.rows, task_id, "");
-        if (!row) throw new Error(`unknown task ${task_id}.`);
-        const locator =
-          findRow(parseTaskCsv(taskCsv ?? ""), task_id, "")?.locator ?? "";
-        const stage = workStage(locator);
-        resetTaskRows(state.rows, state.validationColumns, task_id);
-        const body = `Sends ${task_id} back for ${stage} after a failed validation. Opened from the campaign console.`;
-        const pr = await f.openChangePr(owner, repo, {
-          branch: `sendback-${task_id}-${rand()}`,
-          files: [{ path: STATE_PATH, content: serializeStateCsv(state) }],
-          message: `Send ${task_id} back for ${stage}`,
-          title: `Send ${task_id} back for ${stage}`,
-          body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-        });
-        console.log("[sendback] PR opened", pr.number, pr.html_url);
-        return pr;
-      },
-    );
-  },
-};
-
 // Rewrite the task plan (task.csv + the matching state.csv rows) from the
 // console's plan editor. Owner-only: the rewrite is committed directly, so it
 // requires push access; checkPlan re-validates against fresh tables so a claim
@@ -2447,7 +2400,6 @@ export const commands = {
   submitValidation,
   submitComment,
   resolveComment,
-  sendBack,
   savePlan,
   runReaper,
   readFacsimile,

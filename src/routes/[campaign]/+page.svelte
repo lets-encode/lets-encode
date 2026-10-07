@@ -868,11 +868,6 @@
     return result;
   };
 
-  const sendBackTask = (task_id: string) => {
-    actedOn(task_id);
-    return run((c) => invoke(commands.sendBack, { task_id }, c));
-  };
-
   const postComment = (
     task_id: string,
     kind: string,
@@ -1094,7 +1089,6 @@
     onvalidate={validate}
     onreviewedit={reviewEdit}
     onresolve={resolveCommentRow}
-    onsendback={sendBackTask}
   />
 {/snippet}
 

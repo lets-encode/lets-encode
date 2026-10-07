@@ -15,7 +15,6 @@ import {
   checkEncoding,
   checkResolveComment,
   checkReviewEdit,
-  checkSendBack,
   checkValidation,
   resolveCommentThread,
 } from "../campaign-submit.ts";
@@ -286,16 +285,17 @@ test("validation: the task stays open while another subtask is unfinished", () =
   );
 });
 
-test("validation: a fail with its comment is recorded in place — the task stays in validation", () => {
+test("validation: a fail with its comment sends the task back for encoding", () => {
   const state = parseStateCsv(
     "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n" +
-      "T0001,,validation_required,bob,t,,\n" +
-      "T0001,S0001,validation_required,,,,\n",
+      "T0001,,validation_required,bob,t,,pass|erin|t\n" +
+      "T0001,S0001,validation_required,,,,pass|erin|t\n",
   );
   const locks = parseLockCsv(
     LOCK_HEADER +
       "T0001,S0001,carol,2026-06-25T09:30:00Z,validation\n" +
-      "T0001,S0001,dave,2026-06-25T09:35:00Z,validation\n",
+      "T0001,S0001,dave,2026-06-25T09:35:00Z,validation\n" +
+      "T0002,,frank,2026-06-25T09:40:00Z,encoding\n",
   );
   const v = val({
     state,
@@ -310,17 +310,19 @@ test("validation: a fail with its comment is recorded in place — the task stay
   assert.equal(v.ok, true);
   const row = findRow(v.state!.rows, "T0001", "S0001")!;
   const task = findRow(v.state!.rows, "T0001", "")!;
-  assert.equal(row.validate_status_1, `fail|carol|${NOW}`);
-  assert.equal(row.status, "validation_required");
-  assert.equal(task.status, "validation_required");
-  assert.equal(task.encoder, "bob");
-  // Only carol's own review lock is released; dave keeps reviewing.
+  assert.equal(task.status, "encoding_required");
+  assert.equal(task.encoder, "");
+  assert.equal(task.encoded_at, "");
+  assert.equal(row.status, "pending");
+  assert.equal(row.validate_status_1, "");
+  assert.equal(row.validate_status_2, "");
+  // Every lock on the task is released; other tasks keep theirs.
   assert.equal(
-    v.locks!.some((lock) => lock.user_id === "carol"),
+    v.locks!.some((lock) => lock.task_id === "T0001"),
     false,
   );
   assert.equal(
-    v.locks!.some((lock) => lock.user_id === "dave"),
+    v.locks!.some((lock) => lock.task_id === "T0002"),
     true,
   );
 });
@@ -379,92 +381,6 @@ test("validation: a pass may not carry a comment.csv change", () => {
     now: NOW,
   });
   assert.equal(v.reason, "out_of_bounds");
-});
-
-// --- Send back for encoding --------------------------------------------------
-
-const failedState = () =>
-  parseStateCsv(
-    STATE_HEADER +
-      "T0001,,validation_required,bob,t,\n" +
-      "T0001,S0001,validation_required,,,fail|carol|2026-06-25T09:45:00Z\n",
-  );
-
-test("send-back: a failing validator resets the task to encoding", () => {
-  const locks = parseLockCsv(
-    LOCK_HEADER +
-      "T0001,S0001,dave,2026-06-25T09:35:00Z,validation\n" +
-      "T0002,,erin,2026-06-25T09:40:00Z,encoding\n",
-  );
-  const v: SubmitView = checkSendBack({
-    state: failedState(),
-    locks,
-    intent: { task_id: "T0001" },
-    author: "carol",
-    changedPaths: ["tracking/state.csv"],
-    isCollaborator: false,
-  });
-  assert.equal(v.ok, true);
-  const task = findRow(v.state!.rows, "T0001", "")!;
-  const row = findRow(v.state!.rows, "T0001", "S0001")!;
-  assert.equal(task.status, "encoding_required");
-  assert.equal(task.encoder, "");
-  assert.equal(task.encoded_at, "");
-  assert.equal(row.status, "pending");
-  assert.equal(row.validate_status_1, "");
-  assert.equal(
-    v.locks!.some((lock) => lock.task_id === "T0001"),
-    false,
-  );
-  assert.equal(
-    v.locks!.some((lock) => lock.task_id === "T0002"),
-    true,
-  );
-});
-
-test("send-back: allowed for push access, rejected for bystanders and without a recorded fail", () => {
-  const base = {
-    state: failedState(),
-    locks: [] as LockRow[],
-    intent: { task_id: "T0001" },
-    changedPaths: ["tracking/state.csv"],
-  };
-  assert.equal(
-    checkSendBack({ ...base, author: "owner", isCollaborator: true }).ok,
-    true,
-  );
-  assert.equal(
-    (
-      checkSendBack({
-        ...base,
-        author: "mallory",
-        isCollaborator: false,
-      }) as SubmitView
-    ).reason,
-    "not_permitted",
-  );
-  assert.equal(
-    (
-      checkSendBack({
-        ...base,
-        state: validationState(),
-        author: "carol",
-        isCollaborator: false,
-      }) as SubmitView
-    ).reason,
-    "no_recorded_fail",
-  );
-  assert.equal(
-    (
-      checkSendBack({
-        ...base,
-        state: encodingState(),
-        author: "carol",
-        isCollaborator: false,
-      }) as SubmitView
-    ).reason,
-    "wrong_state",
-  );
 });
 
 // --- Comments ----------------------------------------------------------------

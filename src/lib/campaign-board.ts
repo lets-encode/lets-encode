@@ -116,8 +116,8 @@ export interface TaskCounts {
 /**
  * Chip counts for a task. Fails are the fail cells on its subtasks; a fail
  * comment still matched by a fail cell is the same issue and is not counted
- * again (after a send-back the cells clear, so the unresolved fail comment
- * takes over the count as a plain comment).
+ * again (a fail resets the task and clears the cells, so the unresolved fail
+ * comment takes over the count as a plain comment).
  */
 function taskCounts(
   d: GraphData,
@@ -473,8 +473,8 @@ export function buildRecord(
 }
 
 /**
- * A task's unresolved fail comments no longer matched by a fail cell — a
- * send-back cleared the verdicts they arrived with. They count as plain
+ * A task's unresolved fail comments no longer matched by a fail cell — the
+ * reset that came with each fail cleared its verdict. They count as plain
  * comments (see taskCounts), so the record renders them after its slot rows.
  */
 export function orphanedFails(

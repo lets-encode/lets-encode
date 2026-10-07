@@ -5,6 +5,12 @@ parentheses.
 
 ## 2026-10-07
 
+- Edit yourself moved from the review buttons into the change request form.
+- The score setup and measure correction editors use the same task box and review controls as the campaign page.
+- The pre-task editors no longer repeat the task status below the status pill.
+- Earlier change requests read Changes requested, list newest first and take less space.
+- A change request sends the task back automatically; the Send back button is removed.
+- The pre-task editors hide the submit button while the task is not being edited.
 - Done measure corrections and score setups can be opened read-only from their task box.
 - Overlaps of staff and measure boxes are coloured, box fills are darker and borders are thicker and grow with zoom.
 - A Show overlaps switch in the layout correction toolbar hides the overlap colouring.

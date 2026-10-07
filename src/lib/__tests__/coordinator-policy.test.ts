@@ -18,7 +18,6 @@ import {
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
-  taskResetFromPatch,
   validationIntentFromPatch,
   validationVerdict,
 } from "../coordinator-policy.ts";
@@ -141,56 +140,6 @@ test("pull requests are classified by their mutation table", () => {
   assert.equal(
     classifyPullRequest(["tracking/state.csv", "tracking/comment.csv"]),
     "validation",
-  );
-});
-
-test("a send-back patch reads as the reset of exactly one task", () => {
-  const resetPatch =
-    "@@ -2,3 +2,3 @@\n" +
-    "-T0001,,validation_required,encoder,t,\n" +
-    "-T0001,S0001,validation_required,,,fail|carol|t\n" +
-    "+T0001,,encoding_required,,,\n" +
-    "+T0001,S0001,pending,,,\n" +
-    " T0002,,encoding_required,,,\n";
-  assert.deepEqual(
-    taskResetFromPatch(resetPatch, STATE_HEADER, ["validate_status_1"]),
-    { task_id: "T0001" },
-  );
-  // A reset that also touches another task is not a send-back.
-  assert.equal(
-    taskResetFromPatch(
-      resetPatch
-        .replace(" T0002", "-T0002")
-        .replace(/$/, "+T0002,,completed,,,\n"),
-      STATE_HEADER,
-      ["validate_status_1"],
-    ),
-    null,
-  );
-  // A "reset" that keeps the encoder is malformed.
-  assert.equal(
-    taskResetFromPatch(
-      resetPatch.replace(
-        "+T0001,,encoding_required,,,",
-        "+T0001,,encoding_required,encoder,,",
-      ),
-      STATE_HEADER,
-      ["validate_status_1"],
-    ),
-    null,
-  );
-  // A single-cell verdict is not a reset.
-  assert.equal(
-    taskResetFromPatch(
-      "@@\n-T0001,S0001,validation_required,,,\n+T0001,S0001,validation_required,,,pass",
-      STATE_HEADER,
-      ["validate_status_1"],
-    ),
-    null,
-  );
-  assert.equal(
-    taskResetFromPatch(undefined, STATE_HEADER, ["validate_status_1"]),
-    null,
   );
 });
 

@@ -1,6 +1,6 @@
 <!--
   A task's validation record in its task box: the fails (shown as change
-  requests) with their notes, anchors and the send-back action, the viewer's
+  requests) with their notes and anchors, the viewer's
   own slot with its approve/request-changes/edit controls and the note form a
   change request or an edit fills in, and for the owner (canPush) also the
   slots held and passed under a "Reviews" heading. The host's status pill
@@ -11,7 +11,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, LockRow } from "$lib/campaign-tables.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
-  import { handle, workStage } from "$lib/campaign-graph.ts";
+  import { handle } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import {
     buildRecord,
@@ -30,11 +30,11 @@
     canPush,
     runner,
     prefill,
+    measures = true,
     onshowanchor,
     onvalidate,
     onreviewedit,
     onresolve,
-    onsendback,
   }: {
     card: BoardCard;
     comments: CommentRow[];
@@ -46,6 +46,8 @@
     runner: CommandRunner;
     /** The anchor a fresh fail form opens with (page and measure range). */
     prefill: () => { page: string; m1: string; m2: string };
+    /** The fail form asks for a measure range besides the page. */
+    measures?: boolean;
     /** Highlight a comment's measure range in the preview. */
     onshowanchor: (c: CommentRow) => void;
     onvalidate: (
@@ -61,7 +63,6 @@
       comment: FailComment,
     ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
-    onsendback: (task_id: string) => Promise<unknown>;
   } = $props();
 
   /** How a slot's state reads in the record. */
@@ -95,17 +96,21 @@
         (canPush && (r.key === "review" || r.key === "pass")),
     ),
   );
-  // A submission on this task still being processed (a claim, verdict or
-  // send-back): the slot controls hold until it lands — a repeat would only
+  // A submission on this task still being processed (a claim or verdict):
+  // the slot controls hold until it lands — a repeat would only
   // be rejected.
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
-  const orphanFails = $derived(orphanedFails(card, comments));
+  // Newest first.
+  const orphanFails = $derived(
+    orphanedFails(card, comments).sort((a, b) =>
+      b.timestamp.localeCompare(a.timestamp),
+    ),
+  );
 
   // The inline form a fail verdict or an edit from review fills in (its
   // mandatory comment).
   let failForm = $state<{
     sub: string;
-    edit: boolean;
     body: string;
     page: string;
     m1: string;
@@ -126,7 +131,7 @@
   const hasAnchor = (c: CommentRow): boolean =>
     c.measure_start !== "" || c.page !== "";
 
-  async function submitFail() {
+  async function submitFail(edit: boolean) {
     if (!failForm || !failForm.body.trim()) return;
     const form = failForm;
     const comment = {
@@ -135,7 +140,7 @@
       measure_start: form.m1.trim(),
       measure_end: form.m2.trim(),
     };
-    const result = form.edit
+    const result = edit
       ? await onreviewedit?.(card.task, form.sub, comment)
       : await onvalidate(card.task, form.sub, "fail", comment);
     if (result?.ok) failForm = null;
@@ -228,17 +233,6 @@
             {:else if r.comment?.resolved === "true"}
               <span class="muted small-note">resolved</span>
             {/if}
-            <span class="mspacer"></span>
-            {#if viewer !== "" && (canPush || r.userId === viewer)}
-              <button
-                type="button"
-                class="btn btn-danger"
-                onclick={() => onsendback(card.task)}
-                disabled={runner.busy || processing}
-                title={`Return the task to ${workStage(card.locator)}: attribution and reviews reset.`}
-                >{`Send back ${card.pre ? "to" : "for"} ${workStage(card.locator)}`}</button
-              >
-            {/if}
           </div>
         </div>
       {:else}
@@ -267,31 +261,16 @@
               <button
                 type="button"
                 class="btn btn-danger failbtn"
-                class:on={failForm?.sub === r.sub && !failForm.edit}
+                class:on={failForm?.sub === r.sub}
                 onclick={() =>
                   (failForm =
-                    failForm?.sub === r.sub && !failForm.edit
+                    failForm?.sub === r.sub
                       ? null
-                      : { sub: r.sub, edit: false, body: "", ...prefill() })}
+                      : { sub: r.sub, body: "", ...prefill() })}
                 disabled={runner.busy || processing}
                 title="Ask for changes — a request carries a note saying what needs to change."
                 >Request changes</button
               >
-              {#if onreviewedit}
-                <button
-                  type="button"
-                  class="btn"
-                  class:on={failForm?.sub === r.sub && failForm.edit}
-                  onclick={() =>
-                    (failForm =
-                      failForm?.sub === r.sub && failForm.edit
-                        ? null
-                        : { sub: r.sub, edit: true, body: "", ...prefill() })}
-                  disabled={runner.busy || processing}
-                  title="Correct the work yourself: requests changes with your note and gives you the task to edit. Your edit is then reviewed by someone else."
-                  >Edit</button
-                >
-              {/if}
             </span>
           {/if}
         </div>
@@ -300,39 +279,51 @@
             <textarea
               rows="3"
               bind:value={failForm.body}
-              placeholder={failForm.edit
-                ? "What will you correct? (required)"
-                : "What needs to change? (required)"}
+              placeholder="What needs to change? (required)"
             ></textarea>
             <div class="failform-anchor">
               <label>p. <input size="3" bind:value={failForm.page} /></label>
-              <label
-                >m. <input
-                  size="4"
-                  bind:value={failForm.m1}
-                  placeholder="from"
-                /></label
-              >
-              <label
-                >– <input
-                  size="4"
-                  bind:value={failForm.m2}
-                  placeholder="to"
-                /></label
-              >
+              {#if measures}
+                <label
+                  >m. <input
+                    size="4"
+                    bind:value={failForm.m1}
+                    placeholder="from"
+                  /></label
+                >
+                <label
+                  >– <input
+                    size="4"
+                    bind:value={failForm.m2}
+                    placeholder="to"
+                  /></label
+                >
+              {/if}
               <span class="mspacer"></span>
+              {#if onreviewedit}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => submitFail(true)}
+                  disabled={runner.busy || !failForm.body.trim() || processing}
+                  title="Requests changes with this note and gives you the task to edit. Your edit is then reviewed by someone else."
+                  >Edit yourself</button
+                >
+              {/if}
               <button
                 type="button"
-                class={failForm.edit ? "btn" : "btn btn-danger"}
-                onclick={submitFail}
+                class="btn btn-danger"
+                onclick={() => submitFail(false)}
                 disabled={runner.busy || !failForm.body.trim() || processing}
-                title={failForm.edit
-                  ? "Requests changes with this note and opens the task for you to edit."
-                  : undefined}>{failForm.edit ? "Edit" : "Send request"}</button
+                title="Sends the change request with this note."
+                >Send request</button
               >
             </div>
-            {#if failForm.edit}
-              <p class="editnote">Your edit is reviewed again afterwards.</p>
+            {#if onreviewedit}
+              <p class="editnote">
+                Edit yourself gives you the task to edit. Your edit is then
+                reviewed by someone else.
+              </p>
             {/if}
           </div>
         {/if}
@@ -344,26 +335,26 @@
           {@render slotDot("fail")}
           <span
             class="failtitle"
-            title="This request was recorded before the task was sent back."
-            >Changes requested · before send-back</span
+            title="The task was sent back with this request."
+            >Changes requested</span
           >
           <span class="rwho">{commentLogin(c)} · {elapsed(c.timestamp)}</span>
         </div>
         <div class="failbody">“{c.body}”</div>
-        {#if hasAnchor(c)}
-          <div class="failchips">
-            <button
-              type="button"
-              class="chip chip-question anchorchip"
-              onclick={() => onshowanchor(c)}
-              title="Highlight this place in the preview"
-              >{anchorLabel(c)} — show in the preview</button
-            >
-          </div>
-        {/if}
-        {#if canResolve(c)}
+        {#if hasAnchor(c) || canResolve(c)}
           <div class="failacts">
-            {#if resolvePending(c.comment_id)}
+            {#if hasAnchor(c)}
+              <button
+                type="button"
+                class="chip chip-question anchorchip"
+                onclick={() => onshowanchor(c)}
+                title="Highlight this place in the preview"
+                >{anchorLabel(c)} — show in the preview</button
+              >
+            {/if}
+            {#if !canResolve(c)}
+              <!-- Resolving is open to the author and push access. -->
+            {:else if resolvePending(c.comment_id)}
               <span class="resolving">
                 <span class="spinner" aria-hidden="true"></span>
                 Resolving…
@@ -484,16 +475,16 @@
     border-color: var(--danger);
   }
   .failbox {
-    margin: 10px 0;
+    margin: 6px 0;
     border: 1px solid var(--danger-line);
     border-radius: 10px;
     background: var(--danger-wash);
-    padding: 12px 14px;
+    padding: 8px 10px;
   }
   .failhead {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
   }
   .failtitle {
     font-size: 12.5px;
@@ -503,14 +494,14 @@
   .failbody {
     font-size: 12.5px;
     color: var(--ink);
-    margin-top: 8px;
-    line-height: 1.5;
+    margin-top: 4px;
+    line-height: 1.4;
     overflow-wrap: anywhere;
   }
   .failchips {
     display: flex;
     gap: 6px;
-    margin-top: 9px;
+    margin-top: 6px;
     flex-wrap: wrap;
   }
   .anchorchip {
@@ -521,8 +512,8 @@
   .failacts {
     display: flex;
     flex-wrap: wrap;
-    gap: 12px;
-    margin-top: 10px;
+    gap: 8px 12px;
+    margin-top: 6px;
     align-items: center;
   }
   .resolving {

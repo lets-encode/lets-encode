@@ -208,7 +208,7 @@
   );
 
   // Run a command: show the busy overlay, capture its result banner, then
-  // refresh the tables. A verdict or send-back returns to the campaign page,
+  // refresh the tables. A verdict returns to the campaign page,
   // where its run state shows on the task.
   async function run(
     command: (c: CommandContext) => Promise<Result>,
@@ -277,11 +277,6 @@
 
   const abandon = (task_id: string, subtask_id: string) =>
     run((c) => invoke(commands.abandon, { task_id, subtask_id }, c), {
-      overviewOnSuccess: true,
-    });
-
-  const sendBackTask = (task_id: string) =>
-    run((c) => invoke(commands.sendBack, { task_id }, c), {
       overviewOnSuccess: true,
     });
 
@@ -379,7 +374,7 @@
         {viewer}
         {canPush}
         {runner}
-        inReview
+        inView
         {prefill}
         onshowanchor={showAnchorFor}
         onclaim={claim}
@@ -387,7 +382,6 @@
         onvalidate={validate}
         onreviewedit={reviewEdit}
         onresolve={resolveCommentRow}
-        onsendback={sendBackTask}
       />
     {/snippet}
     <div class="scorecol" bind:clientWidth={scoreW}>

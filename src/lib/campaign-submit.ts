@@ -79,21 +79,6 @@ export interface CheckValidationArgs {
   expired?: LockRow[];
 }
 
-/** Send-back intent: the failed task being returned to encoding. */
-export interface SendBackIntent {
-  task_id: string;
-}
-
-export interface CheckSendBackArgs {
-  state: ParsedState;
-  locks: LockRow[];
-  intent: SendBackIntent;
-  author: string;
-  changedPaths: string[];
-  /** Whether the author has push access to the campaign repo. */
-  isCollaborator: boolean;
-}
-
 export type SubmitResult =
   | { ok: true; state: ParsedState; locks: LockRow[] }
   | { ok: false; reason: string };
@@ -112,8 +97,8 @@ function cloneState(state: ParsedState): ParsedState {
  * Reset a task's state rows to the encoding stage: the task row to
  * encoding_required with attribution cleared, its subtasks to pending, every
  * validation cell emptied. Mutates the given rows in place. Shared by the
- * send-back writer (the console), its checker (checkSendBack) and the
- * coordinator's PR-shape recognition, so all three agree on the reset shape.
+ * fail verdict (checkValidation) and the review edit (checkReviewEdit), so
+ * both return a task to the same state.
  */
 export function resetTaskRows(
   rows: StateRow[],
@@ -235,10 +220,11 @@ export function checkEncoding({
  * mandatory explanation. The author must hold the subtask's active validation
  * lock, and there must be an open validate_status slot. On accept: the first
  * open slot becomes `<verdict>|<author>|<now>` and the validation lock is
- * removed. A fail is recorded in place — the task stays in validation until
- * someone sends it back for encoding (checkSendBack). On passes, the subtask
- * completes once `passThreshold` pass cells accumulate, and the task row
- * completes once every subtask has.
+ * removed. A fail sends the task back for encoding in the same step: it is
+ * reset by resetTaskRows and every lock on it is released; the fail stays on
+ * record in history.csv and its comment in comment.csv. On passes, the
+ * subtask completes once `passThreshold` pass cells accumulate, and the task
+ * row completes once every subtask has.
  */
 export function checkValidation({
   state,
@@ -291,6 +277,14 @@ export function checkValidation({
   if (!slot) return reject("no_open_validation_slot");
 
   const next = cloneState(state);
+  if (intent.verdict === "fail") {
+    resetTaskRows(next.rows, next.validationColumns, intent.task_id);
+    return {
+      ok: true,
+      state: next,
+      locks: locks.filter((l) => l.task_id !== intent.task_id),
+    };
+  }
   const nextRow = findRow(next.rows, intent.task_id, intent.subtask_id)!;
   nextRow[slot] = `${intent.verdict}|${author}|${now}`;
 
@@ -318,51 +312,6 @@ export function checkValidation({
       ),
   );
   return { ok: true, state: next, locks: nextLocks };
-}
-
-/**
- * Sending a failed task back for encoding — the explicit follow-up to a fail
- * verdict. The PR may change only state.csv (carrying the reset), the task
- * must be in validation with at least one recorded fail, and the author must
- * be one of the failing validators or hold push access. On accept: the task
- * returns to encoding_required with attribution cleared, its subtasks return
- * to pending, all validation cells are cleared, and every lock on the task is
- * released.
- */
-export function checkSendBack({
-  state,
-  locks,
-  intent,
-  author,
-  changedPaths,
-  isCollaborator,
-}: CheckSendBackArgs): SubmitResult {
-  const row = findRow(state.rows, intent.task_id, "");
-  if (!row) return reject("unknown_task");
-  if (!boundaryCheck(changedPaths, [STATE_PATH]))
-    return reject("out_of_bounds");
-  if (row.status !== "validation_required") return reject("wrong_state");
-
-  const subtasks = state.rows.filter(
-    (r) => r.task_id === intent.task_id && r.subtask_id !== "",
-  );
-  const failCells = subtasks.flatMap((r) =>
-    state.validationColumns
-      .map((c) => r[c] ?? "")
-      .filter((cell) => isFinalValidation(cell) && cell.startsWith("fail|")),
-  );
-  if (failCells.length === 0) return reject("no_recorded_fail");
-  const failAuthors = failCells.map((cell) => cell.split("|")[1]);
-  if (!isCollaborator && !failAuthors.includes(author))
-    return reject("not_permitted");
-
-  const next = cloneState(state);
-  resetTaskRows(next.rows, next.validationColumns, intent.task_id);
-  return {
-    ok: true,
-    state: next,
-    locks: locks.filter((l) => l.task_id !== intent.task_id),
-  };
 }
 
 /** Edit-from-review intent: the subtask whose review switches to editing. */
@@ -395,7 +344,7 @@ export interface CheckReviewEditArgs {
  * lock.csv (removing the reviewer's own review lock) and comment.csv (one
  * added fail comment saying what the edit is for). The author must hold the
  * subtask's review lock while it is in review. On accept: the task is reset
- * as by a send-back (checkSendBack), every lock on it is released, and the
+ * as by a fail verdict (checkValidation), every lock on it is released, and the
  * author holds a fresh encoding lock.
  */
 export function checkReviewEdit({
