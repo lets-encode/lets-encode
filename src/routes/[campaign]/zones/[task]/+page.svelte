@@ -770,10 +770,6 @@
     return canvasW[p] ? (target * pageW) / canvasW[p] : target;
   };
 
-  // The on-screen size of the measure controls, which take the number
-  // label's place in the selected box; the delete button dodges this extent.
-  const ZC_W_PX = 82;
-  const ZC_H_PX = 22;
   type Drag = {
     kind: "move" | "resize" | "draw";
     layer: Layer;
@@ -1385,8 +1381,6 @@
                               s,
                               staff.box,
                               `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`,
-                              0,
-                              0,
                             )}
                           {/if}
                         {/each}
@@ -1418,7 +1412,6 @@
                           {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
                           {@const editing =
                             canEdit && selected?.p === p && selected?.z === z}
-                          {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
                           {#if !editing}
                             <rect
                               class="labelbg"
@@ -1441,8 +1434,6 @@
                               z,
                               zone.box,
                               `Measure ${zone.label}`,
-                              inset + ZC_W_PX / sc,
-                              inset + ZC_H_PX / sc,
                             )}
                           {/if}
                         {/each}
@@ -1528,17 +1519,8 @@
     </div>
 
     <!-- The resize handles and delete button of the selected box in the
-         active layer, shared by measures and staves. `labelW`/`labelH` are the
-         label's extent inside the box, so the delete button drops below it
-         when the box is too narrow for both; 0 for a box without a label. -->
-    {#snippet handles(
-      p: number,
-      z: number,
-      b: MeasureBox,
-      name: string,
-      labelW: number,
-      labelH: number,
-    )}
+         active layer, shared by measures and staves. -->
+    {#snippet handles(p: number, z: number, b: MeasureBox, name: string)}
       {@const pg = pages[p]}
       <!-- Handle sizes are screen pixels, converted to page units by the
            canvas scale: the corner dots are 5px in radius, the edge strips
@@ -1574,13 +1556,10 @@
           onkeydown={(ev) => resizeKeydown(ev, p, z, c.edges)}
         />
       {/each}
-      <!-- A delete button pinned inside the box's top-right corner, drawn in
-           screen pixels via the inverse-scale transform. -->
-      {@const bx = Math.max(b.ulx + 4 / sc, b.lrx - 27 / sc)}
-      {@const by =
-        labelW && bx < b.ulx + labelW + 6 / sc
-          ? b.uly + labelH + 6 / sc
-          : b.uly + 7 / sc}
+      <!-- A 20px delete button centred in the box, drawn in screen pixels via
+           the inverse-scale transform. -->
+      {@const bx = (b.ulx + b.lrx) / 2 - 10 / sc}
+      {@const by = (b.uly + b.lry) / 2 - 10 / sc}
       <g
         class="delbtn"
         role="button"
@@ -2035,8 +2014,7 @@
   }
 
   /* The per-zone controls (number input · ↵ · §) stand in for the selected
-     measure's number label, at the same top-left anchor and a matching size
-     (ZC_W_PX × ZC_H_PX). The outer layer is a zero-size anchor; the inner
+     measure's number label, at the same top-left anchor. The outer layer is a zero-size anchor; the inner
      box re-enables the pointer. */
   .zc {
     position: absolute;

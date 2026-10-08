@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-08
+
+- The measure corrector's delete button sits in the centre of the selected box.
+
 ## 2026-10-07
 
 - On phones the task panel snaps to three heights when dragged.
