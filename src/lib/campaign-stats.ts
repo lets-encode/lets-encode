@@ -454,21 +454,35 @@ export interface FeedComment {
   logins: Record<string, string>;
 }
 
-/** Unfinished tasks with an unresolved change request (fail comment). */
-export function attentionCount(stats: CampaignStats): number {
+/**
+ * Unfinished tasks with an unresolved change request (fail comment), each
+ * with its display title.
+ */
+export function changeRequestTasks(
+  stats: CampaignStats,
+): { task: string; title: string }[] {
   const done = new Set(
     stats.rows
       .filter((r) => r.subtask_id === "" && r.status === "completed")
       .map((r) => r.task_id),
   );
-  return new Set(
+  const tasks = new Set(
     stats.comments
       .filter(
         (c) =>
           c.kind === "fail" && c.resolved !== "true" && !done.has(c.task_id),
       )
       .map((c) => c.task_id),
-  ).size;
+  );
+  return [...tasks].map((task) => {
+    const def = findRow(stats.taskDefs, task, "");
+    return { task, title: def ? titleOf(stats, def) : task };
+  });
+}
+
+/** Unfinished tasks with an unresolved change request (fail comment). */
+export function attentionCount(stats: CampaignStats): number {
+  return changeRequestTasks(stats).length;
 }
 
 /** The viewer's tasks in one campaign, grouped by what needs doing. */

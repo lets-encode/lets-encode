@@ -21,6 +21,8 @@ export interface PagePreview {
   height: number;
   /** The box around the page's measure zones; null without zones. */
   box: MeasureBox | null;
+  /** The box around the page's first system; null without zones. */
+  system: MeasureBox | null;
 }
 
 export interface PiecePreview {
@@ -36,6 +38,8 @@ export interface PiecePreview {
   pageMeasures: number[];
   /** Staves in the score definition. */
   staves: number;
+  /** True when loading the preview failed, as opposed to there being none. */
+  failed: boolean;
 }
 
 const EMPTY: PiecePreview = {
@@ -45,25 +49,32 @@ const EMPTY: PiecePreview = {
   incipitPending: false,
   pageMeasures: [],
   staves: 0,
+  failed: false,
 };
 
 // One load per piece per page load; a failed load is dropped so the next
 // mount retries it.
 const cache = new Map<string, Promise<PiecePreview>>();
 
-/** The cached preview of one piece, loading it on first request. */
+/**
+ * The cached preview of one piece, loading it on first request. With
+ * `incipit` false the incipit is not rendered (its field stays ''), which
+ * spares loading the Verovio toolkit; a cached full preview still serves it.
+ */
 export function piecePreview(
   f: ForgeClient,
   owner: string,
   repo: string,
   path: string,
+  incipit = true,
 ): Promise<PiecePreview> {
-  const key = `${owner}/${repo}/${path}`;
-  let loading = cache.get(key);
+  const full = `${owner}/${repo}/${path}`;
+  const key = incipit ? full : `${full}#thumb`;
+  let loading = cache.get(full) ?? cache.get(key);
   if (!loading) {
-    loading = loadPreview(f, owner, repo, path).catch(() => {
+    loading = loadPreview(f, owner, repo, path, incipit).catch(() => {
       cache.delete(key);
-      return EMPTY;
+      return { ...EMPTY, failed: true };
     });
     cache.set(key, loading);
   }
@@ -75,6 +86,7 @@ async function loadPreview(
   owner: string,
   repo: string,
   path: string,
+  incipit: boolean,
 ): Promise<PiecePreview> {
   const mei = await f.getRepoFile(owner, repo, path);
   if (mei == null) return EMPTY;
@@ -89,23 +101,19 @@ async function loadPreview(
         parsed.pages.map((page) => page.image),
       )
     : [];
-  const pages: PagePreview[] = parsed.pages.map((page, i) => ({
-    url: urls[i] ?? "",
-    width: page.width,
-    height: page.height,
-    box: page.zones.reduce<MeasureBox | null>(
-      (box, zone) =>
-        box
-          ? {
-              ulx: Math.min(box.ulx, zone.box.ulx),
-              uly: Math.min(box.uly, zone.box.uly),
-              lrx: Math.max(box.lrx, zone.box.lrx),
-              lry: Math.max(box.lry, zone.box.lry),
-            }
-          : { ...zone.box },
-      null,
-    ),
-  }));
+  const pages: PagePreview[] = parsed.pages.map((page, i) => {
+    // The first system runs up to the next measure that starts a system.
+    const next = page.zones.findIndex(
+      (zone, j) => j > 0 && (zone.sb || zone.pb),
+    );
+    return {
+      url: urls[i] ?? "",
+      width: page.width,
+      height: page.height,
+      box: boxAround(page.zones),
+      system: boxAround(next === -1 ? page.zones : page.zones.slice(0, next)),
+    };
+  });
   const thumb = pages.find((page) => page.url)?.url ?? "";
 
   const pageMeasures = parsed.pages.map((page) => page.zones.length);
@@ -121,16 +129,34 @@ async function loadPreview(
       incipitPending: true,
       pageMeasures,
       staves,
+      failed: false,
     };
   }
   return {
     thumb,
     pages,
-    incipit: await renderIncipit(mei),
+    incipit: incipit ? await renderIncipit(mei) : "",
     incipitPending: false,
     pageMeasures,
     staves,
+    failed: false,
   };
+}
+
+/** The smallest box holding every zone; null without zones. */
+function boxAround(zones: { box: MeasureBox }[]): MeasureBox | null {
+  return zones.reduce<MeasureBox | null>(
+    (box, zone) =>
+      box
+        ? {
+            ulx: Math.min(box.ulx, zone.box.ulx),
+            uly: Math.min(box.uly, zone.box.uly),
+            lrx: Math.max(box.lrx, zone.box.lrx),
+            lry: Math.max(box.lry, zone.box.lry),
+          }
+        : { ...zone.box },
+    null,
+  );
 }
 
 // ---------------------------------------------------------------------------

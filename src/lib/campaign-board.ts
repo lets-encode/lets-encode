@@ -17,7 +17,7 @@ import type {
   NodeSlot,
   StatusKey,
 } from "./campaign-graph.ts";
-import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
 import { keptWorkSince } from "./coordinator-policy.ts";
 import type {
   CommentRow,
@@ -60,8 +60,8 @@ export const initialOf = (name: string): string =>
 
 /**
  * The piece behind a fragment path, for card titles: its configured name, else
- * the piece directory of the standard sources/<piece>/score.mei layout, else
- * the basename without extension.
+ * the piece directory of the standard sources/<piece>/score.mei layout (a
+ * numbered piece-NN folder as "Piece N"), else the basename without extension.
  */
 export const fragmentPieceName = (
   fragment: string,
@@ -72,7 +72,9 @@ export const fragmentPieceName = (
   const parts = fragment.split("/");
   const base = (parts.pop() ?? fragment).replace(/\.mei$/i, "");
   const dir = parts.pop();
-  return base === "score" && dir && dir !== "sources" ? dir : base;
+  return base === "score" && dir && dir !== "sources"
+    ? pieceIdLabel(dir)
+    : base;
 };
 
 /** A task's one-line title: its name (description and scope), then its

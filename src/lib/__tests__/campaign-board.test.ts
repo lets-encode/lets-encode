@@ -46,10 +46,19 @@ test("cardTitle is the task's name, then its piece: config name, else piece dire
     cardTitle("sources/piece-1/score.mei", "surface-2", names, true),
     "Correct the OMR draft · p. 2 · Sonata in C",
   );
-  // Unnamed pieces fall back to the path's piece directory…
+  // Unnamed pieces fall back to the path's piece directory, the wizard's
+  // numbered folders as "Piece N"…
   assert.equal(
     cardTitle("sources/piece-2/score.mei", "", names),
-    "Encode · piece-2",
+    "Encode · Piece 2",
+  );
+  assert.equal(
+    cardTitle("sources/piece-01/score.mei", "score-setup", {}),
+    "Score setup · Piece 1",
+  );
+  assert.equal(
+    cardTitle("sources/sonata/score.mei", "", {}),
+    "Encode · sonata",
   );
   // …and paths outside the sources/<piece>/score.mei layout to the basename.
   assert.equal(cardTitle("sources/score.mei", "", names), "Encode · score");

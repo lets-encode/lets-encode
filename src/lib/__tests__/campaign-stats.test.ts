@@ -9,6 +9,7 @@ import {
 } from "../campaign-tables.ts";
 import {
   attentionCount,
+  changeRequestTasks,
   commentsOnMyWork,
   isNearlyDone,
   loadAllCampaignStats,
@@ -138,6 +139,13 @@ test("attentionCount: unfinished tasks with an unresolved change request", () =>
     rows: stats.rows.map((r) => ({ ...r, status: "completed" })),
   };
   assert.equal(attentionCount(finished), 0);
+});
+
+test("changeRequestTasks names each task with an open change request", () => {
+  const [only, ...rest] = changeRequestTasks(stats);
+  assert.equal(only.task, "T0003");
+  assert.ok(only.title);
+  assert.equal(rest.length, 0);
 });
 
 test("myTasksIn groups the viewer's tasks by what needs doing", () => {

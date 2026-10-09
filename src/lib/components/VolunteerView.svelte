@@ -483,17 +483,16 @@
               <div class="prow">
                 {@render thumb(piece.path)}
                 {#if lone}
-                  <span class="piecename" title={pieceLabel(piece)}
-                    >{clipTitle(pieceLabel(piece))}</span
-                  >
+                  <span class="piecename lone">{pieceLabel(piece)}</span>
                 {:else}
                   <button
                     type="button"
                     class="piecename"
                     aria-expanded={open}
                     onclick={() => toggle(piece.path)}
-                    title={`${pieceLabel(piece)} · ${open ? "Collapse this piece" : "Show this piece's tasks"}`}
-                    >{clipTitle(pieceLabel(piece))}</button
+                    title={open
+                      ? "Collapse this piece"
+                      : "Show this piece's tasks"}>{pieceLabel(piece)}</button
                   >
                 {/if}
                 <!-- Done, in review and the rest, in the stage colours; a lone
@@ -1005,6 +1004,7 @@
     object-fit: cover;
     display: block;
   }
+  /* The pieces table gives the full title; the other places clip it. */
   .piecename {
     font-size: 13px;
     font-weight: 600;
@@ -1012,11 +1012,11 @@
     width: 230px;
     overflow-wrap: anywhere;
     text-align: left;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+  }
+  .piecename.lone {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
   }
   .segbar {
     flex: none;

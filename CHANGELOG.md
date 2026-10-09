@@ -3,6 +3,48 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-09
+
+- The pieces table in the volunteer view shows each piece's full title.
+- On wide screens your open work sits in a side column beside the campaigns.
+- On phones and tablets your open work folds into a one-line summary bar.
+- Campaign rows show less text and keep their claim button on phones.
+- A campaign's next task that you cannot take says why.
+- The top bar's New campaign button is a plus icon.
+- A campaign preview that fails to load says so.
+- Campaign list load failures show as errors.
+- The campaigns page no longer loads the score renderer.
+- Attention and open-work lists show five items until Show all is chosen.
+- A search or filter without matches offers to show all campaigns.
+- Needs your attention lists open change requests on your campaigns.
+- A campaign's attention marker says how many changes were requested.
+- Campaign progress reads as tasks done of the total.
+- The open-work count includes only work you can act on.
+- A failed campaign load offers Try again and marks your work summary as incomplete.
+- The campaigns page keeps its search, filter and sort in the address.
+- On phones a dot on the sort button marks a sort other than the default.
+- On phones attention and work entries show their chip under the title.
+- Campaign rows show the first line of music instead of the whole first page.
+- Claim buttons explain in a tooltip what claiming does.
+- Attention and work entries wrap their titles to two lines at every width.
+- On phones open-work entries show their claim and review details.
+- A piece without measures shows No preview instead of part of its first page.
+- The progress bar's track is visible in the dark theme.
+- The campaign list keeps its music previews in the browser, so later visits download no page scans.
+- Needs your attention lists change requests in a fixed order.
+- A task you hold opens from its campaign row the same way as from your work list.
+- Phones and tablets hide the work bar for volunteers without any work.
+- A preview that failed to load can be loaded again.
+- The Nearly done filter explains its threshold in a tooltip.
+- The open-work list on the campaigns page no longer offers Abandon.
+- A review you hold opens the review from the open-work list.
+- Submissions waiting on other reviewers show a grey Awaiting review chip.
+- Open-work titles stay on one line outside the side column.
+- Pieces without a title show as Piece 1, Piece 2 instead of their id.
+- On phones Needs your attention shows two items before Show all.
+- Open to claim lists only campaigns with a task you can claim.
+- The Change requested chip says in a tooltip who acts next.
+
 ## 2026-10-08
 
 - The measure corrector's delete button sits in the centre of the selected box.

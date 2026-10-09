@@ -129,7 +129,12 @@
   {/if}
   <div class="topbar-right">
     {#if onHome}
-      <a class="btn" href="/new">+ New campaign</a>
+      <a
+        class="btn btn-icon"
+        href="/new"
+        aria-label="New campaign"
+        title="New campaign"><Icon name="plus" size={16} /></a
+      >
     {/if}
     {#if auth.user}
       <div class="user">
