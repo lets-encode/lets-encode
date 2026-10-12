@@ -22,7 +22,9 @@
   >
     −
   </button>
-  <span class="per-row">{value} per row</span>
+  <span class="per-row" title="{value} per row"
+    >{value}<span class="per-row-word">per row</span></span
+  >
   <button
     type="button"
     class="btn btn-icon"
@@ -36,9 +38,23 @@
 
 <style>
   .stepper {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 4px;
+  }
+  .per-row-word {
+    margin-left: 0.3em;
+  }
+  @container material (max-width: 439px) {
+    .per-row-word {
+      display: none;
+    }
+  }
+  @media (pointer: coarse) {
+    .stepper {
+      gap: 8px;
+    }
   }
   .per-row {
     font-size: 12px;

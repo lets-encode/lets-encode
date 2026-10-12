@@ -3,6 +3,13 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-12
+
+- The campaign setup wizard fits phones, tablets and small windows, with Continue always in view.
+- The wizard's page panes zoom and pan with two fingers, and pages and piece regions can be edited by touch.
+- A failed wizard finish shows Retry in blue, not green.
+- The top bar is 44px tall in windows 500px tall or less.
+
 ## 2026-10-09
 
 - The pieces table in the volunteer view shows each piece's full title.

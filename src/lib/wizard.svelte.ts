@@ -173,6 +173,20 @@ export const isSkipped = (id: WizardStepId): boolean =>
     wizard.images.length === 0 &&
     wizard.candidates.length === 0);
 
+/**
+ * "N pieces · M pages uncovered": the pieces and, with page images, how many
+ * pages no piece has a region on yet.
+ */
+export function piecesSummary(): string {
+  const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
+  if (!wizard.images.length) return count;
+  const marked = new Set(
+    wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)),
+  );
+  const open = wizard.images.filter((_, i) => !marked.has(i)).length;
+  return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
+}
+
 /** Advance to the next step (passing over steps with nothing to do), if there is one. */
 export function nextStep(): void {
   for (let i = stepIndex(wizard.step) + 1; i < WIZARD_STEPS.length; i++) {

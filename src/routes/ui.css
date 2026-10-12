@@ -596,6 +596,8 @@ textarea.input {
    The centre zone of the wizard workbench: a white card with a fixed toolbar
    and a recessed scrolling body. Steps fill these with their own content. */
 .material-card {
+  /* The toolbar compacts by the pane's own width (container queries). */
+  container: material / inline-size;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -612,9 +614,11 @@ textarea.input {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   padding: 4px 16px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  /* The last resort when a narrow pane cannot fit the compacted controls. */
+  overflow-x: auto;
   border-bottom: 1px solid var(--line);
   background: var(--card);
 }
@@ -632,6 +636,42 @@ textarea.input {
 .material-toolbar .toolbar-gap {
   flex: 1;
 }
+.material-toolbar .tbtn {
+  white-space: nowrap;
+}
+/* Below 640px of pane the file name gives way and labelled buttons show only
+   their icon (.tbtn-label hides; the button keeps its aria-label). */
+.tbtn-glyph {
+  display: none;
+}
+@container material (max-width: 639px) {
+  .material-toolbar .toolbar-name,
+  .material-toolbar .tbtn-label {
+    display: none;
+  }
+  .material-toolbar .tbtn-glyph {
+    display: inline-flex;
+  }
+  .material-toolbar {
+    padding: 4px 10px;
+  }
+}
+/* Touch: toolbar buttons stay 32px to the eye but take a 44px press. */
+@media (pointer: coarse) {
+  .material-toolbar .tbtn,
+  .material-toolbar .btn-icon {
+    position: relative;
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+  }
+  .material-toolbar .tbtn::after,
+  .material-toolbar .btn-icon::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
 .material-toolbar .toolbar-rule {
   width: 1px;
   height: 22px;
@@ -641,6 +681,8 @@ textarea.input {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* A pinch zooms the pages (zoomGestures), not the window. */
+  touch-action: pan-x pan-y;
   background: var(--bg-inset);
   box-shadow: var(--shadow-inset);
 }

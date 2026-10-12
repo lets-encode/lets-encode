@@ -30,6 +30,7 @@
   import WizardCard from "./WizardCard.svelte";
   import FileDropzone from "./FileDropzone.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -174,7 +175,9 @@
 <WizardCard
   step="upload"
   heading="Add your source"
-  intro="Drop material here, or point at a IIIF manifest. You pick which pages to keep next."
+  intro="{wizardLayout.dropZone
+    ? 'Drop material here'
+    : 'Add files'}, or point at a IIIF manifest. You pick which pages to keep next."
   status={railStatus}
 >
   <FileDropzone bind:files={wizard.files} />
@@ -197,10 +200,12 @@
     </span>
   </label>
 
-  {#if error}
-    <p class="msg-error" role="alert">{error}</p>
-  {/if}
-  <ProgressSteps {log} />
+  {#snippet pinned()}
+    {#if error}
+      <p class="msg-error" role="alert">{error}</p>
+    {/if}
+    <ProgressSteps {log} />
+  {/snippet}
 
   <!-- The footer is this step's own: the acknowledgement gating Continue sits
        on the buttons' row, left of them. -->
