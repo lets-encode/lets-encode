@@ -21,6 +21,7 @@
   import PagesPerRow from "./PagesPerRow.svelte";
   import ZoomLevel, {
     fitPageZoom,
+    nearFit,
     ZOOM_MAX,
     ZOOM_MIN,
   } from "./ZoomLevel.svelte";
@@ -29,10 +30,10 @@
   // `toolbar` renders extra controls at the end of the toolbar.
   let { pages, toolbar }: { pages: PageImage[]; toolbar?: Snippet } = $props();
 
-  // Two pages per row, each shown whole, to begin with.
-  let perRow = $state(2);
+  // Two pages per row at the pane's width to begin with; one on a phone.
+  let perRow = $state(window.innerWidth < 600 ? 1 : 2);
   let zoom = $state(100);
-  let fit = $state<"width" | "page" | null>("page");
+  let fit = $state<"width" | "page" | null>("width");
   // The body's inner size and each image's own size, for the page fit.
   let bodyW = $state(0);
   let bodyH = $state(0);
@@ -92,6 +93,7 @@
           fit = null;
         },
         follow: true,
+        onpinchend: () => (fit = nearFit(zoom, fitPage)),
       })}
     >
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">

@@ -9,6 +9,7 @@ parentheses.
 - The wizard's page panes zoom and pan with two fingers, and pages and piece regions can be edited by touch.
 - A failed wizard finish shows Retry in blue, not green.
 - The top bar is 44px tall in windows 500px tall or less.
+- The under-construction banner is a straight strip without rounded corners.
 
 ## 2026-10-09
 

@@ -30,6 +30,8 @@ export interface ZoomGestureOptions {
   /** A second finger touched down: the view drops a drag the first one
       started. */
   onpinchstart?: () => void;
+  /** A pinch ended: the view may snap the zoom to a fit. */
+  onpinchend?: () => void;
   /** During a pinch, scroll the element so the content under the fingers'
       midpoint stays under it: moving both fingers then pans the view. */
   follow?: boolean;
@@ -103,7 +105,9 @@ export function zoomGestures(opts: ZoomGestureOptions) {
       });
     };
     const touchEnd = (e: TouchEvent) => {
-      if (e.touches.length < 2) pinch = null;
+      if (e.touches.length >= 2 || !pinch) return;
+      pinch = null;
+      opts.onpinchend?.();
     };
     // Safari's trackpad pinch: `scale` is relative to the gesture's start.
     // Safari on iOS also sends these for a touch pinch, which the touch

@@ -12,6 +12,19 @@
   export const ZOOM_MAX = 400;
 
   /**
+   * The fit a zoom is close to — within 8% of the width fit (100%) or of the
+   * page fit — or null. Lets a pinch that ends near a fit settle on it.
+   */
+  export function nearFit(
+    zoom: number,
+    fitPage?: number,
+  ): "width" | "page" | null {
+    const near = (target: number) => Math.abs(zoom / target - 1) <= 0.08;
+    if (fitPage !== undefined && near(fitPage)) return "page";
+    return near(100) ? "width" : null;
+  }
+
+  /**
    * The zoom, in percent, at which the tallest page of a material grid fits the
    * body top to bottom. The grid's padding, gap and the height a tile needs
    * beyond its image (caption and border) are the ones ui.css and the page
@@ -43,6 +56,7 @@
     value = $bindable(),
     fitPage,
     fit = $bindable(null),
+    phoneFits = true,
   }: {
     /** Percent, between LEAST and MOST. */
     value: number;
@@ -50,6 +64,8 @@
     fitPage?: number;
     /** The fit in force, if any. */
     fit?: "width" | "page" | null;
+    /** Whether the fit buttons stay in a phone-width pane. */
+    phoneFits?: boolean;
   } = $props();
 
   $effect(() => {
@@ -75,7 +91,7 @@
   }
 </script>
 
-<span class="zoomctl">
+<span class="zoomctl" class:phone-fits={phoneFits}>
   <button
     type="button"
     class="btn btn-icon zstep"
@@ -128,8 +144,7 @@
 
 <style>
   /* A mouse gets the slider, touch the − / + buttons. Narrower panes drop the
-     readout and the page fit, and below 440px the slider gives way to the
-     buttons and touch keeps only − / +. */
+     readout, and below 440px the slider gives way to the buttons. */
   .zoomctl {
     flex: none;
     display: flex;
@@ -151,8 +166,13 @@
     .zoomctl .zoomslider {
       width: 70px;
     }
-    .zval,
-    .fit-page {
+    .zval {
+      display: none;
+    }
+  }
+  @container material (max-width: 479px) {
+    .zoomctl:not(.phone-fits) .fit-width,
+    .zoomctl:not(.phone-fits) .fit-page {
       display: none;
     }
   }
@@ -162,13 +182,6 @@
     }
     .zstep {
       display: inline-flex;
-    }
-  }
-  @media (pointer: coarse) {
-    @container material (max-width: 439px) {
-      .fit-width {
-        display: none;
-      }
     }
   }
 </style>

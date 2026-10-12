@@ -185,7 +185,13 @@
     gap: 8px;
     padding: 9px 20px;
     background: var(--warn-bg);
-    border-bottom: 1px solid var(--warn-line);
+    /* A strip across the window: none of the shared .banner card's rounding,
+       side borders or shadow. */
+    border-radius: 0;
+    border-width: 0 0 1px;
+    border-style: solid;
+    border-color: var(--warn-line);
+    box-shadow: none;
     font-size: 13.5px;
     line-height: 1.4;
     color: var(--ink);

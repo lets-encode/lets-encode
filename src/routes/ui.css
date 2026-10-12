@@ -652,8 +652,27 @@ textarea.input {
   .material-toolbar .tbtn-glyph {
     display: inline-flex;
   }
+  /* A button showing only its glyph centres it. */
+  .material-toolbar .tbtn:has(.tbtn-glyph) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 9px;
+  }
   .material-toolbar {
     padding: 4px 10px;
+  }
+}
+/* Phone-width panes: the controls spread over the whole row instead of
+   gathering at its end. */
+@container material (max-width: 479px) {
+  .material-toolbar {
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .material-toolbar .toolbar-gap,
+  .material-toolbar .toolbar-rule {
+    display: none;
   }
 }
 /* Touch: toolbar buttons stay 32px to the eye but take a 44px press. */

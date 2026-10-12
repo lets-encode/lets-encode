@@ -449,8 +449,10 @@
   .field {
     margin-top: 14px;
   }
+  /* Fields in a row line up at their inputs when a label wraps. */
   .pair {
     display: flex;
+    align-items: flex-end;
     gap: 12px;
   }
   .pair .grow {
@@ -470,6 +472,7 @@
   @container (min-width: 500px) {
     .row {
       flex-direction: row;
+      align-items: flex-end;
       gap: 12px;
     }
     .row .grow {
