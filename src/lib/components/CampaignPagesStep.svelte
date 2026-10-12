@@ -40,6 +40,7 @@
   import PagesPerRow from "./PagesPerRow.svelte";
   import ZoomLevel, {
     fitPageZoom,
+    nearFit,
     ZOOM_MAX,
     ZOOM_MIN,
   } from "./ZoomLevel.svelte";
@@ -55,8 +56,10 @@
   const log = new ProgressLog();
 
   // Fewer pages than the row would hold show one row at its widest; a long
-  // source packs more per row. Not persisted, so every setup starts here.
+  // source packs more per row. Phones and tablets, whose pane is narrow,
+  // start at two. Not persisted, so every setup starts here.
   function defaultPerRow(count: number) {
+    if (wizardLayout.materialMode !== "side") return Math.min(2, count) || 1;
     if (count <= 4) return Math.max(1, count);
     return count > 10 ? 5 : 4;
   }
@@ -79,20 +82,89 @@
 
   // The page a range selection is measured from: the last one clicked on its own.
   let anchor: number | null = null;
-  // Touch has no drag to move a page: in Reorder mode a tap picks a page and
-  // its arrow buttons move it one place at a time.
-  let reordering = $state(false);
-  let picked = $state<number | null>(null);
-  function shift(index: number, by: number) {
-    const to = index + by;
-    if (to < 0 || to >= wizard.candidates.length) return;
-    move(index, to);
-    picked = to;
-  }
-
   // The page being dragged, and the one it is currently over.
   let dragIndex = $state<number | null>(null);
   let overIndex = $state<number | null>(null);
+
+  // Touch: holding a page still lifts it, and it lands where the finger lets
+  // go. A finger that moves before the hold completes scrolls instead. The
+  // tap that ends a hold does not also keep or drop the page.
+  const HOLD_MS = 450;
+  const SLOP = 10;
+  let lifted = $state(false);
+  let swallowClick = false;
+  function liftToReorder(list: HTMLElement) {
+    let hold: { timer: number; x: number; y: number } | null = null;
+    const cancelHold = () => {
+      if (hold) clearTimeout(hold.timer);
+      hold = null;
+    };
+    const indexAt = (x: number, y: number) => {
+      const li = document
+        .elementFromPoint(x, y)
+        ?.closest<HTMLElement>("li[data-index]");
+      return li ? Number(li.dataset.index) : null;
+    };
+    const start = (e: TouchEvent) => {
+      swallowClick = false;
+      cancelHold();
+      const index = indexAt(e.touches[0].clientX, e.touches[0].clientY);
+      if (busy || e.touches.length !== 1 || index === null) return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      hold = {
+        x,
+        y,
+        timer: window.setTimeout(() => {
+          hold = null;
+          dragIndex = index;
+          overIndex = index;
+          lifted = true;
+          swallowClick = true;
+          navigator.vibrate?.(10);
+        }, HOLD_MS),
+      };
+    };
+    const drag = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (hold) {
+        if (
+          e.touches.length > 1 ||
+          Math.hypot(t.clientX - hold.x, t.clientY - hold.y) > SLOP
+        )
+          cancelHold();
+        return;
+      }
+      if (!lifted) return;
+      e.preventDefault();
+      overIndex = indexAt(t.clientX, t.clientY) ?? overIndex;
+      // Near the pane's top or bottom edge the pane scrolls along.
+      const pane = list.parentElement;
+      if (!pane) return;
+      const box = pane.getBoundingClientRect();
+      if (t.clientY < box.top + 48) pane.scrollTop -= 12;
+      else if (t.clientY > box.bottom - 48) pane.scrollTop += 12;
+    };
+    const drop = (e: TouchEvent) => {
+      cancelHold();
+      if (!lifted) return;
+      if (e.type === "touchend" && dragIndex !== null && overIndex !== null)
+        move(dragIndex, overIndex);
+      lifted = false;
+      dragIndex = null;
+      overIndex = null;
+    };
+    list.addEventListener("touchstart", start, { passive: true });
+    list.addEventListener("touchmove", drag, { passive: false });
+    list.addEventListener("touchend", drop);
+    list.addEventListener("touchcancel", drop);
+    return () => {
+      cancelHold();
+      list.removeEventListener("touchstart", start);
+      list.removeEventListener("touchmove", drag);
+      list.removeEventListener("touchend", drop);
+      list.removeEventListener("touchcancel", drop);
+    };
+  }
 
   // One object URL per preview, cached so a re-render — a reorder, a change of
   // selection — hands the same <img> the same src. They are all released together
@@ -288,7 +360,7 @@
       {/if}
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
-      <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
+      <ZoomLevel bind:value={zoom} bind:fit {fitPage} phoneFits={false} />
       <div class="toolbar-rule"></div>
       <button
         type="button"
@@ -298,10 +370,10 @@
         aria-label="Keep all"
         title="Keep all"
         onclick={() => setAll(true)}
-        disabled={busy || reordering}
+        disabled={busy}
       >
         <span class="tbtn-label">Keep all</span>
-        <span class="tbtn-glyph"><Icon name="check" /></span>
+        <span class="tbtn-glyph"><Icon name="pages" size={16} /></span>
       </button>
       <button
         type="button"
@@ -311,33 +383,11 @@
         aria-label="Keep none"
         title="Keep none"
         onclick={() => setAll(false)}
-        disabled={busy || reordering}
+        disabled={busy}
       >
         <span class="tbtn-label">Keep none</span>
-        <span class="tbtn-glyph"><Icon name="close" /></span>
+        <span class="tbtn-glyph"><Icon name="page-none" size={16} /></span>
       </button>
-      {#if wizardLayout.coarse}
-        <button
-          type="button"
-          class="tbtn"
-          class:on={reordering}
-          aria-pressed={reordering}
-          aria-label={reordering ? "Done" : "Reorder"}
-          title={reordering ? "Done" : "Reorder"}
-          onclick={() => {
-            reordering = !reordering;
-            picked = null;
-          }}
-          disabled={busy}
-        >
-          {#if reordering}
-            Done
-          {:else}
-            <span class="tbtn-label">Reorder</span>
-            <span class="tbtn-glyph"><Icon name="sort" /></span>
-          {/if}
-        </button>
-      {/if}
     </div>
     <div
       class="material-body"
@@ -350,14 +400,20 @@
           fit = null;
         },
         follow: true,
+        onpinchend: () => (fit = nearFit(zoom, fitPage)),
       })}
     >
-      <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+      <ol
+        class="material-grid"
+        style="--per-row: {perRow}; width: {zoom}%"
+        {@attach liftToReorder}
+      >
         {#each wizard.candidates as page, i (page.id)}
           <li
+            data-index={i}
             class:out={!page.include}
-            class:picked={reordering && picked === i}
-            class:dragging={dragIndex === i}
+            class:lifted={lifted && dragIndex === i}
+            class:dragging={!lifted && dragIndex === i}
             class:drop-before={dragIndex !== null &&
               overIndex === i &&
               dragIndex > i}
@@ -386,10 +442,13 @@
               class="thumb"
               aria-pressed={page.include}
               disabled={busy}
-              title={page.label}
+              title={wizardLayout.coarse ? undefined : page.label}
               draggable={!busy && !wizardLayout.coarse}
-              onclick={(e) =>
-                reordering ? (picked = i) : toggle(i, e.shiftKey)}
+              onclick={(e) => {
+                if (swallowClick) swallowClick = false;
+                else toggle(i, e.shiftKey);
+              }}
+              oncontextmenu={(e) => wizardLayout.coarse && e.preventDefault()}
               ondragstart={(e) => {
                 dragIndex = i;
                 // Firefox starts a drag only once the transfer carries data.
@@ -419,24 +478,6 @@
                 >
               {/if}
             </button>
-            {#if reordering && picked === i}
-              <span class="movebar">
-                <button
-                  type="button"
-                  aria-label="Move page {i + 1} back"
-                  disabled={i === 0}
-                  onclick={() => shift(i, -1)}
-                  ><Icon name="chevron-left" size={18} /></button
-                >
-                <button
-                  type="button"
-                  aria-label="Move page {i + 1} forward"
-                  disabled={i === wizard.candidates.length - 1}
-                  onclick={() => shift(i, 1)}
-                  ><Icon name="chevron-right" size={18} /></button
-                >
-              </span>
-            {/if}
             <span class="page-caption">p. {i + 1}</span>
           </li>
         {/each}
@@ -449,7 +490,7 @@
   <ul class="how">
     {#if wizardLayout.coarse}
       <li>Tap a page to keep or leave it out</li>
-      <li>Use Reorder to move a page</li>
+      <li>Hold a page, then drag it to move it</li>
     {:else}
       <li>Click a page to keep or leave it out</li>
       <li>Shift-click marks a whole run</li>
@@ -595,40 +636,12 @@
     gap: 5px;
     min-width: 0;
   }
-  li.picked .thumb {
+  /* A page held by a finger, following it until it is let go. */
+  li.lifted .thumb {
     outline: 3px solid var(--accent);
     outline-offset: 1px;
-  }
-  /* The picked page's move buttons, over the foot of its preview. */
-  .movebar {
-    position: absolute;
-    left: 0;
-    right: 0;
-    /* Clear of the page caption under the preview. */
-    bottom: 22px;
-    display: flex;
-    justify-content: space-between;
-    padding: 4px;
-    pointer-events: none;
-  }
-  .movebar button {
-    pointer-events: auto;
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    color: var(--ink);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 50%;
-    box-shadow: var(--shadow-sm);
-    cursor: pointer;
-  }
-  .movebar button:disabled {
-    opacity: 0.4;
-    cursor: default;
+    transform: scale(1.04);
+    box-shadow: var(--shadow);
   }
   li.dragging {
     opacity: 0.4;
@@ -664,6 +677,10 @@
     cursor: pointer;
     /* Safari drags an element from a form control only when told to. */
     -webkit-user-drag: element;
+    /* A held page lifts for reordering instead of opening the image menu or
+       selecting text. */
+    -webkit-touch-callout: none;
+    user-select: none;
   }
   li.out .thumb {
     border-color: var(--line);

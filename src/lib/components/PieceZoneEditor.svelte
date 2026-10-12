@@ -36,6 +36,7 @@
   import PagesPerRow from "./PagesPerRow.svelte";
   import ZoomLevel, {
     fitPageZoom,
+    nearFit,
     ZOOM_MAX,
     ZOOM_MIN,
   } from "./ZoomLevel.svelte";
@@ -510,6 +511,7 @@
         fit = null;
       },
       follow: true,
+      onpinchend: () => (fit = nearFit(zoom, fitPage)),
       onpinchstart: holdGesture,
     })}
   >
@@ -758,6 +760,17 @@
   @container material (max-width: 439px) {
     .per-row-ctl {
       display: none;
+    }
+  }
+  /* Phone width: the picker keeps as much of the piece name as it can. */
+  @container material (max-width: 479px) {
+    .pchip {
+      gap: 5px;
+      padding: 0 8px;
+    }
+    .segt button {
+      min-width: 34px;
+      padding: 0 8px;
     }
   }
   /* Draw: fingers belong to the editor, two of them panning and zooming. */

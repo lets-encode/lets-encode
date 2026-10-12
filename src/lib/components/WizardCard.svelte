@@ -1336,15 +1336,15 @@
      saved line on one line under the track. */
   @media (max-width: 599px) {
     .thead {
-      min-height: 40px;
-      padding-top: 8px;
+      min-height: 34px;
+      padding-top: 4px;
     }
     .tslug,
     .thead-saved {
       display: none;
     }
     .track {
-      margin-top: 2px;
+      margin-top: 0;
     }
     .tstep .step-label,
     .tstep .step-status {
@@ -1354,7 +1354,7 @@
       display: flex;
       align-items: baseline;
       gap: 8px;
-      min-height: 24px;
+      min-height: 22px;
       padding: 0 20px;
       font-size: 13px;
     }
@@ -1682,6 +1682,10 @@
     flex: none;
     padding: 0 var(--pad-x);
   }
+  /* Space between the last message and the footer's divider. */
+  .pinned > :global(:last-child) {
+    margin-bottom: 10px;
+  }
   .pinned :global(.msg-error),
   .pinned :global(.msg-warn) {
     margin: 10px 0 0;
@@ -1728,11 +1732,17 @@
       --pad-x: 14px;
     }
     .workbench:not(.sidebar) .stage {
-      padding: 2px 12px 12px;
+      padding: 0 12px 12px;
     }
     .card-head,
     .card.solo .card-head {
-      padding-top: 14px;
+      padding-top: 10px;
+    }
+    .panes {
+      margin-top: 8px;
+    }
+    .panes-body {
+      margin-top: 8px;
     }
     .footer,
     .card.solo .footer {
