@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-10-12
 
+- On phones the task panel opens to the task box's height, and the comment field opens only on request.
+- The comment field follows the comments instead of sitting at the side panel's bottom.
 - The campaign setup wizard fits phones, tablets and small windows, with Continue always in view.
 - The wizard's page panes zoom and pan with two fingers, and pages and piece regions can be edited by touch.
 - A failed wizard finish shows Retry in blue, not green.

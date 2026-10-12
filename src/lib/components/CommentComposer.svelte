@@ -1,7 +1,8 @@
 <!--
   The discussion composer: a comment on the task, or a reply to the
-  bound comment (set by the host's Reply buttons). Renders nothing for a
-  logged-out viewer.
+  bound comment (set by the host's Reply buttons). With oncancel it has a
+  Cancel button that clears the draft. Renders nothing for a logged-out
+  viewer.
 -->
 <script lang="ts">
   import type { Result } from "$lib/commands.ts";
@@ -16,7 +17,9 @@
     logins,
     runner,
     replyTo = $bindable(),
+    text = $bindable(""),
     oncomment,
+    oncancel,
     placeholder = "Write a comment…",
   }: {
     /** The task id the composer posts to, e.g. "T0002". */
@@ -25,15 +28,18 @@
     runner: CommandRunner;
     /** The comment a reply is being written to, shared with the thread list. */
     replyTo: CommentRow | null;
+    /** The draft. */
+    text?: string;
     oncomment: (
       kind: string,
       body: string,
       parent_id: string,
     ) => Promise<Result | null>;
+    /** Cancel was pressed; the draft and the reply target are cleared. */
+    oncancel?: () => void;
     placeholder?: string;
   } = $props();
 
-  let composerText = $state("");
   let sending = $state(false);
   // Pending from Send until the comment PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
@@ -42,20 +48,26 @@
   );
 
   async function postComment() {
-    if (!composerText.trim()) return;
+    if (!text.trim()) return;
     const kind = replyTo ? "reply" : "comment";
     const parent_id = replyTo?.comment_id ?? "";
     sending = true;
     let result: Result | null;
     try {
-      result = await oncomment(kind, composerText, parent_id);
+      result = await oncomment(kind, text, parent_id);
     } finally {
       sending = false;
     }
     if (result?.ok) {
-      composerText = "";
+      text = "";
       replyTo = null;
     }
+  }
+
+  function cancel() {
+    text = "";
+    replyTo = null;
+    oncancel?.();
   }
 
   const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
@@ -79,19 +91,21 @@
     {/if}
     <div class="composer-row">
       <input
-        bind:value={composerText}
+        bind:value={text}
         {placeholder}
         aria-label="Comment text"
         onkeydown={(e) => {
-          if (e.key === "Enter" && composerText.trim() && !runner.busy)
-            postComment();
+          if (e.key === "Enter" && text.trim() && !runner.busy) postComment();
         }}
       />
+      {#if oncancel}
+        <button type="button" class="btn" onclick={cancel}>Cancel</button>
+      {/if}
       <button
         type="button"
         class="btn btn-soft"
         onclick={postComment}
-        disabled={runner.busy || !composerText.trim()}>Send</button
+        disabled={runner.busy || !text.trim()}>Send</button
       >
     </div>
   </div>

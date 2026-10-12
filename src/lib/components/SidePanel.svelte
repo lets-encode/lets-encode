@@ -2,15 +2,14 @@
   The side panel of every campaign view, always shown. With a task it holds
   the host's task box pinned on top, the task's comments and the composer;
   without one (task '') it holds the campaign comments. Beside the content
-  it is resizable by its left edge; in portrait on a narrow screen
-  (DOCKED_QUERY) it docks below the content at one of three heights
-  (PANEL_SNAPS), dragged by its top edge and snapped on release, a tap on
-  the edge moving to the next height. At the lowest height a task's comment
-  field gives way to a Comment button in the header that raises the panel. Docked
-  without a task it starts as a bar holding the campaign comment field, with
-  a button that opens the list; dragging the bar up opens it too, dragging
-  the open list below its lowest height closes it. Sizes persist per browser
-  (side-panels.ts).
+  it is resizable by its left edge and the composer follows the comments. In
+  portrait on a narrow screen (DOCKED_QUERY) it docks below the content at
+  its content's height: closed, the header and the task box; opened, the
+  comments (without a task, the campaign's details and comments) below them,
+  up to DOCKED_MAX_CSS. The header's button, a tap on the top edge or a drag
+  of it opens and closes it. Docked or on a touch screen the comment field
+  shows only after its button or a Reply is pressed, and closes again when
+  left empty. The width persists per browser (side-panels.ts).
 -->
 <script module lang="ts">
   // Whether resolved threads are hidden; held for the session across views.
@@ -21,20 +20,16 @@
   import { MediaQuery } from "svelte/reactivity";
   import { tick, type Snippet } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
+  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { Result } from "$lib/commands.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { buildThreads } from "$lib/campaign-board.ts";
   import {
+    DOCKED_MAX_CSS,
     DOCKED_QUERY,
-    PANEL_SNAPS,
-    SNAP_CSS,
     defaultPanelWidth,
     hasStoredPanelWidth,
-    nearestSnap,
-    snapHeight,
-    stepSnap,
-    writeSidePanel,
     type SidePanelState,
   } from "$lib/side-panels.ts";
   import Icon from "./Icon.svelte";
@@ -105,62 +100,18 @@
   // Docked, or in a window too short to hold the task box beside a list.
   const shortQuery = new MediaQuery("(max-height: 500px)", false);
   const cramped = $derived(dockedQuery.current || shortQuery.current);
-  // Docked without a task, the campaign comments open only on request.
-  let campaignOpen = $state(false);
+  // Docked or on a touch screen the comment field opens on request.
+  const coarseQuery = new MediaQuery("(pointer: coarse)", false);
+  const fieldOnRequest = $derived(docked || coarseQuery.current);
+  // Docked: whether the panel is opened past the header and the task box.
+  let open = $state(false);
+  let fieldOpen = $state(false);
+  let draft = $state("");
   // The docked height in pixels while the top edge is dragged.
   let drag = $state<number | null>(null);
-  const collapsedCampaign = $derived(
-    docked && !task && !campaignOpen && drag === null,
-  );
-
-  // Docked, the bar is step 0 and the snaps follow.
-  const dockLevel = $derived(
-    collapsedCampaign ? 0 : PANEL_SNAPS.indexOf(panel.snap) + 1,
-  );
-  const SNAP_TEXT = {
-    peek: "Low height",
-    half: "Half height",
-    full: "Full height",
-  } as const;
-  const dockText = $derived(
-    collapsedCampaign ? "Comment field only" : SNAP_TEXT[panel.snap],
-  );
-
-  function setSnap(snap: SidePanelState["snap"]) {
-    panel.snap = snap;
-    writeSidePanel({ ...panel }, "snap");
-  }
-  // Without a task, a release well below the lowest snap closes the list
-  // back to the bar.
-  function dockEnd(height: number) {
-    const peek = snapHeight("peek", window.innerHeight);
-    if (!task && height < peek * 0.75) {
-      campaignOpen = false;
-      return;
-    }
-    if (!task) campaignOpen = true;
-    setSnap(nearestSnap(height, window.innerHeight));
-  }
-  // A tap on the bar moves up one height, from the highest back to the
-  // lowest (without a task, back to the comment field).
-  function dockTap() {
-    if (collapsedCampaign) campaignOpen = true;
-    else if (panel.snap !== "full") setSnap(stepSnap(panel.snap, 1));
-    else if (task) setSnap("peek");
-    else campaignOpen = false;
-  }
-  function dockStep(dir: 1 | -1) {
-    if (collapsedCampaign) {
-      if (dir === 1) campaignOpen = true;
-      return;
-    }
-    if (!task && dir === -1 && panel.snap === "peek") {
-      campaignOpen = false;
-      return;
-    }
-    setSnap(stepSnap(panel.snap, dir));
-  }
-
+  // A drag shows the list it may open; the field only once opened.
+  const listShown = $derived(!docked || open || drag !== null);
+  const posting = $derived(pendingVerdicts.isProcessing(`comment:${task}`));
   // Until the viewer sets a width, the panel beside the content keeps its
   // default share of the window as the window changes.
   $effect(() => {
@@ -194,36 +145,113 @@
   $effect.pre(() => {
     void task;
     replyTo = null;
-    campaignOpen = false;
+    open = false;
+    fieldOpen = false;
   });
 
-  // At the lowest docked height a task's comment field is hidden, keeping a
-  // draft, so the task box keeps the room; a reply in progress shows it.
-  const composerHidden = $derived(
-    docked && !!task && panel.snap === "peek" && drag === null && !replyTo,
+  // What opening the docked panel adds below the header and the task box.
+  const hasMore = $derived(count > 0 || (!task && !!info));
+  const fieldShown = $derived(
+    (!docked || open) && (!fieldOnRequest || fieldOpen || !!replyTo),
   );
+  const writeShown = $derived((!docked || open) && !fieldShown && !!auth.user);
+  const writeLabel = $derived(
+    composerHint ? composerHint.replace(/…$/, "") : "Write a comment",
+  );
+  const toggleLabel = $derived(
+    !task && info
+      ? `Details and comments · ${count}`
+      : count > 0
+        ? `Comments · ${count}`
+        : "Comment",
+  );
+
   let aside = $state<HTMLElement>();
-  async function openComposer() {
-    setSnap("half");
+  async function focusField() {
     await tick();
     aside?.querySelector<HTMLInputElement>(".composerwrap input")?.focus();
   }
+  function openField() {
+    open = true;
+    fieldOpen = true;
+    focusField();
+  }
   function startReply(c: CommentRow) {
     replyTo = c;
-    if (docked && panel.snap === "peek") setSnap("half");
+    open = true;
+    focusField();
   }
+  // Closing keeps a draft; an empty field closes with the panel.
+  function closePanel() {
+    open = false;
+    if (!draft.trim() && !replyTo) fieldOpen = false;
+  }
+  // The field's focus leaves before the header button's click lands, so the
+  // click acts on whether the panel was open at the press.
+  let openAtPress: boolean | null = null;
+  function toggle() {
+    const wasOpen = openAtPress ?? open;
+    openAtPress = null;
+    if (wasOpen) closePanel();
+    else if (hasMore) open = true;
+    else openField();
+  }
+  // With nothing else to show, the panel closes with the field.
+  function closeField() {
+    fieldOpen = false;
+    if (!hasMore) open = false;
+  }
+  // Focus leaving an empty field closes it.
+  function fieldBlur(e: FocusEvent) {
+    const to = e.relatedTarget as Node | null;
+    if (to && (e.currentTarget as HTMLElement).contains(to)) return;
+    if (fieldOnRequest && !draft.trim() && !replyTo && !posting) closeField();
+  }
+
+  // A drag past DOCK_STEP pixels opens or closes the docked panel.
+  const DOCK_STEP = 48;
+  function dockEnd(height: number, startHeight: number) {
+    if (height - startHeight > DOCK_STEP && hasMore) open = true;
+    else if (startHeight - height > DOCK_STEP) closePanel();
+  }
+  function dockTap() {
+    if (open) closePanel();
+    else if (hasMore) open = true;
+  }
+  function dockStep(dir: 1 | -1) {
+    if (dir === 1 && hasMore) open = true;
+    else if (dir === -1) closePanel();
+  }
+  const dockText = $derived(
+    open
+      ? task
+        ? "Task and comments"
+        : "Details and comments"
+      : task
+        ? "Task only"
+        : "Closed",
+  );
 </script>
 
 {#snippet composer()}
-  <div class="composerwrap" class:hidden={composerHidden}>
+  {#if writeShown}
+    <div class="composerwrap">
+      <button type="button" class="btn writebtn" onclick={openField}
+        ><Icon name="plus" /> {writeLabel}</button
+      >
+    </div>
+  {/if}
+  <div class="composerwrap" class:hidden={!fieldShown} onfocusout={fieldBlur}>
     <CommentComposer
       {task}
       {logins}
       {runner}
       bind:replyTo
+      bind:text={draft}
       placeholder={composerHint ||
         (task ? "Comment on this task…" : "Comment on the campaign…")}
       {oncomment}
+      oncancel={fieldOnRequest ? closeField : undefined}
     />
   </div>
 {/snippet}
@@ -234,11 +262,8 @@
   class:cramped
   class:dragging={drag !== null}
   style={docked
-    ? drag !== null
-      ? `height: ${drag}px`
-      : collapsedCampaign
-        ? ""
-        : `height: ${SNAP_CSS[panel.snap]}`
+    ? `max-height: ${DOCKED_MAX_CSS}` +
+      (drag !== null ? `; height: ${drag}px` : "")
     : `width: ${panel.width}px`}
 >
   <PanelResizeHandle
@@ -246,10 +271,12 @@
     bind:panel
     bind:drag
     {docked}
-    {dockLevel}
-    dockMin={task ? 1 : 0}
-    dockLevels={PANEL_SNAPS.length + 1}
+    dockLevel={open ? 1 : 0}
+    dockMin={0}
+    dockLevels={2}
     {dockText}
+    dockUp={!open && hasMore}
+    dockDown={open}
     ondockend={dockEnd}
     ondockstep={dockStep}
     ondocktap={dockTap}
@@ -272,29 +299,27 @@
         <span class="sep" aria-hidden="true">/</span>
       {/if}
       <h2 class="sptitle">{task ? "Task" : "Campaign"}</h2>
-      {#if composerHidden && auth.user}
-        <button type="button" class="btn showinline" onclick={openComposer}
-          >Comment</button
-        >
-      {/if}
-      {#if collapsedCampaign && (count > 0 || info)}
+      {#if docked && (hasMore || auth.user)}
         <button
           type="button"
           class="btn showinline"
-          onclick={() => (campaignOpen = true)}
-          >{info ? "Details and comments" : "Comments"} · {count}</button
+          aria-pressed={open}
+          onpointerdown={() => (openAtPress = open)}
+          onclick={toggle}
+          >{#if posting}<span
+              class="spinner"
+              title="Processing comment"
+              aria-label="Processing comment"
+            ></span>{/if}{toggleLabel}</button
         >
       {/if}
     </div>
     {#if taskBox}
       <div class="pinhead">{@render taskBox()}</div>
-    {:else if emptyLine && !collapsedCampaign}
+    {:else if emptyLine && listShown}
       <p class="empty">{emptyLine}</p>
     {/if}
-    {#if collapsedCampaign}
-      <!-- The bar is the campaign's comment field; the list opens above. -->
-      {@render composer()}
-    {:else}
+    {#if listShown}
       <div class="clist">
         {#if !task}{@render info?.()}{/if}
         <!-- In a docked or short panel, no comments means no list: the
@@ -352,8 +377,8 @@
           {/if}
         {/if}
       </div>
-      {@render composer()}
     {/if}
+    {@render composer()}
   </aside>
 </div>
 
@@ -369,12 +394,15 @@
        clampPanelWidth does (side-panels.ts). */
     max-width: max(280px, min(50vw, calc(100vw - 474px)));
   }
-  /* Docked below the content: full width, the grip on the top edge. The
-     height settles on its snap after a drag. */
+  /* Docked below the content: full width, the grip on the top edge, as tall
+     as its content up to its inline max-height. After a drag the height
+     returns to its content's, animated where height: auto interpolates. */
   .spwrap.docked {
+    flex: none;
     flex-direction: column;
     max-width: none;
     width: 100%;
+    interpolate-size: allow-keywords;
     transition: height 200ms cubic-bezier(0.22, 1, 0.36, 1);
     border-top: 1px solid var(--line-strong);
     box-shadow: 0 -2px 8px var(--shade);
@@ -405,7 +433,7 @@
   .docked .sp {
     border-radius: 0;
     box-shadow: none;
-    padding: 4px 12px 10px;
+    padding: 4px 12px 16px;
   }
   .sp :global(.banner) {
     margin: 0;
@@ -436,16 +464,15 @@
   .pinhead {
     flex: none;
   }
-  /* The shadow fills the panel's bottom padding, so content scrolling under
-     the composer does not show below it. With room to spare the composer
-     sits at the panel's bottom. */
+  /* The composer follows the comments; once they overflow it stays at the
+     panel's bottom. The shadow fills the panel's bottom padding, so content
+     scrolling under the composer does not show below it. */
   .composerwrap {
     flex: none;
-    margin-top: auto;
     position: sticky;
     bottom: 0;
     background: var(--bg-inset);
-    box-shadow: 0 12px 0 var(--bg-inset);
+    box-shadow: 0 16px 0 var(--bg-inset);
     padding-top: 6px;
   }
   .composerwrap.hidden {
@@ -472,10 +499,43 @@
     margin-left: auto;
     flex: none;
   }
+  .docked .sphead :global(.btn) {
+    min-height: 40px;
+  }
+  .showinline[aria-pressed="true"] {
+    color: var(--accent);
+    background: var(--accent-tint-strong);
+    border-color: var(--accent-line-strong);
+  }
+  .writebtn {
+    width: 100%;
+    min-height: 44px;
+    justify-content: center;
+    border-style: dashed;
+  }
+  .spinner {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--line);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation-duration: 2s;
+    }
+  }
   .clist {
-    flex: 1 1 0;
+    flex: 0 1 auto;
     /* Room for the list heading and a line below it. */
-    min-height: 72px;
+    min-height: 50px;
     overflow-y: auto;
     overscroll-behavior: contain;
     display: flex;
