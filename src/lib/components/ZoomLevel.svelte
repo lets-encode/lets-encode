@@ -56,7 +56,6 @@
     value = $bindable(),
     fitPage,
     fit = $bindable(null),
-    phoneFits = true,
   }: {
     /** Percent, between LEAST and MOST. */
     value: number;
@@ -64,8 +63,6 @@
     fitPage?: number;
     /** The fit in force, if any. */
     fit?: "width" | "page" | null;
-    /** Whether the fit buttons stay in a phone-width pane. */
-    phoneFits?: boolean;
   } = $props();
 
   $effect(() => {
@@ -91,7 +88,7 @@
   }
 </script>
 
-<span class="zoomctl" class:phone-fits={phoneFits}>
+<span class="zoomctl">
   <button
     type="button"
     class="btn btn-icon zstep"
@@ -121,25 +118,27 @@
     disabled={value >= MOST}
     onclick={() => step(1.25)}><Icon name="zoom-in" /></button
   >
-  <button
-    type="button"
-    class="tbtn tbtn-icon fit-width"
-    class:on={fit === "width"}
-    onclick={() => (fit = "width")}
-    aria-label="Fit the page width"
-    title="Fit the page width to the pane"><FitIcon kind="width" /></button
-  >
-  {#if fitPage !== undefined}
+  <span class="tbtn-pair">
     <button
       type="button"
-      class="tbtn tbtn-icon fit-page"
-      class:on={fit === "page"}
-      onclick={() => (fit = "page")}
-      aria-label="Fit the whole page"
-      title="Fit the whole page in the pane, top to bottom"
-      ><FitIcon kind="page" /></button
+      class="tbtn tbtn-icon fit-width"
+      class:on={fit === "width"}
+      onclick={() => (fit = "width")}
+      aria-label="Fit the page width"
+      title="Fit the page width to the pane"><FitIcon kind="width" /></button
     >
-  {/if}
+    {#if fitPage !== undefined}
+      <button
+        type="button"
+        class="tbtn tbtn-icon fit-page"
+        class:on={fit === "page"}
+        onclick={() => (fit = "page")}
+        aria-label="Fit the whole page"
+        title="Fit the whole page in the pane, top to bottom"
+        ><FitIcon kind="page" /></button
+      >
+    {/if}
+  </span>
 </span>
 
 <style>
@@ -167,12 +166,6 @@
       width: 70px;
     }
     .zval {
-      display: none;
-    }
-  }
-  @container material (max-width: 479px) {
-    .zoomctl:not(.phone-fits) .fit-width,
-    .zoomctl:not(.phone-fits) .fit-page {
       display: none;
     }
   }

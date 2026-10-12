@@ -162,7 +162,10 @@
   const minSizeOn = (surface: number) =>
     Math.max(pages[surface]?.width ?? 0, 1) * 0.02;
 
-  function svgXY(e: PointerEvent, surface: number): { x: number; y: number } {
+  function svgXY(
+    e: { clientX: number; clientY: number },
+    surface: number,
+  ): { x: number; y: number } {
     const svg = svgEls[surface];
     const page = pages[surface];
     if (!svg || !page) return { x: 0, y: 0 };
@@ -270,7 +273,46 @@
     zone.lry = snap(zone.lry, ys);
   }
 
+  // Dragging near the pane's edge scrolls it, so a region can be drawn or
+  // moved past what is in view; the edit follows the pointer as it scrolls.
+  const EDGE = 40;
+  let lastPointer: { clientX: number; clientY: number } | null = null;
+  let edgeScroll = 0;
+  function scrollAtEdge() {
+    edgeScroll = 0;
+    if (!drag || !lastPointer || !body) return;
+    const box = body.getBoundingClientRect();
+    const step = (inside: number) => Math.ceil((EDGE - inside) / 4);
+    const { clientX: x, clientY: y } = lastPointer;
+    const dy =
+      y < box.top + EDGE
+        ? -step(y - box.top)
+        : y > box.bottom - EDGE
+          ? step(box.bottom - y)
+          : 0;
+    const dx =
+      x < box.left + EDGE
+        ? -step(x - box.left)
+        : x > box.right - EDGE
+          ? step(box.right - x)
+          : 0;
+    const top = body.scrollTop;
+    const left = body.scrollLeft;
+    body.scrollTop += dy;
+    body.scrollLeft += dx;
+    if (body.scrollTop !== top || body.scrollLeft !== left)
+      applyDrag(lastPointer);
+    edgeScroll = requestAnimationFrame(scrollAtEdge);
+  }
+
   function pointerMove(e: PointerEvent) {
+    if (!drag) return;
+    lastPointer = { clientX: e.clientX, clientY: e.clientY };
+    applyDrag(lastPointer);
+    if (!edgeScroll) edgeScroll = requestAnimationFrame(scrollAtEdge);
+  }
+
+  function applyDrag(e: { clientX: number; clientY: number }) {
     if (!drag) return;
     const page = pages[drag.page];
     if (!page) return;
@@ -515,7 +557,14 @@
       onpinchstart: holdGesture,
     })}
   >
-    <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+    <div
+      class="material-grid"
+      class:fit-page={fit === "page"}
+      style="--per-row: {perRow}; width: {zoom}%; --page-row: {Math.max(
+        0,
+        bodyH - 30,
+      )}px"
+    >
       {#each pages as page, i (page.url)}
         {@const scale = (svgWidths[i] || 400) / page.width}
         {@const rx = 6 / scale}

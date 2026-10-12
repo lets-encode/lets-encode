@@ -10,6 +10,8 @@ parentheses.
 - A failed wizard finish shows Retry in blue, not green.
 - The top bar is 44px tall in windows 500px tall or less.
 - The under-construction banner is a straight strip without rounded corners.
+- At fit page the wizard's page panes show one whole page, and dragging a region near the pane's edge scrolls the pages.
+- Wizard cards use more of a phone's width and fade at the top as well as the bottom when they scroll.
 
 ## 2026-10-09
 
