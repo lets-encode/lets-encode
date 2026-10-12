@@ -24,6 +24,7 @@
     drawnBox,
     drawStarted,
     movedBox,
+    nudgedEdges,
     pagePoint,
     resizedBox,
   } from "$lib/box-geometry.ts";
@@ -44,6 +45,7 @@
   import { untrack } from "svelte";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
+  import { pieceIdLabel } from "$lib/campaign-tables.ts";
 
   let {
     pieces = $bindable(),
@@ -102,11 +104,24 @@
     /** A draw creates its zone only once the pointer has moved a few
         millimetres on screen, so a plain click leaves nothing behind. */
     started?: boolean;
+    /** A background press that cleared a selection only deselects; it never
+        sets a corner. */
+    deselected?: boolean;
   };
   let drag: Drag | null = null;
+  // The first corner of a region drawn by two clicks instead of a drag, in
+  // page pixels. A second click on the same page for the same piece completes
+  // the region; a second click on the same spot clears the corner.
+  let firstCorner = $state<{
+    surface: number;
+    piece: number;
+    x: number;
+    y: number;
+  } | null>(null);
 
-  // What a finger does on the pages; a mouse or pen always edits.
-  let touchMode = $state<"draw" | "scroll">("draw");
+  // What a finger does on the pages; a mouse or pen always edits. A finger
+  // starts by scrolling, so reaching the next page draws nothing.
+  let touchMode = $state<"draw" | "scroll">("scroll");
   // Fingers down on the pages. A second one turns the touch into a pan and
   // zoom, and no finger edits again until all have lifted.
   const fingers = new Set<number>();
@@ -174,6 +189,7 @@
 
   function backgroundPointerDown(e: PointerEvent, surface: number) {
     if (!mayEdit(e)) return;
+    const deselected = selectedZone !== null;
     selectedZone = null;
     const piece = pieces[selectedPiece];
     if (!piece || piece.kind !== "facsimile") return;
@@ -187,7 +203,29 @@
       sy: y,
       origin: { surface, ulx: x, uly: y, lrx: x, lry: y },
       started: false,
+      deselected,
     };
+  }
+
+  function cornerClick(surface: number, p: number, x: number, y: number) {
+    const first = firstCorner;
+    firstCorner = null;
+    if (!first || first.surface !== surface || first.piece !== p) {
+      firstCorner = { surface, piece: p, x, y };
+      return;
+    }
+    const minSize = minSizeOn(surface);
+    const zone: PieceZone = {
+      surface,
+      ...drawnBox(first.x, first.y, x, y, minSize),
+    };
+    if (zone.lrx - zone.ulx < minSize || zone.lry - zone.uly < minSize) return;
+    snapToNeighbours(zone, surface, { piece: p, zone: -1 });
+    const clash = overlappingPiece(pieces, p, zone);
+    notice = clash === -1 ? null : overlapNotice(clash, surface);
+    if (clash !== -1) return;
+    pieces[p].zones.push(zone);
+    selectedZone = { piece: p, zone: pieces[p].zones.length - 1 };
   }
 
   function zonePointerDown(
@@ -198,6 +236,7 @@
   ) {
     e.stopPropagation();
     if (!mayEdit(e)) return;
+    firstCorner = null;
     selectedZone = { piece: p, zone: z };
     const { x, y } = svgXY(e, surface);
     drag = {
@@ -220,6 +259,7 @@
   ) {
     e.stopPropagation();
     if (!mayEdit(e)) return;
+    firstCorner = null;
     selectedZone = { piece: p, zone: z };
     const { x, y } = svgXY(e, surface);
     drag = {
@@ -328,6 +368,7 @@
         )
       )
         return;
+      firstCorner = null;
       const piece = pieces[drag.piece];
       piece.zones.push({ ...drag.origin });
       drag.zone = piece.zones.length - 1;
@@ -376,10 +417,23 @@
   function pointerUp(e: PointerEvent) {
     releaseFinger(e);
     if (!drag) return;
-    const { kind, page, piece, zone: z, origin, started } = drag;
+    const {
+      kind,
+      page,
+      piece,
+      zone: z,
+      origin,
+      started,
+      deselected,
+      sx,
+      sy,
+    } = drag;
     drag = null;
     // A draw that never crossed the drag threshold was a plain click.
-    if (kind === "draw" && !started) return;
+    if (kind === "draw" && !started) {
+      if (!deselected) cornerClick(page, piece, sx, sy);
+      return;
+    }
     notice = null;
     const zone = pieces[piece].zones[z];
     const minSize = minSizeOn(page);
@@ -437,13 +491,43 @@
     if (clash === -1) Object.assign(zone, moved);
   }
 
+  // Arrow keys on a focused corner handle move that corner.
+  function handleKeydown(
+    e: KeyboardEvent,
+    surface: number,
+    p: number,
+    z: number,
+    corner: string,
+  ) {
+    const page = pages[surface];
+    const shift = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE);
+    if (!shift || !page) return;
+    e.preventDefault();
+    const zone = pieces[p].zones[z];
+    const resized = {
+      surface,
+      ...nudgedEdges(
+        zone,
+        corner,
+        shift.dx,
+        shift.dy,
+        minSizeOn(surface),
+        page,
+      ),
+    };
+    const clash = overlappingPiece(pieces, p, resized);
+    notice = clash === -1 ? null : overlapNotice(clash, surface);
+    if (clash === -1) Object.assign(zone, resized);
+  }
+
   function removeZone(p: number, z: number) {
     pieces[p].zones.splice(z, 1);
     selectedZone = null;
     notice = null;
   }
 
-  const labelFor = (p: number) => pieces[p].meta.title.trim() || pieces[p].id;
+  const labelFor = (p: number) =>
+    pieces[p].meta.title.trim() || pieceIdLabel(pieces[p].id);
 
   // Where the pages share the card behind a tab, picking a piece brings its
   // first page into view, so the Pages tab opens where that piece is.
@@ -462,6 +546,9 @@
 </script>
 
 <svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && firstCorner) firstCorner = null;
+  }}
   onpointermove={pointerMove}
   onpointerup={pointerUp}
   onpointercancel={(e) => {
@@ -519,7 +606,7 @@
     {:else}
       <span class="drag-hint">
         {#if pieces[selectedPiece]?.kind === "facsimile"}
-          Drag on a page to give a region to
+          Drag on a page, or click two corners, to give a region to
           <strong style="color: {pieceColour(selectedPiece)}"
             >{labelFor(selectedPiece)}</strong
           >
@@ -539,6 +626,11 @@
   {#if notice}
     <p class="msg-warn notice" role="status">{notice}</p>
   {/if}
+  <span class="vh" role="status"
+    >{firstCorner
+      ? `First corner set on page ${firstCorner.surface + 1}. Click the opposite corner to give the region to ${labelFor(firstCorner.piece)}.`
+      : ""}</span
+  >
 
   <div
     class="material-body"
@@ -600,7 +692,7 @@
               )}
               {@const btnX = Math.max(
                 zone.ulx + 4 / scale,
-                zone.lrx - 27 / scale,
+                zone.lrx - 31 / scale,
               )}
               {@const btnBelowLabel = btnX < zone.ulx + rx + pillW + 6 / scale}
               {@const btnY = btnBelowLabel
@@ -690,8 +782,9 @@
                     }
                   }}
                 >
-                  <rect width="20" height="20" rx="6" />
+                  <rect width="24" height="24" rx="7" />
                   <path
+                    transform="translate(2 2)"
                     d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
                   />
                 </g>
@@ -709,10 +802,20 @@
                     r={(wizardLayout.coarse ? 7 : 5) / scale}
                     onpointerdown={(e) =>
                       handlePointerDown(e, i, p, z, h.corner)}
+                    onkeydown={(e) => handleKeydown(e, i, p, z, h.corner)}
                   />
                 {/each}
               {/if}
             {/each}
+            {#if firstCorner?.surface === i}
+              {@const r = 9 / scale}
+              <path
+                class="corner"
+                style="--piece: {pieceColour(firstCorner.piece)}"
+                vector-effect="non-scaling-stroke"
+                d={`M${firstCorner.x - r} ${firstCorner.y}H${firstCorner.x + r}M${firstCorner.x} ${firstCorner.y - r}V${firstCorner.y + r}`}
+              />
+            {/if}
           </svg>
         </figure>
       {/each}
@@ -721,6 +824,12 @@
 </div>
 
 <style>
+  /* The first corner of a region drawn by two clicks. */
+  .corner {
+    stroke: var(--piece);
+    stroke-width: 2px;
+    pointer-events: none;
+  }
   .drag-hint {
     min-width: 0;
     font-size: 12px;

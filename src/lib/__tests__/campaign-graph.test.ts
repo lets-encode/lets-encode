@@ -265,10 +265,10 @@ test("buildGraph: numeric user ids render as logins via the map", () => {
   const withLogin = buildGraph(data, "", logins).find(
     (n) => n.task === "T0001",
   );
-  assert.equal(withLogin?.slots[0].who, "@octocat · pass");
+  assert.equal(withLogin?.slots[0].who, "@octocat · approved");
   // No map entry → the id stands in for the login, never a blank.
   const withoutLogin = buildGraph(data, "").find((n) => n.task === "T0001");
-  assert.equal(withoutLogin?.slots[0].who, "@12345 · pass");
+  assert.equal(withoutLogin?.slots[0].who, "@12345 · approved");
 });
 
 test("claimLabel names mei-friend for an encoding only", () => {

@@ -122,7 +122,7 @@
   const claimTip = (n: NextTask): string =>
     n.action === "continue"
       ? "Opens the task you hold in mei-friend."
-      : `Reserves this ${n.action === "review" ? "review" : "task"} for you for a limited time. Abandon gives it back.`;
+      : `Reserves this ${n.action === "review" ? "review" : "task"} for you for a limited time. Give back releases it.`;
 </script>
 
 <div class="shelfrow">

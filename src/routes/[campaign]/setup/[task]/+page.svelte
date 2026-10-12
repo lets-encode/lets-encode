@@ -228,9 +228,9 @@
   const runner = session.runner;
   const data = $derived(session.data);
   const holds = $derived(session.holds);
+  // Only the volunteer holding the task edits it; everyone else, and everyone
+  // once it is done, sees its values read-only without the editing buttons.
   const canEdit = $derived(session.canEdit);
-  // A done task is shown for viewing only: its editing buttons are hidden.
-  const done = $derived(data?.status === "completed");
   const busy = $derived(session.busy);
   const owner = $derived(session.campaign.owner);
   const repo = $derived(session.campaign.repo);
@@ -340,8 +340,9 @@
   // since the setup submission rebuilds empty measures for it until then.
   const omr = $derived(data?.preparation === "omr");
   // Below this width the form and the source pages take turns, chosen by a
-  // switch, instead of sharing the row.
-  const NARROW_DESK = 760;
+  // switch, instead of sharing the row. At 680px both still fit beside the
+  // side panel in a 1024px window, at about 330px each.
+  const NARROW_DESK = 680;
   let mainW = $state(0);
   const narrow = $derived(mainW > 0 && mainW < NARROW_DESK);
   let shownCol = $state<"form" | "pages">("form");
@@ -515,7 +516,7 @@
       proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
     return {
       note:
-        ` Filled in: clefs ${clefs}, each where its staff first appears; key signature ${proposal.keysig} and meter ${meter} from the first system; instrument labels for ${filled} of ${staves.length} staves.` +
+        ` Filled in: clefs ${clefs}, each where its staff first appears; key signature ${proposal.keysig} and time signature ${meter} from the first system; instrument labels for ${filled} of ${staves.length} staves.` +
         " Check the values, then submit.",
     };
   }
@@ -821,11 +822,11 @@
                       <input
                         type="text"
                         bind:value={staff.label}
-                        placeholder="optional"
+                        placeholder={canEdit ? "optional" : "—"}
                         title="The instrument or voice name printed in front of this staff. Leave empty for none."
                       />
                     </label>
-                    {#if !done}
+                    {#if canEdit}
                       <div class="rowbtns">
                         <button
                           type="button"
@@ -861,7 +862,7 @@
                   </li>
                 {/each}
               </ol>
-              {#if !done}
+              {#if canEdit}
                 <button
                   type="button"
                   class="btn addbtn"
@@ -915,11 +916,11 @@
                       <input
                         type="text"
                         bind:value={group.label}
-                        placeholder="optional"
+                        placeholder={canEdit ? "optional" : "—"}
                         title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
                       />
                     </label>
-                    {#if !done}
+                    {#if canEdit}
                       <div class="rowbtns">
                         <button
                           type="button"
@@ -933,7 +934,7 @@
                     {/if}
                   </div>
                 {/each}
-                {#if !done}
+                {#if canEdit}
                   <button
                     type="button"
                     class="btn addbtn"
@@ -951,7 +952,7 @@
             </fieldset>
 
             <fieldset disabled={!canEdit}>
-              <p class="grouphead">Key signature and meter</p>
+              <p class="grouphead">Key and time signature</p>
               <div class="pair">
                 <label class="field">
                   <span>Key signature</span>
@@ -1086,7 +1087,7 @@
               (omr && !recognition)}
             title={omr && canEdit && !recognition
               ? "The staves have to be transcribed before the setup can be submitted"
-              : "Submit the staves, clefs, key signature and meter for review"}
+              : "Submit the staves, clefs, key signature and time signature for review"}
           >
             Submit setup
           </button>
@@ -1115,6 +1116,7 @@
       <TaskPageSidePanel
         {tables}
         {taskId}
+        done={data?.status === "completed"}
         {viewer}
         {runner}
         bind:panel={sidePanel}
@@ -1257,9 +1259,6 @@
     margin: 0;
     min-width: 0;
   }
-  .setup fieldset:disabled {
-    opacity: 0.6;
-  }
   .grouphead {
     margin: 0 0 10px;
     font-size: 12px;
@@ -1368,6 +1367,25 @@
     color: var(--ink-faint);
     background: var(--bg-tint);
     cursor: not-allowed;
+  }
+  /* Read-only (the viewer does not hold the task): the values are what is
+     being reviewed, so they read as plain text in full ink, not as dimmed
+     controls. */
+  fieldset:disabled .field select,
+  fieldset:disabled .field input {
+    appearance: none;
+    color: var(--ink);
+    -webkit-text-fill-color: var(--ink);
+    opacity: 1;
+    background: transparent;
+    border-color: transparent;
+    padding-left: 0;
+    padding-right: 0;
+    cursor: default;
+  }
+  fieldset:disabled .field input::placeholder {
+    color: var(--ink-faint);
+    -webkit-text-fill-color: var(--ink-faint);
   }
   .rowbtns {
     flex: none;

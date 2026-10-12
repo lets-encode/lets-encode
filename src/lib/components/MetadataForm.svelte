@@ -449,14 +449,16 @@
   .field {
     margin-top: 14px;
   }
-  /* Fields in a row line up at their inputs when a label wraps. */
+  /* Fields in a row line up at their inputs when a label wraps. A field
+     narrower than 160px moves to the next line, so a placeholder is not cut. */
   .pair {
     display: flex;
+    flex-wrap: wrap;
     align-items: flex-end;
-    gap: 12px;
+    column-gap: 12px;
   }
   .pair .grow {
-    flex: 1;
+    flex: 1 1 160px;
     min-width: 0;
   }
   .pair .year {

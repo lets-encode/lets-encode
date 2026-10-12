@@ -897,6 +897,22 @@
     if (result?.ok) manage = false;
   }
 
+  // The setup wizard opens a campaign it has just created with ?created; the
+  // confirmation stays until dismissed, and the parameter leaves the address so
+  // a reload does not repeat it.
+  let created = $state(page.url.searchParams.has("created"));
+  $effect(() => {
+    if (!page.url.searchParams.has("created")) return;
+    const query = new URLSearchParams(page.url.searchParams);
+    query.delete("created");
+    const rest = query.toString();
+    goto(`/${campaign}${rest ? `?${rest}` : ""}`, {
+      replaceState: true,
+      noScroll: true,
+      keepFocus: true,
+    });
+  });
+
   // Deep links, read once after the first load: ?task= opens that task's
   // detail. On the owner's board the side panel reopens the task chosen last
   // time, if any; the score view shows a task only from ?task=.
@@ -1093,6 +1109,7 @@
       task={card.task}
       zone={zoneOf(card.task)}
       review={card.column === "validation"}
+      done={card.column === "done"}
       {comments}
       {logins}
       {viewer}
@@ -1207,9 +1224,9 @@
       </div>
       <div
         class="irow"
-        title="Contributions to this campaign are published under this license."
+        title="Contributions to this campaign are published under this licence."
       >
-        <span>License</span>
+        <span>Licence</span>
         <span>{license || "—"}</span>
       </div>
       <div
@@ -1227,6 +1244,17 @@
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else}
+    {#if created}
+      <div class="banner bar ok" role="status">
+        <span>
+          The campaign is created. Its address is
+          <a href={`/${campaign}`}>{page.url.host}/{campaign}</a>.
+        </span>
+        <button type="button" class="dismiss" onclick={() => (created = false)}
+          >Dismiss</button
+        >
+      </div>
+    {/if}
     {#if !auth.user}
       <div class="banner bar warn">
         <span>
@@ -1381,7 +1409,6 @@
             {locks}
             {logins}
             {pieceNames}
-            preparations={piecePreparations}
             busy={runner.busy}
             onsave={savePlan}
             oncancel={() => (manage = false)}
@@ -1544,7 +1571,7 @@
                       >
                         <span class="attntitle">{card.title}</span>
                         <span class="attnspacer"></span>
-                        {#if card.counts.fails > 0}
+                        {#if card.counts.fails > 0 && card.column !== "done"}
                           <span class="chip chip-fail"
                             >{card.counts.fails} change request{card.counts
                               .fails === 1
@@ -1931,7 +1958,7 @@
     padding: 12px 16px 12px 0;
     box-sizing: border-box;
   }
-  @media (orientation: portrait) and (max-width: 753px) {
+  @media (orientation: portrait) and (max-width: 860px) {
     .volsplit.split,
     .boardview.split {
       flex-direction: column;
@@ -2250,6 +2277,9 @@
   .stat {
     font-size: 13px;
     color: var(--ink-soft);
+  }
+  .stat b {
+    font-weight: 600;
   }
   .stat b.c-info {
     color: var(--info);

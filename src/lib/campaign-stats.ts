@@ -27,7 +27,6 @@ import {
   parseStateCsv,
   parseTaskCsv,
   pieceNamesOf,
-  piecePreparationsOf,
   resolveLogins,
   COMMENT_PATH,
   CONFIG_PATH,
@@ -41,7 +40,6 @@ import type {
   HistoryRow,
   LockRow,
   PieceNames,
-  PiecePreparations,
   StateRow,
   TaskRow,
 } from "./campaign-tables.ts";
@@ -52,15 +50,9 @@ import type { RepoSummary } from "./forge/github-rest.ts";
 
 /** A task's one-line title in a campaign (cardTitle). */
 const titleOf = (
-  stats: Pick<CampaignStats, "pieceNames" | "preparations">,
+  stats: Pick<CampaignStats, "pieceNames">,
   def: TaskRow,
-): string =>
-  cardTitle(
-    def.fragment,
-    def.locator,
-    stats.pieceNames,
-    stats.preparations[def.fragment] === "omr",
-  );
+): string => cardTitle(def.fragment, def.locator, stats.pieceNames);
 
 /** One campaign's tracking tables condensed for the dashboard views. */
 export interface CampaignStats {
@@ -94,8 +86,6 @@ export interface CampaignStats {
   allowSelfValidation: boolean;
   /** Fragment path → piece display name, from the config's pieces list. */
   pieceNames: PieceNames;
-  /** Fragment path → the piece's preparation ("omr"), from the same list. */
-  preparations: PiecePreparations;
   // The raw tables, for the my-work projections.
   taskDefs: TaskRow[];
   rows: StateRow[];
@@ -404,7 +394,6 @@ async function fetchStats(
     createdAt: summary.created_at || history[0]?.timestamp || "",
     allowSelfValidation: configFlag(yaml, "allow_self_validation"),
     pieceNames: pieceNamesOf(configPieces(yaml)),
-    preparations: piecePreparationsOf(configPieces(yaml)),
     taskDefs,
     rows: state.rows,
     validationColumns: state.validationColumns,

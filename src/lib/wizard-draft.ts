@@ -4,23 +4,23 @@
 // continued from the campaign list.
 //
 // A record holds less than the wizard's state. `File` objects and image bytes
-// cannot be stored, so a draft keeps the repository-relative paths of the page
-// images the pages step committed and reads their bytes back from the repository
-// when the setup is continued; files that were picked but not yet uploaded, and
-// the candidate pages read from them, are not kept. Uploaded encodings are MEI
-// text and are stored as they are, since nothing else holds them until the final
-// step commits them.
+// cannot be stored in localStorage, so a draft keeps the repository-relative
+// paths of the page images the pages step prepared, and their bytes are kept in
+// IndexedDB (draft-images.ts) until the final step commits them; files that were
+// picked but not yet read, and the candidate pages read from them, are not kept.
+// Uploaded encodings are MEI text and are stored as they are, since nothing else
+// holds them until the final step commits them.
 //
 // A record exists only while a setup is unfinished: once the last step has
 // committed the campaign, the record is removed. So every record here describes
 // something that can be continued.
 
 import type { Preparation } from "./campaign-init.ts";
-import type { EncodingSource, PageImage } from "./prepare-images.ts";
+import type { EncodingSource } from "./prepare-images.ts";
 import type { SourceMetadata } from "./source-metadata.ts";
 import type { Piece } from "./pieces.ts";
 import type { WizardClaim, WizardRepo, WizardStepId } from "./wizard.svelte.ts";
-import type { ForgeClient } from "./forge/types.ts";
+import { discardDraftImages } from "./draft-images.ts";
 
 /** Records written under any other version are ignored when read back. */
 export const DRAFT_VERSION = 1;
@@ -36,7 +36,7 @@ export interface DraftEntries {
   license: string;
   iiifManifestUrl: string;
   copyrightAccepted: boolean;
-  /** Paths of the committed page images, in page order; the bytes are re-read. */
+  /** Paths of the prepared page images, in page order; the bytes are in IndexedDB. */
   imagePaths: string[];
   encodings: EncodingSource[];
   source: SourceMetadata;
@@ -59,7 +59,7 @@ export interface WizardDraft {
    * again and find it gone.
    */
   claim: WizardClaim | null;
-  /** The campaign repository, once the pages step has created it. */
+  /** The campaign repository, once the final step has created it. */
   repo: WizardRepo | null;
   entries: DraftEntries;
 }
@@ -133,6 +133,7 @@ export function writeDraft(draft: WizardDraft): string | null {
 
 export function discardDraft(handle: string): void {
   store()?.removeItem(draftKey(handle));
+  discardDraftImages(handle);
 }
 
 /**
@@ -151,49 +152,4 @@ export function resumableDrafts(owner: string): WizardDraft[] {
     if (draft && draft.owner === owner) drafts.push(draft);
   }
   return drafts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-/**
- * A page image a draft records is not in its repository. Its own type because a
- * caller can carry on without the images — they can be uploaded again — where a
- * request that failed for another reason is worth reporting and repeating.
- */
-export class MissingDraftImageError extends Error {}
-
-/**
- * The bytes of a draft's page images, read back from the repository the upload
- * step committed them to. The result follows `paths`, which is page order.
- *
- * Read through the API rather than from each file's download URL: a page
- * displayed from raw.githubusercontent.com is an image the browser loads, while
- * reading its bytes is a connection this app only makes to the API.
- */
-export async function fetchDraftImages(
-  forge: Pick<ForgeClient, "getRepoFileBytes">,
-  repo: { owner: string; name: string },
-  paths: string[],
-  onProgress?: (done: number, total: number) => void,
-): Promise<PageImage[]> {
-  const images: PageImage[] = [];
-  for (const path of paths) {
-    const blob = await forge.getRepoFileBytes(repo.owner, repo.name, path);
-    if (!blob)
-      throw new MissingDraftImageError(
-        `${path} is no longer in ${repo.owner}/${repo.name}.`,
-      );
-    images.push({ path, blob: asImageBlob(blob, path) });
-    onProgress?.(images.length, paths.length);
-  }
-  return images;
-}
-
-/**
- * The same bytes under an image media type, taken from the file's extension when
- * they arrive under another one. A blob URL is displayed according to the type
- * its blob records, so bytes labelled anything else do not render as an image.
- */
-function asImageBlob(blob: Blob, path: string): Blob {
-  if (blob.type.startsWith("image/")) return blob;
-  const type = /\.png$/i.test(path) ? "image/png" : "image/jpeg";
-  return new Blob([blob], { type });
 }

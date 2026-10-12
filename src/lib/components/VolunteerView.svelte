@@ -189,7 +189,7 @@
     if (!featured) return "";
     const parts = typeOf(featured) ? [typeOf(featured)] : [];
     if (featured.column === "ready" && featured.omr)
-      parts.push("starts from an OMR draft (optical music recognition)");
+      parts.push("starts from a draft");
     const pageCount = nextPreview?.pages.length ?? 0;
     if (featured.pre && pageCount)
       parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
@@ -270,7 +270,7 @@
 {/snippet}
 
 {#snippet chips(card: BoardCard)}
-  {#if card.counts.fails > 0}
+  {#if card.counts.fails > 0 && card.column !== "done"}
     <span class="chip chip-fail"
       >{card.counts.fails} change request{card.counts.fails === 1
         ? ""
@@ -466,7 +466,8 @@
       <span class="none"
         >{waitingCards.length > 0
           ? "No tasks are open for you right now."
-          : "No tasks are open right now: every task is claimed, in review, waiting for an earlier task, or done."}</span
+          : "No tasks are open right now: every task is claimed, in review, waiting for an earlier task, or done."}
+        <a href="/campaigns">Find open tasks in other campaigns</a></span
       >
     {/if}
 
@@ -967,6 +968,13 @@
   .none {
     font-size: 12px;
     color: var(--ink-faint);
+  }
+  .none a {
+    display: block;
+    width: fit-content;
+    padding: 5px 0;
+    font-weight: 600;
+    color: var(--link);
   }
 
   /* --------------------------------------------------------- pieces table */

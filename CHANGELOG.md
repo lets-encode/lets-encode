@@ -5,6 +5,20 @@ parentheses.
 
 ## 2026-10-12
 
+- The setup wizard creates the campaign repository on Create campaign and says beforehand what it creates.
+- The wizard gives the page images more room on tablets and small laptops.
+- The wizard says why Continue is not available, and a single facsimile piece covers every page from the start.
+- Pages, piece regions and measure correction boxes can be placed without dragging.
+- Measure correction draws staves in wine red and grand staves in dark green, with a help panel and zoom buttons.
+- Score setup shows read-only values as plain text and keeps form and pages side by side on tablets.
+- The side panel docks below the content on tablets held upright.
+- Reviews say approve and request changes, and change requests on finished tasks are no longer red.
+- Abandon is called Give back.
+- Task names and labels drop the OMR and layout-task terms and use British spelling.
+- Unknown addresses show an error page, and an empty campaign links to the other campaigns.
+- A new campaign opens with a confirmation of its address.
+- The theme follows the system's light or dark setting until the bulb is used.
+- Toggles and icon buttons tell screen readers their state and use drawn icons.
 - On phones the task panel opens to the task box's height, and the comment field opens only on request.
 - The comment field follows the comments instead of sitting at the side panel's bottom.
 - On phones the campaign's settings and View score buttons sit on the campaign name's line.

@@ -48,7 +48,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import { untrack, type Snippet } from "svelte";
   import { goto } from "$app/navigation";
-  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
   import { releaseClaim } from "$lib/campaign-resolve.ts";
   import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
@@ -82,6 +82,7 @@
     nextLabel = "Continue",
     nextIcon = "arrow-right",
     nextDisabled = false,
+    nextReason,
     backDisabled = false,
     navBlocked,
     finish = false,
@@ -122,6 +123,11 @@
     /** The icon after the next label; null for none. */
     nextIcon?: "arrow-right" | "check" | null;
     nextDisabled?: boolean;
+    /**
+     * Why Next is disabled, shown above the footer beside the button and
+     * linked to it as its description.
+     */
+    nextReason?: string;
     backDisabled?: boolean;
     /**
      * Why the step cannot be left right now: disables Back, Next and the
@@ -133,6 +139,8 @@
     /** Controls the Back/Next pair cannot express, in place of it. */
     footer?: Snippet;
   } = $props();
+  const reasonId = $props.id();
+  const reasonShown = $derived(nextDisabled && !!nextReason);
 
   const sidebar = $derived(wizardLayout.sidebar);
   const short = $derived(wizardLayout.short);
@@ -232,7 +240,7 @@
     const owner = auth.user?.login;
     if (owner) saveDraft(owner, draftSnapshot());
     try {
-      await resumeDraft(forge(), handle, () => {});
+      await resumeDraft(handle);
     } catch (err) {
       resumeError = `Could not resume “${handle}”: ${(err as Error).message}`;
     }
@@ -708,8 +716,8 @@
         <div class="kicker">Step {current + 1} of {steps.length}</div>
       {/if}
       <div class="title-row">
-        <h1>
-          {heading}
+        <div class="headline">
+          <h1>{heading}</h1>
           {#if shared && (intro || info)}
             <button
               type="button"
@@ -722,7 +730,7 @@
               <Icon name="info" size={18} />
             </button>
           {/if}
-        </h1>
+        </div>
         {#if shared && panes}
           <div
             class="panes"
@@ -793,7 +801,7 @@
     <!-- Every step draws the frame, so the one place to report that this setup
          is no longer being kept for later — or why it opened where it did — is
          here. -->
-    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned}
+    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned || reasonShown}
       <div class="pinned">
         {#if draftStatus.resumeNotice}
           <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
@@ -805,6 +813,9 @@
           </p>
         {/if}
         {@render pinned?.()}
+        {#if reasonShown}
+          <p class="msg-warn" id={reasonId} role="status">{nextReason}</p>
+        {/if}
       </div>
     {/if}
 
@@ -831,6 +842,7 @@
             onclick={onNext}
             disabled={nextDisabled || navBlocked !== undefined}
             title={navBlocked}
+            aria-describedby={reasonShown ? reasonId : undefined}
           >
             {nextLabel}{#if nextIcon}<Icon name={nextIcon} />{/if}
           </button>
@@ -1059,6 +1071,13 @@
     flex-direction: column;
     overflow: auto;
   }
+  /* Below 1300px the rail gives the page images part of its width. */
+  @media (max-width: 1299px) {
+    .rail {
+      width: 208px;
+      padding-inline: 16px;
+    }
+  }
   .rail-kicker {
     font-size: 12px;
     font-weight: 600;
@@ -1184,7 +1203,7 @@
     font-size: 11.5px;
   }
   .short .connector {
-    height: 8px;
+    height: 4px;
   }
   .short .step-text {
     padding-top: 4px;
@@ -1444,7 +1463,7 @@
     flex: none;
     width: var(
       --work-width,
-      max(clamp(400px, 25.6vw + 138px, 472px), min(30vw, 680px))
+      max(clamp(340px, 25.6vw + 78px, 472px), min(30vw, 680px))
     );
     box-sizing: border-box;
     padding: 24px 24px 24px 3px;
@@ -1537,11 +1556,16 @@
     align-items: center;
     column-gap: 14px;
   }
-  h1 {
-    margin: 0;
+  /* The heading with its info button beside it, outside the heading so the
+     button's label is not read as part of it. */
+  .headline {
     display: flex;
     align-items: center;
     gap: 2px;
+    min-width: 0;
+  }
+  h1 {
+    margin: 0;
     font-size: 21px;
     line-height: 1.25;
     font-weight: 600;
@@ -1656,7 +1680,9 @@
   .body-wrap:global([data-more-below])::after {
     opacity: 1;
   }
+  /* A field focused near either edge scrolls clear of the 26px fades. */
   .card-body {
+    scroll-padding-block: 26px;
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;

@@ -124,7 +124,9 @@
 >
   {#if wizardLayout.dropZone}
     <div class="dropzone" class:drag={dragActive}>
-      <div class="arrow" aria-hidden="true">⤓</div>
+      <div class="arrow" aria-hidden="true">
+        <Icon name="upload" size={40} />
+      </div>
       <div class="drop-text">
         <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
         <div class="types">You can combine them — or continue without any.</div>
@@ -168,7 +170,7 @@
             onclick={() => remove(i)}
             aria-label="Remove {file.name}"
           >
-            ×
+            <Icon name="close" />
           </button>
         </div>
       {/each}
@@ -207,7 +209,7 @@
     background: var(--bg-tint);
   }
   .arrow {
-    font-size: 40px;
+    display: flex;
     color: var(--accent);
   }
   .prompt {
@@ -250,8 +252,9 @@
       padding: 16px 20px;
       text-align: left;
     }
-    .arrow {
-      font-size: 28px;
+    .arrow :global(svg) {
+      width: 28px;
+      height: 28px;
     }
     .prompt {
       margin-top: 0;
@@ -324,15 +327,31 @@
       color: var(--ink-soft);
     }
   }
-  /* Phones in landscape: the button and the list side by side. */
+  /* Phones in landscape: the button and the list side by side. A drop zone
+     takes at most half the row, so the list keeps room for the file names. */
   @media (max-height: 500px) {
     .upload {
       flex-direction: row;
       align-items: flex-start;
     }
-    .files {
-      flex: 1;
+    .dropzone {
+      flex: 0 1 50%;
       min-width: 0;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      min-height: 0;
+      padding: 12px 14px;
+    }
+    .dropzone .arrow,
+    .dropzone .types {
+      display: none;
+    }
+    .dropzone .picker {
+      margin-left: 0;
+    }
+    .files {
+      flex: 1 1 50%;
+      min-width: 200px;
     }
   }
   .drop-overlay {
@@ -393,7 +412,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font: 600 9px var(--font);
+    font: 600 10px var(--font);
     color: var(--accent);
   }
   .file-text {
@@ -415,6 +434,9 @@
   }
   .remove {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     margin-left: auto;
     cursor: pointer;
     width: 32px;

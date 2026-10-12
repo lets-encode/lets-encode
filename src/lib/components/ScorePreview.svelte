@@ -516,6 +516,7 @@
         <button
           type="button"
           class:on={pane === "facs"}
+          aria-pressed={pane === "facs"}
           onclick={() => setPane("facs")}
           title="Show the page images of the source"
           ><span class="ico" aria-hidden="true"><Icon name="facsimile" /></span
@@ -524,6 +525,7 @@
         <button
           type="button"
           class:on={pane === "enc"}
+          aria-pressed={pane === "enc"}
           onclick={() => setPane("enc")}
           title="Show the encoding rendered as notation"
           ><span class="ico" aria-hidden="true"><Icon name="notes" /></span
@@ -532,6 +534,7 @@
         <button
           type="button"
           class:on={pane === "both"}
+          aria-pressed={pane === "both"}
           onclick={() => setPane("both")}
           title="Show the facsimile and the rendered encoding next to each other"
           ><span class="ico" aria-hidden="true"
@@ -547,11 +550,13 @@
       <button
         type="button"
         class:on={pvView === "single"}
+        aria-pressed={pvView === "single"}
         onclick={() => pvSetView("single")}>1 page</button
       >
       <button
         type="button"
         class:on={pvView === "double"}
+        aria-pressed={pvView === "double"}
         onclick={() => pvSetView("double")}>2 pages</button
       >
     </div>
@@ -574,6 +579,7 @@
         type="button"
         class="chip-switch zonesw"
         class:on={showZones}
+        aria-pressed={showZones}
         onclick={() => (showZones = !showZones)}
         title="Show or hide the measure zones on the facsimile"
         ><span class="sw"></span>Measure zones</button
@@ -610,6 +616,7 @@
         type="button"
         class="tbtn tbtn-icon fitbtn"
         class:on={pvFit === "width"}
+        aria-pressed={pvFit === "width"}
         onclick={() => (pvFit = "width")}
         aria-label="Fit the page width"
         title="Fit the page width to the pane"><FitIcon kind="width" /></button
@@ -618,6 +625,7 @@
         type="button"
         class="tbtn tbtn-icon fitbtn"
         class:on={pvFit === "page"}
+        aria-pressed={pvFit === "page"}
         onclick={pvFitWholePage}
         aria-label="Fit the whole page"
         title="Fit the whole page in the pane, top to bottom"

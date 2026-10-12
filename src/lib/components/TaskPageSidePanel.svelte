@@ -25,6 +25,7 @@
     runner,
     panel = $bindable(),
     review = false,
+    done = false,
     banner,
     taskBox,
     onanchor,
@@ -39,6 +40,8 @@
     panel: SidePanelState;
     /** The task awaits review: comments take the review colour. */
     review?: boolean;
+    /** The task is done: its change requests read as history. */
+    done?: boolean;
     banner?: Snippet;
     /** The task's record and controls, pinned above the comments. */
     taskBox: Snippet;
@@ -72,6 +75,7 @@
   task={taskId}
   zone={pieceZone(index)}
   {review}
+  {done}
   comments={tables.comments}
   logins={tables.logins}
   {viewer}

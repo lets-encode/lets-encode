@@ -3,6 +3,8 @@
   width it has, so fewer per row shows each page larger.
 -->
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+
   let {
     value = $bindable(),
   }: {
@@ -20,7 +22,7 @@
     disabled={value <= 1}
     onclick={() => value--}
   >
-    −
+    <Icon name="minus" />
   </button>
   <span class="per-row" title="{value} per row"
     >{value}<span class="per-row-word">per row</span></span
@@ -32,7 +34,7 @@
     disabled={value >= MOST}
     onclick={() => value++}
   >
-    +
+    <Icon name="plus" />
   </button>
 </span>
 

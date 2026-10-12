@@ -14,10 +14,12 @@ export const PANEL_MIN = 280;
 export const CONTENT_BESIDE_MIN = 474;
 
 /** Where the panel docks below the content instead of beside it: portrait
-    windows too narrow for the panel at PANEL_MIN beside CONTENT_BESIDE_MIN.
-    ui.css, ScoreView.svelte and the campaign page repeat the width in their
-    media queries. */
-export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 753px)";
+    windows up to 860px wide, phones and tablets held upright (an 11-inch iPad
+    is 834px). Narrower than PANEL_MIN beside CONTENT_BESIDE_MIN the panel
+    cannot sit beside the content at all; up to 860px it would take the width
+    the page images need. ui.css, ScoreView.svelte and the campaign page repeat
+    the width in their media queries. */
+export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 860px)";
 /** The widest default panel beside the content (defaultPanelWidth). */
 export const DEFAULT_PANEL_WIDTH = 400;
 const DEFAULT_WIDTH_SHARE = 0.38;

@@ -871,7 +871,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
     const kind = subtask_id ? "validation" : "encoding";
     const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
     try {
-      ctx.progress({ step: "Abandoning the task…" });
+      ctx.progress({ step: "Giving the task back…" });
       await muteOnce(ctx);
       const locks = parseLockCsv(
         (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
@@ -916,7 +916,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
       if (kind === "encoding") await deleteTaskBranch(ctx, task_id);
       return { ...res, message: `You abandoned ${target}.` };
     } catch (e) {
-      return { error: `Abandoning the task failed: ${(e as Error).message}` };
+      return { error: `Giving the task back failed: ${(e as Error).message}` };
     }
   },
 };

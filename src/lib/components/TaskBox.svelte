@@ -2,7 +2,7 @@
   A task's box in the side panel (SidePanel.svelte) of the campaign page, the
   review view and the pre-task editors: one continuous card — piece-tinted header with the task's
   name over its piece, status pill, submission and the viewer's own review
-  slot (on a phone, DOCKED_QUERY, the submission and others' reviews fold
+  slot (docked, DOCKED_QUERY, the submission and others' reviews fold
   behind a disclosure), and the action footer. Commands run through callbacks the
   host page passes in.
 -->
@@ -165,11 +165,13 @@
   const help = $derived.by(() => {
     if (card.column === "done") return "";
     if (card.column === "validation")
-      return card.pre
-        ? `Check the submitted work in the ${editorName} and approve it or request changes.`
-        : inView
-          ? "Compare the encoding with the scan and approve it or request changes."
-          : "Compare the encoding with the scan in the review view and approve it or request changes.";
+      return taskState?.encoder === viewer && !claimableSub && !myReview
+        ? "Another volunteer reviews your submission."
+        : card.pre
+          ? `Check the submitted work in the ${editorName} and approve it or request changes.`
+          : inView
+            ? "Compare the encoding with the scan and approve it or request changes."
+            : "Compare the encoding with the scan in the review view and approve it or request changes.";
     if (card.locator === "score-setup")
       return "Set the score's staves, clefs, key signature and time signature from the source.";
     if (card.locator === "omr-layout")
@@ -177,7 +179,7 @@
     if (card.locator === "measure-zones")
       return "Check the measure boxes on each page and correct the wrong ones.";
     if (card.omr)
-      return "Correct the notes that optical music recognition (OMR) read from this page, in the mei-friend editor.";
+      return "Correct the notes of this page's draft, read automatically from the scan, in the mei-friend editor.";
     return card.scope
       ? "Encode the music of this page in the mei-friend editor."
       : "Encode the music of the piece in the mei-friend editor.";
@@ -233,7 +235,7 @@
       <div class="subline">
         <span class="avatar">{initialOf(encoderLogin)}</span>
         <span class="subtext"
-          >encoded by <b>{encoderLogin}</b>{taskState?.encoded_at
+          >submitted by <b>{encoderLogin}</b>{taskState?.encoded_at
             ? elapsed(taskState.encoded_at) === "now"
               ? " · just now"
               : ` · ${elapsed(taskState.encoded_at)} ago`
@@ -340,13 +342,14 @@
           class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
-          title="Reserve this review slot.">Claim to review</button
+          title="Reserves this review for you for a limited time. Give back releases it."
+          >Claim to review</button
         >
         {#if !card.pre && !inView}
           <a
             class="btn btn-soft"
             href={`/${campaign}/review/${card.task}`}
-            title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
+            title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review view</a
           >
         {/if}
@@ -370,7 +373,7 @@
             class:btn-primary={primary}
             href={processing ? undefined : `/${campaign}/review/${card.task}`}
             aria-disabled={processing}
-            title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
+            title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review view</a
           >
         {/if}

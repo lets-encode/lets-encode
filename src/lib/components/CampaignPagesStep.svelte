@@ -5,36 +5,26 @@
   previous step read are shown here as previews to choose between, and can be
   moved into reading order.
 
-  This is where the campaign repository is created, under the name the first step
-  reserved: on Continue the chosen pages are fetched or rendered at committing
-  size — and only those, so an unchosen page costs nothing — and committed, so
-  later steps work against a real repository. The reservation keeps the name
-  through all of this; it is registered as a campaign by the final step, once
-  there is a campaign to register. Configuration, tracking tables and the piece
-  MEIs are written there too, not here. Because the repository outlives a failure
-  after it exists, a retry re-runs only the commit rather than creating a second
-  one. An upload with no page images never reaches this step — navigation skips
-  it, and the upload step creates the repository instead (campaign-repo.ts).
+  On Continue the chosen pages are fetched or rendered at committing size — and
+  only those, so an unchosen page costs nothing — and kept in the browser
+  (draft-images.ts). The final step creates the campaign repository and commits
+  them there with the configuration, tracking tables and piece MEIs. An upload
+  with no page images never reaches this step: navigation skips it.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import {
-    IMAGE_DIR,
-    resolvePages,
-    blobToBase64,
-  } from "$lib/prepare-images.ts";
-  import { ensureCampaignRepo } from "$lib/campaign-repo.ts";
+  import { resolvePages } from "$lib/prepare-images.ts";
   import {
     wizard,
     draftSnapshot,
+    keepDraftImages,
     saveDraft,
     nextStep,
     previousStep,
   } from "$lib/wizard.svelte.ts";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
-  import type { FileChange } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
@@ -50,22 +40,37 @@
 
   let busy = $state(false);
   let error = $state<string | null>(null);
-  // Whether the commit has been attempted here and stopped part way, which is
-  // what makes the next press a retry of it.
+  // Whether reading the pages has been attempted here and stopped part way,
+  // which is what makes the next press a retry of it.
   let failed = $state(false);
   const log = new ProgressLog();
 
   // Fewer pages than the row would hold show one row at its widest; a long
   // source packs more per row. Phones and tablets, whose pane is narrow,
-  // start at two. Not persisted, so every setup starts here.
+  // start at two; a window 500px tall or less shows whole pages, five to a
+  // row. Not persisted, so every setup starts here.
   function defaultPerRow(count: number) {
+    if (wizardLayout.short) return Math.min(5, count) || 1;
     if (wizardLayout.materialMode !== "side") return Math.min(2, count) || 1;
     if (count <= 4) return Math.max(1, count);
     return count > 10 ? 5 : 4;
   }
   let perRow = $state(defaultPerRow(wizard.candidates.length));
+  // Beside the card the pane can be narrow: once its width is known, the
+  // starting row holds no more pages than fit at MIN_TILE each (the grid has
+  // 16px padding and 14px gaps).
+  const MIN_TILE = 140;
+  let rowFitted = false;
+  $effect(() => {
+    if (rowFitted || !bodyW || wizardLayout.materialMode !== "side") return;
+    rowFitted = true;
+    perRow = Math.max(
+      1,
+      Math.min(perRow, Math.floor((bodyW - 32 + 14) / (MIN_TILE + 14))),
+    );
+  });
   let zoom = $state(100);
-  let fit = $state<"width" | "page" | null>(null);
+  let fit = $state<"width" | "page" | null>(wizardLayout.short ? "page" : null);
   // The body's inner size and each preview's own size, for the page fit.
   let bodyW = $state(0);
   let bodyH = $state(0);
@@ -193,9 +198,7 @@
     return wizard.candidates.map((page) => (page.include ? ++n : 0));
   });
 
-  // Only an attempt that stopped part way is a retry. A repository that already
-  // exists otherwise — a setup continued from a draft, a second pass through this
-  // step — is committed to the same way a new one is, so it reads the same.
+  // Only an attempt that stopped part way is a retry.
   const continueLabel = $derived(
     busy
       ? "Working…"
@@ -242,11 +245,10 @@
     anchor = null;
   }
 
-  async function commitAndContinue() {
+  async function prepareAndContinue() {
     error = null;
     const user = auth.user;
-    const f = forge();
-    if (!user || !f) {
+    if (!user) {
       error = "You are signed out. Log in with GitHub to continue.";
       return;
     }
@@ -254,10 +256,9 @@
     busy = true;
     failed = false;
     log.clear();
-    let rendered = false;
     try {
-      // Fetching and rendering happens before the repository is created, so an
-      // upload that cannot be read leaves nothing behind.
+      // The chosen pages are fetched and rendered at committing size here; the
+      // final step commits them to the repository it creates.
       const pages = chosen.map(({ include, ...page }) => page);
       const images = pages.length
         ? await resolvePages(
@@ -269,70 +270,14 @@
             { brokerUrl: provider.brokerUrl },
           )
         : [];
-      rendered = true;
-
-      const repo = await ensureCampaignRepo(
-        f,
-        user.login,
-        ({ step, detail }) => {
-          if (step) log.step(step);
-          if (detail) log.detail(detail);
-        },
-      );
-
-      // Pages the repository holds that this selection does not: the chosen ones
-      // are committed over the paths they had, but a shorter selection, or one
-      // whose pages are named differently, would leave the rest behind. The
-      // repository is asked rather than this browser, so pages committed by an
-      // attempt whose images are not held here are removed too.
-      //
-      // Only a run that had pages to choose from removes any: a continued setup
-      // cannot pick its files again, and reaches this step with nothing chosen,
-      // which says nothing about what the campaign's pages should be.
-      let stale: string[] = [];
-      if (wizard.candidates.length) {
-        log.step("Reading the pages already committed", { timed: false });
-        const held = await f.getDirDownloadUrls(
-          repo.owner,
-          repo.name,
-          IMAGE_DIR,
-        );
-        stale = Object.keys(held)
-          .map((name) => `${IMAGE_DIR}/${name}`)
-          .filter((path) => !images.some((image) => image.path === path));
-      }
-
-      if (images.length || stale.length) {
-        log.step(`Committing ${images.length} image(s)`);
-        const files: FileChange[] = [];
-        for (const image of images) {
-          log.detail(`encoding ${files.length + 1}/${images.length}`);
-          files.push({
-            path: image.path,
-            contentBase64: await blobToBase64(image.blob),
-          });
-        }
-        if (stale.length)
-          log.detail(`removing ${stale.length} page(s) not kept`);
-        log.detail(`uploading 0/${images.length}`);
-        await f.commitFiles(
-          repo.owner,
-          repo.name,
-          files,
-          wizard.images.length ? "Update source images" : "Add source images",
-          {
-            deletePaths: stale,
-            onUpload: (done, total) => log.detail(`uploading ${done}/${total}`),
-          },
-        );
-      }
       // Only a run that had pages to choose from replaces what the step already
       // produced. A continued setup, whose files cannot be picked again, keeps
-      // the images the repository already holds instead of emptying them.
-      if (wizard.candidates.length) wizard.images = images;
-      // Which pages the repository holds has just changed; the draft records
-      // their paths, and is read back against the repository when a setup is
-      // continued, so it is stored before the step moves on.
+      // the images it already holds.
+      if (wizard.candidates.length) {
+        wizard.images = images;
+        log.step("Keeping the pages in this browser", { timed: false });
+        await keepDraftImages(wizard.handle);
+      }
       saveDraft(user.login, draftSnapshot());
 
       log.done();
@@ -340,11 +285,7 @@
       nextStep();
     } catch (err) {
       console.error("Pages step failed:", (err as Error).message);
-      error = wizard.repo
-        ? `The repository ${wizard.repo.full_name} was created, but the upload didn't finish: ${(err as Error).message}`
-        : rendered
-          ? `Could not create the repository: ${(err as Error).message}`
-          : `Could not read the pages: ${(err as Error).message}`;
+      error = `Could not read the pages: ${(err as Error).message}`;
       log.fail();
       failed = true;
       busy = false;
@@ -453,6 +394,18 @@
                 else toggle(i, e.shiftKey);
               }}
               oncontextmenu={(e) => wizardLayout.coarse && e.preventDefault()}
+              onkeydown={(e) => {
+                if (!e.altKey) return;
+                const by =
+                  e.key === "ArrowLeft" || e.key === "ArrowUp"
+                    ? -1
+                    : e.key === "ArrowRight" || e.key === "ArrowDown"
+                      ? 1
+                      : 0;
+                if (!by) return;
+                e.preventDefault();
+                move(i, i + by);
+              }}
               ondragstart={(e) => {
                 dragIndex = i;
                 // Firefox starts a drag only once the transfer carries data.
@@ -498,7 +451,7 @@
     {:else}
       <li>Click a page to keep or leave it out</li>
       <li>Shift-click marks a whole run</li>
-      <li>Drag a page to move it</li>
+      <li>Drag a page to move it, or press Alt and an arrow key</li>
     {/if}
   </ul>
 {/snippet}
@@ -526,7 +479,7 @@
   status="{chosen.length} of {wizard.candidates.length} kept"
   onBack={previousStep}
   backDisabled={busy}
-  onNext={commitAndContinue}
+  onNext={prepareAndContinue}
   nextDisabled={busy}
   nextLabel={continueLabel}
   material={wizard.candidates.length ? material : undefined}
@@ -541,7 +494,6 @@
           ? " becomes a piece in its own right and needs"
           : "s become pieces in their own right and need"} no pages chosen.
       {/if}
-      Continuing creates the campaign's repository.
     </p>
   {:else}
     <div class="count-row">
@@ -608,6 +560,13 @@
   .minibar .progress {
     flex: 1;
     margin: 0;
+  }
+  /* A window 500px tall or less shows the count in the step rail beside the
+     card, so the pages get this row too. */
+  @media (max-height: 500px) and (min-width: 640px) {
+    .minibar {
+      display: none;
+    }
   }
   .minibar-count {
     font-size: 13px;

@@ -123,6 +123,7 @@
       type="button"
       class="tbtn tbtn-icon fit-width"
       class:on={fit === "width"}
+      aria-pressed={fit === "width"}
       onclick={() => (fit = "width")}
       aria-label="Fit the page width"
       title="Fit the page width to the pane"><FitIcon kind="width" /></button
@@ -132,6 +133,7 @@
         type="button"
         class="tbtn tbtn-icon fit-page"
         class:on={fit === "page"}
+        aria-pressed={fit === "page"}
         onclick={() => (fit = "page")}
         aria-label="Fit the whole page"
         title="Fit the whole page in the pane, top to bottom"

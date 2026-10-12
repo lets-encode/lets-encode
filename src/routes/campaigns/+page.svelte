@@ -540,21 +540,21 @@
             {#if wide.current}
               <div class="phead">
                 <h2 class="stitle">Your open work</h2>
-                <span class="countpill">{openCount}</span>
+                <span class="countpill">{openCount} to do</span>
               </div>
             {:else}
               <h2 class="barh">
                 <button
                   type="button"
                   class="workbar"
-                  aria-label={`Your open work: ${openCount} to act on, ${listLoading && tasks.length === 0 ? "loading" : workSummary}`}
+                  aria-label={`Your open work: ${openCount} to do, ${listLoading && tasks.length === 0 ? "loading" : workSummary}`}
                   aria-expanded={workOpen}
                   aria-controls="worklist"
                   onclick={() => (workOpen = !workOpen)}
                 >
                   <span class="phead"
                     ><span class="btitle">Your open work</span><span
-                      class="countpill">{openCount}</span
+                      class="countpill">{openCount} to do</span
                     ></span
                   >
                   <span class="wsum"

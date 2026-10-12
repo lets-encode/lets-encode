@@ -185,6 +185,7 @@
   function setLayoutStep(step: 1 | 2 | 3) {
     layoutStep = step;
     selected = null;
+    corner = null;
   }
   // A page's boxes in a layer, for the geometry code shared by all.
   const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
@@ -215,8 +216,12 @@
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
   const ZOOM_STOPS = 100;
+  // One press of zoom out or in: a tenth of the slider, about a third larger
+  // or smaller.
+  const ZOOM_STEP = 10;
   /** Below this tool-column width the toolbar keeps only the page
-      navigation, fit width, undo and redo (the narrow rule in the styles). */
+      navigation, fit width, zoom out and in, undo, redo and help (the narrow
+      rule in the styles). */
   const NARROW_TOOL = 560;
   const zoomPos = $derived(
     Math.round(
@@ -785,8 +790,16 @@
     // A draw creates its box only once the pointer has moved a few
     // millimetres on screen, so a plain click leaves nothing behind.
     started: boolean;
+    // A background press that cleared a selection only deselects; it never
+    // sets a corner.
+    deselected: boolean;
   };
   let drag: Drag | null = null;
+  // The first corner of a box drawn by two clicks instead of a drag, in page
+  // pixels. A second click on the same page and layer completes the box.
+  let corner = $state<{ p: number; layer: Layer; x: number; y: number } | null>(
+    null,
+  );
   // In page pixels: a box is at least MIN_BOX each way, a drawn box under
   // DROP_BELOW was a background click, and an arrow key moves NUDGE
   // (NUDGE_FAR with Shift).
@@ -820,6 +833,7 @@
     edges = "",
   ) {
     if (kind === "move") selected = { p, z };
+    corner = null;
     if (!canEdit) return;
     e.stopPropagation();
     selected = { p, z };
@@ -835,6 +849,7 @@
       moved: false,
       edges,
       started: true,
+      deselected: false,
     };
   }
 
@@ -872,6 +887,7 @@
   }
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
+    const deselected = selected !== null;
     selected = null;
     if (!canEdit) return;
     const { x, y } = svgXY(e, p);
@@ -887,7 +903,41 @@
       moved: false,
       edges: "",
       started: false,
+      deselected,
     };
+  }
+
+  // Add a box to a page's layer and select it; returns its index.
+  function addBox(p: number, layer: Layer, box: MeasureBox): number {
+    if (layer !== "measures") pages[p][layer].push({ box });
+    else
+      pages[p].zones.push({
+        box,
+        override: null,
+        label: "",
+        sb: false,
+        sbOverride: null,
+        mdiv: false,
+      });
+    const z = items(p, layer).length - 1;
+    selected = { p, z };
+    return z;
+  }
+
+  // A plain click on the page: the first sets a corner, the second on the same
+  // page and layer completes the box spanning the two. A second click on the
+  // same spot clears the corner.
+  function cornerClick(p: number, layer: Layer, x: number, y: number) {
+    const first = corner;
+    corner = null;
+    if (!first || first.p !== p || first.layer !== layer) {
+      corner = { p, layer, x, y };
+      return;
+    }
+    const box = drawnBox(first.x, first.y, x, y, MIN_BOX);
+    if (box.lrx - box.ulx < DROP_BELOW || box.lry - box.uly < DROP_BELOW)
+      return;
+    commitGeometry(p, addBox(p, layer, box));
   }
 
   function pointerMove(e: PointerEvent) {
@@ -898,20 +948,9 @@
     const pg = pages[drag.p];
     if (!drag.started) {
       if (!drawStarted(dx, dy, pg, canvasW[drag.p] || pg.width)) return;
-      const box = { ...drag.orig };
-      if (drag.layer !== "measures") pages[drag.p][drag.layer].push({ box });
-      else
-        pages[drag.p].zones.push({
-          box,
-          override: null,
-          label: "",
-          sb: false,
-          sbOverride: null,
-          mdiv: false,
-        });
-      drag.z = items(drag.p, drag.layer).length - 1;
+      corner = null;
+      drag.z = addBox(drag.p, drag.layer, { ...drag.orig });
       drag.started = true;
-      selected = { p: drag.p, z: drag.z };
     }
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
     const box = items(drag.p, drag.layer)[drag.z].box;
@@ -940,10 +979,13 @@
 
   function pointerUp() {
     if (!drag) return;
-    const { kind, layer, p, z, moved, started } = drag;
+    const { kind, layer, p, z, moved, started, deselected, sx, sy } = drag;
     drag = null;
     // A draw that never crossed the threshold was a plain click.
-    if (!started) return;
+    if (!started) {
+      if (kind === "draw" && !deselected) cornerClick(p, layer, sx, sy);
+      return;
+    }
     if (kind === "draw") {
       const box = items(p, layer)[z].box;
       // A tiny drawn box was just a background click — drop it.
@@ -986,7 +1028,10 @@
       redo();
       return;
     }
-    if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+    if (e.key === "Escape" && (corner || helpOpen)) {
+      if (corner) corner = null;
+      else helpOpen = false;
+    } else if ((e.key === "Delete" || e.key === "Backspace") && selected) {
       e.preventDefault();
       deleteSelected();
     } else if (e.key === "ArrowRight") {
@@ -1097,20 +1142,33 @@
   const accentFor = (p: number, z: number) =>
     startsMovement(p, z) ? MDIV_ACCENT : MEASURE_ACCENT;
 
-  // The editing hints and colour legend, shown by the toolbar's help icon.
-  const helpText = $derived(
-    [
-      ...(canEdit
-        ? [
-            `drag on the page to draw a ${tool === "staves" ? "staff" : tool === "grandstaves" ? "grand staff" : "measure"} · drag a box to move · edges and corners resize · arrows nudge (⇧ ×5)`,
-          ]
-        : []),
-      "⌘Z undo · ⌘⇧Z redo · ⌫ delete · ← → pages",
-      omr
-        ? "red = staff · green = grand staff (the staves a brace joins) · teal = measure · purple = movement start"
-        : "purple = movement start",
-    ].join("\n"),
+  const boxName = $derived(
+    tool === "staves"
+      ? "staff"
+      : tool === "grandstaves"
+        ? "grand staff"
+        : "measure",
   );
+
+  // The editing hints and outline legend, shown by the toolbar's help icon.
+  // Shortcut names as the viewer's keyboard labels them.
+  const mac =
+    typeof navigator !== "undefined" &&
+    /Mac|iPhone|iPad/.test(navigator.userAgent);
+  const MOD = mac ? "⌘" : "Ctrl+";
+  const SHIFT = mac ? "⇧" : "Shift+";
+  const helpLines = $derived([
+    ...(canEdit
+      ? [
+          `Drag on the page, or click two opposite corners, to draw a ${boxName}. Drag a box to move it; its edges and corners resize it. Arrow keys nudge a selected box (${SHIFT}arrow moves 5 times as far). Esc clears a first corner.`,
+        ]
+      : []),
+    `${MOD}Z undo · ${MOD}${SHIFT}Z redo · ${mac ? "⌫" : "Delete"} removes the selected box · ← → change pages`,
+    omr
+      ? "Wine red: staff · dark green: grand staff (the staves a brace joins) · teal: measure · thick purple: movement start"
+      : "Thick purple: movement start",
+  ]);
+  let helpOpen = $state(false);
 </script>
 
 <svelte:head>
@@ -1190,11 +1248,13 @@
           <button
             type="button"
             class:on={view === "single"}
+            aria-pressed={view === "single"}
             onclick={() => (view = "single")}>1 page</button
           >
           <button
             type="button"
             class:on={view === "double"}
+            aria-pressed={view === "double"}
             onclick={() => (view = "double")}>2 pages</button
           >
         </div>
@@ -1210,6 +1270,7 @@
           type="button"
           class="chip-switch"
           class:on={showOverlaps}
+          aria-pressed={showOverlaps}
           onclick={() => (showOverlaps = !showOverlaps)}
           title="Show or hide the colour on areas where two boxes overlap"
           ><span class="sw"></span>Show overlaps</button
@@ -1232,8 +1293,31 @@
         <span class="zval">{Math.round(zoom * 100)}%</span>
         <button
           type="button"
+          class="tbtn tbtn-icon zoomstep"
+          onclick={() => {
+            setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
+            fit = null;
+          }}
+          disabled={zoomPos <= 0}
+          aria-label="Zoom out"
+          title="Zoom out"><Icon name="zoom-out" /></button
+        >
+        <button
+          type="button"
+          class="tbtn tbtn-icon zoomstep"
+          onclick={() => {
+            setZoomPos(Math.min(ZOOM_STOPS, zoomPos + ZOOM_STEP));
+            fit = null;
+          }}
+          disabled={zoomPos >= ZOOM_STOPS}
+          aria-label="Zoom in"
+          title="Zoom in"><Icon name="zoom-in" /></button
+        >
+        <button
+          type="button"
           class="tbtn tbtn-icon"
           class:on={fit === "width"}
+          aria-pressed={fit === "width"}
           onclick={() => (fit = "width")}
           aria-label="Fit the page width"
           title="Fit the page width to the view"
@@ -1243,6 +1327,7 @@
           type="button"
           class="tbtn tbtn-icon fitpage"
           class:on={fit === "page"}
+          aria-pressed={fit === "page"}
           onclick={fitWholePage}
           aria-label="Fit the whole page"
           title="Fit the whole page in the view, top to bottom"
@@ -1256,7 +1341,8 @@
             onclick={() => undo()}
             disabled={!canUndo}
             aria-label="Undo"
-            title="Undo the last change (Ctrl/Cmd+Z)">↶</button
+            title="Undo the last change (Ctrl/Cmd+Z)"
+            ><Icon name="undo" /></button
           >
           <button
             type="button"
@@ -1264,14 +1350,23 @@
             onclick={() => redo()}
             disabled={!canRedo}
             aria-label="Redo"
-            title="Redo (Ctrl/Cmd+Shift+Z)">↷</button
+            title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
           >
         {/if}
-        <span
-          class="helpico"
-          role="img"
+        <button
+          type="button"
+          class="btn btn-icon helpbtn"
+          class:on={helpOpen}
           aria-label="Editor help"
-          title={helpText}>?</span
+          aria-expanded={helpOpen}
+          aria-controls="zone-help"
+          onclick={() => (helpOpen = !helpOpen)}
+          ><Icon name="help" size={18} /></button
+        >
+        <span class="vh" role="status"
+          >{corner
+            ? `First corner set on page ${corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
+            : ""}</span
         >
         <!-- Last in the toolbar, next to the side panel on the right. -->
         <div class="pgnav">
@@ -1299,6 +1394,26 @@
           >
         </div>
       </div>
+      {#if helpOpen}
+        <div
+          id="zone-help"
+          class="helppanel"
+          role="region"
+          aria-label="Editor help"
+        >
+          <ul>
+            {#each helpLines as line (line)}
+              <li>{line}</li>
+            {/each}
+          </ul>
+          <button
+            type="button"
+            class="btn btn-icon"
+            aria-label="Close the editor help"
+            onclick={() => (helpOpen = false)}><Icon name="close" /></button
+          >
+        </div>
+      {/if}
       <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
@@ -1366,7 +1481,7 @@
                             vector-effect="non-scaling-stroke"
                             role="button"
                             tabindex={0}
-                            aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}: select, drag or resize`}
+                            aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}${canEdit ? ": select, drag or resize" : ""}`}
                             x={staff.box.ulx}
                             y={staff.box.uly}
                             width={staff.box.lrx - staff.box.ulx}
@@ -1393,7 +1508,7 @@
                             vector-effect="non-scaling-stroke"
                             role="button"
                             tabindex={0}
-                            aria-label={`Measure ${zone.label}: select, drag, or edit its number and breaks`}
+                            aria-label={`Measure ${zone.label}${canEdit ? ": select, drag, or edit its number and breaks" : ""}`}
                             x={zone.box.ulx}
                             y={zone.box.uly}
                             width={zone.box.lrx - zone.box.ulx}
@@ -1446,6 +1561,14 @@
                             height={o.lry - o.uly}
                           />
                         {/each}
+                        {#if corner?.p === p && corner.layer === tool}
+                          {@const r = labelFont(p, pg.width) * 0.9}
+                          <path
+                            class="corner"
+                            vector-effect="non-scaling-stroke"
+                            d={`M${corner.x - r} ${corner.y}H${corner.x + r}M${corner.x} ${corner.y - r}V${corner.y + r}`}
+                          />
+                        {/if}
                       {/if}
                     </svg>
 
@@ -1606,17 +1729,26 @@
             <button
               type="button"
               class:on={layoutStep === 1}
-              onclick={() => setLayoutStep(1)}>1 · Staff boxes</button
+              aria-pressed={layoutStep === 1}
+              onclick={() => setLayoutStep(1)}
+              ><span class="swatch staff" aria-hidden="true"></span>1 · Staff
+              boxes</button
             >
             <button
               type="button"
               class:on={layoutStep === 2}
-              onclick={() => setLayoutStep(2)}>2 · Grand staves</button
+              aria-pressed={layoutStep === 2}
+              onclick={() => setLayoutStep(2)}
+              ><span class="swatch grand" aria-hidden="true"></span>2 · Grand
+              staves</button
             >
             <button
               type="button"
               class:on={layoutStep === 3}
-              onclick={() => setLayoutStep(3)}>3 · Measures</button
+              aria-pressed={layoutStep === 3}
+              onclick={() => setLayoutStep(3)}
+              ><span class="swatch measure" aria-hidden="true"></span>3 ·
+              Measures</button
             >
           </div>
         {/if}
@@ -1677,6 +1809,7 @@
       <TaskPageSidePanel
         {tables}
         {taskId}
+        done={data?.status === "completed"}
         {viewer}
         {runner}
         bind:panel={sidePanel}
@@ -1751,31 +1884,42 @@
     align-items: center;
     gap: 6px;
     min-height: 24px;
-  }
-  .checkline input {
-    width: 16px;
-    height: 16px;
-    margin: 0;
     font-size: 12px;
     color: var(--ink-soft);
     white-space: nowrap;
     cursor: pointer;
   }
+  .checkline input {
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    cursor: pointer;
+  }
   /* The toolbar's help icon; its title carries the hints and colour legend. */
-  .helpico {
+  .helpbtn.on {
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  /* The editor help, opened from the toolbar, between it and the pages. */
+  .helppanel {
     flex: none;
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    border: 1px solid var(--line-input);
-    background: var(--card);
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 8px;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    line-height: 1.5;
     color: var(--ink-soft);
-    font-size: 12px;
-    font-weight: 600;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: help;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow-sm);
+  }
+  .helppanel ul {
+    flex: 1;
+    margin: 0;
+    padding-left: 18px;
   }
 
   /* Banner styles are shared app-wide in ui.css. */
@@ -1801,10 +1945,30 @@
     box-sizing: border-box;
     container-type: inline-size;
   }
+  /* Zoom out and in by one step, in place of the slider where it is hidden. */
+  .zoomstep {
+    display: none;
+  }
+  /* A medium tool column (a tablet, or a laptop beside the side panel): the
+     zoom slider and its readout give way to zoom out/in buttons, and what
+     remains wraps onto a second line rather than scrolling out of view. */
+  @container (max-width: 959px) {
+    .ctoolbar {
+      flex-wrap: wrap;
+      row-gap: 4px;
+      padding-block: 4px;
+    }
+    .ctoolbar > .zoomslider,
+    .ctoolbar > .zval {
+      display: none;
+    }
+    .ctoolbar > .zoomstep {
+      display: inline-flex;
+    }
+  }
   /* Narrow tool column (NARROW_TOOL): the page navigation leads, then fit
-     width, undo and redo at touch size; the page-count switch, "Page 1
-     right", the overlap switch, the zoom slider, fit page and the help mark
-     are hidden. Zoom stays reachable by pinch and Ctrl/Cmd + scroll. */
+     width, zoom out and in, undo, redo and help at touch size; the page-count
+     switch, "Page 1 right", the overlap switch and fit page are hidden. */
   @container (max-width: 559px) {
     .ctoolbar {
       gap: 4px;
@@ -1817,7 +1981,6 @@
     .ctoolbar > .zoomslider,
     .ctoolbar > .zval,
     .ctoolbar > .fitpage,
-    .ctoolbar > .helpico,
     .pgnav > .vline {
       display: none;
     }
@@ -1928,27 +2091,39 @@
     fill: rgba(139, 95, 191, 0.22);
     stroke-width: calc(4px * var(--stroke-scale, 1));
   }
-  /* Red for staff boxes: a third hue outside the region palette. */
+  /* Wine red for staff boxes, dark green for grand staves, teal for measures:
+     hues outside the region palette, darker than the red and green that mean
+     fail and done. Only one layer is shown at a time. */
   .staff {
-    fill: rgba(214, 40, 40, 0.2);
-    stroke: rgba(214, 40, 40, 0.9);
+    fill: rgba(128, 34, 64, 0.16);
+    stroke: rgba(128, 34, 64, 0.9);
     stroke-width: calc(2px * var(--stroke-scale, 1));
     cursor: pointer;
   }
   .staff.selected {
-    fill: rgba(214, 40, 40, 0.28);
+    fill: rgba(128, 34, 64, 0.26);
     stroke-width: calc(3px * var(--stroke-scale, 1));
+  }
+  /* The first corner of a box drawn by two clicks, in its layer's colour. */
+  .corner {
+    stroke: rgba(14, 129, 149, 0.95);
+    stroke-width: calc(2px * var(--stroke-scale, 1));
+    pointer-events: none;
+  }
+  .staves .corner {
+    stroke: rgba(128, 34, 64, 0.95);
+  }
+  .grandstaves .corner {
+    stroke: rgba(38, 100, 60, 0.95);
   }
   /* The intersection of two boxes takes the inverse of the box colour. */
   .overlap {
     fill: rgba(255, 100, 70, 0.6);
     pointer-events: none;
   }
-  .staves .overlap {
-    fill: rgba(0, 235, 235, 0.6);
-  }
+  .staves .overlap,
   .grandstaves .overlap {
-    fill: rgba(255, 70, 200, 0.6);
+    fill: rgba(240, 180, 40, 0.6);
   }
   .labelbg {
     fill: rgba(255, 255, 255, 0.88);
@@ -1966,18 +2141,40 @@
     stroke-width: 1.5;
   }
   .staves .handle {
-    stroke: rgba(214, 40, 40, 0.9);
-  }
-  /* Green for grand-staff boxes, the complement of the staff red. */
-  .staff.grand {
-    fill: rgba(30, 150, 70, 0.2);
-    stroke: rgba(30, 150, 70, 0.9);
-  }
-  .staff.grand.selected {
-    fill: rgba(30, 150, 70, 0.28);
+    stroke: rgba(128, 34, 64, 0.9);
   }
   .grandstaves .handle {
-    stroke: rgba(30, 150, 70, 0.9);
+    stroke: rgba(38, 100, 60, 0.9);
+  }
+  .staff.grand {
+    fill: rgba(38, 100, 60, 0.16);
+    stroke: rgba(38, 100, 60, 0.9);
+  }
+  .staff.grand.selected {
+    fill: rgba(38, 100, 60, 0.26);
+  }
+  /* Each step carries the colour its boxes are drawn in. */
+  .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 5px;
+    border-radius: 2px;
+    vertical-align: -1px;
+    border: 2px solid;
+    box-sizing: border-box;
+  }
+  .swatch.staff {
+    border-color: rgb(128, 34, 64);
+    background: rgba(128, 34, 64, 0.2);
+  }
+  .swatch.grand {
+    border-color: rgb(38, 100, 60);
+    background: rgba(38, 100, 60, 0.2);
+  }
+  .swatch.measure {
+    border-color: rgb(14, 129, 149);
+    background: rgba(14, 129, 149, 0.2);
   }
   /* Three equal cells; in a narrow panel a label wraps inside its cell. */
   .steps {
