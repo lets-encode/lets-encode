@@ -360,34 +360,34 @@
       {/if}
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
-      <ZoomLevel bind:value={zoom} bind:fit {fitPage} phoneFits={false} />
+      <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
       <div class="toolbar-rule"></div>
-      <button
-        type="button"
-        class="tbtn"
-        class:on={chosen.length === wizard.candidates.length}
-        aria-pressed={chosen.length === wizard.candidates.length}
-        aria-label="Keep all"
-        title="Keep all"
-        onclick={() => setAll(true)}
-        disabled={busy}
-      >
-        <span class="tbtn-label">Keep all</span>
-        <span class="tbtn-glyph"><Icon name="pages" size={16} /></span>
-      </button>
-      <button
-        type="button"
-        class="tbtn"
-        class:on={chosen.length === 0}
-        aria-pressed={chosen.length === 0}
-        aria-label="Keep none"
-        title="Keep none"
-        onclick={() => setAll(false)}
-        disabled={busy}
-      >
-        <span class="tbtn-label">Keep none</span>
-        <span class="tbtn-glyph"><Icon name="page-none" size={16} /></span>
-      </button>
+      <span class="tbtn-pair">
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={chosen.length === wizard.candidates.length}
+          aria-pressed={chosen.length === wizard.candidates.length}
+          aria-label="Keep all"
+          title="Keep all"
+          onclick={() => setAll(true)}
+          disabled={busy}
+        >
+          <Icon name="pages" size={16} />
+        </button>
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={chosen.length === 0}
+          aria-pressed={chosen.length === 0}
+          aria-label="Keep none"
+          title="Keep none"
+          onclick={() => setAll(false)}
+          disabled={busy}
+        >
+          <Icon name="page-none" size={16} />
+        </button>
+      </span>
     </div>
     <div
       class="material-body"
@@ -405,7 +405,11 @@
     >
       <ol
         class="material-grid"
-        style="--per-row: {perRow}; width: {zoom}%"
+        class:fit-page={fit === "page"}
+        style="--per-row: {perRow}; width: {zoom}%; --page-row: {Math.max(
+          0,
+          bodyH - 30,
+        )}px"
         {@attach liftToReorder}
       >
         {#each wizard.candidates as page, i (page.id)}

@@ -336,13 +336,18 @@
   const tabOrder = $derived<("form" | "material")[]>(
     panes?.materialFirst ? ["material", "form"] : ["form", "material"],
   );
-  // Marks a scrolling body's wrapper with data-more while content lies below
-  // what is in view, which shows the fade at its foot. Read again on scroll
-  // and whenever the body or anything in it changes size.
-  function markMoreBelow(body: HTMLElement) {
+  // Marks a scrolling body's wrapper with data-more-above / data-more-below
+  // while content lies above or below what is in view, which shows a fade at
+  // that edge. Read again on scroll and whenever the body or anything in it
+  // changes size.
+  function markHidden(body: HTMLElement) {
     const update = () => {
-      const more = body.scrollHeight - body.scrollTop - body.clientHeight > 1;
-      body.parentElement?.toggleAttribute("data-more", more);
+      const wrap = body.parentElement;
+      wrap?.toggleAttribute("data-more-above", body.scrollTop > 1);
+      wrap?.toggleAttribute(
+        "data-more-below",
+        body.scrollHeight - body.scrollTop - body.clientHeight > 1,
+      );
     };
     const sizes = new ResizeObserver(update);
     const watch = () => {
@@ -761,7 +766,7 @@
             id="wizard-pane-form"
             aria-labelledby="wizard-tab-form"
           >
-            <div class="card-body" {@attach markMoreBelow}>
+            <div class="card-body" {@attach markHidden}>
               {@render children()}
             </div>
           </div>
@@ -779,7 +784,7 @@
       </div>
     {:else}
       <div class="body-wrap">
-        <div class="card-body" {@attach markMoreBelow}>
+        <div class="card-body" {@attach markHidden}>
           {@render children()}
         </div>
       </div>
@@ -958,6 +963,11 @@
   @media (pointer: coarse) {
     .linkbtn {
       min-height: 44px;
+    }
+    /* In the line above the track the press area overlaps its neighbours
+       rather than making the line taller. */
+    .thead .linkbtn {
+      margin-block: -10px;
     }
   }
   .discard-row {
@@ -1343,8 +1353,10 @@
     .thead-saved {
       display: none;
     }
+    /* The circles sit as far below the name as the name sits below the top
+       bar; their 44px press areas overlap the line above. */
     .track {
-      margin-top: 0;
+      margin-top: -6px;
     }
     .tstep .step-label,
     .tstep .step-status {
@@ -1568,7 +1580,7 @@
     display: flex;
     gap: 2px;
     margin-top: 12px;
-    padding: 3px;
+    padding: 2px;
     background: var(--bg-tint);
     border-radius: 999px;
   }
@@ -1585,7 +1597,7 @@
   }
   .panes button {
     flex: 1;
-    min-height: 38px;
+    min-height: 30px;
     border: none;
     background: transparent;
     border-radius: 999px;
@@ -1608,7 +1620,8 @@
   }
 
   /* The body takes what the heading and footer leave and scrolls within it,
-     with a fade at its foot while there is more below. */
+     with a fade at the top or the foot while there is more in that
+     direction. */
   .body-wrap {
     flex: 1;
     min-height: 0;
@@ -1619,19 +1632,28 @@
   .card.hug .body-wrap {
     flex: 0 1 auto;
   }
+  .body-wrap::before,
   .body-wrap::after {
     content: "";
     position: absolute;
+    z-index: 1;
     left: 0;
     right: 0;
-    bottom: 0;
     height: 26px;
-    background: linear-gradient(transparent, var(--card));
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.15s;
   }
-  .body-wrap:global([data-more])::after {
+  .body-wrap::before {
+    top: 0;
+    background: linear-gradient(var(--card), transparent);
+  }
+  .body-wrap::after {
+    bottom: 0;
+    background: linear-gradient(transparent, var(--card));
+  }
+  .body-wrap:global([data-more-above])::before,
+  .body-wrap:global([data-more-below])::after {
     opacity: 1;
   }
   .card-body {
@@ -1714,6 +1736,9 @@
     .card {
       --pad-x: 18px;
     }
+    .card.solo {
+      --pad-x: 24px;
+    }
     .card-head,
     .card.solo .card-head {
       padding-top: 16px;
@@ -1728,15 +1753,18 @@
   /* Phones: the primary button takes the row's width, and a step's own line
      beside the buttons (an acknowledgement) moves above them. */
   @media (max-width: 599px) {
-    .card {
+    .card,
+    .card.solo {
       --pad-x: 14px;
     }
     .workbench:not(.sidebar) .stage {
       padding: 0 12px 12px;
     }
-    .card-head,
-    .card.solo .card-head {
+    .card-head {
       padding-top: 10px;
+    }
+    .card.solo .card-head {
+      padding-top: 14px;
     }
     .panes {
       margin-top: 8px;
@@ -1759,7 +1787,8 @@
       flex: 1;
     }
   }
-  .short .card {
+  .short .card,
+  .short .card.solo {
     --pad-x: 16px;
   }
   .short .card-head,

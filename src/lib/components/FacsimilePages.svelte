@@ -96,7 +96,14 @@
         onpinchend: () => (fit = nearFit(zoom, fitPage)),
       })}
     >
-      <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+      <div
+        class="material-grid"
+        class:fit-page={fit === "page"}
+        style="--per-row: {perRow}; width: {zoom}%; --page-row: {Math.max(
+          0,
+          bodyH - 30,
+        )}px"
+      >
         {#each urls as url, i (url)}
           <figure>
             <figcaption class="page-label">Page {i + 1} · Facsimile</figcaption>

@@ -639,25 +639,33 @@ textarea.input {
 .material-toolbar .tbtn {
   white-space: nowrap;
 }
-/* Below 640px of pane the file name gives way and labelled buttons show only
-   their icon (.tbtn-label hides; the button keeps its aria-label). */
-.tbtn-glyph {
-  display: none;
+/* Two toolbar buttons joined into one control, e.g. the two fits. */
+.tbtn-pair {
+  flex: none;
+  display: inline-flex;
 }
+.tbtn-pair > .tbtn {
+  position: relative;
+  justify-content: center;
+  border-radius: 0;
+}
+.tbtn-pair > .tbtn:first-child {
+  border-radius: 8px 0 0 8px;
+}
+.tbtn-pair > .tbtn:last-child {
+  border-radius: 0 8px 8px 0;
+}
+.tbtn-pair > .tbtn + .tbtn {
+  margin-left: -1px;
+}
+/* The active one's accent border shows on both sides. */
+.tbtn-pair > .tbtn.on {
+  z-index: 1;
+}
+/* Below 640px of pane the file name gives way. */
 @container material (max-width: 639px) {
-  .material-toolbar .toolbar-name,
-  .material-toolbar .tbtn-label {
+  .material-toolbar .toolbar-name {
     display: none;
-  }
-  .material-toolbar .tbtn-glyph {
-    display: inline-flex;
-  }
-  /* A button showing only its glyph centres it. */
-  .material-toolbar .tbtn:has(.tbtn-glyph) {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 9px;
   }
   .material-toolbar {
     padding: 4px 10px;
@@ -690,6 +698,11 @@ textarea.input {
     position: absolute;
     inset: -6px;
   }
+  /* Joined buttons share their edge, so their press areas only grow up and
+     down. */
+  .material-toolbar .tbtn-pair > .tbtn::after {
+    inset: -6px 0;
+  }
 }
 .material-toolbar .toolbar-rule {
   width: 1px;
@@ -718,6 +731,12 @@ textarea.input {
   grid-auto-rows: min-content;
   gap: 14px;
   padding: 16px;
+}
+/* Fit page: each row of pages is the pane's height less the grid's padding
+   and gap (--page-row, set by the pane), so the page in view is whole and
+   the next row starts below the pane's edge. */
+.material-grid.fit-page {
+  grid-auto-rows: var(--page-row);
 }
 .material-grid .page-caption {
   text-align: center;

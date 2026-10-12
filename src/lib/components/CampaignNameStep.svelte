@@ -341,6 +341,14 @@
   .field:first-child {
     margin-top: 26px;
   }
+  @media (max-width: 599px) {
+    .field {
+      margin-top: 14px;
+    }
+    .field:first-child {
+      margin-top: 18px;
+    }
+  }
   /* Sits under the field's hints rather than beside the input. */
   .btn-inline {
     margin-top: 0.4rem;
