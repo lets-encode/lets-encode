@@ -2926,20 +2926,21 @@
   .lanetab-count {
     font-size: 11px;
   }
-  /* A narrow view column (a phone): the title takes one line over the
-     controls (the full title is its tooltip, the repository link moves to
-     the campaign details in the side panel) and the side margins shrink. */
+  /* A narrow view column (a phone): the title shares one line with the
+     controls, cut short where it does not fit (the full title is its
+     tooltip, the repository link moves to the campaign details in the side
+     panel), and the side margins shrink. */
   @container (max-width: 700px) {
     .hero {
       padding: 10px 16px 8px;
       gap: 8px;
     }
     .hero-line {
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       gap: 8px 10px;
     }
     .hero-line h1 {
-      flex-basis: 100%;
+      flex: 1 1 0;
       font-size: 20px;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -2948,10 +2949,10 @@
     .slug {
       display: none;
     }
-    /* The actions take their own full-width line; Manage is its gear
-       only. */
+    /* The actions stay on the title's line, at its right end; Manage is its
+       gear only. */
     .hero-acts {
-      flex-basis: 100%;
+      flex: none;
     }
     .managechip {
       width: 32px;
