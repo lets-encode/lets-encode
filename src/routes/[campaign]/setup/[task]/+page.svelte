@@ -11,7 +11,6 @@
     Result,
     FacsimileTaskData,
   } from "$lib/commands.ts";
-  import { workStage } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
   import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
@@ -44,10 +43,9 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
-  import TaskHeading from "$lib/components/TaskHeading.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
-  import PreTaskReview from "$lib/components/PreTaskReview.svelte";
+  import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
@@ -231,6 +229,8 @@
   const data = $derived(session.data);
   const holds = $derived(session.holds);
   const canEdit = $derived(session.canEdit);
+  // A done task is shown for viewing only: its editing buttons are hidden.
+  const done = $derived(data?.status === "completed");
   const busy = $derived(session.busy);
   const owner = $derived(session.campaign.owner);
   const repo = $derived(session.campaign.repo);
@@ -825,50 +825,54 @@
                         title="The instrument or voice name printed in front of this staff. Leave empty for none."
                       />
                     </label>
-                    <div class="rowbtns">
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => moveStaff(i, -1)}
-                        disabled={i === 0}
-                        aria-label={`Move staff ${i + 1} up`}
-                        title="Move this staff up"
-                        ><Icon name="arrow-up" /></button
-                      >
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => moveStaff(i, 1)}
-                        disabled={i === staves.length - 1}
-                        aria-label={`Move staff ${i + 1} down`}
-                        title="Move this staff down"
-                        ><Icon name="arrow-down" /></button
-                      >
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => removeStaff(i)}
-                        disabled={staves.length <= 1 ||
-                          (omr && data?.hasNotation)}
-                        aria-label={`Remove staff ${i + 1}`}
-                        title={omr && data?.hasNotation
-                          ? "The staff count is fixed once the piece holds notation"
-                          : "Remove this staff"}><Icon name="close" /></button
-                      >
-                    </div>
+                    {#if !done}
+                      <div class="rowbtns">
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => moveStaff(i, -1)}
+                          disabled={i === 0}
+                          aria-label={`Move staff ${i + 1} up`}
+                          title="Move this staff up"
+                          ><Icon name="arrow-up" /></button
+                        >
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => moveStaff(i, 1)}
+                          disabled={i === staves.length - 1}
+                          aria-label={`Move staff ${i + 1} down`}
+                          title="Move this staff down"
+                          ><Icon name="arrow-down" /></button
+                        >
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => removeStaff(i)}
+                          disabled={staves.length <= 1 ||
+                            (omr && data?.hasNotation)}
+                          aria-label={`Remove staff ${i + 1}`}
+                          title={omr && data?.hasNotation
+                            ? "The staff count is fixed once the piece holds notation"
+                            : "Remove this staff"}><Icon name="close" /></button
+                        >
+                      </div>
+                    {/if}
                   </li>
                 {/each}
               </ol>
-              <button
-                type="button"
-                class="btn addbtn"
-                onclick={() => addStaff()}
-                disabled={staves.length >= MAX_STAVES ||
-                  (omr && data?.hasNotation)}
-                title={omr && data?.hasNotation
-                  ? "The staff count is fixed once the piece holds notation"
-                  : "Add a staff below the last one."}>Add staff</button
-              >
+              {#if !done}
+                <button
+                  type="button"
+                  class="btn addbtn"
+                  onclick={() => addStaff()}
+                  disabled={staves.length >= MAX_STAVES ||
+                    (omr && data?.hasNotation)}
+                  title={omr && data?.hasNotation
+                    ? "The staff count is fixed once the piece holds notation"
+                    : "Add a staff below the last one."}>Add staff</button
+                >
+              {/if}
 
               {#if staves.length > 1 || groups.length > 0}
                 <p class="grouphead sub">Groups</p>
@@ -915,24 +919,29 @@
                         title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
                       />
                     </label>
-                    <div class="rowbtns">
-                      <button
-                        type="button"
-                        class="btn btn-icon"
-                        onclick={() => removeGroup(i)}
-                        aria-label={`Remove group ${i + 1}`}
-                        title="Remove this group"><Icon name="close" /></button
-                      >
-                    </div>
+                    {#if !done}
+                      <div class="rowbtns">
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          onclick={() => removeGroup(i)}
+                          aria-label={`Remove group ${i + 1}`}
+                          title="Remove this group"
+                          ><Icon name="close" /></button
+                        >
+                      </div>
+                    {/if}
                   </div>
                 {/each}
-                <button
-                  type="button"
-                  class="btn addbtn"
-                  onclick={() => addGroup()}
-                  title="Join a run of staves with a brace or bracket."
-                  >Add group</button
-                >
+                {#if !done}
+                  <button
+                    type="button"
+                    class="btn addbtn"
+                    onclick={() => addGroup()}
+                    title="Join a run of staves with a brace or bracket."
+                    >Add group</button
+                  >
+                {/if}
                 {#if !groupsValid}
                   <p class="groupwarn">
                     Groups must fit the staves and must not overlap.
@@ -1032,52 +1041,40 @@
       </div>
     </div>
 
-    {#snippet taskBox()}
-      <!-- The snippet renders only while `data` is loaded (see its host). -->
-      {@const d = data!}
-      <div class="taskbox">
-        <div
-          class="tbhead"
-          title="Every encoding task of this piece waits for this setup."
-        >
-          <TaskHeading
-            description="Score setup"
-            piece={session.pieceName}
-            task={taskId}
-          />
-        </div>
-        <div class="tbsection">
-          <span class="abcount">
-            {staves.length} stave{staves.length === 1 ? "" : "s"}
-            · {meterType === "numeric"
-              ? `${meterCount}/${meterUnit}`
-              : meterType === "common"
-                ? "common time"
-                : "cut time"}
-          </span>
-          <PreTaskStatus {session} />
-          {#if omr && canEdit && recognition && recognition.failed.length > 0}
-            <button
-              type="button"
-              class="btn"
-              onclick={() => recognise()}
-              disabled={busy}
-              title="Run the staff model again on the {recognition.failed
-                .length} staves it could not transcribe"
-            >
-              Transcribe failed staves again
-            </button>
-          {:else if omr && canEdit && !recognition && recognisedFor === taskId}
-            <button
-              type="button"
-              class="btn"
-              onclick={() => recognise()}
-              disabled={busy}
-              title="Transcribe the staves again; staves already transcribed in this browser are kept"
-            >
-              Transcribe the staves again
-            </button>
-          {/if}
+    {#snippet tools()}
+      <div class="tbsection">
+        <span class="abcount">
+          {staves.length} stave{staves.length === 1 ? "" : "s"}
+          · {meterType === "numeric"
+            ? `${meterCount}/${meterUnit}`
+            : meterType === "common"
+              ? "common time"
+              : "cut time"}
+        </span>
+        <PreTaskStatus {session} />
+        {#if omr && canEdit && recognition && recognition.failed.length > 0}
+          <button
+            type="button"
+            class="btn"
+            onclick={() => recognise()}
+            disabled={busy}
+            title="Run the staff model again on the {recognition.failed
+              .length} staves it could not transcribe"
+          >
+            Transcribe failed staves again
+          </button>
+        {:else if omr && canEdit && !recognition && recognisedFor === taskId}
+          <button
+            type="button"
+            class="btn"
+            onclick={() => recognise()}
+            disabled={busy}
+            title="Transcribe the staves again; staves already transcribed in this browser are kept"
+          >
+            Transcribe the staves again
+          </button>
+        {/if}
+        {#if data?.status === "encoding_required"}
           <button
             type="button"
             class="btn btn-primary submitbtn"
@@ -1093,10 +1090,25 @@
           >
             Submit setup
           </button>
-        </div>
-
-        <PreTaskReview {session} stage={workStage("score-setup")} />
+        {/if}
       </div>
+    {/snippet}
+
+    {#snippet taskBox()}
+      {#if session.card}
+        <PreTaskBox
+          {session}
+          {campaign}
+          card={session.card}
+          {tools}
+          prefill={() => ({
+            page: String((refPreview?.currentPage() ?? 0) + 1),
+            m1: "",
+            m2: "",
+          })}
+          measures={false}
+        />
+      {/if}
     {/snippet}
 
     {#if tables}
@@ -1129,8 +1141,10 @@
     padding: 0;
     cursor: pointer;
   }
-  .linkish:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .linkish:hover {
+      text-decoration: underline;
+    }
   }
 
   /* The whole tool: the form and its preview on the desk, with the comments
@@ -1384,24 +1398,13 @@
   /* --------------------------------------------------------------- task box
      The task's status, actions and validation controls, pinned at the top of
      the side panel. The tint follows the panel's piece colour (--zone). */
-  .taskbox {
-    background: var(--card);
-    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
-    border-radius: 12px;
-    overflow: hidden;
-    box-shadow: var(--shadow-sm);
-  }
-  .tbhead {
-    background: color-mix(in srgb, var(--zone) 10%, var(--card));
-    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
-    padding: 9px 12px;
-  }
   .tbsection {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 8px;
     padding: 10px 12px;
+    border-top: 1px solid var(--hairline, var(--line));
   }
   .sb-label {
     font-size: 10.5px;

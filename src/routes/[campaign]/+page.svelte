@@ -3,6 +3,7 @@
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
+  import { tick } from "svelte";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import {
     CommandRunner,
@@ -63,6 +64,7 @@
   import type { MeiHeader } from "$lib/mei-header.ts";
   import {
     DOCKED_QUERY,
+    clampPanelWidth,
     readSidePanel,
     readLastTask,
     writeLastTask,
@@ -133,13 +135,13 @@
   let sidePanel = $state(readSidePanel());
   // The board row's rail takes its wide form only while four lanes fit
   // beside it and the side panel, at the panel's rendered width (its stored
-  // width, capped at half the window).
+  // width, capped by clampPanelWidth).
   let instrowBox = $state<DOMRectReadOnly | null>(null);
   const instrowWidth = $derived(instrowBox?.width ?? 0);
   let windowWidth = $state(0);
-  // In portrait up to tablet width and in a short window the view is split:
-  // the content scrolls as one region and the side panel takes the lower part
-  // of the screen (docked) or its right half (a short window).
+  // In a narrow portrait window (DOCKED_QUERY) and in a short window the view
+  // is split: the content scrolls as one region and the side panel takes the
+  // lower part of the screen (docked) or its right half (a short window).
   const panelOutQuery = new MediaQuery(`${DOCKED_QUERY}, (max-height: 500px)`);
   const panelOut = $derived(panelOutQuery.current);
   /** Four 200px lanes with 1px borders and three 12px gaps. */
@@ -152,7 +154,7 @@
   const rowBesidePanel = $derived(
     panelOut
       ? instrowWidth
-      : instrowWidth - Math.min(sidePanel.width, windowWidth / 2) - ROW_GAP,
+      : instrowWidth - clampPanelWidth(sidePanel.width, windowWidth) - ROW_GAP,
   );
   const railChips = $derived(
     instrowWidth > 0 && rowBesidePanel < RAIL_WIDE + ROW_GAP + LANES_WIDTH,
@@ -384,6 +386,16 @@
   const detailCard = $derived(
     detailTask ? (allCards.find((c) => c.task === detailTask) ?? null) : null,
   );
+  // The selected task's card is scrolled into the board's visible part, in
+  // its lane and above a docked panel.
+  $effect(() => {
+    if (!detailTask) return;
+    void tick().then(() =>
+      document
+        .querySelector<HTMLElement>('.card[aria-current="true"]')
+        ?.scrollIntoView({ block: "nearest" }),
+    );
+  });
   // The lane the narrow board shows (lane tabs): the one picked, else the
   // selected task's, else the next task's.
   let pickedLane = $state<ColumnKey | null>(null);
@@ -750,16 +762,6 @@
   let completed = $state<{ task: string; until: number } | null>(null);
   const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
   const completedTask = $derived(completed?.task ?? null);
-  // The next task's own control only opens it (the viewer's claimed work):
-  // with it open, its task box holds the action.
-  const nextOpensOnly = $derived(
-    !!nextCard &&
-      nextCard.column !== "ready" &&
-      !(
-        nextCard.column === "validation" &&
-        nextCard.slots.some((s) => s.claimable)
-      ),
-  );
 
   $effect(() => {
     if (!completed) return;
@@ -868,11 +870,6 @@
     return result;
   };
 
-  const sendBackTask = (task_id: string) => {
-    actedOn(task_id);
-    return run((c) => invoke(commands.sendBack, { task_id }, c));
-  };
-
   const postComment = (
     task_id: string,
     kind: string,
@@ -959,9 +956,6 @@
       actedOn(card.task);
       claimValidate(card.task, sub);
     } else openTask(card.task);
-  }
-  function actOnNext() {
-    if (nextCard) actOnCard(nextCard);
   }
 
   // The side panel names its piece and carries its colour.
@@ -1070,31 +1064,24 @@
   ></span>
 {/snippet}
 
-<!-- In the score view (inBoard false) the task box has no next-task control
-     beside it, so its action stays the view's primary one. -->
-{#snippet boardTaskBox(card: BoardCard, inBoard = true)}
+{#snippet boardTaskBox(card: BoardCard)}
   <TaskBox
     {card}
     pieceName={pieceNameOf(card.task)}
     zone={zoneOf(card.task)}
     {campaign}
-    {comments}
     {locks}
     {rows}
     {logins}
     {viewer}
     {canPush}
     {runner}
-    primary={!inBoard || (card.task === nextCard?.task && nextOpensOnly)}
-    onshowanchor={showCommentInScore}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
     onabandon={abandon}
     onvalidate={validate}
     onreviewedit={reviewEdit}
-    onresolve={resolveCommentRow}
-    onsendback={sendBackTask}
   />
 {/snippet}
 
@@ -1353,7 +1340,6 @@
             >
               {#snippet taskBox()}{#if detailCard}{@render boardTaskBox(
                     detailCard,
-                    false,
                   )}{/if}{/snippet}
             </ScoreView>
           {/key}
@@ -1505,23 +1491,6 @@
                         title={scoreHint}>View score</button
                       >
                     {/if}
-                    <!-- Only while there is a task to act on: logged out, the
-                         banner offers the login; with nothing open, no
-                         button stands in for it. -->
-                    {#if auth.user && nextCard}
-                      <button
-                        type="button"
-                        class="btn btn-primary claimbtn"
-                        disabled={runner.busy}
-                        title={nextOpensOnly
-                          ? "Open the task you have claimed."
-                          : "Claim the first task that is open for you."}
-                        onclick={actOnNext}
-                        >{nextOpensOnly
-                          ? "Open your task"
-                          : "Claim the next task"}</button
-                      >
-                    {/if}
                   </div>
                 </div>
                 <!-- One line: the progress first; the other counts give way
@@ -1577,7 +1546,8 @@
                         <span class="attnspacer"></span>
                         {#if card.counts.fails > 0}
                           <span class="chip chip-fail"
-                            >{card.counts.fails} fail{card.counts.fails === 1
+                            >{card.counts.fails} change request{card.counts
+                              .fails === 1
                               ? ""
                               : "s"}</span
                           >
@@ -1707,7 +1677,6 @@
                          nested in a button. -->
                             <div
                               class="card col-{card.column}"
-                              class:nextup={card.nextUp && !completedTask}
                               class:justmoved={recentlyFinished.has(
                                 card.task,
                               ) || card.task === completedTask}
@@ -1766,6 +1735,11 @@
                                   1
                                     ? ""
                                     : "s"}
+                                  <span class="card-dots">
+                                    {#each card.slots as slot (slot.label)}
+                                      {@render slotDot(slot.key, slot.who)}
+                                    {/each}
+                                  </span>
                                 </div>
                               {/if}
                               <TaskRunState task={card.task} />
@@ -1802,11 +1776,6 @@
                                     >
                                   </div>
                                 {/each}
-                                <div class="card-dots">
-                                  {#each card.slots as slot (slot.label)}
-                                    {@render slotDot(slot.key, slot.who)}
-                                  {/each}
-                                </div>
                               {:else if card.column === "done"}
                                 <div class="card-done">
                                   <img
@@ -1821,8 +1790,8 @@
                                 <div class="card-chips">
                                   {#if card.counts.fails > 0}
                                     <span class="chip chip-fail"
-                                      >{card.counts.fails} fail{card.counts
-                                        .fails === 1
+                                      >{card.counts.fails} change request{card
+                                        .counts.fails === 1
                                         ? ""
                                         : "s"}</span
                                     >
@@ -1928,11 +1897,11 @@
     container-type: inline-size;
     container-name: view;
   }
-  /* Split (portrait up to tablet width, or a short window): the content and
+  /* Split (a narrow portrait window, or a short window): the content and
      the side panel share the window, the panel docked below in portrait
      (DOCKED_QUERY) and beside in a short window. The content scrolls as one
      region, its sections at their content's height; a gap separates it from
-     the panel. */
+     the panel beside it, none from the panel docked below. */
   .volsplit,
   .boardview,
   .boardscroll {
@@ -1962,14 +1931,15 @@
     padding: 12px 16px 12px 0;
     box-sizing: border-box;
   }
-  @media (orientation: portrait) and (max-width: 900px) {
+  @media (orientation: portrait) and (max-width: 753px) {
     .volsplit.split,
     .boardview.split {
       flex-direction: column;
     }
+    /* Docked, the panel's top border meets the scrolling content directly. */
     .panelslot {
       flex-direction: column;
-      padding: 10px 0 0;
+      padding: 0;
     }
   }
   .split .volcenter,
@@ -2161,8 +2131,10 @@
     color: var(--link);
     text-decoration: none;
   }
-  .irow a:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .irow a:hover {
+      text-decoration: underline;
+    }
   }
   .seclabel {
     font-weight: 600;
@@ -2211,21 +2183,28 @@
     padding: 5px 0;
     margin: -5px 0;
   }
-  .slug:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .slug:hover {
+      text-decoration: underline;
+    }
   }
   .cspacer {
     flex: 1;
   }
-  /* Sizing comes from .btn.btn-lg; only the owner-amber tint is local. */
+  .hero-acts .btn,
+  .hero-line .btn {
+    padding-block: 4px;
+  }
   .managechip {
     color: var(--owner);
     background: var(--owner-bg);
     border-color: var(--owner-line);
   }
-  .managechip:hover:not(:disabled) {
-    color: var(--owner);
-    border-color: var(--owner);
+  @media (hover: hover) {
+    .managechip:hover:not(:disabled) {
+      color: var(--owner);
+      border-color: var(--owner);
+    }
   }
   .managechip {
     gap: 6px;
@@ -2313,8 +2292,10 @@
     padding: 10px 14px;
     cursor: pointer;
   }
-  .attnrow:hover {
-    border-color: var(--accent);
+  @media (hover: hover) {
+    .attnrow:hover {
+      border-color: var(--accent);
+    }
   }
   .attntitle {
     font-weight: 600;
@@ -2564,10 +2545,10 @@
     --lane-line: var(--ok-line);
   }
   .well {
-    padding: 10px;
+    padding: 8px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
     flex: 1;
     min-height: 0;
     overflow-y: auto;
@@ -2578,9 +2559,7 @@
   }
   .card {
     position: relative;
-    /* A flex column, so each column's footer row (waits-for, worker,
-       completion line) pins to the card's bottom edge via margin-top: auto
-       instead of leaving the uniform height unused. */
+    /* A flex column at its content's height. */
     display: flex;
     flex-direction: column;
     text-align: left;
@@ -2588,12 +2567,10 @@
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 12px 14px;
+    padding: 8px 10px;
     box-shadow: var(--shadow-sm);
     cursor: pointer;
     flex: none;
-    /* One height for every card, whichever footer line its column gives it. */
-    min-height: 88px;
     box-sizing: border-box;
   }
   /* The card the side panel shows. */
@@ -2601,8 +2578,10 @@
     background: var(--info-bg);
     border-color: var(--info-line);
   }
-  .card:hover {
-    border-color: var(--accent);
+  @media (hover: hover) {
+    .card:hover {
+      border-color: var(--accent);
+    }
   }
   .card.col-blocked {
     opacity: 0.8;
@@ -2626,9 +2605,13 @@
     background: var(--danger-bg);
     border-color: var(--danger-line);
   }
-  .card.nextup {
-    border-color: var(--accent);
+  /* The card the side panel shows: an outline the stage and fail tints
+     cannot override. */
+  .card.paneled {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
+  /* The next task is marked by its badge only. */
   .nextup-badge {
     position: absolute;
     top: -9px;
@@ -2698,10 +2681,14 @@
   .card.col-done .card-title {
     color: var(--ink-soft);
   }
+  /* The review count with one dot per review slot. */
   .card-type {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 11.5px;
     color: var(--ink-faint);
-    margin-top: 3px;
+    margin-top: 2px;
   }
   .boardnote {
     margin: 0;
@@ -2711,16 +2698,15 @@
   .card-foot {
     font-size: 11.5px;
     color: var(--ink-faint);
-    margin-top: auto;
+    margin-top: 5px;
     border-top: 1px solid var(--hairline);
-    padding-top: 8px;
+    padding-top: 5px;
   }
   .card-worker {
     display: flex;
     align-items: center;
     gap: 7px;
-    margin-top: auto;
-    padding-top: 6px;
+    padding-top: 4px;
   }
   .avatar {
     width: 20px;
@@ -2755,8 +2741,6 @@
   .card-dots {
     display: flex;
     gap: 4px;
-    margin-top: auto;
-    padding-top: 6px;
   }
   .dot {
     width: 10px;
@@ -2786,9 +2770,9 @@
   .card-chips {
     display: flex;
     gap: 6px;
-    margin-top: 9px;
+    margin-top: 5px;
     border-top: 1px solid var(--hairline);
-    padding-top: 9px;
+    padding-top: 5px;
     flex-wrap: wrap;
   }
   .chip {
@@ -2803,8 +2787,7 @@
     font-size: 11.5px;
     color: var(--ok);
     font-weight: 600;
-    margin-top: auto;
-    padding-top: 6px;
+    padding-top: 4px;
     display: flex;
     align-items: center;
     gap: 5px;
@@ -2831,8 +2814,10 @@
     cursor: pointer;
     flex: none;
   }
-  .backlink:hover {
-    text-decoration: underline;
+  @media (hover: hover) {
+    .backlink:hover {
+      text-decoration: underline;
+    }
   }
   .bcsep {
     color: var(--line-input);
@@ -2910,15 +2895,6 @@
     .bcol-head {
       display: none;
     }
-    /* One lane on a phone: cards are short rows. */
-    .well {
-      gap: 8px;
-      padding: 8px;
-    }
-    .card {
-      min-height: 0;
-      padding: 9px 12px;
-    }
   }
   .lanetab {
     --lane-solid: var(--ink-soft);
@@ -2926,7 +2902,7 @@
     --lane-text: var(--ink-soft);
     --lane-bg: var(--bg-tint);
     --lane-line: var(--line);
-    min-height: 36px;
+    min-height: 32px;
     padding: 2px 4px;
     display: flex;
     align-items: center;
@@ -2952,8 +2928,7 @@
   }
   /* A narrow view column (a phone): the title takes one line over the
      controls (the full title is its tooltip, the repository link moves to
-     the campaign details in the side panel), the controls grow to 36px, and
-     the side margins shrink. */
+     the campaign details in the side panel) and the side margins shrink. */
   @container (max-width: 700px) {
     .hero {
       padding: 10px 16px 8px;
@@ -2973,19 +2948,13 @@
     .slug {
       display: none;
     }
-    .hero-line .btn {
-      min-height: 36px;
-    }
-    /* The actions take their own full-width line, the claim the most room;
-       Manage is its gear only. */
+    /* The actions take their own full-width line; Manage is its gear
+       only. */
     .hero-acts {
       flex-basis: 100%;
     }
-    .claimbtn {
-      flex: 1;
-    }
     .managechip {
-      width: 36px;
+      width: 32px;
       padding: 0;
       justify-content: center;
     }

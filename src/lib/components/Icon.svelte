@@ -25,7 +25,10 @@
     | "warning"
     | "check-circle"
     | "reset"
-    | "lock";
+    | "lock"
+    | "plus"
+    | "sort"
+    | "clock";
   let {
     name,
     size = 14,
@@ -55,6 +58,9 @@
       "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM8.5 12l2.5 2.5 4.5-5",
     reset: "M3 12a9 9 0 1 0 3-6.7M3 4v5h5",
     lock: "M6 10h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2zM8 10V7a4 4 0 0 1 8 0v3",
+    plus: "M12 5v14M5 12h14",
+    sort: "M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4",
+    clock: "M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
   };
 </script>
 

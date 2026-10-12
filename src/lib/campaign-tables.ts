@@ -445,9 +445,15 @@ export function pieceNamesOf(pieces: PieceRef[]): PieceNames {
   return names;
 }
 
+/** A piece id for display: the wizard's numbered ids (piece-01) as "Piece 1". */
+export const pieceIdLabel = (id: string): string => {
+  const numbered = /^piece-(\d+)$/.exec(id);
+  return numbered ? `Piece ${Number(numbered[1])}` : id;
+};
+
 /** A piece's display name: its title, or its id when it has none. */
 export const pieceLabel = (p: { title: string; id: string }): string =>
-  p.title || p.id;
+  p.title || pieceIdLabel(p.id);
 
 /** Display titles longer than this are shortened (clipTitle). */
 export const TITLE_MAX = 40;

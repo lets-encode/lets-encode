@@ -3,8 +3,88 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-09
+
+- The pieces table in the volunteer view shows each piece's full title.
+- On wide screens your open work sits in a side column beside the campaigns.
+- On phones and tablets your open work folds into a one-line summary bar.
+- Campaign rows show less text and keep their claim button on phones.
+- A campaign's next task that you cannot take says why.
+- The top bar's New campaign button is a plus icon.
+- A campaign preview that fails to load says so.
+- Campaign list load failures show as errors.
+- The campaigns page no longer loads the score renderer.
+- Attention and open-work lists show five items until Show all is chosen.
+- A search or filter without matches offers to show all campaigns.
+- Needs your attention lists open change requests on your campaigns.
+- A campaign's attention marker says how many changes were requested.
+- Campaign progress reads as tasks done of the total.
+- The open-work count includes only work you can act on.
+- A failed campaign load offers Try again and marks your work summary as incomplete.
+- The campaigns page keeps its search, filter and sort in the address.
+- On phones a dot on the sort button marks a sort other than the default.
+- On phones attention and work entries show their chip under the title.
+- Campaign rows show the first line of music instead of the whole first page.
+- Claim buttons explain in a tooltip what claiming does.
+- Attention and work entries wrap their titles to two lines at every width.
+- On phones open-work entries show their claim and review details.
+- A piece without measures shows No preview instead of part of its first page.
+- The progress bar's track is visible in the dark theme.
+- The campaign list keeps its music previews in the browser, so later visits download no page scans.
+- Needs your attention lists change requests in a fixed order.
+- A task you hold opens from its campaign row the same way as from your work list.
+- Phones and tablets hide the work bar for volunteers without any work.
+- A preview that failed to load can be loaded again.
+- The Nearly done filter explains its threshold in a tooltip.
+- The open-work list on the campaigns page no longer offers Abandon.
+- A review you hold opens the review from the open-work list.
+- Submissions waiting on other reviewers show a grey Awaiting review chip.
+- Open-work titles stay on one line outside the side column.
+- Pieces without a title show as Piece 1, Piece 2 instead of their id.
+- On phones Needs your attention shows two items before Show all.
+- Open to claim lists only campaigns with a task you can claim.
+- The Change requested chip says in a tooltip who acts next.
+
+## 2026-10-08
+
+- The measure corrector's delete button sits in the centre of the selected box.
+
 ## 2026-10-07
 
+- On phones the task panel snaps to three heights when dragged.
+- A tap on the panel's drag handle moves it to the next height.
+- At the lowest panel height a Comment button replaces the comment field.
+- The task panel's buttons, header row and comment cards take less height.
+- Buttons are 32px tall in every view; only the volunteer's main action is larger.
+- Task cards on the board are more compact and show their review dots beside the review count.
+- The selected task card has a blue outline and is scrolled into view; the next task is marked by its badge only.
+- A volunteer's task actions in the panel are 44px, as on the next-task card.
+- The side panel docks below the board only where the board beside it would show one lane at a time.
+- The owner view no longer has a Claim the next task button; the task panel's action is the primary one.
+- Task panel buttons that do not fit side by side take a row each.
+- Comment links use 12px text and are 32px tall on touch screens.
+- On phones and tablets the docked panel meets the content above without a gap.
+- Approving a review resolves the task's open change requests.
+- The under-construction banner can be hidden until the browser is closed.
+- The panel's drag handle is easier to hit on touch screens.
+- Change requests are listed and counted with the task's comments.
+- On phones a task's submission and reviews fold behind a disclosure.
+- Holding a finger on a control shows its tooltip.
+- On touch screens buttons are taller and text fields no longer zoom the page.
+- Hover colours no longer stay on after a tap.
+- The side panel task box no longer scrolls on its own; the whole panel scrolls when needed.
+- Edit yourself moved from the review buttons into the change request form.
+- The score setup and measure correction editors use the same task box and review controls as the campaign page.
+- The pre-task editors no longer repeat the task status below the status pill.
+- Earlier change requests read Changes requested, list newest first and take less space.
+- A change request sends the task back automatically; the Send back button is removed.
+- The pre-task editors hide the submit button while the task is not being edited.
+- Attention counts and chips count open change requests; the Changes requested entry on the campaigns page is removed.
+- The owner board's attention chips read change request instead of fail.
+- Done measure corrections and score setups can be opened read-only from their task box.
+- Overlaps of staff and measure boxes are coloured, box fills are darker and borders are thicker and grow with zoom.
+- A Show overlaps switch in the layout correction toolbar hides the overlap colouring.
+- On phones a change request or comment on the campaigns page takes two lines.
 - Done tasks in the volunteer view show their review count and when they finished.
 - Reviews read Approve and Request changes instead of Pass and Fail.
 - The unused status pill labels are removed.

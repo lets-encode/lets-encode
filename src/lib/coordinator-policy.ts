@@ -5,13 +5,7 @@ import {
   LOCK_PATH,
   STATE_PATH,
 } from "./campaign-tables.ts";
-import type {
-  CommentRow,
-  HistoryRow,
-  StateRow,
-  TaskRow,
-} from "./campaign-tables.ts";
-import { resetTaskRows } from "./campaign-submit.ts";
+import type { CommentRow, HistoryRow, TaskRow } from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
 
 export type PullRequestKind =
@@ -147,46 +141,6 @@ export function validationIntentFromPatch(
 
 export function validationVerdict(value: string): "pass" | "fail" | null {
   return value === "pass" || value === "fail" ? value : null;
-}
-
-/**
- * The task whose rows a state.csv patch resets to encoding — the shape a
- * send-back PR carries, relative to the PR's own merge base — or null for any
- * other diff. Every changed row must belong to one task and carry exactly the
- * reset resetTaskRows writes; nothing else may change.
- */
-export function taskResetFromPatch(
-  patch: string | undefined,
-  header: string[],
-  validationColumns: string[],
-): { task_id: string } | null {
-  const rows = csvRowsFromPatch(patch);
-  if (
-    !rows ||
-    rows.added.length === 0 ||
-    rows.added.length !== rows.removed.length
-  )
-    return null;
-  const toRow = (cells: string[]): StateRow =>
-    Object.fromEntries(
-      header.map((column, i) => [column, cells[i] ?? ""]),
-    ) as StateRow;
-  const base = rows.removed.map(toRow);
-  const head = rows.added.map(toRow);
-  const task_id = head[0].task_id;
-  if (task_id === "") return null;
-  for (let i = 0; i < head.length; i++) {
-    if (head[i].task_id !== task_id || base[i].task_id !== task_id) return null;
-    if (base[i].subtask_id !== head[i].subtask_id) return null;
-  }
-  const expected = base.map((r) => ({ ...r }));
-  resetTaskRows(expected, validationColumns, task_id);
-  for (let i = 0; i < head.length; i++) {
-    for (const column of header) {
-      if ((expected[i][column] ?? "") !== (head[i][column] ?? "")) return null;
-    }
-  }
-  return { task_id };
 }
 
 /**
@@ -357,8 +311,8 @@ export function claimPullRequest(
 
 /**
  * The expired claims whose unsubmitted work the task carries: the
- * `released_with_work` rows since the task's last accepted submission,
- * send-back or review edit, oldest first.
+ * `released_with_work` rows since the task's last accepted submission or
+ * review edit, oldest first.
  */
 export function keptWorkSince(
   history: HistoryRow[],
@@ -370,7 +324,7 @@ export function keptWorkSince(
     if (h.task_id !== task_id) continue;
     if (
       h.outcome === "accepted" &&
-      ["submit_encoding", "send_back", "review_edit"].includes(h.action)
+      ["submit_encoding", "review_edit"].includes(h.action)
     )
       break;
     if (h.action === "reap" && h.outcome === "released_with_work")

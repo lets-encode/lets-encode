@@ -421,7 +421,7 @@ async function fetchStats(
 
 /** One task of the viewer's, grouped for the personal dashboard. */
 export interface MyTask {
-  group: "fix" | "encoding" | "validating" | "awaiting" | "done";
+  group: "encoding" | "validating" | "awaiting" | "done";
   campaign: string;
   campaignSlug: string;
   repoPath: string;
@@ -435,13 +435,11 @@ export interface MyTask {
   claimedAt: string;
   /** When the claim goes stale (ISO); '' when the reaper is not configured. */
   expiresAt: string;
-  /** Fail/awaiting groups: validation progress on the task's subtasks. */
+  /** Awaiting group: validation progress on the task's subtasks. */
   passes: number;
   threshold: number;
   /** Slot dots for the awaiting group. */
-  dots: Array<"pass" | "fail" | "open">;
-  /** The latest unresolved fail comment (fix group), or null. */
-  failComment: CommentRow | null;
+  dots: Array<"pass" | "open">;
   /** When the encoding was submitted (awaiting/done groups). */
   submittedAt: string;
   logins: Record<string, string>;
@@ -456,21 +454,36 @@ export interface FeedComment {
   logins: Record<string, string>;
 }
 
-/** Tasks whose latest validation round records a fail (fix requested). */
-export function attentionCount(stats: CampaignStats): number {
-  return stats.rows.filter(
-    (r) =>
-      r.subtask_id === "" &&
-      r.status === "validation_required" &&
-      taskFailCells(stats, r.task_id).length > 0,
-  ).length;
+/**
+ * Unfinished tasks with an unresolved change request (fail comment), each
+ * with its display title.
+ */
+export function changeRequestTasks(
+  stats: CampaignStats,
+): { task: string; title: string }[] {
+  const done = new Set(
+    stats.rows
+      .filter((r) => r.subtask_id === "" && r.status === "completed")
+      .map((r) => r.task_id),
+  );
+  const tasks = new Set(
+    stats.comments
+      .filter(
+        (c) =>
+          c.kind === "fail" && c.resolved !== "true" && !done.has(c.task_id),
+      )
+      .map((c) => c.task_id),
+  );
+  return [...tasks].map((task) => {
+    const def = findRow(stats.taskDefs, task, "");
+    return { task, title: def ? titleOf(stats, def) : task };
+  });
 }
 
-const taskFailCells = (stats: CampaignStats, task: string): string[] =>
-  stats.rows
-    .filter((r) => r.task_id === task && r.subtask_id !== "")
-    .flatMap((r) => stats.validationColumns.map((c) => r[c] ?? ""))
-    .filter((cell) => isFinalValidation(cell) && cell.startsWith("fail|"));
+/** Unfinished tasks with an unresolved change request (fail comment). */
+export function attentionCount(stats: CampaignStats): number {
+  return changeRequestTasks(stats).length;
+}
 
 /** The viewer's tasks in one campaign, grouped by what needs doing. */
 export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
@@ -485,11 +498,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       stats.validationColumns.map((c) => r[c] ?? ""),
     );
     const dots = cells.map((cell) =>
-      isFinalValidation(cell)
-        ? cell.startsWith("pass|")
-          ? ("pass" as const)
-          : ("fail" as const)
-        : ("open" as const),
+      isFinalValidation(cell) ? ("pass" as const) : ("open" as const),
     );
     return {
       campaign: stats.title,
@@ -504,7 +513,6 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       passes: dots.filter((d) => d === "pass").length,
       threshold: taskThreshold(stats.passThreshold, subRows.length),
       dots,
-      failComment: null,
       submittedAt: findRow(stats.rows, task, "")?.encoded_at ?? "",
       logins: stats.logins,
     };
@@ -531,35 +539,15 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
     }
   }
 
-  // Tasks the viewer encoded: failed → fix requested, else awaiting / done.
+  // Tasks the viewer encoded: awaiting review or done.
   for (const row of stats.rows) {
     if (row.subtask_id !== "" || row.encoder !== viewer) continue;
     if (row.status === "completed") {
       out.push({ ...base(row.task_id), group: "done" });
       continue;
     }
-    if (row.status !== "validation_required") continue;
-    const fails = taskFailCells(stats, row.task_id);
-    if (fails.length > 0) {
-      const failTs = new Set(fails.map((cell) => cell.split("|")[2]));
-      const comment =
-        stats.comments
-          .filter(
-            (c) =>
-              c.task_id === row.task_id &&
-              c.kind === "fail" &&
-              c.resolved !== "true" &&
-              failTs.has(c.timestamp),
-          )
-          .at(-1) ??
-        stats.comments
-          .filter((c) => c.task_id === row.task_id && c.kind === "fail")
-          .at(-1) ??
-        null;
-      out.push({ ...base(row.task_id), group: "fix", failComment: comment });
-    } else {
+    if (row.status === "validation_required")
       out.push({ ...base(row.task_id), group: "awaiting" });
-    }
   }
   return out;
 }

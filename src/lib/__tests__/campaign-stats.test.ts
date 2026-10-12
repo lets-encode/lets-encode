@@ -9,6 +9,7 @@ import {
 } from "../campaign-tables.ts";
 import {
   attentionCount,
+  changeRequestTasks,
   commentsOnMyWork,
   isNearlyDone,
   loadAllCampaignStats,
@@ -41,8 +42,9 @@ const taskDefs = parseTaskCsv(
     "T0004,,sources/a.mei,surface-4,,,\n" +
     "T0004,S0001,sources/a.mei,surface-4,,,\n",
 );
-// T0001 open · T0002 blocked by it · T0003 encoded by 7 with one fail ·
-// T0004 encoded by 7, one pass, awaiting the second.
+// T0001 open · T0002 blocked by it · T0003 encoded by 7, one pass, with an
+// open change request from an earlier round · T0004 encoded by 7, one pass,
+// awaiting the second.
 const state = parseStateCsv(
   STATE_HEADER +
     "T0001,,encoding_required,,,,\n" +
@@ -50,7 +52,7 @@ const state = parseStateCsv(
     "T0002,,encoding_required,,,,\n" +
     "T0002,S0001,pending,,,,\n" +
     "T0003,,validation_required,7,2026-07-30T10:00:00Z,,\n" +
-    "T0003,S0001,validation_required,,,fail|9|2026-07-31T08:00:00Z,\n" +
+    "T0003,S0001,validation_required,,,pass|9|2026-07-31T08:00:00Z,\n" +
     "T0004,,validation_required,7,2026-07-29T10:00:00Z,,\n" +
     "T0004,S0001,validation_required,,,pass|9|2026-07-30T08:00:00Z,\n",
 );
@@ -124,14 +126,26 @@ test("isNearlyDone: from 80% up, but never when finished", () => {
   assert.equal(isNearlyDone(0, 0), false);
 });
 
-test("attentionCount: tasks whose validation records a fail", () => {
-  // Only T0003 carries a fail; T0004 has a pass and an open slot.
+test("attentionCount: unfinished tasks with an unresolved change request", () => {
+  // Only T0003 carries a change request (c1).
   assert.equal(attentionCount(stats), 1);
-  const clean = {
+  const resolved = {
     ...stats,
-    rows: stats.rows.map((r) => ({ ...r, validate_status_1: "" })),
+    comments: stats.comments.map((c) => ({ ...c, resolved: "true" })),
   };
-  assert.equal(attentionCount(clean), 0);
+  assert.equal(attentionCount(resolved), 0);
+  const finished = {
+    ...stats,
+    rows: stats.rows.map((r) => ({ ...r, status: "completed" })),
+  };
+  assert.equal(attentionCount(finished), 0);
+});
+
+test("changeRequestTasks names each task with an open change request", () => {
+  const [only, ...rest] = changeRequestTasks(stats);
+  assert.equal(only.task, "T0003");
+  assert.ok(only.title);
+  assert.equal(rest.length, 0);
 });
 
 test("myTasksIn groups the viewer's tasks by what needs doing", () => {
@@ -141,9 +155,6 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
   assert.equal(byGroup.encoding.task, "T0001");
   assert.equal(byGroup.encoding.claimedAt, "2026-08-01T10:00:00Z");
   assert.equal(byGroup.encoding.expiresAt, "2026-08-01T12:00:00.000Z");
-  // The failed encoding → fix requested, quoting the validator's comment.
-  assert.equal(byGroup.fix.task, "T0003");
-  assert.equal(byGroup.fix.failComment?.body, "Slurs missing");
   // The passing encoding → awaiting validation with its dots.
   assert.equal(byGroup.awaiting.task, "T0004");
   assert.equal(byGroup.awaiting.passes, 1);

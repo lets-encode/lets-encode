@@ -217,7 +217,7 @@
   }
   /* Docked panel (DOCKED_QUERY in side-panels.ts): the panel spans the
      window's width under the score. */
-  @media (orientation: portrait) and (max-width: 900px) {
+  @media (orientation: portrait) and (max-width: 753px) {
     .scoreview {
       padding: 10px 0 0;
       gap: 8px;

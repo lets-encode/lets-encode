@@ -1,8 +1,8 @@
 <!--
-  One discussion comment as a card: avatar, author, elapsed/measure meta, the
-  kind pill, body, measure anchor and the reply/resolve actions. Replies
-  render indented without pill or actions. Rendered in the side panel's
-  comment list.
+  One discussion comment as a card: avatar, author, elapsed/measure meta, a
+  "Changes requested" label on a fail comment, body, measure anchor and the
+  reply/resolve actions. Replies render indented without actions. Rendered
+  in the side panel's comment list.
 -->
 <script lang="ts">
   import { auth } from "$lib/auth.svelte.ts";
@@ -44,6 +44,8 @@
   } = $props();
 
   const login = $derived(handle(logins, comment.author_id));
+  // A fail comment is the note of a review that sent the task back.
+  const fail = $derived(comment.kind === "fail");
   const resolved = $derived(comment.resolved === "true");
   const canResolve = $derived(
     viewer !== "" && (canPush || comment.author_id === viewer),
@@ -79,7 +81,7 @@
   );
 </script>
 
-<div class="ccard" class:review class:reply class:resolved>
+<div class="ccard" class:review class:reply class:resolved class:fail>
   <div class="chead">
     <span class="avatar">{initialOf(login)}</span>
     <span class="cwho">{login}</span>
@@ -92,15 +94,18 @@
           : ""}{resolved ? " · resolved" : ""}
       {/if}
     </span>
+    {#if fail}
+      <span class="ckind">Changes requested</span>
+    {/if}
   </div>
   <span class="cbody">{comment.body}</span>
-  {#if !reply && measureLabel}
-    <button type="button" class="anchor" onclick={() => onanchor(comment)}>
-      {anchorLabel}
-    </button>
-  {/if}
-  {#if !reply && ((onreply && auth.user) || (!resolved && canResolve))}
+  {#if !reply && (measureLabel || (onreply && auth.user) || (!resolved && canResolve))}
     <div class="cacts">
+      {#if measureLabel}
+        <button type="button" class="anchor" onclick={() => onanchor(comment)}>
+          {anchorLabel}
+        </button>
+      {/if}
       {#if onreply && auth.user}
         <button type="button" class="linkish" onclick={() => onreply(comment)}>
           Reply
@@ -131,15 +136,25 @@
   .ccard {
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 3px;
     background: var(--card);
     border: 1px solid var(--line);
     border-left: 3px solid var(--info);
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 6px 10px;
   }
   .ccard.review {
     border-left-color: var(--warn);
+  }
+  .ccard.fail {
+    border-left-color: var(--danger-solid);
+  }
+  .ckind {
+    margin-left: auto;
+    flex: none;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--danger);
   }
   .ccard.reply {
     margin-left: 14px;
@@ -184,8 +199,24 @@
     line-height: 1.45;
     overflow-wrap: anywhere;
   }
+  /* The anchor and the actions are 24px tall to tap, 32px on a touch
+     screen; the row's negative margin keeps the extra height out of the
+     card. */
+  .anchor,
+  .linkish {
+    min-height: 24px;
+    display: inline-flex;
+    align-items: center;
+  }
+  @media (pointer: coarse) {
+    .anchor,
+    .linkish {
+      min-height: 32px;
+    }
+  }
   .anchor {
-    font-size: 10.5px;
+    margin-right: auto;
+    font-size: 12px;
     font-weight: 600;
     color: var(--info);
     cursor: pointer;
@@ -197,8 +228,10 @@
   }
   .cacts {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
+    gap: 0 12px;
+    margin: -4px 0;
   }
   .resolving {
     display: inline-flex;
@@ -229,7 +262,7 @@
   }
   .linkish {
     font: inherit;
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 600;
     background: none;
     border: none;

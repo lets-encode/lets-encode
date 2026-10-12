@@ -548,10 +548,15 @@
     stroke-width: 2;
     cursor: move;
   }
-  .zone:hover,
   .zone.selected {
     fill-opacity: calc(var(--zone-fill-alpha) * 1.6);
     stroke-width: 3.5;
+  }
+  @media (hover: hover) {
+    .zone:hover {
+      fill-opacity: calc(var(--zone-fill-alpha) * 1.6);
+      stroke-width: 3.5;
+    }
   }
   .zone:focus-visible {
     outline: none;
@@ -582,9 +587,13 @@
     fill: var(--card);
     stroke: var(--line-input);
   }
-  .delbtn:hover rect,
   .delbtn:focus-visible rect {
     stroke: var(--danger);
+  }
+  @media (hover: hover) {
+    .delbtn:hover rect {
+      stroke: var(--danger);
+    }
   }
   .delbtn path {
     fill: none;

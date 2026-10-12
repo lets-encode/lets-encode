@@ -5,8 +5,8 @@ import {
   buildBoard,
   cardTitle,
   doneLabel,
+  buildThreads,
   expiresIn,
-  orphanedFails,
 } from "../campaign-board.ts";
 import {
   parseCommentCsv,
@@ -46,10 +46,19 @@ test("cardTitle is the task's name, then its piece: config name, else piece dire
     cardTitle("sources/piece-1/score.mei", "surface-2", names, true),
     "Correct the OMR draft · p. 2 · Sonata in C",
   );
-  // Unnamed pieces fall back to the path's piece directory…
+  // Unnamed pieces fall back to the path's piece directory, the wizard's
+  // numbered folders as "Piece N"…
   assert.equal(
     cardTitle("sources/piece-2/score.mei", "", names),
-    "Encode · piece-2",
+    "Encode · Piece 2",
+  );
+  assert.equal(
+    cardTitle("sources/piece-01/score.mei", "score-setup", {}),
+    "Score setup · Piece 1",
+  );
+  assert.equal(
+    cardTitle("sources/sonata/score.mei", "", {}),
+    "Encode · sonata",
   );
   // …and paths outside the sources/<piece>/score.mei layout to the basename.
   assert.equal(cardTitle("sources/score.mei", "", names), "Encode · score");
@@ -67,26 +76,28 @@ test("taskName and taskScope: the page is the scope; pre-tasks cover the whole p
   assert.equal(taskName("surface-4", true), "Correct the OMR draft · p. 4");
 });
 
-test("orphanedFails returns unresolved fail comments without a matching fail cell", () => {
+test("buildThreads lists a task's comments and fail comments in log order, with replies", () => {
   const comments = parseCommentCsv(
     COMMENT_HEADER +
       "c1,T0002,S0001,fail,1,1,2,111,2026-08-12T10:21:03.348Z,,,Not the correct notes\n" +
       "c2,T0002,S0001,fail,3,,,222,2026-08-12T10:37:24.390Z,true,,resolved earlier\n" +
       "c3,T0002,,comment,,,,333,2026-08-12T10:40:00.000Z,,,a comment\n" +
-      "c4,T0001,S0001,fail,1,1,1,111,2026-08-12T09:00:00.000Z,,,other task\n",
+      "c4,T0001,S0001,fail,1,1,1,111,2026-08-12T09:00:00.000Z,,,other task\n" +
+      "c5,T0002,S0001,fail,2,,,111,2026-08-12T11:00:00.000Z,,,later request\n" +
+      "c6,T0002,,reply,,,,111,2026-08-12T11:05:00.000Z,,c3,a reply\n",
   );
-  // After a send-back the slot is open again — no fail cell matches c1.
-  const open = { task: "T0002", slots: [slot({})] };
   assert.deepEqual(
-    orphanedFails(open, comments).map((c) => c.comment_id),
-    ["c1"],
+    buildThreads(comments, "T0002").map((t) => [
+      t.root.comment_id,
+      t.replies.map((r) => r.comment_id),
+    ]),
+    [
+      ["c1", []],
+      ["c2", []],
+      ["c3", ["c6"]],
+      ["c5", []],
+    ],
   );
-  // A fail cell with c1's author and timestamp still matches it.
-  const matched = {
-    task: "T0002",
-    slots: [slot({ key: "fail", user: "111", ts: "2026-08-12T10:21:03.348Z" })],
-  };
-  assert.deepEqual(orphanedFails(matched, comments), []);
 });
 
 test("the done column lists the tasks finished last first", () => {

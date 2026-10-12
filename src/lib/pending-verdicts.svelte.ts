@@ -47,7 +47,7 @@ const taskOf = (key: string): string => {
 };
 
 /** Submission kinds that finish work on a task, as the board understands it. */
-const FINISH_KINDS = new Set(["encode", "validate", "sendback"]);
+const FINISH_KINDS = new Set(["encode", "validate"]);
 
 /** Discussion kinds: their run state renders at the comment or composer they
  * act on (CommentCard, CommentComposer), never on the task. */
@@ -55,7 +55,7 @@ const DISCUSSION_KEY_KINDS = new Set(["comment", "resolve"]);
 
 class PendingVerdictStore {
   entries = $state<PendingVerdict[]>([]);
-  /** Tasks an accepted encoding, validation or send-back of the viewer's just
+  /** Tasks an accepted encoding or validation of the viewer's just
    * moved on the board, per repo — each highlighted for a short while. Raw
    * state: the expiry timeout removes its mark by identity, which the deep
    * proxy of plain $state would break. */
@@ -132,7 +132,7 @@ class PendingVerdictStore {
   }
 
   /** Whether any submission acting on `taskId` itself (claim, encoding,
-   * verdict, send-back — not a discussion) is still being processed; the
+   * verdict — not a discussion) is still being processed; the
    * task's controls hold until it lands. `repoId` limits the check to one
    * campaign. */
   taskProcessing(taskId: string, repoId?: number): boolean {

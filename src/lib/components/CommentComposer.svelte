@@ -154,6 +154,7 @@
   }
   .composer-row {
     display: flex;
+    align-items: center;
     gap: 8px;
   }
   .composer-row input {
