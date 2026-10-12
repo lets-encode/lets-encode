@@ -352,6 +352,19 @@
       min-width: 32px;
     }
   }
+  /* Windows 500px tall or less (phones in landscape): a 44px bar. */
+  @media (max-height: 500px) {
+    header {
+      height: 44px;
+    }
+    .brand img {
+      height: 24px;
+    }
+    header .user :global(.btn) {
+      min-height: 32px;
+      padding: 4px 12px;
+    }
+  }
   .user {
     display: flex;
     align-items: center;

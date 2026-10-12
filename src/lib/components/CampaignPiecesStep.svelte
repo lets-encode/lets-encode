@@ -22,12 +22,18 @@
     pagesCovered,
     pieceColour,
   } from "$lib/pieces.ts";
-  import { wizard, nextStep, previousStep } from "$lib/wizard.svelte.ts";
+  import {
+    wizard,
+    nextStep,
+    piecesSummary,
+    previousStep,
+  } from "$lib/wizard.svelte.ts";
   import { CampaignFinisher } from "$lib/campaign-finish.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let selected = $state(0);
   // With no page images the preparation step is skipped, so this step
@@ -194,15 +200,14 @@
     wizard.pieces[selected].pages = Number.isFinite(n) && n > 0 ? n : undefined;
   }
 
-  const railStatus = $derived.by(() => {
-    const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
-    if (!wizard.images.length) return count;
-    const marked = new Set(
-      wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)),
-    );
-    const open = wizard.images.filter((_, i) => !marked.has(i)).length;
-    return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
-  });
+  // Where the pages are, for the hints that send the user to them.
+  const wherePages = $derived(
+    {
+      side: "in the pane on the left",
+      stacked: "in the pane above",
+      switch: "under Pages",
+    }[wizardLayout.materialMode],
+  );
 
   // Whether the selected piece's XML view holds a well-formed <meiHead>.
   // While it does not, nothing that leaves the piece is available.
@@ -226,6 +231,8 @@
     bind:pieces={wizard.pieces}
     {pages}
     selectedPiece={selected}
+    onselect={selectPiece}
+    selectBlocked={xmlBlock}
   />
 {/snippet}
 
@@ -233,8 +240,15 @@
   step="pieces"
   heading={wizard.images.length ? "Mark the pieces" : "Describe the pieces"}
   intro="The separate works in this source. Each becomes its own score and its own set of tasks."
-  status={railStatus}
+  status={piecesSummary()}
   material={pages.length ? material : undefined}
+  panes={{
+    form: "Pieces",
+    formCount: wizard.pieces.length,
+    material: "Pages",
+    materialCount: pages.length,
+    materialFirst: true,
+  }}
   onBack={previousStep}
   backDisabled={busy}
   navBlocked={xmlBlock}
@@ -254,7 +268,7 @@
       : finisher.error
         ? "arrow-right"
         : "check"}
-  finish={last}
+  finish={last && !finisher.error}
 >
   <div class="pieces-head">
     <span class="pieces-count">Pieces · {wizard.pieces.length}</span>
@@ -417,12 +431,11 @@
           <strong style="color: {pieceColour(selected)}">{label}</strong>
           {#if covered.length}
             covers page{covered.length === 1 ? "" : "s"}
-            {formatRanges(covered.map((p) => p + 1))}. Adjust its regions in the
-            pane on the left.
+            {formatRanges(covered.map((p) => p + 1))}. Adjust its regions {wherePages}.
           {:else if piece.noRegions}
             covers no regions on purpose and gets no tasks.
           {:else}
-            has no regions marked yet. Mark them in the pane on the left.
+            has no regions marked yet. Mark them {wherePages}.
           {/if}
         </p>
       {:else if piece.kind === "physical-only"}
@@ -466,10 +479,12 @@
     </p>
   {/if}
 
-  {#if finisher.error}
-    <p class="msg-error" role="alert">{finisher.error}</p>
-  {/if}
-  <ProgressSteps log={finisher.log} />
+  {#snippet pinned()}
+    {#if finisher.error}
+      <p class="msg-error" role="alert">{finisher.error}</p>
+    {/if}
+    <ProgressSteps log={finisher.log} />
+  {/snippet}
 </WizardCard>
 
 <style>

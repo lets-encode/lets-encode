@@ -7,6 +7,10 @@
   `fitPageZoom`, at which a whole page is visible top to bottom.
 -->
 <script module lang="ts">
+  /** The zoom's range, in percent. */
+  export const ZOOM_MIN = 50;
+  export const ZOOM_MAX = 400;
+
   /**
    * The zoom, in percent, at which the tallest page of a material grid fits the
    * body top to bottom. The grid's padding, gap and the height a tile needs
@@ -33,6 +37,7 @@
 
 <script lang="ts">
   import FitIcon from "./FitIcon.svelte";
+  import Icon from "./Icon.svelte";
 
   let {
     value = $bindable(),
@@ -55,17 +60,29 @@
 
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
-  const LEAST = 50;
-  const MOST = 400;
+  const LEAST = ZOOM_MIN;
+  const MOST = ZOOM_MAX;
   const STOPS = 100;
   const pos = $derived(
     Math.round((Math.log(value / LEAST) / Math.log(MOST / LEAST)) * STOPS),
   );
   const setPos = (p: number) =>
     (value = Math.round(LEAST * (MOST / LEAST) ** (p / STOPS)));
+  // The buttons that stand in for the slider on touch and in narrow panes.
+  function step(factor: number) {
+    value = Math.round(Math.min(MOST, Math.max(LEAST, value * factor)));
+    fit = null;
+  }
 </script>
 
 <span class="zoomctl">
+  <button
+    type="button"
+    class="btn btn-icon zstep"
+    aria-label="Zoom out"
+    disabled={value <= LEAST}
+    onclick={() => step(1 / 1.25)}><Icon name="zoom-out" /></button
+  >
   <input
     class="zoomslider"
     type="range"
@@ -83,7 +100,14 @@
   <span class="zval">{value}%</span>
   <button
     type="button"
-    class="tbtn tbtn-icon"
+    class="btn btn-icon zstep"
+    aria-label="Zoom in"
+    disabled={value >= MOST}
+    onclick={() => step(1.25)}><Icon name="zoom-in" /></button
+  >
+  <button
+    type="button"
+    class="tbtn tbtn-icon fit-width"
     class:on={fit === "width"}
     onclick={() => (fit = "width")}
     aria-label="Fit the page width"
@@ -92,7 +116,7 @@
   {#if fitPage !== undefined}
     <button
       type="button"
-      class="tbtn tbtn-icon"
+      class="tbtn tbtn-icon fit-page"
       class:on={fit === "page"}
       onclick={() => (fit = "page")}
       aria-label="Fit the whole page"
@@ -103,9 +127,48 @@
 </span>
 
 <style>
+  /* A mouse gets the slider, touch the − / + buttons. Narrower panes drop the
+     readout and the page fit, and below 440px the slider gives way to the
+     buttons and touch keeps only − / +. */
   .zoomctl {
+    flex: none;
     display: flex;
     align-items: center;
     gap: 8px;
+  }
+  .zstep {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .zoomctl .zoomslider {
+      display: none;
+    }
+    .zstep {
+      display: inline-flex;
+    }
+  }
+  @container material (max-width: 639px) {
+    .zoomctl .zoomslider {
+      width: 70px;
+    }
+    .zval,
+    .fit-page {
+      display: none;
+    }
+  }
+  @container material (max-width: 439px) {
+    .zoomctl .zoomslider {
+      display: none;
+    }
+    .zstep {
+      display: inline-flex;
+    }
+  }
+  @media (pointer: coarse) {
+    @container material (max-width: 439px) {
+      .fit-width {
+        display: none;
+      }
+    }
   }
 </style>

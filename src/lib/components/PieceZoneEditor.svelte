@@ -12,6 +12,11 @@
 
   Coordinates are the page image's own pixels, which is what the detector
   returns boxes in, so no rescaling is needed when the boxes are partitioned.
+
+  On touch the toolbar holds a piece picker and a Scroll / Draw switch. In
+  Draw one finger draws, moves and resizes, and two fingers pan and zoom; a
+  second finger landing mid-edit undoes the edit it interrupted. In Scroll a
+  finger or a pen scrolls and nothing is edited.
 -->
 <script lang="ts">
   import {
@@ -29,22 +34,36 @@
     type PieceZone,
   } from "$lib/pieces.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
+  import ZoomLevel, {
+    fitPageZoom,
+    ZOOM_MAX,
+    ZOOM_MIN,
+  } from "./ZoomLevel.svelte";
+  import Icon from "./Icon.svelte";
+  import { untrack } from "svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let {
     pieces = $bindable(),
     pages,
     selectedPiece,
+    onselect,
+    selectBlocked,
   }: {
     pieces: Piece[];
     /** One entry per page image, with its natural pixel size. */
     pages: { url: string; width: number; height: number }[];
     /** Index into `pieces`; regions are drawn for this piece. */
     selectedPiece: number;
+    /** Picks the piece to draw for, from the touch toolbar's picker. */
+    onselect?: (index: number) => void;
+    /** Why another piece cannot be picked right now; disables the picker. */
+    selectBlocked?: string;
   } = $props();
 
-  // Two pages per row, each shown whole, to begin with.
-  let perRow = $state(2);
+  // Two pages per row, each shown whole, to begin with; one on a phone.
+  let perRow = $state(window.innerWidth < 600 ? 1 : 2);
   let zoom = $state(100);
   let fit = $state<"width" | "page" | null>("page");
   // The body's inner size, for the page fit.
@@ -84,6 +103,44 @@
     started?: boolean;
   };
   let drag: Drag | null = null;
+
+  // What a finger does on the pages; a mouse or pen always edits.
+  let touchMode = $state<"draw" | "scroll">("draw");
+  // Fingers down on the pages. A second one turns the touch into a pan and
+  // zoom, and no finger edits again until all have lifted.
+  const fingers = new Set<number>();
+  let gestureHeld = false;
+
+  /** Whether this press may start an edit, keeping count of the fingers. */
+  function mayEdit(e: PointerEvent): boolean {
+    if (e.pointerType === "mouse") return true;
+    if (e.pointerType === "touch") fingers.add(e.pointerId);
+    return !gestureHeld && touchMode === "draw";
+  }
+  function holdGesture() {
+    gestureHeld = true;
+    cancelDrag();
+  }
+  function releaseFinger(e: PointerEvent) {
+    if (e.pointerType !== "touch") return;
+    fingers.delete(e.pointerId);
+    if (!fingers.size) gestureHeld = false;
+  }
+
+  /** Undo the edit in progress: a drawn region goes, a moved one returns. */
+  function cancelDrag() {
+    if (!drag) return;
+    const { kind, piece, zone, origin, started } = drag;
+    drag = null;
+    if (kind === "draw") {
+      if (started) {
+        pieces[piece].zones.splice(zone, 1);
+        selectedZone = null;
+      }
+    } else {
+      Object.assign(pieces[piece].zones[zone], origin);
+    }
+  }
   // Arrow keys move a region NUDGE page pixels, NUDGE_FAR with Shift.
   const NUDGE = 4;
   const NUDGE_FAR = 20;
@@ -112,6 +169,7 @@
   }
 
   function backgroundPointerDown(e: PointerEvent, surface: number) {
+    if (!mayEdit(e)) return;
     selectedZone = null;
     const piece = pieces[selectedPiece];
     if (!piece || piece.kind !== "facsimile") return;
@@ -135,6 +193,7 @@
     z: number,
   ) {
     e.stopPropagation();
+    if (!mayEdit(e)) return;
     selectedZone = { piece: p, zone: z };
     const { x, y } = svgXY(e, surface);
     drag = {
@@ -156,6 +215,7 @@
     corner: Corner,
   ) {
     e.stopPropagation();
+    if (!mayEdit(e)) return;
     selectedZone = { piece: p, zone: z };
     const { x, y } = svgXY(e, surface);
     drag = {
@@ -270,7 +330,8 @@
     }
   }
 
-  function pointerUp() {
+  function pointerUp(e: PointerEvent) {
+    releaseFinger(e);
     if (!drag) return;
     const { kind, page, piece, zone: z, origin, started } = drag;
     drag = null;
@@ -340,27 +401,95 @@
   }
 
   const labelFor = (p: number) => pieces[p].meta.title.trim() || pieces[p].id;
+
+  // Where the pages share the card behind a tab, picking a piece brings its
+  // first page into view, so the Pages tab opens where that piece is.
+  let body = $state<HTMLDivElement>();
+  $effect(() => {
+    const piece = selectedPiece;
+    untrack(() => {
+      const zones = pieces[piece]?.zones ?? [];
+      if (wizardLayout.materialMode !== "switch" || !zones.length) return;
+      const svg = svgEls[Math.min(...zones.map((z) => z.surface))];
+      if (!body || !svg) return;
+      body.scrollTop +=
+        svg.getBoundingClientRect().top - body.getBoundingClientRect().top - 8;
+    });
+  });
 </script>
 
-<svelte:window onpointermove={pointerMove} onpointerup={pointerUp} />
+<svelte:window
+  onpointermove={pointerMove}
+  onpointerup={pointerUp}
+  onpointercancel={(e) => {
+    releaseFinger(e);
+    cancelDrag();
+  }}
+/>
 
 <div class="material-card">
   <div class="material-toolbar">
-    <span class="drag-hint">
-      {#if pieces[selectedPiece]?.kind === "facsimile"}
-        Drag on a page to give a region to
-        <strong style="color: {pieceColour(selectedPiece)}"
-          >{labelFor(selectedPiece)}</strong
+    {#if wizardLayout.coarse}
+      <label
+        class="pchip"
+        style="--piece: {pieceColour(selectedPiece)}"
+        title={selectBlocked}
+      >
+        <span class="swatch"></span>
+        <span class="pchip-name">{labelFor(selectedPiece)}</span>
+        <Icon name="chevron-down" size={12} />
+        <select
+          aria-label="Piece to draw for"
+          value={selectedPiece}
+          disabled={selectBlocked !== undefined}
+          onchange={(e) =>
+            onselect?.(Number((e.currentTarget as HTMLSelectElement).value))}
         >
-      {:else}
-        <strong style="color: {pieceColour(selectedPiece)}"
-          >{labelFor(selectedPiece)}</strong
-        >
-        is an uploaded encoding — it needs no regions
+          {#each pieces as _, p (pieces[p].id)}
+            <option value={p}>{labelFor(p)}</option>
+          {/each}
+        </select>
+      </label>
+      {#if pieces[selectedPiece]?.kind !== "facsimile"}
+        <span class="drag-hint">An uploaded encoding needs no regions</span>
       {/if}
-    </span>
+      <span class="segt" role="group" aria-label="What a finger does">
+        <button
+          type="button"
+          class:on={touchMode === "scroll"}
+          aria-pressed={touchMode === "scroll"}
+          aria-label="Scroll"
+          onclick={() => (touchMode = "scroll")}
+          ><Icon name="hand" size={16} /><span class="segt-label">Scroll</span
+          ></button
+        >
+        <button
+          type="button"
+          class:on={touchMode === "draw"}
+          aria-pressed={touchMode === "draw"}
+          aria-label="Draw regions"
+          onclick={() => (touchMode = "draw")}
+          ><Icon name="square" size={16} /><span class="segt-label">Draw</span
+          ></button
+        >
+      </span>
+    {:else}
+      <span class="drag-hint">
+        {#if pieces[selectedPiece]?.kind === "facsimile"}
+          Drag on a page to give a region to
+          <strong style="color: {pieceColour(selectedPiece)}"
+            >{labelFor(selectedPiece)}</strong
+          >
+        {:else}
+          <strong style="color: {pieceColour(selectedPiece)}"
+            >{labelFor(selectedPiece)}</strong
+          >
+          is an uploaded encoding — it needs no regions
+        {/if}
+      </span>
+    {/if}
     <div class="toolbar-gap"></div>
-    <PagesPerRow bind:value={perRow} />
+    <span class="per-row-ctl"><PagesPerRow bind:value={perRow} /></span>
     <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
   </div>
 
@@ -368,7 +497,22 @@
     <p class="msg-warn notice" role="status">{notice}</p>
   {/if}
 
-  <div class="material-body" bind:clientWidth={bodyW} bind:clientHeight={bodyH}>
+  <div
+    class="material-body"
+    class:drawing={touchMode === "draw"}
+    bind:this={body}
+    bind:clientWidth={bodyW}
+    bind:clientHeight={bodyH}
+    {@attach zoomGestures({
+      get: () => zoom,
+      set: (z) => {
+        zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+        fit = null;
+      },
+      follow: true,
+      onpinchstart: holdGesture,
+    })}
+  >
     <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
       {#each pages as page, i (page.url)}
         {@const scale = (svgWidths[i] || 400) / page.width}
@@ -428,6 +572,28 @@
                 onpointerdown={(e) => zonePointerDown(e, i, p, z)}
                 onkeydown={(e) => zoneKeydown(e, i, p, z)}
               />
+              {#if wizardLayout.coarse && selectedZone?.piece === p && selectedZone?.zone === z}
+                <!-- Press areas around the corner handles, up to 44px but no
+                     more than a quarter of the region, so a small region can
+                     still be moved; drawn under the label and the delete
+                     button. -->
+                {@const hitR =
+                  Math.min(
+                    22,
+                    (Math.min(zw, zone.lry - zone.uly) * scale) / 4,
+                  ) / scale}
+                {#each [{ corner: "nw", cx: zone.ulx, cy: zone.uly }, { corner: "ne", cx: zone.lrx, cy: zone.uly }, { corner: "sw", cx: zone.ulx, cy: zone.lry }, { corner: "se", cx: zone.lrx, cy: zone.lry }] as const as h (h.corner)}
+                  <circle
+                    class="handle-hit"
+                    aria-hidden="true"
+                    cx={h.cx}
+                    cy={h.cy}
+                    r={hitR}
+                    onpointerdown={(e) =>
+                      handlePointerDown(e, i, p, z, h.corner)}
+                  />
+                {/each}
+              {/if}
               <clipPath id={`pillclip-${i}-${p}-${z}`}>
                 <rect
                   x={zone.ulx + rx}
@@ -489,7 +655,7 @@
                     aria-label={`${label}: resize region (${h.name} corner)`}
                     cx={h.cx}
                     cy={h.cy}
-                    r={5 / scale}
+                    r={(wizardLayout.coarse ? 7 : 5) / scale}
                     onpointerdown={(e) =>
                       handlePointerDown(e, i, p, z, h.corner)}
                   />
@@ -505,8 +671,98 @@
 
 <style>
   .drag-hint {
+    min-width: 0;
     font-size: 12px;
     color: var(--ink-soft);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* The piece picker: a chip over a transparent native select. */
+  .pchip {
+    position: relative;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 170px;
+    height: 32px;
+    box-sizing: border-box;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 12px;
+    font: 600 12.5px var(--font);
+    color: var(--ink);
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 999px;
+  }
+  .pchip .swatch {
+    flex: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    background: var(--piece);
+  }
+  .pchip-name {
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pchip select {
+    position: absolute;
+    inset: -6px;
+    width: calc(100% + 12px);
+    opacity: 0;
+    font-size: 16px;
+  }
+  .segt {
+    flex: none;
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    background: var(--bg-tint);
+    border-radius: 999px;
+  }
+  .segt button {
+    position: relative;
+    height: 28px;
+    min-width: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 10px;
+    font: 600 12px var(--font);
+    color: var(--ink-soft);
+    background: transparent;
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+  }
+  .segt button::after {
+    content: "";
+    position: absolute;
+    inset: -8px -1px;
+  }
+  .segt button.on {
+    color: var(--ink);
+    background: var(--card);
+    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.12);
+  }
+  @container material (max-width: 639px) {
+    .segt-label {
+      display: none;
+    }
+  }
+  @container material (max-width: 439px) {
+    .per-row-ctl {
+      display: none;
+    }
+  }
+  /* Draw: fingers belong to the editor, two of them panning and zooming. */
+  .material-body.drawing {
+    touch-action: none;
   }
   .notice {
     margin: 0;
@@ -532,7 +788,6 @@
     border: 1px solid var(--line);
     border-radius: 6px;
     box-shadow: var(--shadow-sm);
-    touch-action: none;
     /* Strokes are centred on their edge, so a region flush with the page
        boundary paints half its outline outside the viewBox; without this it
        is clipped and corners go missing. */
@@ -579,6 +834,9 @@
   }
   .handle.nesw {
     cursor: nesw-resize;
+  }
+  .handle-hit {
+    fill: transparent;
   }
   .delbtn {
     cursor: pointer;

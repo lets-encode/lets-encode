@@ -19,7 +19,12 @@
   import { onDestroy, type Snippet } from "svelte";
   import type { PageImage } from "$lib/prepare-images.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
+  import ZoomLevel, {
+    fitPageZoom,
+    ZOOM_MAX,
+    ZOOM_MIN,
+  } from "./ZoomLevel.svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
 
   // `toolbar` renders extra controls at the end of the toolbar.
   let { pages, toolbar }: { pages: PageImage[]; toolbar?: Snippet } = $props();
@@ -80,6 +85,14 @@
       class="material-body"
       bind:clientWidth={bodyW}
       bind:clientHeight={bodyH}
+      {@attach zoomGestures({
+        get: () => zoom,
+        set: (z) => {
+          zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+          fit = null;
+        },
+        follow: true,
+      })}
     >
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each urls as url, i (url)}

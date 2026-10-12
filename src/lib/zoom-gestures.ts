@@ -4,6 +4,8 @@
 // Ctrl + scroll in Chromium and Firefox and as gesture events in Safari; both
 // are handled. All set the same zoom level the view's slider sets.
 
+import { tick } from "svelte";
+
 /** Pixels per line for a wheel event that scrolls by lines (deltaMode 1). */
 const LINE_PX = 16;
 /** A wheel step's delta is capped here, so a mouse notch zooms by about a
@@ -28,10 +30,17 @@ export interface ZoomGestureOptions {
   /** A second finger touched down: the view drops a drag the first one
       started. */
   onpinchstart?: () => void;
+  /** During a pinch, scroll the element so the content under the fingers'
+      midpoint stays under it: moving both fingers then pans the view. */
+  follow?: boolean;
 }
 
 const distance = (t: TouchList): number =>
   Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+const midpoint = (t: TouchList) => ({
+  x: (t[0].clientX + t[1].clientX) / 2,
+  y: (t[0].clientY + t[1].clientY) / 2,
+});
 
 /**
  * An attachment (`{@attach zoomGestures({...})}`) for the scrolling element.
@@ -43,7 +52,14 @@ export function zoomGestures(opts: ZoomGestureOptions) {
     // The touch pointers down on the element; a second one starts a pinch
     // and does not reach the content under it.
     const touches = new Set<number>();
-    let pinch: { dist: number; zoom: number } | null = null;
+    // The pinch's start: finger distance, zoom, and the content point under
+    // the fingers' midpoint.
+    let pinch: {
+      dist: number;
+      zoom: number;
+      px: number;
+      py: number;
+    } | null = null;
 
     const wheel = (e: WheelEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
@@ -61,13 +77,30 @@ export function zoomGestures(opts: ZoomGestureOptions) {
     const pointerGone = (e: PointerEvent) => touches.delete(e.pointerId);
     const touchStart = (e: TouchEvent) => {
       if (e.touches.length !== 2) return;
-      pinch = { dist: distance(e.touches), zoom: opts.get() };
+      const m = midpoint(e.touches);
+      const box = node.getBoundingClientRect();
+      pinch = {
+        dist: distance(e.touches),
+        zoom: opts.get(),
+        px: node.scrollLeft + m.x - box.left,
+        py: node.scrollTop + m.y - box.top,
+      };
     };
     const touchMove = (e: TouchEvent) => {
-      if (!pinch || e.touches.length !== 2) return;
+      const p = pinch;
+      if (!p || e.touches.length !== 2) return;
       e.preventDefault();
       const dist = distance(e.touches);
-      if (pinch.dist > 0) opts.set((pinch.zoom * dist) / pinch.dist);
+      if (p.dist > 0) opts.set((p.zoom * dist) / p.dist);
+      if (!opts.follow) return;
+      const m = midpoint(e.touches);
+      const box = node.getBoundingClientRect();
+      // The content is laid out at the new zoom on the next update.
+      void tick().then(() => {
+        const f = opts.get() / p.zoom;
+        node.scrollLeft = p.px * f - (m.x - box.left);
+        node.scrollTop = p.py * f - (m.y - box.top);
+      });
     };
     const touchEnd = (e: TouchEvent) => {
       if (e.touches.length < 2) pinch = null;

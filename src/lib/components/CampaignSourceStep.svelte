@@ -17,6 +17,7 @@
   import MetadataForm from "./MetadataForm.svelte";
   import FacsimilePages from "./FacsimilePages.svelte";
   import XmlEditor from "./XmlEditor.svelte";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let view = $state<"short" | "long" | "xml">("short");
   let xml = $state("");
@@ -24,7 +25,10 @@
   let showPages = $state(false);
   let wrap = $state(true);
 
-  const editing = $derived(view === "xml" && !showPages);
+  // On phones and narrow windows the pages share the card with the form
+  // behind a tab, and the XML editor stays inside the form.
+  const inCard = $derived(wizardLayout.materialMode === "switch");
+  const editing = $derived(view === "xml" && !showPages && !inCard);
 
   // Pre-fill the extent from the upload's page count — the full upload when it
   // is known, otherwise the committed pages. Editable like any other field.
@@ -63,7 +67,7 @@
       </div>
       <XmlEditor bind:value={xml} {wrap} fill />
     </div>
-  {:else if view === "xml"}
+  {:else if view === "xml" && !inCard}
     <FacsimilePages pages={wizard.images}>
       {#snippet toolbar()}
         <button type="button" class="tbtn" onclick={() => (showPages = false)}>
@@ -81,7 +85,14 @@
   heading="Describe the source"
   intro="What the pages were taken from. Every piece inherits this, and can add its own details next."
   status={view === "xml" ? "editing the XML" : "describing the source"}
-  material={wizard.images.length || view === "xml" ? material : undefined}
+  material={wizard.images.length || (view === "xml" && !inCard)
+    ? material
+    : undefined}
+  panes={{
+    form: "Metadata",
+    material: "Pages",
+    materialCount: wizard.images.length,
+  }}
   onBack={previousStep}
   onNext={nextStep}
   navBlocked={xmlValid
@@ -93,7 +104,7 @@
     bind:view
     bind:xml
     bind:xmlValid
-    externalEditor
+    externalEditor={!inCard}
   />
 </WizardCard>
 

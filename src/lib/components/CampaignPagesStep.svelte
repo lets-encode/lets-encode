@@ -38,7 +38,14 @@
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
+  import ZoomLevel, {
+    fitPageZoom,
+    ZOOM_MAX,
+    ZOOM_MIN,
+  } from "./ZoomLevel.svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
+  import Icon from "./Icon.svelte";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -55,6 +62,7 @@
   }
   let perRow = $state(defaultPerRow(wizard.candidates.length));
   let zoom = $state(100);
+  let fit = $state<"width" | "page" | null>(null);
   // The body's inner size and each preview's own size, for the page fit.
   let bodyW = $state(0);
   let bodyH = $state(0);
@@ -71,6 +79,17 @@
 
   // The page a range selection is measured from: the last one clicked on its own.
   let anchor: number | null = null;
+  // Touch has no drag to move a page: in Reorder mode a tap picks a page and
+  // its arrow buttons move it one place at a time.
+  let reordering = $state(false);
+  let picked = $state<number | null>(null);
+  function shift(index: number, by: number) {
+    const to = index + by;
+    if (to < 0 || to >= wizard.candidates.length) return;
+    move(index, to);
+    picked = to;
+  }
+
   // The page being dragged, and the one it is currently over.
   let dragIndex = $state<number | null>(null);
   let overIndex = $state<number | null>(null);
@@ -269,38 +288,75 @@
       {/if}
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
-      <ZoomLevel bind:value={zoom} {fitPage} />
+      <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
       <div class="toolbar-rule"></div>
       <button
         type="button"
         class="tbtn"
         class:on={chosen.length === wizard.candidates.length}
         aria-pressed={chosen.length === wizard.candidates.length}
+        aria-label="Keep all"
+        title="Keep all"
         onclick={() => setAll(true)}
-        disabled={busy}
+        disabled={busy || reordering}
       >
-        Keep all
+        <span class="tbtn-label">Keep all</span>
+        <span class="tbtn-glyph"><Icon name="check" /></span>
       </button>
       <button
         type="button"
         class="tbtn"
         class:on={chosen.length === 0}
         aria-pressed={chosen.length === 0}
+        aria-label="Keep none"
+        title="Keep none"
         onclick={() => setAll(false)}
-        disabled={busy}
+        disabled={busy || reordering}
       >
-        Keep none
+        <span class="tbtn-label">Keep none</span>
+        <span class="tbtn-glyph"><Icon name="close" /></span>
       </button>
+      {#if wizardLayout.coarse}
+        <button
+          type="button"
+          class="tbtn"
+          class:on={reordering}
+          aria-pressed={reordering}
+          aria-label={reordering ? "Done" : "Reorder"}
+          title={reordering ? "Done" : "Reorder"}
+          onclick={() => {
+            reordering = !reordering;
+            picked = null;
+          }}
+          disabled={busy}
+        >
+          {#if reordering}
+            Done
+          {:else}
+            <span class="tbtn-label">Reorder</span>
+            <span class="tbtn-glyph"><Icon name="sort" /></span>
+          {/if}
+        </button>
+      {/if}
     </div>
     <div
       class="material-body"
       bind:clientWidth={bodyW}
       bind:clientHeight={bodyH}
+      {@attach zoomGestures({
+        get: () => zoom,
+        set: (z) => {
+          zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+          fit = null;
+        },
+        follow: true,
+      })}
     >
       <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each wizard.candidates as page, i (page.id)}
           <li
             class:out={!page.include}
+            class:picked={reordering && picked === i}
             class:dragging={dragIndex === i}
             class:drop-before={dragIndex !== null &&
               overIndex === i &&
@@ -331,8 +387,9 @@
               aria-pressed={page.include}
               disabled={busy}
               title={page.label}
-              draggable={!busy}
-              onclick={(e) => toggle(i, e.shiftKey)}
+              draggable={!busy && !wizardLayout.coarse}
+              onclick={(e) =>
+                reordering ? (picked = i) : toggle(i, e.shiftKey)}
               ondragstart={(e) => {
                 dragIndex = i;
                 // Firefox starts a drag only once the transfer carries data.
@@ -362,11 +419,58 @@
                 >
               {/if}
             </button>
+            {#if reordering && picked === i}
+              <span class="movebar">
+                <button
+                  type="button"
+                  aria-label="Move page {i + 1} back"
+                  disabled={i === 0}
+                  onclick={() => shift(i, -1)}
+                  ><Icon name="chevron-left" size={18} /></button
+                >
+                <button
+                  type="button"
+                  aria-label="Move page {i + 1} forward"
+                  disabled={i === wizard.candidates.length - 1}
+                  onclick={() => shift(i, 1)}
+                  ><Icon name="chevron-right" size={18} /></button
+                >
+              </span>
+            {/if}
             <span class="page-caption">p. {i + 1}</span>
           </li>
         {/each}
       </ol>
     </div>
+  </div>
+{/snippet}
+
+{#snippet hints()}
+  <ul class="how">
+    {#if wizardLayout.coarse}
+      <li>Tap a page to keep or leave it out</li>
+      <li>Use Reorder to move a page</li>
+    {:else}
+      <li>Click a page to keep or leave it out</li>
+      <li>Shift-click marks a whole run</li>
+      <li>Drag a page to move it</li>
+    {/if}
+  </ul>
+{/snippet}
+
+<!-- The count as one line over its bar, under the heading when the pages take
+     the card's body. -->
+{#snippet minibar()}
+  <div class="minibar">
+    <div class="progress">
+      <div
+        class="progress-fill"
+        style="width: {(chosen.length / wizard.candidates.length) * 100}%"
+      ></div>
+    </div>
+    <span class="minibar-count"
+      ><b>{chosen.length}</b> of {wizard.candidates.length} kept</span
+    >
   </div>
 {/snippet}
 
@@ -381,6 +485,8 @@
   nextDisabled={busy}
   nextLabel={continueLabel}
   material={wizard.candidates.length ? material : undefined}
+  info={hints}
+  compactHead={minibar}
 >
   {#if !wizard.candidates.length}
     <p class="note">
@@ -405,19 +511,15 @@
           : 0}%"
       ></div>
     </div>
-    <ul class="how">
-      <li>Click a page to keep or leave it out</li>
-      <li>Shift-click marks a whole run</li>
-      <li>Drag a page to move it</li>
-    </ul>
+    {@render hints()}
   {/if}
 
-  <div class="spacer"></div>
-
-  {#if error}
-    <p class="msg-error" role="alert">{error}</p>
-  {/if}
-  <ProgressSteps {log} />
+  {#snippet pinned()}
+    {#if error}
+      <p class="msg-error" role="alert">{error}</p>
+    {/if}
+    <ProgressSteps {log} />
+  {/snippet}
 </WizardCard>
 
 <style>
@@ -452,6 +554,25 @@
     height: 100%;
     background: linear-gradient(90deg, var(--blue), var(--green));
   }
+  .minibar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .minibar .progress {
+    flex: 1;
+    margin: 0;
+  }
+  .minibar-count {
+    font-size: 13px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .minibar-count b {
+    font-weight: 600;
+    color: var(--ink);
+  }
   .how {
     list-style: none;
     margin: 22px 0 0;
@@ -460,9 +581,6 @@
     gap: 9px;
     font-size: 12.5px;
     color: var(--ink-soft);
-  }
-  .spacer {
-    flex: 1;
   }
 
   /* ---- Page tiles in the material pane ---- */
@@ -476,6 +594,41 @@
     flex-direction: column;
     gap: 5px;
     min-width: 0;
+  }
+  li.picked .thumb {
+    outline: 3px solid var(--accent);
+    outline-offset: 1px;
+  }
+  /* The picked page's move buttons, over the foot of its preview. */
+  .movebar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* Clear of the page caption under the preview. */
+    bottom: 22px;
+    display: flex;
+    justify-content: space-between;
+    padding: 4px;
+    pointer-events: none;
+  }
+  .movebar button {
+    pointer-events: auto;
+    width: 44px;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--ink);
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 50%;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+  }
+  .movebar button:disabled {
+    opacity: 0.4;
+    cursor: default;
   }
   li.dragging {
     opacity: 0.4;

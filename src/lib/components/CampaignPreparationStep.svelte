@@ -51,13 +51,18 @@
   intro="How the pieces get their measures before encoding starts."
   status="choosing the preparation"
   {material}
+  panes={{
+    form: "Options",
+    material: "Pages",
+    materialCount: wizard.images.length,
+  }}
   onBack={previousStep}
   backDisabled={finisher.busy}
   onNext={() => finisher.run()}
   nextDisabled={finisher.busy}
   nextLabel={finisher.busy ? "Working…" : finisher.error ? "Retry" : "Finish"}
   nextIcon={finisher.busy ? null : finisher.error ? "arrow-right" : "check"}
-  finish
+  finish={!finisher.error}
 >
   <div class="options" role="radiogroup" aria-label="Preparation">
     {#each OPTIONS as option (option.id)}
@@ -78,8 +83,10 @@
     {/each}
   </div>
 
-  {#if finisher.error}
-    <p class="msg-error" role="alert">{finisher.error}</p>
-  {/if}
-  <ProgressSteps log={finisher.log} />
+  {#snippet pinned()}
+    {#if finisher.error}
+      <p class="msg-error" role="alert">{finisher.error}</p>
+    {/if}
+    <ProgressSteps log={finisher.log} />
+  {/snippet}
 </WizardCard>
