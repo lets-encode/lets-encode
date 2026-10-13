@@ -590,7 +590,11 @@
           class:on={touchMode === "scroll"}
           aria-pressed={touchMode === "scroll"}
           aria-label="Scroll"
-          onclick={() => (touchMode = "scroll")}
+          onclick={() => {
+            // A finger that scrolls edits nothing, so no region stays selected.
+            touchMode = "scroll";
+            selectedZone = null;
+          }}
           ><Icon name="hand" size={16} /><span class="mode-label">Scroll</span
           ></button
         >
