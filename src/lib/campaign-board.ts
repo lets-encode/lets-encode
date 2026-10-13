@@ -83,9 +83,8 @@ export function cardTitle(
   fragment: string,
   locator: string,
   names: PieceNames = {},
-  omr = false,
 ): string {
-  return `${taskName(locator, omr)} · ${fragmentPieceName(fragment, names)}`;
+  return `${taskName(locator)} · ${fragmentPieceName(fragment, names)}`;
 }
 
 /** A card's name without its piece: description, then scope. */
@@ -177,7 +176,7 @@ export interface BoardCard {
   column: ColumnKey;
   /** The one-line title: description, scope, piece (cardTitle). */
   title: string;
-  /** What the task asks for ("Encode", "Correct the OMR draft", "Measure correction", "Score setup"). */
+  /** What the task asks for ("Encode", "Measure correction", "Score setup"). */
   description: string;
   /** The part of the piece the task covers ("p. 3"); '' for the whole piece. */
   scope: string;
@@ -320,17 +319,15 @@ export function buildBoard(
     columnByKey.get(column)!.cards.push({
       task: n.task,
       column,
-      title: cardTitle(def.fragment, def.locator, names, omr),
-      description: taskDescription(def.locator, omr),
+      title: cardTitle(def.fragment, def.locator, names),
+      description: taskDescription(def.locator),
       scope: taskScope(def.locator),
       piece: fragmentPieceName(def.fragment, names),
       pre: n.kind === "pre",
       omr: omr && n.kind !== "pre",
       locator: def.locator,
       statusKey: n.statusKey,
-      waitsFor: depDef
-        ? taskName(depDef.locator, preparations[depDef.fragment] === "omr")
-        : dep,
+      waitsFor: depDef ? taskName(depDef.locator) : dep,
       claimable: viewer !== "" && column === "ready" && !lock,
       submittedByViewer:
         viewer !== "" && findRow(d.rows, n.task, "")?.encoder === viewer,

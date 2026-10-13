@@ -897,6 +897,22 @@
     if (result?.ok) manage = false;
   }
 
+  // The setup wizard opens a campaign it has just created with ?created; the
+  // confirmation stays until dismissed, and the parameter leaves the address so
+  // a reload does not repeat it.
+  let created = $state(page.url.searchParams.has("created"));
+  $effect(() => {
+    if (!page.url.searchParams.has("created")) return;
+    const query = new URLSearchParams(page.url.searchParams);
+    query.delete("created");
+    const rest = query.toString();
+    goto(`/${campaign}${rest ? `?${rest}` : ""}`, {
+      replaceState: true,
+      noScroll: true,
+      keepFocus: true,
+    });
+  });
+
   // Deep links, read once after the first load: ?task= opens that task's
   // detail. On the owner's board the side panel reopens the task chosen last
   // time, if any; the score view shows a task only from ?task=.
@@ -1093,6 +1109,7 @@
       task={card.task}
       zone={zoneOf(card.task)}
       review={card.column === "validation"}
+      done={card.column === "done"}
       {comments}
       {logins}
       {viewer}
@@ -1207,9 +1224,9 @@
       </div>
       <div
         class="irow"
-        title="Contributions to this campaign are published under this license."
+        title="Contributions to this campaign are published under this licence."
       >
-        <span>License</span>
+        <span>Licence</span>
         <span>{license || "—"}</span>
       </div>
       <div
@@ -1227,6 +1244,17 @@
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else}
+    {#if created}
+      <div class="banner bar ok" role="status">
+        <span>
+          The campaign is created. Its address is
+          <a href={`/${campaign}`}>{page.url.host}/{campaign}</a>.
+        </span>
+        <button type="button" class="dismiss" onclick={() => (created = false)}
+          >Dismiss</button
+        >
+      </div>
+    {/if}
     {#if !auth.user}
       <div class="banner bar warn">
         <span>
@@ -1381,7 +1409,6 @@
             {locks}
             {logins}
             {pieceNames}
-            preparations={piecePreparations}
             busy={runner.busy}
             onsave={savePlan}
             oncancel={() => (manage = false)}
@@ -1544,7 +1571,7 @@
                       >
                         <span class="attntitle">{card.title}</span>
                         <span class="attnspacer"></span>
-                        {#if card.counts.fails > 0}
+                        {#if card.counts.fails > 0 && card.column !== "done"}
                           <span class="chip chip-fail"
                             >{card.counts.fails} change request{card.counts
                               .fails === 1
@@ -1931,7 +1958,7 @@
     padding: 12px 16px 12px 0;
     box-sizing: border-box;
   }
-  @media (orientation: portrait) and (max-width: 753px) {
+  @media (orientation: portrait) and (max-width: 860px) {
     .volsplit.split,
     .boardview.split {
       flex-direction: column;
@@ -2150,12 +2177,10 @@
     flex-direction: column;
     gap: 12px;
   }
-  /* The title and its repository link lead; the actions follow on the same
-     line where they fit and wrap below it, right-aligned, where they do not.
-     A title longer than the line wraps rather than being cut. */
+  /* The title, its repository link and the actions share one line. A title
+     longer than the room left is cut short; the full title is its tooltip. */
   .hero-line {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 10px 14px;
     min-width: 0;
@@ -2166,9 +2191,19 @@
     font-size: 26px;
     line-height: 1.2;
     font-weight: 600;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Below desktop width the repository link gives way; it is in the campaign
+     details in the side panel. */
+  @container (max-width: 1100px) {
+    .slug {
+      display: none;
+    }
   }
   .hero-acts {
+    flex: none;
     margin-left: auto;
     display: flex;
     align-items: center;
@@ -2250,6 +2285,9 @@
   .stat {
     font-size: 13px;
     color: var(--ink-soft);
+  }
+  .stat b {
+    font-weight: 600;
   }
   .stat b.c-info {
     color: var(--info);
@@ -2926,33 +2964,18 @@
   .lanetab-count {
     font-size: 11px;
   }
-  /* A narrow view column (a phone): the title shares one line with the
-     controls, cut short where it does not fit (the full title is its
-     tooltip, the repository link moves to the campaign details in the side
-     panel), and the side margins shrink. */
+  /* A narrow view column (a phone): the title is smaller, the side margins
+     shrink, and Manage is its gear only. */
   @container (max-width: 700px) {
     .hero {
       padding: 10px 16px 8px;
       gap: 8px;
     }
     .hero-line {
-      flex-wrap: nowrap;
       gap: 8px 10px;
     }
     .hero-line h1 {
-      flex: 1 1 0;
       font-size: 20px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .slug {
-      display: none;
-    }
-    /* The actions stay on the title's line, at its right end; Manage is its
-       gear only. */
-    .hero-acts {
-      flex: none;
     }
     .managechip {
       width: 32px;

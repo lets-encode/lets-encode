@@ -2,7 +2,7 @@
   The review view: a full-screen surface for validating an encoding task. The
   score fills the window, facsimile and rendered encoding side by side, and
   the side panel on the right carries the task box — the campaign page's
-  TaskBox with the verdict controls — pinned above the task's comments.
+  TaskBox with the Approve and Request changes buttons — pinned above the task's comments.
   Clicking a measure in either pane highlights it in both and prefills the
   fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
 -->
@@ -109,6 +109,13 @@
     board.columns.flatMap((c) => c.cards).find((c) => c.task === taskId) ??
       null,
   );
+  // A pre-task is reviewed in its own editor; its review address leads there.
+  $effect(() => {
+    if (card?.pre)
+      goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`, {
+        replaceState: true,
+      });
+  });
   const taskDef = $derived(findRow(taskDefs, taskId, ""));
   const fragment = $derived(taskDef?.fragment ?? "");
   /** The page a per-page task opens at, 0-based; null for a whole-piece task. */
@@ -353,14 +360,7 @@
       </span>
     </div>
   {:else if card.pre}
-    <div class="msg banner warn">
-      <span>
-        {card.title} is reviewed in its own editor.
-        <a href={`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`}
-          >Open it</a
-        >.
-      </span>
-    </div>
+    <!-- Replaced by the pre-task's own editor (the redirect above). -->
   {:else}
     {#snippet taskBox()}
       <TaskBox
@@ -421,6 +421,7 @@
       {runner}
       bind:panel={sidePanel}
       review={card.column === "validation"}
+      done={card.column === "done"}
       banner={resultBanner}
       {taskBox}
       onanchor={showAnchorFor}

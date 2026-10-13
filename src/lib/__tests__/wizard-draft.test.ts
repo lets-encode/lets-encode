@@ -2,9 +2,7 @@ import { test, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import {
   DRAFT_VERSION,
-  MissingDraftImageError,
   discardDraft,
-  fetchDraftImages,
   parseDraft,
   readDraft,
   resumableDrafts,
@@ -134,51 +132,4 @@ test("reports the browser refusing a write rather than throwing", () => {
     },
   });
   assert.equal(writeDraft(draft()), "quota exceeded");
-});
-
-test("reads the page images back through the API, in page order", async () => {
-  const read: string[] = [];
-  const images = await fetchDraftImages(
-    {
-      getRepoFileBytes: async (_owner, _repo, path) => {
-        read.push(path);
-        return new Blob([path]);
-      },
-    },
-    { owner: "ada", name: "symphony-9" },
-    ["img/02.jpg", "img/01.jpg"],
-  );
-  assert.deepEqual(
-    images.map((image) => image.path),
-    ["img/02.jpg", "img/01.jpg"],
-  );
-  assert.deepEqual(read, ["img/02.jpg", "img/01.jpg"]);
-});
-
-test("labels the bytes as an image, whatever media type they arrive under", async () => {
-  const images = await fetchDraftImages(
-    {
-      getRepoFileBytes: async (_owner, _repo, path) =>
-        new Blob([path], { type: "application/vnd.github.raw" }),
-    },
-    { owner: "ada", name: "symphony-9" },
-    ["img/01.jpg", "img/02.PNG"],
-  );
-  assert.deepEqual(
-    images.map((image) => image.blob.type),
-    ["image/jpeg", "image/png"],
-  );
-});
-
-test("fails when an image is no longer in the repository, saying so by its type", async () => {
-  await assert.rejects(
-    fetchDraftImages(
-      { getRepoFileBytes: async () => null },
-      { owner: "ada", name: "symphony-9" },
-      ["img/01.jpg"],
-    ),
-    (err: Error) =>
-      err instanceof MissingDraftImageError &&
-      /img\/01\.jpg is no longer in ada\/symphony-9/.test(err.message),
-  );
 });

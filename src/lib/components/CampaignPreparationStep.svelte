@@ -1,19 +1,23 @@
 <!--
   Wizard step 7: how the facsimile pieces get their measures before encoding
   starts, and the button that finishes the setup. Measure detection contacts
-  the edirom detector for every page when Finish is pressed; optical music
+  the edirom detector for every page when Create campaign is pressed; optical music
   recognition leaves the pages as they are — their staves and measures are
-  found in each piece's layout task, and every page is transcribed when its
+  found in each piece's measure correction task, and every page is transcribed when its
   encoding task is claimed.
 
-  Finishing builds the scores, the configuration and the tables and commits
-  them (campaign-finish.svelte.ts). The step is skipped when the campaign has
+  Finishing creates the repository, builds the scores, the configuration and
+  the tables and commits them with the pages (campaign-finish.svelte.ts). The step is skipped when the campaign has
   no page images; the pieces step finishes the setup then.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { wizard, previousStep } from "$lib/wizard.svelte.ts";
-  import { CampaignFinisher } from "$lib/campaign-finish.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
+  import {
+    CampaignFinisher,
+    finishSummary,
+  } from "$lib/campaign-finish.svelte.ts";
   import type { Preparation } from "$lib/campaign-init.ts";
   import WizardCard from "./WizardCard.svelte";
   import FacsimilePages from "./FacsimilePages.svelte";
@@ -24,14 +28,15 @@
       id: "measure-detection",
       name: "Measure detection",
       info:
-        "Measure boxes are detected on every page when you finish and corrected by volunteers " +
-        "in a measure-correction task. Encoding starts from empty measures.",
+        "Measure boxes are detected on every page when you create the campaign and corrected by " +
+        "volunteers in a measure-correction task. Encoding starts from empty measures. " +
+        "Page images are sent to the Edirom measure detector (measure-detector.edirom.de).",
     },
     {
       id: "omr",
       name: "Optical music recognition",
       info:
-        "Staves and measures are detected and corrected in a layout task. The staves are then " +
+        "Staves and measures are detected and corrected in a measure correction task. The staves are then " +
         "transcribed in the score setup, and each page's encoding starts from that draft. " +
         "Page images are sent to the Musibot service (Charles University) for recognition.",
     },
@@ -60,7 +65,11 @@
   backDisabled={finisher.busy}
   onNext={() => finisher.run()}
   nextDisabled={finisher.busy}
-  nextLabel={finisher.busy ? "Working…" : finisher.error ? "Retry" : "Finish"}
+  nextLabel={finisher.busy
+    ? "Working…"
+    : finisher.error
+      ? "Retry"
+      : "Create campaign"}
   nextIcon={finisher.busy ? null : finisher.error ? "arrow-right" : "check"}
   finish={!finisher.error}
 >
@@ -86,6 +95,8 @@
   {#snippet pinned()}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
+    {:else if !finisher.busy && auth.user}
+      <p class="finish-note">{finishSummary(auth.user.login)}</p>
     {/if}
     <ProgressSteps log={finisher.log} />
   {/snippet}

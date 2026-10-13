@@ -160,16 +160,13 @@ export function pageOfLocator(locator: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
-/** What the task asks for, from its locator. A page of an OMR-prepared piece
-    (`omr`) starts from the OMR transcription draft; every other encoding
-    task encodes from scratch. */
-export function taskDescription(locator: string, omr = false): string {
+/** What the task asks for, from its locator. An encoding task is called
+    "Encode" whether it starts from scratch or from a recognised draft. */
+export function taskDescription(locator: string): string {
   if (locator === "score-setup") return "Score setup";
   if (locator === "measure-zones" || locator === "omr-layout")
     return "Measure correction";
-  return omr && pageOfLocator(locator) !== null
-    ? "Correct the OMR draft"
-    : "Encode";
+  return "Encode";
 }
 
 /** The part of the piece a task covers ("p. 3"); '' for the whole piece. */
@@ -179,9 +176,9 @@ export function taskScope(locator: string): string {
 }
 
 /** A task's name without its piece: description, then scope. */
-export function taskName(locator: string, omr = false): string {
+export function taskName(locator: string): string {
   const scope = taskScope(locator);
-  const description = taskDescription(locator, omr);
+  const description = taskDescription(locator);
   return scope ? `${description} · ${scope}` : description;
 }
 
@@ -329,7 +326,7 @@ function slotState(
     const [verdict, user, ts] = cell.split("|");
     return {
       key: verdict as StatusKey,
-      sub: `@${handle(logins, user)} · ${verdict}`,
+      sub: `@${handle(logins, user)} · ${verdict === "pass" ? "approved" : "changes requested"}`,
       running: false,
       user,
       ts,

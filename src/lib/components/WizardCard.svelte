@@ -12,8 +12,8 @@
   The work card fills the height it is given: its heading and footer stay put
   and the body scrolls between them, so the step's primary action is always in
   view. Messages a step pins (an error, a progress log) sit between the body and
-  the footer. A step without material gets its card on its own with a "Step N
-  of M" kicker; short ones end where their content ends.
+  the footer. A step without material gets its card on its own, ending where
+  its content ends.
 
   A step with material lays it out in one of three ways: the material pane in
   the centre with the card on the right, the material pane above the card, or —
@@ -48,7 +48,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import { untrack, type Snippet } from "svelte";
   import { goto } from "$app/navigation";
-  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
   import { releaseClaim } from "$lib/campaign-resolve.ts";
   import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
@@ -82,6 +82,7 @@
     nextLabel = "Continue",
     nextIcon = "arrow-right",
     nextDisabled = false,
+    nextReason,
     backDisabled = false,
     navBlocked,
     finish = false,
@@ -122,6 +123,11 @@
     /** The icon after the next label; null for none. */
     nextIcon?: "arrow-right" | "check" | null;
     nextDisabled?: boolean;
+    /**
+     * Why Next is disabled, shown above the footer beside the button and
+     * linked to it as its description.
+     */
+    nextReason?: string;
     backDisabled?: boolean;
     /**
      * Why the step cannot be left right now: disables Back, Next and the
@@ -133,6 +139,8 @@
     /** Controls the Back/Next pair cannot express, in place of it. */
     footer?: Snippet;
   } = $props();
+  const reasonId = $props.id();
+  const reasonShown = $derived(nextDisabled && !!nextReason);
 
   const sidebar = $derived(wizardLayout.sidebar);
   const short = $derived(wizardLayout.short);
@@ -232,7 +240,7 @@
     const owner = auth.user?.login;
     if (owner) saveDraft(owner, draftSnapshot());
     try {
-      await resumeDraft(forge(), handle, () => {});
+      await resumeDraft(handle);
     } catch (err) {
       resumeError = `Could not resume “${handle}”: ${(err as Error).message}`;
     }
@@ -387,7 +395,6 @@
 <div class="workbench" class:sidebar class:short>
   {#if sidebar}
     <nav class="rail" aria-label="Campaign setup steps">
-      <div class="rail-kicker">Campaign setup</div>
       <div class="rail-name">
         {#if wizard.handle.trim()}
           {wizard.handle}
@@ -614,7 +621,7 @@
         {@render workCard()}
       </div>
     {:else}
-      <div class="stage" class:hug={!material && step !== "upload"}>
+      <div class="stage" class:hug={!material}>
         {@render workCard()}
       </div>
     {/if}
@@ -698,18 +705,15 @@
   <section
     class="card"
     class:solo
-    class:hug={solo && step !== "upload"}
+    class:hug={solo}
     class:wide={solo && step === "upload"}
     class:shared
     aria-label={heading}
   >
     <div class="card-head">
-      {#if solo}
-        <div class="kicker">Step {current + 1} of {steps.length}</div>
-      {/if}
       <div class="title-row">
-        <h1>
-          {heading}
+        <div class="headline">
+          <h1>{heading}</h1>
           {#if shared && (intro || info)}
             <button
               type="button"
@@ -722,7 +726,7 @@
               <Icon name="info" size={18} />
             </button>
           {/if}
-        </h1>
+        </div>
         {#if shared && panes}
           <div
             class="panes"
@@ -793,7 +797,7 @@
     <!-- Every step draws the frame, so the one place to report that this setup
          is no longer being kept for later — or why it opened where it did — is
          here. -->
-    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned}
+    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned || reasonShown}
       <div class="pinned">
         {#if draftStatus.resumeNotice}
           <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
@@ -805,6 +809,9 @@
           </p>
         {/if}
         {@render pinned?.()}
+        {#if reasonShown}
+          <p class="msg-warn" id={reasonId} role="status">{nextReason}</p>
+        {/if}
       </div>
     {/if}
 
@@ -831,6 +838,7 @@
             onclick={onNext}
             disabled={nextDisabled || navBlocked !== undefined}
             title={navBlocked}
+            aria-describedby={reasonShown ? reasonId : undefined}
           >
             {nextLabel}{#if nextIcon}<Icon name={nextIcon} />{/if}
           </button>
@@ -1059,13 +1067,12 @@
     flex-direction: column;
     overflow: auto;
   }
-  .rail-kicker {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    margin-bottom: 4px;
+  /* Below 1300px the rail gives the page images part of its width. */
+  @media (max-width: 1299px) {
+    .rail {
+      width: 208px;
+      padding-inline: 16px;
+    }
   }
   .rail-name {
     font-size: 15px;
@@ -1163,7 +1170,6 @@
     width: 156px;
     padding: 8px 6px 6px 12px;
   }
-  .short .rail-kicker,
   .short .rail-slug {
     display: none;
   }
@@ -1184,7 +1190,7 @@
     font-size: 11.5px;
   }
   .short .connector {
-    height: 8px;
+    height: 4px;
   }
   .short .step-text {
     padding-top: 4px;
@@ -1444,7 +1450,7 @@
     flex: none;
     width: var(
       --work-width,
-      max(clamp(400px, 25.6vw + 138px, 472px), min(30vw, 680px))
+      max(clamp(340px, 25.6vw + 78px, 472px), min(30vw, 680px))
     );
     box-sizing: border-box;
     padding: 24px 24px 24px 3px;
@@ -1513,7 +1519,8 @@
   .card.wide {
     width: 920px;
   }
-  /* A short card ends where its content ends, up to the height it is given. */
+  /* A card on its own ends where its content ends, up to the height it is
+     given. */
   .card.hug {
     flex: 0 1 auto;
   }
@@ -1524,30 +1531,27 @@
   .card.solo .card-head {
     padding-top: 36px;
   }
-  .kicker {
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-  }
   .title-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     column-gap: 14px;
   }
-  h1 {
-    margin: 0;
+  /* The heading with its info button beside it, outside the heading so the
+     button's label is not read as part of it. */
+  .headline {
     display: flex;
     align-items: center;
     gap: 2px;
+    min-width: 0;
+  }
+  h1 {
+    margin: 0;
     font-size: 21px;
     line-height: 1.25;
     font-weight: 600;
   }
   .card.solo h1 {
-    margin-top: 8px;
     font-size: 26px;
     line-height: 1.2;
   }
@@ -1656,7 +1660,9 @@
   .body-wrap:global([data-more-below])::after {
     opacity: 1;
   }
+  /* A field focused near either edge scrolls clear of the 26px fades. */
   .card-body {
+    scroll-padding-block: 26px;
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;

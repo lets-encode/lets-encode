@@ -102,6 +102,7 @@
       type="button"
       class="railrow all"
       class:selected={selected === "all"}
+      aria-pressed={selected === "all"}
       onclick={() => onselect("all")}
       title="All pieces · {openCount} open"
     >
@@ -115,6 +116,7 @@
         type="button"
         class="railrow"
         class:selected={selected === piece.path}
+        aria-pressed={selected === piece.path}
         style="--zone: var(--zone-{pieceZone(index)})"
         onclick={() => onselect(piece.path)}
         title={tooltip(piece)}

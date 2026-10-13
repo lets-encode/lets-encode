@@ -89,13 +89,22 @@
 </script>
 
 <span class="zoomctl">
-  <button
-    type="button"
-    class="btn btn-icon zstep"
-    aria-label="Zoom out"
-    disabled={value <= LEAST}
-    onclick={() => step(1 / 1.25)}><Icon name="zoom-out" /></button
-  >
+  <span class="tbtn-pair zstep">
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom out"
+      disabled={value <= LEAST}
+      onclick={() => step(1 / 1.25)}><Icon name="zoom-out" size={16} /></button
+    >
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom in"
+      disabled={value >= MOST}
+      onclick={() => step(1.25)}><Icon name="zoom-in" size={16} /></button
+    >
+  </span>
   <input
     class="zoomslider"
     type="range"
@@ -111,18 +120,12 @@
     }}
   />
   <span class="zval">{value}%</span>
-  <button
-    type="button"
-    class="btn btn-icon zstep"
-    aria-label="Zoom in"
-    disabled={value >= MOST}
-    onclick={() => step(1.25)}><Icon name="zoom-in" /></button
-  >
   <span class="tbtn-pair">
     <button
       type="button"
       class="tbtn tbtn-icon fit-width"
       class:on={fit === "width"}
+      aria-pressed={fit === "width"}
       onclick={() => (fit = "width")}
       aria-label="Fit the page width"
       title="Fit the page width to the pane"><FitIcon kind="width" /></button
@@ -132,6 +135,7 @@
         type="button"
         class="tbtn tbtn-icon fit-page"
         class:on={fit === "page"}
+        aria-pressed={fit === "page"}
         onclick={() => (fit = "page")}
         aria-label="Fit the whole page"
         title="Fit the whole page in the pane, top to bottom"
@@ -148,7 +152,7 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
   .zstep {
     display: none;

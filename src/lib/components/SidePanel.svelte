@@ -3,7 +3,7 @@
   the host's task box pinned on top, the task's comments and the composer;
   without one (task '') it holds the campaign comments. Beside the content
   it is resizable by its left edge and the composer follows the comments. In
-  portrait on a narrow screen (DOCKED_QUERY) it docks below the content at
+  portrait up to tablet width (DOCKED_QUERY) it docks below the content at
   its content's height: closed, the header and the task box; opened, the
   comments (without a task, the campaign's details and comments) below them,
   up to DOCKED_MAX_CSS. The header's button, a tap on the top edge or a drag
@@ -47,6 +47,7 @@
     runner,
     panel = $bindable(),
     review = false,
+    done = false,
     inScore = false,
     composerHint = "",
     emptyLine = "",
@@ -71,6 +72,8 @@
     panel: SidePanelState;
     /** Tint the comments in the review colour. */
     review?: boolean;
+    /** The task is done: its change requests read as history. */
+    done?: boolean;
     /** Anchor links read as in-view highlights instead of score links. */
     inScore?: boolean;
     /** Composer placeholder override (e.g. when a measure is selected). */
@@ -334,6 +337,7 @@
                 type="button"
                 class="chip-switch"
                 class:on={hideResolved}
+                aria-pressed={hideResolved}
                 onclick={() => (hideResolved = !hideResolved)}
                 title="Hide the resolved threads"
                 ><span class="sw"></span>Hide resolved · {resolvedCount}</button
@@ -348,6 +352,7 @@
               {canPush}
               {runner}
               {review}
+              settled={done}
               {inScore}
               {onanchor}
               onreply={t.root.kind === "comment" ? startReply : undefined}
@@ -548,6 +553,7 @@
     color: var(--ink-soft);
     padding: 4px 2px 0;
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 6px;
   }

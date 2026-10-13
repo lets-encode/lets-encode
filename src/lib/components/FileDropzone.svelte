@@ -1,20 +1,26 @@
 <!--
   Drag-and-drop / picker for the files a campaign is built from: page images,
   PDFs, and existing encodings. With a mouse or trackpad at hand it is a drop
-  target with a picker button, flat in smaller windows; on touch-only devices a
-  "Choose files" button, and files dragged in from another app (split view on a
-  tablet) are taken by an overlay over the whole card. The queued files are
-  listed under it, in a panel that takes the card's spare height on tall
-  screens. Unsupported files are rejected with a note rather than silently
-  dropped. The list is additive, so several drops (or a drop plus a pick) build
-  one sequence, in the order the pages should read.
+  target with a picker button; on touch-only devices a "Choose files" button,
+  and files dragged in from another app (split view on a tablet) are taken by
+  an overlay over the whole card. The queued files are listed under it, in a
+  list of cards that grows to four and then scrolls on its own. The empty drop
+  target or button is as tall as its one-row form and the first file
+  together, so the card keeps its height when the first file is added.
+  Unsupported files are rejected with a note rather than silently dropped. The
+  list is additive, so several drops (or a drop plus a pick) build one
+  sequence, in the order the pages should read.
 -->
 <script lang="ts">
   import { classifyUpload } from "$lib/prepare-images.ts";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
+  import { MediaQuery } from "svelte/reactivity";
   import Icon from "./Icon.svelte";
 
   let { files = $bindable() }: { files: File[] } = $props();
+
+  // A window 500px tall or less sets the drop zone beside the file list.
+  const shortWindow = new MediaQuery("(max-height: 500px)");
 
   let dragActive = $state(false);
   let note = $state<string | null>(null);
@@ -123,8 +129,14 @@
   ondrop={(e) => wizardLayout.dropZone && onDrop(e)}
 >
   {#if wizardLayout.dropZone}
-    <div class="dropzone" class:drag={dragActive}>
-      <div class="arrow" aria-hidden="true">⤓</div>
+    <div
+      class="dropzone"
+      class:drag={dragActive}
+      class:flat={files.length > 0 || shortWindow.current}
+    >
+      <div class="arrow" aria-hidden="true">
+        <Icon name="upload" size={40} />
+      </div>
       <div class="drop-text">
         <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
         <div class="types">You can combine them — or continue without any.</div>
@@ -135,7 +147,7 @@
       </label>
     </div>
   {:else}
-    <label class="choose">
+    <label class="choose" class:flat={files.length > 0 || shortWindow.current}>
       <input type="file" accept={ACCEPT} multiple onchange={onPick} />
       <Icon name="upload" size={22} />
       <span class="choose-text">
@@ -151,27 +163,26 @@
 
   {#if files.length}
     <div class="files">
-      <div class="files-head">
-        <span>Added files · {files.length}</span>
-        <span>Read when you continue</span>
-      </div>
-      {#each files as file, i (`${file.name}:${file.size}`)}
-        <div class="file-row">
-          <div class="kind">{kindOf(file.name)}</div>
-          <div class="file-text">
-            <div class="name">{file.name}</div>
-            <div class="meta">{sizeOf(file.size)} · read on Continue</div>
+      <div class="files-head">Added files · {files.length}</div>
+      <div class="file-list">
+        {#each files as file, i (`${file.name}:${file.size}`)}
+          <div class="file-row">
+            <div class="kind">{kindOf(file.name)}</div>
+            <div class="file-text">
+              <div class="name">{file.name}</div>
+              <div class="meta">{sizeOf(file.size)}</div>
+            </div>
+            <button
+              type="button"
+              class="remove"
+              onclick={() => remove(i)}
+              aria-label="Remove {file.name}"
+            >
+              <Icon name="close" />
+            </button>
           </div>
-          <button
-            type="button"
-            class="remove"
-            onclick={() => remove(i)}
-            aria-label="Remove {file.name}"
-          >
-            ×
-          </button>
-        </div>
-      {/each}
+        {/each}
+      </div>
     </div>
   {/if}
 </div>
@@ -185,7 +196,20 @@
 {/if}
 
 <style>
+  /* In a window too short for the card, the file list gives up height
+     before the card's body scrolls. */
   .upload {
+    /* The flat drop zone's and the Choose files button's heights, the list's
+       heading and one file card: an empty drop zone or button takes the
+       height its flat form and the first file take, so the card grows only
+       from the second file on. */
+    --flat-h: 104px;
+    --choose-h: 56px;
+    --head-h: 16px;
+    --row-h: 50px;
+    --first-file: calc(14px + var(--head-h) + 6px + var(--row-h));
+    flex: 0 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 14px;
@@ -197,7 +221,9 @@
     align-items: center;
     justify-content: center;
     text-align: center;
-    padding: 56px 40px;
+    box-sizing: border-box;
+    min-height: calc(var(--flat-h) + var(--first-file));
+    padding: 16px 40px;
     border: 2px dashed var(--accent-line-strong);
     border-radius: 14px;
     background: color-mix(in srgb, var(--bg-tint) 55%, transparent);
@@ -207,7 +233,7 @@
     background: var(--bg-tint);
   }
   .arrow {
-    font-size: 40px;
+    display: flex;
     color: var(--accent);
   }
   .prompt {
@@ -240,34 +266,37 @@
   .choose input {
     display: none;
   }
-  /* Smaller windows: one row of icon, text and button. */
-  @media (max-width: 999px), (max-height: 760px) {
-    .dropzone {
-      flex-direction: row;
-      gap: 16px;
-      min-height: 104px;
-      box-sizing: border-box;
-      padding: 16px 20px;
-      text-align: left;
-    }
-    .arrow {
-      font-size: 28px;
-    }
-    .prompt {
-      margin-top: 0;
-      font-size: 15px;
-    }
-    .picker {
-      flex: none;
-      margin: 0 0 0 auto;
-    }
+  /* Once files are added: one row of icon, text and button. */
+  .dropzone.flat {
+    flex-direction: row;
+    gap: 16px;
+    min-height: var(--flat-h);
+    box-sizing: border-box;
+    padding: 16px 20px;
+    text-align: left;
   }
+  .flat .arrow :global(svg) {
+    width: 28px;
+    height: 28px;
+  }
+  .flat .prompt {
+    margin-top: 0;
+    font-size: 15px;
+  }
+  .flat .picker {
+    flex: none;
+    margin: 0 0 0 auto;
+  }
+  /* Empty: icon over text, centred. Once files are added: one row. */
   .choose {
     flex: none;
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 14px;
-    min-height: 56px;
+    justify-content: center;
+    gap: 8px;
+    text-align: center;
+    min-height: calc(var(--choose-h) + var(--first-file));
     box-sizing: border-box;
     padding: 8px 18px;
     cursor: pointer;
@@ -275,6 +304,13 @@
     background: var(--accent-tint);
     border: 1px solid var(--accent-line);
     border-radius: 12px;
+  }
+  .choose.flat {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 14px;
+    text-align: left;
+    min-height: var(--choose-h);
   }
   .choose-text {
     display: flex;
@@ -290,49 +326,55 @@
     font-size: 12.5px;
   }
   .files {
+    flex: 0 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
   }
   .files-head {
-    display: none;
+    flex: none;
+    line-height: var(--head-h);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-soft);
   }
-  /* Tall screens: the list is a panel that takes the card's spare height, so
-     the footer stays at the card's foot. */
-  @media (min-height: 900px) {
-    .upload {
-      flex: 1 1 auto;
-    }
-    .files {
-      flex: 1 1 auto;
-      min-height: 130px;
-      overflow: auto;
-      padding: 10px 12px 12px;
-      background: var(--bg-alt);
-      border: 1px solid var(--line);
-      border-radius: 12px;
-    }
-    .files-head {
-      display: flex;
-      justify-content: space-between;
-      gap: 12px;
-      font-size: 12px;
-      color: var(--ink-faint);
-    }
-    .files-head span:first-child {
-      font-weight: 600;
-      color: var(--ink-soft);
-    }
+  /* Four rows and part of a fifth show; more scroll inside the list. */
+  .file-list {
+    flex: 0 1 auto;
+    min-height: var(--row-h);
+    max-height: 242px;
+    overflow: auto;
+    overscroll-behavior: contain;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  /* Phones in landscape: the button and the list side by side. */
+  /* Phones in landscape: the button and the list side by side. A drop zone
+     takes at most half the row, so the list keeps room for the file names. */
   @media (max-height: 500px) {
     .upload {
       flex-direction: row;
       align-items: flex-start;
     }
-    .files {
-      flex: 1;
+    .dropzone.flat {
+      flex: 0 1 50%;
       min-width: 0;
+      flex-wrap: wrap;
+      gap: 8px 12px;
+      min-height: 0;
+      padding: 12px 14px;
+    }
+    .dropzone .arrow,
+    .dropzone .types {
+      display: none;
+    }
+    .dropzone .picker {
+      margin-left: 0;
+    }
+    .files {
+      flex: 1 1 50%;
+      min-width: 200px;
     }
   }
   .drop-overlay {
@@ -374,18 +416,20 @@
   }
   .file-row {
     flex: none;
+    box-sizing: border-box;
+    height: var(--row-h);
     display: flex;
     align-items: center;
     gap: 12px;
+    padding: 7px 8px 7px 12px;
     background: var(--card);
     border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 12px 16px;
+    border-radius: 10px;
   }
   .kind {
     flex: none;
-    width: 34px;
-    height: 42px;
+    width: 28px;
+    height: 34px;
     box-sizing: border-box;
     background: var(--card);
     border: 1px solid var(--accent-line);
@@ -393,7 +437,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    font: 600 9px var(--font);
+    font: 600 10px var(--font);
     color: var(--accent);
   }
   .file-text {
@@ -414,7 +458,11 @@
     margin-top: 2px;
   }
   .remove {
+    position: relative;
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     margin-left: auto;
     cursor: pointer;
     width: 32px;
@@ -425,10 +473,12 @@
     border: 1px solid var(--line);
     border-radius: 999px;
   }
+  /* Touch: a 44px press area around the 32px button. */
   @media (pointer: coarse) {
-    .remove {
-      width: 44px;
-      height: 44px;
+    .remove::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
     }
   }
   @media (hover: hover) {

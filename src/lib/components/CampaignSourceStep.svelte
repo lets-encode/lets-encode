@@ -55,6 +55,7 @@
           type="button"
           class="tbtn"
           class:on={wrap}
+          aria-pressed={wrap}
           onclick={() => (wrap = !wrap)}
         >
           Wrap lines

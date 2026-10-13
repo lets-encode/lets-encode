@@ -7,7 +7,7 @@
   work needs no editing here.
 
   With page images the preparation step follows and finishes the setup; without
-  them there is nothing to prepare, that step is skipped and Finish is here.
+  them there is nothing to prepare, that step is skipped and Create campaign is here.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
@@ -28,12 +28,18 @@
     piecesSummary,
     previousStep,
   } from "$lib/wizard.svelte.ts";
-  import { CampaignFinisher } from "$lib/campaign-finish.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
+  import {
+    CampaignFinisher,
+    finishSummary,
+  } from "$lib/campaign-finish.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
+  import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
+  import { pieceIdLabel } from "$lib/campaign-tables.ts";
 
   let selected = $state(0);
   // With no page images the preparation step is skipped, so this step
@@ -45,7 +51,8 @@
 
   // Seed the pieces the first time the step is opened; returning from a later
   // step must not discard edits.
-  if (!wizard.pieces.length) {
+  const seeded = !wizard.pieces.length;
+  if (seeded) {
     wizard.pieces = initialPieces(
       wizard.encodings.map((encoding) => encoding.name),
       wizard.images.length > 0,
@@ -83,6 +90,22 @@
     };
   });
   onDestroy(() => liveUrls.forEach((url) => URL.revokeObjectURL(url)));
+
+  // A freshly seeded single facsimile piece is the whole source: it starts
+  // with every page, once the page sizes are known.
+  let autoCovered = false;
+  $effect(() => {
+    if (!seeded || autoCovered || !pages.length) return;
+    autoCovered = true;
+    const facsimile = wizard.pieces.filter((p) => p.kind === "facsimile");
+    if (facsimile.length !== 1 || facsimile[0].zones.length) return;
+    coverPages(
+      wizard.pieces,
+      wizard.pieces.indexOf(facsimile[0]),
+      pages.map((_, i) => i),
+      pages,
+    );
+  });
 
   function addPiece() {
     // With no page images there are no regions to mark, so an added piece is
@@ -170,7 +193,9 @@
   }
 
   const piece = $derived(wizard.pieces[selected]);
-  const label = $derived(piece ? piece.meta.title.trim() || piece.id : "");
+  const label = $derived(
+    piece ? piece.meta.title.trim() || pieceIdLabel(piece.id) : "",
+  );
   const covered = $derived(piece ? pagesCovered(piece) : []);
   // A facsimile piece with no regions would produce no tasks at all, so it
   // blocks finishing unless marked as having none on purpose.
@@ -181,7 +206,7 @@
   );
 
   const labelOf = (p: (typeof wizard.pieces)[number]) =>
-    p.meta.title.trim() || p.id;
+    p.meta.title.trim() || pieceIdLabel(p.id);
   const rangeOf = (p: (typeof wizard.pieces)[number]) => {
     if (p.kind === "encoded") return "encoding";
     if (p.kind === "physical-only") {
@@ -254,13 +279,16 @@
   navBlocked={xmlBlock}
   onNext={last ? () => finisher.run() : nextStep}
   nextDisabled={busy || !wizard.pieces.length || unmarked.length > 0}
+  nextReason={unmarked.length && (pages.length || !wizard.images.length)
+    ? `${unmarked.map(labelOf).join(", ")} ${unmarked.length === 1 ? "has" : "have"} no regions marked, so ${unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark regions, or mark the piece as having no regions on purpose, to ${last ? "finish" : "continue"}.`
+    : undefined}
   nextLabel={!last
     ? "Continue"
     : busy
       ? "Working…"
       : finisher.error
         ? "Retry"
-        : "Finish"}
+        : "Create campaign"}
   nextIcon={!last
     ? "arrow-right"
     : busy
@@ -319,7 +347,7 @@
                 aria-label="Remove {labelOf(p)}"
                 title="Remove this piece"
               >
-                ×
+                <Icon name="close" size={14} />
               </button>
             {/if}
           {/if}
@@ -470,18 +498,11 @@
     <p class="covered">Add a piece to describe what this campaign encodes.</p>
   {/if}
 
-  {#if unmarked.length}
-    <p class="msg-warn" role="status">
-      {unmarked.map((p) => p.meta.title.trim() || p.id).join(", ")}
-      {unmarked.length === 1 ? "has" : "have"} no regions marked, so
-      {unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark regions,
-      or mark the piece as having no regions on purpose, to finish.
-    </p>
-  {/if}
-
   {#snippet pinned()}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
+    {:else if last && !finisher.busy && auth.user}
+      <p class="finish-note">{finishSummary(auth.user.login)}</p>
     {/if}
     <ProgressSteps log={finisher.log} />
   {/snippet}
@@ -570,13 +591,13 @@
   .delete {
     flex: none;
     margin-right: 10px;
-    min-height: 22px;
+    min-height: 24px;
     font-size: 11.5px;
     padding: 2px 9px;
   }
   .delete.btn-icon {
-    width: 22px;
-    font-size: 15px;
+    width: 24px;
+    padding: 0;
     border-radius: 6px;
     color: var(--ink-faint);
     border-color: transparent;
@@ -587,6 +608,17 @@
       color: var(--danger);
       border-color: var(--danger-line);
       background: var(--danger-bg);
+    }
+  }
+  /* On touch the remove button's press area grows to 44px. */
+  @media (pointer: coarse) {
+    .delete.btn-icon {
+      position: relative;
+    }
+    .delete.btn-icon::after {
+      content: "";
+      position: absolute;
+      inset: -10px;
     }
   }
   .piece-actions {

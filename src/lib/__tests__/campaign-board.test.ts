@@ -43,8 +43,8 @@ test("cardTitle is the task's name, then its piece: config name, else piece dire
     "Score setup · Sonata in C",
   );
   assert.equal(
-    cardTitle("sources/piece-1/score.mei", "surface-2", names, true),
-    "Correct the OMR draft · p. 2 · Sonata in C",
+    cardTitle("sources/piece-1/score.mei", "surface-2", names),
+    "Encode · p. 2 · Sonata in C",
   );
   // Unnamed pieces fall back to the path's piece directory, the wizard's
   // numbered folders as "Piece N"…
@@ -72,8 +72,8 @@ test("taskName and taskScope: the page is the scope; pre-tasks cover the whole p
   assert.equal(taskScope("surface-12"), "p. 12");
   assert.equal(taskScope("measure-zones"), "");
   assert.equal(taskName("omr-layout"), "Measure correction");
-  assert.equal(taskName("score-setup", true), "Score setup");
-  assert.equal(taskName("surface-4", true), "Correct the OMR draft · p. 4");
+  assert.equal(taskName("score-setup"), "Score setup");
+  assert.equal(taskName("surface-4"), "Encode · p. 4");
 });
 
 test("buildThreads lists a task's comments and fail comments in log order, with replies", () => {

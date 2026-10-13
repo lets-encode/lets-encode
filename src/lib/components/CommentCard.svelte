@@ -19,6 +19,7 @@
     canPush,
     runner,
     review = false,
+    settled = false,
     reply = false,
     inScore = false,
     onanchor,
@@ -32,6 +33,9 @@
     runner: CommandRunner;
     /** Tint the card's edge in the review colour instead of encoding blue. */
     review?: boolean;
+    /** The task is done: a change request is part of its history, shown as
+        an ordinary comment rather than in the fail colour. */
+    settled?: boolean;
     /** Render as an indented reply: no pill, no actions. */
     reply?: boolean;
     /** Anchor links read as in-view highlights instead of score links. */
@@ -45,7 +49,8 @@
 
   const login = $derived(handle(logins, comment.author_id));
   // A fail comment is the note of a review that sent the task back.
-  const fail = $derived(comment.kind === "fail");
+  const fail = $derived(comment.kind === "fail" && !settled);
+  const changeRequest = $derived(comment.kind === "fail");
   const resolved = $derived(comment.resolved === "true");
   const canResolve = $derived(
     viewer !== "" && (canPush || comment.author_id === viewer),
@@ -94,8 +99,8 @@
           : ""}{resolved ? " · resolved" : ""}
       {/if}
     </span>
-    {#if fail}
-      <span class="ckind">Changes requested</span>
+    {#if changeRequest}
+      <span class="ckind" class:settled>Changes requested</span>
     {/if}
   </div>
   <span class="cbody">{comment.body}</span>
@@ -155,6 +160,9 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--danger);
+  }
+  .ckind.settled {
+    color: var(--ink-faint);
   }
   .ccard.reply {
     margin-left: 14px;
