@@ -124,8 +124,9 @@
     nextIcon?: "arrow-right" | "check" | null;
     nextDisabled?: boolean;
     /**
-     * Why Next is disabled, shown above the footer beside the button and
-     * linked to it as its description.
+     * Why Next is disabled, linked to the button as its description. Shown
+     * above the footer, or at the top of the form tab when the material is
+     * behind the other tab, with the button's tooltip repeating it.
      */
     nextReason?: string;
     backDisabled?: boolean;
@@ -147,6 +148,10 @@
   const mode = $derived(wizardLayout.materialMode);
   // The card holds the material itself.
   const shared = $derived(!!material && mode === "switch");
+  // With the material behind a tab, why Next is disabled leads the form tab:
+  // under the material it would change the material's height when it goes,
+  // which rescales pages fitted to that height while one is being edited.
+  const reasonInForm = $derived(shared && !!panes);
 
   // Whether a step is skipped follows from the upload, so steps are left out
   // only once the upload step is done; before that the whole flow is listed.
@@ -771,6 +776,11 @@
             aria-labelledby="wizard-tab-form"
           >
             <div class="card-body" {@attach markHidden}>
+              {#if reasonShown}
+                <p class="msg-warn form-reason" id={reasonId} role="status">
+                  {nextReason}
+                </p>
+              {/if}
               {@render children()}
             </div>
           </div>
@@ -797,7 +807,7 @@
     <!-- Every step draws the frame, so the one place to report that this setup
          is no longer being kept for later — or why it opened where it did — is
          here. -->
-    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned || reasonShown}
+    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned || (reasonShown && !reasonInForm)}
       <div class="pinned">
         {#if draftStatus.resumeNotice}
           <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
@@ -809,7 +819,7 @@
           </p>
         {/if}
         {@render pinned?.()}
-        {#if reasonShown}
+        {#if reasonShown && !reasonInForm}
           <p class="msg-warn" id={reasonId} role="status">{nextReason}</p>
         {/if}
       </div>
@@ -837,7 +847,8 @@
             class:btn-finish={finish}
             onclick={onNext}
             disabled={nextDisabled || navBlocked !== undefined}
-            title={navBlocked}
+            title={navBlocked ??
+              (reasonShown && reasonInForm ? nextReason : undefined)}
             aria-describedby={reasonShown ? reasonId : undefined}
           >
             {nextLabel}{#if nextIcon}<Icon name={nextIcon} />{/if}
@@ -1694,6 +1705,9 @@
   }
   .panes-body .card-body {
     padding-top: 6px;
+  }
+  .form-reason {
+    margin: 10px 0 0;
   }
   .inpane {
     display: flex;

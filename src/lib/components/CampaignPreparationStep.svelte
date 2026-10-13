@@ -1,6 +1,7 @@
 <!--
-  Wizard step 7: how the facsimile pieces get their measures before encoding
-  starts, and the button that finishes the setup. Measure detection contacts
+  Wizard step 7: whether the facsimile pieces go through optical music
+  recognition, which decides how they get their measures and whether encoding
+  starts from a draft, and the button that finishes the setup. Measure detection contacts
   the edirom detector for every page when Create campaign is pressed; optical music
   recognition leaves the pages as they are — their staves and measures are
   found in each piece's measure correction task, and every page is transcribed when its
@@ -53,7 +54,7 @@
 <WizardCard
   step="preparation"
   heading="Prepare the scores"
-  intro="How the pieces get their measures before encoding starts."
+  intro="Optical music recognition turns the pages into a draft that encoding starts from. Choose now whether to use it: this cannot be changed once the campaign is created."
   status="choosing the preparation"
   {material}
   panes={{

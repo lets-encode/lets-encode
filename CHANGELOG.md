@@ -9,6 +9,8 @@ parentheses.
 - The wizard's page toolbars group their buttons, and pages are centred.
 - The campaign title stays on one line, and the repository link shows only on desktop.
 - The wizard drops the step count and the Campaign setup label.
+- Drawing a piece's first region on a phone no longer resizes the pages, and scroll mode hides the delete button.
+- The preparation step says it is about using optical music recognition.
 
 ## 2026-10-12
 
