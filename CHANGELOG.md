@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-13
+
+- The wizard's upload card keeps its height for the first file, and only the file list scrolls.
+- The wizard's page toolbars group their buttons, and pages are centred.
+- The wizard drops the step count and the Campaign setup label.
+
 ## 2026-10-12
 
 - The setup wizard creates the campaign repository on Create campaign and says beforehand what it creates.

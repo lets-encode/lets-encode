@@ -583,23 +583,25 @@
       {#if pieces[selectedPiece]?.kind !== "facsimile"}
         <span class="drag-hint">An uploaded encoding needs no regions</span>
       {/if}
-      <span class="segt" role="group" aria-label="What a finger does">
+      <span class="tbtn-pair" role="group" aria-label="What a finger does">
         <button
           type="button"
+          class="tbtn tbtn-icon"
           class:on={touchMode === "scroll"}
           aria-pressed={touchMode === "scroll"}
           aria-label="Scroll"
           onclick={() => (touchMode = "scroll")}
-          ><Icon name="hand" size={16} /><span class="segt-label">Scroll</span
+          ><Icon name="hand" size={16} /><span class="mode-label">Scroll</span
           ></button
         >
         <button
           type="button"
+          class="tbtn tbtn-icon"
           class:on={touchMode === "draw"}
           aria-pressed={touchMode === "draw"}
           aria-label="Draw regions"
           onclick={() => (touchMode = "draw")}
-          ><Icon name="square" size={16} /><span class="segt-label">Draw</span
+          ><Icon name="square" size={16} /><span class="mode-label">Draw</span
           ></button
         >
       </span>
@@ -853,8 +855,8 @@
     font: 600 12.5px var(--font);
     color: var(--ink);
     background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 999px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
   }
   .pchip .swatch {
     flex: none;
@@ -876,42 +878,13 @@
     opacity: 0;
     font-size: 16px;
   }
-  .segt {
-    flex: none;
-    display: inline-flex;
-    gap: 2px;
-    padding: 2px;
-    background: var(--bg-tint);
-    border-radius: 999px;
-  }
-  .segt button {
-    position: relative;
-    height: 28px;
-    min-width: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 5px;
-    padding: 0 10px;
+  .mode-label {
+    margin-left: 5px;
     font: 600 12px var(--font);
-    color: var(--ink-soft);
-    background: transparent;
-    border: none;
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  .segt button::after {
-    content: "";
-    position: absolute;
-    inset: -8px -1px;
-  }
-  .segt button.on {
-    color: var(--ink);
-    background: var(--card);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.12);
+    line-height: 1;
   }
   @container material (max-width: 639px) {
-    .segt-label {
+    .mode-label {
       display: none;
     }
   }
@@ -924,10 +897,6 @@
   @container material (max-width: 479px) {
     .pchip {
       gap: 5px;
-      padding: 0 8px;
-    }
-    .segt button {
-      min-width: 34px;
       padding: 0 8px;
     }
   }

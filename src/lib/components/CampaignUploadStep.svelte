@@ -35,8 +35,8 @@
 
   const manifestUrl = $derived(wizard.iiifManifestUrl.trim());
   const hasUpload = $derived(wizard.files.length > 0 || manifestUrl !== "");
-  // The acknowledgement is about material being published, so it only applies
-  // when there is material.
+  // The acknowledgement is about material being published, so it only gates
+  // Continue when there is material.
   const canContinue = $derived(
     !busy && (!hasUpload || wizard.copyrightAccepted),
   );
@@ -154,12 +154,10 @@
   <!-- The footer is this step's own: the acknowledgement gating Continue sits
        on the buttons' row, left of them. -->
   {#snippet footer()}
-    {#if hasUpload}
-      <label class="ack">
-        <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
-        <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
-      </label>
-    {/if}
+    <label class="ack">
+      <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
+      <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
+    </label>
     <button
       type="button"
       class="btn btn-lg btn-secondary"

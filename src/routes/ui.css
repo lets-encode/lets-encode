@@ -658,10 +658,31 @@ textarea.input {
 .material-toolbar .tbtn {
   white-space: nowrap;
 }
-/* Two toolbar buttons joined into one control, e.g. the two fits. */
+/* Every toolbar control is one square size, so joined groups line up. */
+.material-toolbar .tbtn-icon {
+  box-sizing: border-box;
+  min-width: 32px;
+  min-height: 32px;
+  justify-content: center;
+}
+/* Toolbar buttons joined into one control, e.g. the two fits. A .tval between
+   them is a read-out segment, e.g. a stepper's value. */
 .tbtn-pair {
   flex: none;
   display: inline-flex;
+}
+.tbtn-pair > .tval {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  border-block: 1px solid var(--line);
 }
 .tbtn-pair > .tbtn {
   position: relative;
@@ -690,14 +711,11 @@ textarea.input {
     padding: 4px 10px;
   }
 }
-/* Phone-width panes: the controls spread over the whole row instead of
-   gathering at its end. */
+/* Phone-width panes: the groups sit closer and the rule between them goes. */
 @container material (max-width: 479px) {
   .material-toolbar {
-    justify-content: space-between;
-    gap: 6px;
+    gap: 8px;
   }
-  .material-toolbar .toolbar-gap,
   .material-toolbar .toolbar-rule {
     display: none;
   }

@@ -89,13 +89,22 @@
 </script>
 
 <span class="zoomctl">
-  <button
-    type="button"
-    class="btn btn-icon zstep"
-    aria-label="Zoom out"
-    disabled={value <= LEAST}
-    onclick={() => step(1 / 1.25)}><Icon name="zoom-out" /></button
-  >
+  <span class="tbtn-pair zstep">
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom out"
+      disabled={value <= LEAST}
+      onclick={() => step(1 / 1.25)}><Icon name="zoom-out" size={16} /></button
+    >
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom in"
+      disabled={value >= MOST}
+      onclick={() => step(1.25)}><Icon name="zoom-in" size={16} /></button
+    >
+  </span>
   <input
     class="zoomslider"
     type="range"
@@ -111,13 +120,6 @@
     }}
   />
   <span class="zval">{value}%</span>
-  <button
-    type="button"
-    class="btn btn-icon zstep"
-    aria-label="Zoom in"
-    disabled={value >= MOST}
-    onclick={() => step(1.25)}><Icon name="zoom-in" /></button
-  >
   <span class="tbtn-pair">
     <button
       type="button"
@@ -150,7 +152,7 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
   .zstep {
     display: none;

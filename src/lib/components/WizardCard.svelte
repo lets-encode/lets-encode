@@ -12,8 +12,8 @@
   The work card fills the height it is given: its heading and footer stay put
   and the body scrolls between them, so the step's primary action is always in
   view. Messages a step pins (an error, a progress log) sit between the body and
-  the footer. A step without material gets its card on its own with a "Step N
-  of M" kicker; short ones end where their content ends.
+  the footer. A step without material gets its card on its own, ending where
+  its content ends.
 
   A step with material lays it out in one of three ways: the material pane in
   the centre with the card on the right, the material pane above the card, or —
@@ -395,7 +395,6 @@
 <div class="workbench" class:sidebar class:short>
   {#if sidebar}
     <nav class="rail" aria-label="Campaign setup steps">
-      <div class="rail-kicker">Campaign setup</div>
       <div class="rail-name">
         {#if wizard.handle.trim()}
           {wizard.handle}
@@ -622,7 +621,7 @@
         {@render workCard()}
       </div>
     {:else}
-      <div class="stage" class:hug={!material && step !== "upload"}>
+      <div class="stage" class:hug={!material}>
         {@render workCard()}
       </div>
     {/if}
@@ -706,15 +705,12 @@
   <section
     class="card"
     class:solo
-    class:hug={solo && step !== "upload"}
+    class:hug={solo}
     class:wide={solo && step === "upload"}
     class:shared
     aria-label={heading}
   >
     <div class="card-head">
-      {#if solo}
-        <div class="kicker">Step {current + 1} of {steps.length}</div>
-      {/if}
       <div class="title-row">
         <div class="headline">
           <h1>{heading}</h1>
@@ -1078,14 +1074,6 @@
       padding-inline: 16px;
     }
   }
-  .rail-kicker {
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    margin-bottom: 4px;
-  }
   .rail-name {
     font-size: 15px;
     font-weight: 600;
@@ -1182,7 +1170,6 @@
     width: 156px;
     padding: 8px 6px 6px 12px;
   }
-  .short .rail-kicker,
   .short .rail-slug {
     display: none;
   }
@@ -1532,7 +1519,8 @@
   .card.wide {
     width: 920px;
   }
-  /* A short card ends where its content ends, up to the height it is given. */
+  /* A card on its own ends where its content ends, up to the height it is
+     given. */
   .card.hug {
     flex: 0 1 auto;
   }
@@ -1542,13 +1530,6 @@
   }
   .card.solo .card-head {
     padding-top: 36px;
-  }
-  .kicker {
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
   }
   .title-row {
     display: flex;
@@ -1571,7 +1552,6 @@
     font-weight: 600;
   }
   .card.solo h1 {
-    margin-top: 8px;
     font-size: 26px;
     line-height: 1.2;
   }

@@ -303,7 +303,7 @@
       <PagesPerRow bind:value={perRow} />
       <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
       <div class="toolbar-rule"></div>
-      <span class="tbtn-pair">
+      <span class="tbtn-pair keep">
         <button
           type="button"
           class="tbtn tbtn-icon"
@@ -587,10 +587,21 @@
     color: var(--ink-soft);
   }
 
+  /* Phone-width panes: the view controls start the row and Keep all / Keep
+     none end it. */
+  @container material (max-width: 479px) {
+    .material-toolbar .toolbar-gap {
+      display: none;
+    }
+    .keep {
+      margin-left: auto;
+    }
+  }
+
   /* ---- Page tiles in the material pane ---- */
   ol.material-grid {
     list-style: none;
-    margin: 0;
+    margin-block: 0;
   }
   li {
     position: relative;
