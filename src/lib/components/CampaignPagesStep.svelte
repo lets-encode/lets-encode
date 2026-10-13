@@ -92,12 +92,36 @@
   let overIndex = $state<number | null>(null);
 
   // Touch: holding a page still lifts it, and it lands where the finger lets
-  // go. A finger that moves before the hold completes scrolls instead. The
-  // tap that ends a hold does not also keep or drop the page.
+  // go. A finger that moves before the hold completes scrolls instead. A page
+  // let go where it was lifted, or held still under the mouse, is picked up:
+  // the next page pressed takes it to that page's place. The press that ends
+  // a hold does not also keep or drop the page.
   const HOLD_MS = 450;
   const SLOP = 10;
   let lifted = $state(false);
+  let picked = $state<number | null>(null);
   let swallowClick = false;
+  // The page being moved by drag or pick-up, for the drop markers.
+  const moving = $derived(dragIndex ?? picked);
+  // Read out by screen readers when a page is picked up or moved.
+  let announcement = $state("");
+  const press = $derived(wizardLayout.coarse ? "Tap" : "Click");
+
+  function pick(index: number) {
+    picked = index;
+    announcement = `Page ${index + 1} picked up. ${press} the page whose place it takes, or ${press.toLowerCase()} it again to leave it.`;
+  }
+
+  /** Put the picked-up page in the place of the page pressed. */
+  function place(index: number) {
+    if (picked === null) return;
+    overIndex = null;
+    if (picked === index) {
+      picked = null;
+      announcement = `Page ${index + 1} left in place.`;
+    } else move(picked, index);
+  }
+
   function liftToReorder(list: HTMLElement) {
     let hold: { timer: number; x: number; y: number } | null = null;
     const cancelHold = () => {
@@ -152,22 +176,63 @@
     const drop = (e: TouchEvent) => {
       cancelHold();
       if (!lifted) return;
-      if (e.type === "touchend" && dragIndex !== null && overIndex !== null)
-        move(dragIndex, overIndex);
+      if (e.type === "touchend" && dragIndex !== null && overIndex !== null) {
+        if (overIndex === dragIndex) pick(dragIndex);
+        else move(dragIndex, overIndex);
+      }
       lifted = false;
       dragIndex = null;
       overIndex = null;
+    };
+    // A mouse held still on a page picks it up; one that moves drags it.
+    const mouseDown = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      swallowClick = false;
+      cancelHold();
+      if (e.button !== 0 || busy) return;
+      const index = indexAt(e.clientX, e.clientY);
+      if (index === null) return;
+      hold = {
+        x: e.clientX,
+        y: e.clientY,
+        timer: window.setTimeout(() => {
+          hold = null;
+          pick(index);
+          swallowClick = true;
+        }, HOLD_MS),
+      };
+    };
+    const mouseMove = (e: PointerEvent) => {
+      if (
+        hold &&
+        e.pointerType === "mouse" &&
+        Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > SLOP
+      )
+        cancelHold();
+    };
+    const mouseUp = (e: PointerEvent) => {
+      if (e.pointerType === "mouse") cancelHold();
     };
     list.addEventListener("touchstart", start, { passive: true });
     list.addEventListener("touchmove", drag, { passive: false });
     list.addEventListener("touchend", drop);
     list.addEventListener("touchcancel", drop);
+    list.addEventListener("pointerdown", mouseDown);
+    list.addEventListener("pointermove", mouseMove);
+    list.addEventListener("pointerup", mouseUp);
+    list.addEventListener("pointercancel", mouseUp);
+    list.addEventListener("dragstart", cancelHold);
     return () => {
       cancelHold();
       list.removeEventListener("touchstart", start);
       list.removeEventListener("touchmove", drag);
       list.removeEventListener("touchend", drop);
       list.removeEventListener("touchcancel", drop);
+      list.removeEventListener("pointerdown", mouseDown);
+      list.removeEventListener("pointermove", mouseMove);
+      list.removeEventListener("pointerup", mouseUp);
+      list.removeEventListener("pointercancel", mouseUp);
+      list.removeEventListener("dragstart", cancelHold);
     };
   }
 
@@ -243,6 +308,8 @@
     pages.splice(to, 0, page);
     wizard.candidates = pages;
     anchor = null;
+    picked = null;
+    announcement = `Page ${from + 1} moved to page ${to + 1} of ${pages.length}.`;
   }
 
   async function prepareAndContinue() {
@@ -292,6 +359,12 @@
     }
   }
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && picked !== null) place(picked);
+  }}
+/>
 
 {#snippet material()}
   <div class="material-card">
@@ -357,14 +430,16 @@
           <li
             data-index={i}
             class:out={!page.include}
-            class:lifted={lifted && dragIndex === i}
+            class:lifted={(lifted && dragIndex === i) || picked === i}
             class:dragging={!lifted && dragIndex === i}
-            class:drop-before={dragIndex !== null &&
-              overIndex === i &&
-              dragIndex > i}
-            class:drop-after={dragIndex !== null &&
-              overIndex === i &&
-              dragIndex < i}
+            class:drop-before={moving !== null && overIndex === i && moving > i}
+            class:drop-after={moving !== null && overIndex === i && moving < i}
+            onpointerenter={() => {
+              if (picked !== null) overIndex = i;
+            }}
+            onpointerleave={() => {
+              if (picked !== null && overIndex === i) overIndex = null;
+            }}
             ondragover={(e) => {
               if (dragIndex === null) return;
               // Accepting the drag is what makes this position a drop target.
@@ -391,6 +466,7 @@
               draggable={!busy && !wizardLayout.coarse}
               onclick={(e) => {
                 if (swallowClick) swallowClick = false;
+                else if (picked !== null) place(i);
                 else toggle(i, e.shiftKey);
               }}
               oncontextmenu={(e) => wizardLayout.coarse && e.preventDefault()}
@@ -440,6 +516,7 @@
         {/each}
       </ol>
     </div>
+    <span class="vh" role="status">{announcement}</span>
   </div>
 {/snippet}
 
@@ -447,11 +524,14 @@
   <ul class="how">
     {#if wizardLayout.coarse}
       <li>Tap a page to keep or leave it out</li>
-      <li>Hold a page, then drag it to move it</li>
+      <li>Hold a page, then drag it or tap where it goes</li>
     {:else}
       <li>Click a page to keep or leave it out</li>
       <li>Shift-click marks a whole run</li>
-      <li>Drag a page to move it, or press Alt and an arrow key</li>
+      <li>
+        Drag a page to move it, hold it and click where it goes, or press Alt
+        and an arrow key
+      </li>
     {/if}
   </ul>
 {/snippet}
@@ -610,7 +690,8 @@
     gap: 5px;
     min-width: 0;
   }
-  /* A page held by a finger, following it until it is let go. */
+  /* A page held by a finger, following it until it is let go, or picked up
+     and waiting for its place. */
   li.lifted .thumb {
     outline: 3px solid var(--accent);
     outline-offset: 1px;

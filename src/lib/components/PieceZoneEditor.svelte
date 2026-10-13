@@ -610,7 +610,12 @@
         >
       </span>
     {:else}
-      <span class="drag-hint">
+      <span
+        class="drag-hint"
+        title={pieces[selectedPiece]?.kind === "facsimile"
+          ? `Drag on a page, or click two corners, to give a region to ${labelFor(selectedPiece)}`
+          : `${labelFor(selectedPiece)} is an uploaded encoding — it needs no regions`}
+      >
         {#if pieces[selectedPiece]?.kind === "facsimile"}
           Drag on a page, or click two corners, to give a region to
           <strong style="color: {pieceColour(selectedPiece)}"
@@ -836,13 +841,17 @@
     stroke-width: 2px;
     pointer-events: none;
   }
+  /* Up to two lines in the toolbar; the title carries the whole text. */
   .drag-hint {
     min-width: 0;
     font-size: 12px;
+    line-height: 1.35;
     color: var(--ink-soft);
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
   /* The piece picker: a chip over a transparent native select. */
   .pchip {

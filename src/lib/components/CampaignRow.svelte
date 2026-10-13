@@ -152,7 +152,7 @@
         <span class="title">{stats.title}</span>
         {#if attention > 0}
           <span class="attn"
-            >{attention} change{attention === 1 ? "" : "s"} requested</span
+            >{attention} change request{attention === 1 ? "" : "s"}</span
           >
         {/if}
       </span>

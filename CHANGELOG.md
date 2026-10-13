@@ -12,6 +12,14 @@ parentheses.
 - Drawing a piece's first region on a phone no longer resizes the pages, and scroll mode hides the delete button.
 - The preparation step says it is about using optical music recognition.
 
+## 2026-10-13
+
+- On phones, measure correction keeps the zoom buttons together, opens at page width and shows its help over the pages.
+- Wizard pages can be moved by holding one and then clicking or tapping where it goes, and every move is announced.
+- Change requests have one name everywhere, and campaign rows count them instead of tasks.
+- Comment links say "Show on page N" or "Show m. N in the score".
+- The wizard's Pieces hint wraps to two lines and shows its full text on hover.
+
 ## 2026-10-12
 
 - The setup wizard creates the campaign repository on Create campaign and says beforehand what it creates.

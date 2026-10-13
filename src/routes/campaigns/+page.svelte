@@ -498,7 +498,7 @@
                     <span
                       class="chip danger"
                       title="A review asked for changes; the task is back with its encoder."
-                      >Change requested</span
+                      >Change request</span
                     >
                   </a>
                 {:else}

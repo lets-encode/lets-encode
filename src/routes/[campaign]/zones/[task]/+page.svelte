@@ -262,6 +262,10 @@
     zoomInitFor = data;
     fit = "page";
   });
+  // A narrow tool column has no whole-page fit: it shows the page width.
+  $effect(() => {
+    if (narrow && fit === "page") fit = "width";
+  });
   $effect(() => {
     if (fit === "width") zoom = 1;
     else if (fit === "page") zoom = fitZoom();
@@ -1243,177 +1247,181 @@
     </div>
   {:else if data}
     <div class="main" bind:clientWidth={mainW}>
-      <div class="ctoolbar">
-        <div class="seg" title="How many pages the desk shows side by side">
+      <div class="tbar" style={`--desk-h:${deskH}px`}>
+        <div class="ctoolbar">
+          <div class="seg" title="How many pages the desk shows side by side">
+            <button
+              type="button"
+              class:on={view === "single"}
+              aria-pressed={view === "single"}
+              onclick={() => (view = "single")}>1 page</button
+            >
+            <button
+              type="button"
+              class:on={view === "double"}
+              aria-pressed={view === "double"}
+              onclick={() => (view = "double")}>2 pages</button
+            >
+          </div>
+          {#if view === "double"}
+            <label
+              class="checkline"
+              title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+            >
+              <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
+            </label>
+          {/if}
           <button
             type="button"
-            class:on={view === "single"}
-            aria-pressed={view === "single"}
-            onclick={() => (view = "single")}>1 page</button
+            class="chip-switch"
+            class:on={showOverlaps}
+            aria-pressed={showOverlaps}
+            onclick={() => (showOverlaps = !showOverlaps)}
+            title="Show or hide the colour on areas where two boxes overlap"
+            ><span class="sw"></span>Show overlaps</button
           >
-          <button
-            type="button"
-            class:on={view === "double"}
-            aria-pressed={view === "double"}
-            onclick={() => (view = "double")}>2 pages</button
-          >
-        </div>
-        {#if view === "double"}
-          <label
-            class="checkline"
-            title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
-          >
-            <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
-          </label>
-        {/if}
-        <button
-          type="button"
-          class="chip-switch"
-          class:on={showOverlaps}
-          aria-pressed={showOverlaps}
-          onclick={() => (showOverlaps = !showOverlaps)}
-          title="Show or hide the colour on areas where two boxes overlap"
-          ><span class="sw"></span>Show overlaps</button
-        >
-        <span class="tspacer"></span>
-        <input
-          class="zoomslider"
-          type="range"
-          aria-label="Zoom"
-          aria-valuetext={`${Math.round(zoom * 100)}%`}
-          min={0}
-          max={ZOOM_STOPS}
-          step={1}
-          value={zoomPos}
-          oninput={(e) => {
-            setZoomPos(Number((e.target as HTMLInputElement).value));
-            fit = null;
-          }}
-        />
-        <span class="zval">{Math.round(zoom * 100)}%</span>
-        <button
-          type="button"
-          class="tbtn tbtn-icon zoomstep"
-          onclick={() => {
-            setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
-            fit = null;
-          }}
-          disabled={zoomPos <= 0}
-          aria-label="Zoom out"
-          title="Zoom out"><Icon name="zoom-out" /></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon zoomstep"
-          onclick={() => {
-            setZoomPos(Math.min(ZOOM_STOPS, zoomPos + ZOOM_STEP));
-            fit = null;
-          }}
-          disabled={zoomPos >= ZOOM_STOPS}
-          aria-label="Zoom in"
-          title="Zoom in"><Icon name="zoom-in" /></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={fit === "width"}
-          aria-pressed={fit === "width"}
-          onclick={() => (fit = "width")}
-          aria-label="Fit the page width"
-          title="Fit the page width to the view"
-          ><FitIcon kind="width" /></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon fitpage"
-          class:on={fit === "page"}
-          aria-pressed={fit === "page"}
-          onclick={fitWholePage}
-          aria-label="Fit the whole page"
-          title="Fit the whole page in the view, top to bottom"
-          ><FitIcon kind="page" /></button
-        >
-        <span class="vline"></span>
-        {#if canEdit}
-          <button
-            type="button"
-            class="btn btn-icon"
-            onclick={() => undo()}
-            disabled={!canUndo}
-            aria-label="Undo"
-            title="Undo the last change (Ctrl/Cmd+Z)"
-            ><Icon name="undo" /></button
-          >
-          <button
-            type="button"
-            class="btn btn-icon"
-            onclick={() => redo()}
-            disabled={!canRedo}
-            aria-label="Redo"
-            title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
-          >
-        {/if}
-        <button
-          type="button"
-          class="btn btn-icon helpbtn"
-          class:on={helpOpen}
-          aria-label="Editor help"
-          aria-expanded={helpOpen}
-          aria-controls="zone-help"
-          onclick={() => (helpOpen = !helpOpen)}
-          ><Icon name="help" size={18} /></button
-        >
-        <span class="vh" role="status"
-          >{corner
-            ? `First corner set on page ${corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
-            : ""}</span
-        >
-        <!-- Last in the toolbar, next to the side panel on the right. -->
-        <div class="pgnav">
+          <span class="tspacer"></span>
+          <span class="zoomset">
+            <input
+              class="zoomslider"
+              type="range"
+              aria-label="Zoom"
+              aria-valuetext={`${Math.round(zoom * 100)}%`}
+              min={0}
+              max={ZOOM_STOPS}
+              step={1}
+              value={zoomPos}
+              oninput={(e) => {
+                setZoomPos(Number((e.target as HTMLInputElement).value));
+                fit = null;
+              }}
+            />
+            <span class="zval">{Math.round(zoom * 100)}%</span>
+            <button
+              type="button"
+              class="tbtn tbtn-icon zoomstep"
+              onclick={() => {
+                setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
+                fit = null;
+              }}
+              disabled={zoomPos <= 0}
+              aria-label="Zoom out"
+              title="Zoom out"><Icon name="zoom-out" /></button
+            >
+            <button
+              type="button"
+              class="tbtn tbtn-icon zoomstep"
+              onclick={() => {
+                setZoomPos(Math.min(ZOOM_STOPS, zoomPos + ZOOM_STEP));
+                fit = null;
+              }}
+              disabled={zoomPos >= ZOOM_STOPS}
+              aria-label="Zoom in"
+              title="Zoom in"><Icon name="zoom-in" /></button
+            >
+            <button
+              type="button"
+              class="tbtn tbtn-icon"
+              class:on={fit === "width"}
+              aria-pressed={fit === "width"}
+              onclick={() => (fit = "width")}
+              aria-label="Fit the page width"
+              title="Fit the page width to the view"
+              ><FitIcon kind="width" /></button
+            >
+            <button
+              type="button"
+              class="tbtn tbtn-icon fitpage"
+              class:on={fit === "page"}
+              aria-pressed={fit === "page"}
+              onclick={fitWholePage}
+              aria-label="Fit the whole page"
+              title="Fit the whole page in the view, top to bottom"
+              ><FitIcon kind="page" /></button
+            >
+          </span>
           <span class="vline"></span>
+          {#if canEdit}
+            <button
+              type="button"
+              class="btn btn-icon"
+              onclick={() => undo()}
+              disabled={!canUndo}
+              aria-label="Undo"
+              title="Undo the last change (Ctrl/Cmd+Z)"
+              ><Icon name="undo" /></button
+            >
+            <button
+              type="button"
+              class="btn btn-icon"
+              onclick={() => redo()}
+              disabled={!canRedo}
+              aria-label="Redo"
+              title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
+            >
+          {/if}
           <button
             type="button"
-            class="btn btn-icon pgbtn"
-            onclick={() => go(-1)}
-            disabled={atTop}
-            aria-label="Previous page"
-            title="Previous page"><Icon name="chevron-left" /></button
+            class="btn btn-icon helpbtn"
+            class:on={helpOpen}
+            aria-label="Editor help"
+            aria-expanded={helpOpen}
+            aria-controls="zone-help"
+            onclick={() => (helpOpen = !helpOpen)}
+            ><Icon name="help" size={18} /></button
           >
-          <span
-            class="pglabel"
-            style={`min-width:${pagesLabelCh(pages.length)}ch`}
-            >{spreadLabel}</span
+          <span class="vh" role="status"
+            >{corner
+              ? `First corner set on page ${corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
+              : ""}</span
           >
-          <button
-            type="button"
-            class="btn btn-icon pgbtn"
-            onclick={() => go(1)}
-            disabled={atEnd}
-            aria-label="Next page"
-            title="Next page"><Icon name="chevron-right" /></button
-          >
+          <!-- Last in the toolbar, next to the side panel on the right. -->
+          <div class="pgnav">
+            <span class="vline"></span>
+            <button
+              type="button"
+              class="btn btn-icon pgbtn"
+              onclick={() => go(-1)}
+              disabled={atTop}
+              aria-label="Previous page"
+              title="Previous page"><Icon name="chevron-left" /></button
+            >
+            <span
+              class="pglabel"
+              style={`min-width:${pagesLabelCh(pages.length)}ch`}
+              >{spreadLabel}</span
+            >
+            <button
+              type="button"
+              class="btn btn-icon pgbtn"
+              onclick={() => go(1)}
+              disabled={atEnd}
+              aria-label="Next page"
+              title="Next page"><Icon name="chevron-right" /></button
+            >
+          </div>
         </div>
+        {#if helpOpen}
+          <div
+            id="zone-help"
+            class="helppanel"
+            role="region"
+            aria-label="Editor help"
+          >
+            <ul>
+              {#each helpLines as line (line)}
+                <li>{line}</li>
+              {/each}
+            </ul>
+            <button
+              type="button"
+              class="btn btn-icon"
+              aria-label="Close the editor help"
+              onclick={() => (helpOpen = false)}><Icon name="close" /></button
+            >
+          </div>
+        {/if}
       </div>
-      {#if helpOpen}
-        <div
-          id="zone-help"
-          class="helppanel"
-          role="region"
-          aria-label="Editor help"
-        >
-          <ul>
-            {#each helpLines as line (line)}
-              <li>{line}</li>
-            {/each}
-          </ul>
-          <button
-            type="button"
-            class="btn btn-icon"
-            aria-label="Close the editor help"
-            onclick={() => (helpOpen = false)}><Icon name="close" /></button
-          >
-        </div>
-      {/if}
       <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
@@ -1900,6 +1908,11 @@
     color: var(--accent);
     border-color: var(--accent);
   }
+  /* The toolbar and the editor help below it. */
+  .tbar {
+    flex: none;
+    position: relative;
+  }
   /* The editor help, opened from the toolbar, between it and the pages. */
   .helppanel {
     flex: none;
@@ -1945,55 +1958,6 @@
     box-sizing: border-box;
     container-type: inline-size;
   }
-  /* Zoom out and in by one step, in place of the slider where it is hidden. */
-  .zoomstep {
-    display: none;
-  }
-  /* A medium tool column (a tablet, or a laptop beside the side panel): the
-     zoom slider and its readout give way to zoom out/in buttons, and what
-     remains wraps onto a second line rather than scrolling out of view. */
-  @container (max-width: 959px) {
-    .ctoolbar {
-      flex-wrap: wrap;
-      row-gap: 4px;
-      padding-block: 4px;
-    }
-    .ctoolbar > .zoomslider,
-    .ctoolbar > .zval {
-      display: none;
-    }
-    .ctoolbar > .zoomstep {
-      display: inline-flex;
-    }
-  }
-  /* Narrow tool column (NARROW_TOOL): the page navigation leads, then fit
-     width, zoom out and in, undo, redo and help at touch size; the page-count
-     switch, "Page 1 right", the overlap switch and fit page are hidden. */
-  @container (max-width: 559px) {
-    .ctoolbar {
-      gap: 4px;
-      padding: 0 6px;
-    }
-    .ctoolbar > .seg,
-    .ctoolbar > .checkline,
-    .ctoolbar > .chip-switch,
-    .ctoolbar > .tspacer,
-    .ctoolbar > .zoomslider,
-    .ctoolbar > .zval,
-    .ctoolbar > .fitpage,
-    .pgnav > .vline {
-      display: none;
-    }
-    .pgnav {
-      order: -1;
-      margin-right: auto;
-    }
-    .ctoolbar :global(.btn),
-    .ctoolbar :global(.tbtn) {
-      min-width: 44px;
-      min-height: 44px;
-    }
-  }
   .ctoolbar {
     flex: none;
     min-height: 44px;
@@ -2008,6 +1972,83 @@
     box-shadow: var(--shadow-sm);
     overflow-x: auto;
   }
+  /* The zoom controls, which wrap onto a new toolbar line together. */
+  .zoomset {
+    flex: 0 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  /* Zoom out and in by one step, in place of the slider where it is hidden. */
+  .zoomstep {
+    display: none;
+  }
+  /* A medium tool column (a tablet, or a laptop beside the side panel): the
+     zoom slider and its readout give way to zoom out/in buttons, and what
+     remains wraps onto a second line rather than scrolling out of view. */
+  @container (max-width: 959px) {
+    .ctoolbar {
+      flex-wrap: wrap;
+      row-gap: 4px;
+      padding-block: 4px;
+    }
+    .zoomset > .zoomslider,
+    .zoomset > .zval {
+      display: none;
+    }
+    .zoomset > .zoomstep {
+      display: inline-flex;
+    }
+  }
+  /* Narrow tool column (NARROW_TOOL): the page navigation takes the first
+     line; zoom out, zoom in and fit width, then undo, redo and help at the
+     right, take the second, at touch size. The page-count switch, "Page 1
+     right", the overlap switch and fit page are hidden. The help opens over
+     the pages, so the desk keeps its height. */
+  @container (max-width: 559px) {
+    .ctoolbar {
+      gap: 4px;
+      padding: 0 6px;
+    }
+    .ctoolbar > .seg,
+    .ctoolbar > .checkline,
+    .ctoolbar > .chip-switch,
+    .ctoolbar > .tspacer,
+    .zoomset > .zoomslider,
+    .zoomset > .zval,
+    .zoomset > .fitpage,
+    .pgnav > .vline {
+      display: none;
+    }
+    .zoomset {
+      gap: 4px;
+    }
+    .ctoolbar > .vline {
+      margin-left: auto;
+      background: none;
+    }
+    .pgnav {
+      order: -1;
+      flex: 1 0 100%;
+      justify-content: space-between;
+    }
+    .helppanel {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      z-index: 5;
+      max-height: calc(var(--desk-h) - 16px);
+      box-sizing: border-box;
+      overflow: auto;
+    }
+    .ctoolbar :global(.btn),
+    .ctoolbar :global(.tbtn) {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
   .tspacer {
     flex: 1;
   }
@@ -2021,6 +2062,12 @@
     touch-action: pan-x pan-y;
     padding: 16px 24px;
     box-sizing: border-box;
+  }
+  /* A narrow tool column gives the page most of its width. */
+  @container (max-width: 559px) {
+    .desk {
+      padding-inline: 8px;
+    }
   }
   .pages {
     min-width: 0;

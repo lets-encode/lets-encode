@@ -1,6 +1,6 @@
 <!--
   One discussion comment as a card: avatar, author, elapsed/measure meta, a
-  "Changes requested" label on a fail comment, body, measure anchor and the
+  "Change request" label on a fail comment, body, measure anchor and the
   reply/resolve actions. Replies render indented without actions. Rendered
   in the side panel's comment list.
 -->
@@ -81,8 +81,10 @@
   );
   const anchorLabel = $derived(
     inScore
-      ? `${measureLabel}${comment.page ? ` — highlighted on page ${comment.page}` : ""}`
-      : `${measureLabel} — show in score`,
+      ? comment.measure_start
+        ? `Show ${measureLabel}${comment.page ? ` on page ${comment.page}` : ""}`
+        : `Show on page ${comment.page}`
+      : `Show ${measureLabel} in the score`,
   );
 </script>
 
@@ -100,7 +102,7 @@
       {/if}
     </span>
     {#if changeRequest}
-      <span class="ckind" class:settled>Changes requested</span>
+      <span class="ckind" class:settled>Change request</span>
     {/if}
   </div>
   <span class="cbody">{comment.body}</span>

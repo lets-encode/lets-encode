@@ -125,7 +125,7 @@ test("isNearlyDone: from 80% up, but never when finished", () => {
   assert.equal(isNearlyDone(0, 0), false);
 });
 
-test("attentionCount: unfinished tasks with an unresolved change request", () => {
+test("attentionCount: unresolved change requests on unfinished tasks", () => {
   // Only T0003 carries a change request (c1).
   assert.equal(attentionCount(stats), 1);
   const resolved = {
