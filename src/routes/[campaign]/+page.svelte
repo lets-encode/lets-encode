@@ -2177,12 +2177,10 @@
     flex-direction: column;
     gap: 12px;
   }
-  /* The title and its repository link lead; the actions follow on the same
-     line where they fit and wrap below it, right-aligned, where they do not.
-     A title longer than the line wraps rather than being cut. */
+  /* The title, its repository link and the actions share one line. A title
+     longer than the room left is cut short; the full title is its tooltip. */
   .hero-line {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 10px 14px;
     min-width: 0;
@@ -2193,9 +2191,19 @@
     font-size: 26px;
     line-height: 1.2;
     font-weight: 600;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Below desktop width the repository link gives way; it is in the campaign
+     details in the side panel. */
+  @container (max-width: 1100px) {
+    .slug {
+      display: none;
+    }
   }
   .hero-acts {
+    flex: none;
     margin-left: auto;
     display: flex;
     align-items: center;
@@ -2956,33 +2964,18 @@
   .lanetab-count {
     font-size: 11px;
   }
-  /* A narrow view column (a phone): the title shares one line with the
-     controls, cut short where it does not fit (the full title is its
-     tooltip, the repository link moves to the campaign details in the side
-     panel), and the side margins shrink. */
+  /* A narrow view column (a phone): the title is smaller, the side margins
+     shrink, and Manage is its gear only. */
   @container (max-width: 700px) {
     .hero {
       padding: 10px 16px 8px;
       gap: 8px;
     }
     .hero-line {
-      flex-wrap: nowrap;
       gap: 8px 10px;
     }
     .hero-line h1 {
-      flex: 1 1 0;
       font-size: 20px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .slug {
-      display: none;
-    }
-    /* The actions stay on the title's line, at its right end; Manage is its
-       gear only. */
-    .hero-acts {
-      flex: none;
     }
     .managechip {
       width: 32px;

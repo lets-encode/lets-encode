@@ -7,6 +7,7 @@ parentheses.
 
 - The wizard's upload card keeps its height for the first file, and only the file list scrolls.
 - The wizard's page toolbars group their buttons, and pages are centred.
+- The campaign title stays on one line, and the repository link shows only on desktop.
 - The wizard drops the step count and the Campaign setup label.
 
 ## 2026-10-12
