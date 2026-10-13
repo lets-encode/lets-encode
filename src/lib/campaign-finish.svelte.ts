@@ -411,7 +411,7 @@ export class CampaignFinisher {
       // is cleared once the campaign has opened, since emptying the wizard while
       // the step is still on screen would show the first step again.
       this.log.done();
-      await goto(`/${repo.name}?created`);
+      await goto(`/${repo.name}`);
       clearFinishedSetup();
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
