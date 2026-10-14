@@ -603,7 +603,7 @@
                         <span class="imeta">{claimMeta(t)}</span>
                       </a>
                       {#if t.group === "encoding"}
-                        <span class="chip blue">Encoding</span>
+                        <span class="chip blue">Ongoing</span>
                       {:else}
                         <span class="chip review">Reviewing</span>
                       {/if}

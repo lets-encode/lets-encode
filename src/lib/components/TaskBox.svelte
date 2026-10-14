@@ -189,11 +189,7 @@
   const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
 </script>
 
-<div
-  class="taskcard"
-  class:volunteer={!canPush}
-  style={zone ? `--zone: var(--zone-${zone})` : ""}
->
+<div class="taskcard" style={zone ? `--zone: var(--zone-${zone})` : ""}>
   <div class="tsphead">
     <TaskHeading
       description={card.description}
@@ -506,10 +502,17 @@
   .tspfoot .btn {
     padding-block: 4px;
   }
-  /* A volunteer's task actions are their main action: 44px, as on the
-     volunteer view's next-task card. */
-  .volunteer .tspfoot .btn {
-    min-height: 44px;
+  /* On a touch screen the 32px buttons take a 44px press through an
+     invisible ::after. */
+  @media (pointer: coarse) {
+    .tspfoot .btn {
+      position: relative;
+    }
+    .tspfoot .btn::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+    }
   }
 
   /* ---------------------------------------------------------------- pills */

@@ -3,6 +3,18 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-14
+
+- Measure correction can be used with the keyboard, and Cmd/Ctrl+drag copies a box or a wizard region.
+- Measure correction on touch screens has Scroll and Draw modes and a magnifier on touch.
+- The measure correction toolbar and side panel are rearranged for phones and tablets.
+- Measure correction marks system and section starts and shows why Submit is not available.
+- Screen readers describe measure correction boxes, and form controls have 3:1 contrast.
+- The draft save state shows as a bubble over the pages.
+- All buttons are at most 32px tall.
+- A claimed task is labelled "Ongoing" instead of "Encoding".
+- The under-construction banner stays on one line.
+
 ## 2026-10-13
 
 - Measure correction, review and the score view show the selected measure in the side panel and anchor new comments to it.

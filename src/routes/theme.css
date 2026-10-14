@@ -34,7 +34,7 @@
   --ok-btn-hover: #196538;
 
   /* Form control outlines, a step heavier than --line. */
-  --line-input: #9ea7bd;
+  --line-input: #8a93a9;
   /* Functional orange: XML attribute names, piece highlights. */
   --orange-deep: #ad561c;
   /* Recessed work surfaces: page grids, the XML editor, the corrector desk.
@@ -175,7 +175,7 @@
   --ok-btn: #26794a;
   --ok-btn-hover: #1f653d;
 
-  --line-input: #3c455e;
+  --line-input: #606a87;
   --orange-deep: #ffa76d;
   /* One step below --bg-alt; the inset shadow carries the recession. */
   --bg-inset: #101423;

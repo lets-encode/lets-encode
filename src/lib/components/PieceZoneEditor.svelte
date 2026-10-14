@@ -474,7 +474,7 @@
     notice = overlapNotice(clash, page);
     if (kind === "draw" || copyOf !== undefined) {
       pieces[piece].zones.splice(z, 1);
-      selectedZone = null;
+      selectedZone = copyOf === undefined ? null : { piece, zone: copyOf };
     } else {
       Object.assign(zone, origin);
     }
@@ -636,7 +636,7 @@
       <span
         class="drag-hint"
         title={pieces[selectedPiece]?.kind === "facsimile"
-          ? `Drag on a page, or click two corners, to give a region to ${labelFor(selectedPiece)}`
+          ? `Drag on a page, or click two corners, to give a region to ${labelFor(selectedPiece)}. ${/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl+"}drag a region to copy it.`
           : `${labelFor(selectedPiece)} is an uploaded encoding — it needs no regions`}
       >
         {#if pieces[selectedPiece]?.kind === "facsimile"}

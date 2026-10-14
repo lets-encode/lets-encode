@@ -14,9 +14,9 @@
   A score workspace (a task's own view) adds its task tools below the task
   box, the selected item's controls as a tab beside the comments, and the
   task's action in a footer pinned to the panel's bottom. Docked as a sheet
-  it shows only the tools (while something is selected, its controls) and
-  the footer until opened; without a footer the task box stays in view
-  instead.
+  it shows only the view's bar, the tools (while something is selected, its
+  controls) and the footer until opened; without a footer the task box stays
+  in view instead.
 -->
 <script module lang="ts">
   // Whether resolved threads are hidden; held for the session across views.
@@ -25,7 +25,7 @@
 
 <script lang="ts">
   import { MediaQuery } from "svelte/reactivity";
-  import { tick, type Snippet } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { Result } from "$lib/commands.ts";
@@ -35,6 +35,7 @@
   import {
     DOCKED_MAX_CSS,
     DOCKED_QUERY,
+    PANEL_MIN,
     defaultPanelWidth,
     hasStoredPanelWidth,
     type SidePanelState,
@@ -53,6 +54,7 @@
     canPush,
     runner,
     panel = $bindable(),
+    minWidth = PANEL_MIN,
     review = false,
     done = false,
     inScore = false,
@@ -66,7 +68,9 @@
     selectionLabel = "Selection",
     selectionActive = false,
     tab = $bindable("selection"),
+    compose = 0,
     footer,
+    bar,
     sheet = false,
     ondeselect,
     onanchor,
@@ -84,6 +88,9 @@
     canPush: boolean;
     runner: CommandRunner;
     panel: SidePanelState;
+    /** The narrowest the panel gets beside the content, for a view whose
+        tools need more room than PANEL_MIN. */
+    minWidth?: number;
     /** Tint the comments in the review colour. */
     review?: boolean;
     /** The task is done: its change requests read as history. */
@@ -112,8 +119,14 @@
     selectionActive?: boolean;
     /** The tab shown when the panel has a selection. */
     tab?: "selection" | "comments";
+    /** Each change asks for the comment field: the panel opens on the
+        comments with the field focused (e.g. "Comment on measure 3"). */
+    compose?: number;
     /** The task's action, pinned to the panel's bottom. */
     footer?: Snippet;
+    /** Docked as a sheet: a row at the sheet's top, open or closed (e.g. the
+        view's page toolbar). */
+    bar?: Snippet;
     /** Docked, the panel is a sheet: closed it shows the tools and the
         footer. */
     sheet?: boolean;
@@ -139,6 +152,11 @@
   const fieldOnRequest = $derived(docked || coarseQuery.current);
   // Docked: whether the panel is opened past the header and the task box.
   let open = $state(false);
+  // A new selection scrolls its controls into view.
+  let selEl = $state<HTMLElement>();
+  $effect(() => {
+    if (selectionActive && selEl) selEl.scrollIntoView({ block: "nearest" });
+  });
   let fieldOpen = $state(false);
   let draft = $state("");
   // The docked height in pixels while the top edge is dragged.
@@ -214,11 +232,13 @@
     composerHint ? composerHint.replace(/…$/, "") : "Write a comment",
   );
   const toggleLabel = $derived(
-    !task && info
-      ? `Details and comments · ${count}`
-      : count > 0
-        ? `Comments · ${count}`
-        : "Comment",
+    open
+      ? "Close"
+      : !task && info
+        ? `Details and comments · ${count}`
+        : count > 0
+          ? `Comments · ${count}`
+          : "Comment",
   );
 
   let aside = $state<HTMLElement>();
@@ -232,6 +252,12 @@
     fieldOpen = true;
     focusField();
   }
+  let composeSeen = untrack(() => compose);
+  $effect(() => {
+    if (compose === composeSeen) return;
+    composeSeen = compose;
+    openField();
+  });
   function startReply(c: CommentRow) {
     replyTo = c;
     open = true;
@@ -322,11 +348,12 @@
   style={docked
     ? `max-height: ${DOCKED_MAX_CSS}` +
       (drag !== null ? `; height: ${drag}px` : "")
-    : `width: ${panel.width}px`}
+    : `width: ${Math.max(panel.width, minWidth)}px; min-width: ${minWidth}px`}
 >
   <PanelResizeHandle
     label="Resize the side panel"
     bind:panel
+    min={minWidth}
     bind:drag
     {docked}
     dockLevel={open ? 1 : 0}
@@ -342,10 +369,12 @@
   <aside
     bind:this={aside}
     class="sp"
+    class:peek
     style={zone ? `--zone: var(--zone-${zone})` : ""}
     aria-label={task ? "Task" : "Campaign"}
     style:--spfoot-h={`${footer ? footHeight : 0}px`}
   >
+    {#if bar && docked && sheet}<div class="spbar">{@render bar()}</div>{/if}
     {@render banner?.()}
     <div class="sphead" class:hidden={peek}>
       {#if ondeselect}
@@ -362,11 +391,12 @@
         <button
           type="button"
           class="btn showinline"
-          aria-pressed={open}
+          aria-expanded={open}
           onpointerdown={() => (openAtPress = open)}
           onclick={toggle}
           >{#if posting}<span
               class="spinner"
+              role="img"
               title="Processing comment"
               aria-label="Processing comment"
             ></span>{/if}{toggleLabel}</button
@@ -384,34 +414,40 @@
       <div class="sptools">{@render tools()}</div>
     {/if}
     {#if selection && listShown}
-      <div class="seg sptabs" role="tablist" aria-label="Panel content">
+      <div class="seg sptabs" role="group" aria-label="Panel content">
         <button
           type="button"
-          role="tab"
           class:on={tab === "selection"}
-          aria-selected={tab === "selection"}
+          aria-pressed={tab === "selection"}
           onclick={() => (tab = "selection")}>{selectionLabel}</button
         >
         <button
           type="button"
-          role="tab"
           class:on={tab === "comments"}
-          aria-selected={tab === "comments"}
+          aria-pressed={tab === "comments"}
           onclick={() => (tab = "comments")}
           >{#if posting}<span
               class="spinner"
+              role="img"
               title="Processing comment"
               aria-label="Processing comment"
             ></span>{/if}Comments · {count}</button
         >
       </div>
       {#if tab === "selection"}
-        <div class="spsel" role="tabpanel" aria-label={selectionLabel}>
+        <div
+          class="spsel"
+          role="region"
+          aria-label={selectionLabel}
+          bind:this={selEl}
+        >
           {@render selection()}
         </div>
       {/if}
     {/if}
-    {#if listShown && commentsShown}
+    <!-- A task's empty list in a docked or short panel is left out, so it
+         adds no gap above the composer. -->
+    {#if listShown && commentsShown && !(task && cramped && count === 0)}
       <div class="clist">
         {#if !task}{@render info?.()}{/if}
         <!-- In a docked or short panel, no comments means no list: the
@@ -535,6 +571,11 @@
     padding: 12px;
     overflow-y: auto;
     overscroll-behavior: contain;
+    --btn-soft-bg: var(--card);
+    --btn-soft-line: var(--line);
+    --seg-bg: var(--card);
+    --seg-line: inset 0 0 0 1px var(--line);
+    --seg-on-bg: var(--accent-tint-strong);
   }
   .docked .sp {
     border-radius: 0;
@@ -600,18 +641,26 @@
     justify-content: center;
     min-height: 30px;
   }
+  /* Docked, the tabs, the header's buttons and the comment button are 32px
+     and take a 44px press through an invisible ::after. */
+  .docked .sptabs {
+    padding: 2px;
+  }
   .docked .sptabs > button {
-    min-height: 40px;
+    position: relative;
+    min-height: 28px;
   }
+  .docked .sptabs > button::after {
+    content: "";
+    position: absolute;
+    inset: -8px 0;
+  }
+  /* The selection's controls keep their full height; where the panel is
+     too short the panel scrolls as a whole, and a new selection scrolls
+     them into view above the footer. */
   .spsel {
-    flex: 0 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-  }
-  .cramped .spsel {
     flex: none;
-    overflow-y: visible;
+    scroll-margin-bottom: calc(var(--spfoot-h, 0px) + 12px);
   }
   .spfoot {
     flex: none;
@@ -623,6 +672,16 @@
     border-top: 1px solid var(--line);
     background: var(--bg-inset);
     box-shadow: 0 16px 0 var(--bg-inset);
+  }
+  /* A closed sheet: the footer follows the tools with no rule between. */
+  .peek .spfoot {
+    padding-top: 0;
+    border-top: 0;
+  }
+  /* The view's bar measures its own width (container queries). */
+  .spbar {
+    flex: none;
+    container-type: inline-size;
   }
   /* A sheet's rounded top edge; its footer clears the home indicator. */
   .spwrap.sheet {
@@ -652,17 +711,19 @@
     margin-left: auto;
     flex: none;
   }
-  .docked .sphead :global(.btn) {
-    min-height: 40px;
+  .docked .sphead :global(.btn),
+  .docked .writebtn {
+    position: relative;
   }
-  .showinline[aria-pressed="true"] {
-    color: var(--accent);
-    background: var(--accent-tint-strong);
-    border-color: var(--accent-line-strong);
+  .docked .sphead :global(.btn)::after,
+  .docked .writebtn::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
   }
   .writebtn {
     width: 100%;
-    min-height: 44px;
+    min-height: 32px;
     justify-content: center;
     border-style: dashed;
   }

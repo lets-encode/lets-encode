@@ -832,7 +832,7 @@
         {#if onBack}
           <button
             type="button"
-            class="btn btn-lg btn-secondary"
+            class="btn btn-secondary"
             onclick={onBack}
             disabled={backDisabled || navBlocked !== undefined}
             title={navBlocked}
@@ -843,7 +843,7 @@
         {#if onNext}
           <button
             type="button"
-            class="btn btn-lg btn-primary"
+            class="btn btn-primary"
             class:btn-finish={finish}
             onclick={onNext}
             disabled={nextDisabled || navBlocked !== undefined}
@@ -993,9 +993,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-  }
-  .discard-row .btn {
-    min-height: 40px;
   }
 
   /* ---- Popups ------------------------------------------------------------ */
@@ -1749,6 +1746,18 @@
   }
   .card.solo .footer {
     margin-top: 18px;
+  }
+  /* On a touch screen the footer's 32px buttons take a 44px press through
+     an invisible ::after. */
+  @media (pointer: coarse) {
+    .footer > :global(.btn) {
+      position: relative;
+    }
+    .footer > :global(.btn)::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+    }
   }
 
   /* ---- Smaller windows ---------------------------------------------------- */

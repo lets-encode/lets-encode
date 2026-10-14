@@ -119,9 +119,14 @@ export function writeLastTask(campaign: string, task: string | null): void {
   }
 }
 
-/** A panel width, kept between the minimum and half the viewport, and
-    leaving CONTENT_BESIDE_MIN beside it where the viewport allows. */
-export function clampPanelWidth(w: number, viewport: number): number {
+/** A panel width, kept between the minimum (PANEL_MIN unless a view sets
+    its own) and half the viewport, and leaving CONTENT_BESIDE_MIN beside it
+    where the viewport allows. */
+export function clampPanelWidth(
+  w: number,
+  viewport: number,
+  min = PANEL_MIN,
+): number {
   const max = Math.min(viewport / 2, viewport - CONTENT_BESIDE_MIN);
-  return Math.round(Math.min(Math.max(w, PANEL_MIN), Math.max(PANEL_MIN, max)));
+  return Math.round(Math.min(Math.max(w, min), Math.max(min, max)));
 }

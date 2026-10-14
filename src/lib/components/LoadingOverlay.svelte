@@ -50,7 +50,7 @@
     {/if}
     <ProgressSteps {log} />
     {#if finished}
-      <button type="button" class="btn btn-lg btn-primary" onclick={onContinue}>
+      <button type="button" class="btn btn-primary" onclick={onContinue}>
         Continue
       </button>
     {/if}

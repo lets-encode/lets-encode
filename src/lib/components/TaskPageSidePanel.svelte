@@ -25,6 +25,7 @@
     viewer,
     runner,
     panel = $bindable(),
+    minWidth,
     review = false,
     done = false,
     composerHint = "",
@@ -35,7 +36,9 @@
     selectionLabel,
     selectionActive = false,
     tab = $bindable("selection"),
+    compose,
     footer,
+    bar,
     onanchor,
     oncomment,
     onresolve,
@@ -46,6 +49,8 @@
     viewer: string;
     runner: CommandRunner;
     panel: SidePanelState;
+    /** The narrowest the panel gets beside the view (SidePanel). */
+    minWidth?: number;
     /** The task awaits review: comments take the review colour. */
     review?: boolean;
     /** The task is done: its change requests read as history. */
@@ -63,8 +68,12 @@
     /** Something is selected (SidePanel). */
     selectionActive?: boolean;
     tab?: "selection" | "comments";
+    /** Each change opens the comment field (SidePanel). */
+    compose?: number;
     /** The task's action, pinned to the panel's bottom. */
     footer?: Snippet;
+    /** Docked as a sheet: a row at the sheet's top (SidePanel). */
+    bar?: Snippet;
     /** Show a comment's measure range in the view's own viewer. */
     onanchor: (comment: CommentRow) => void;
     oncomment: (
@@ -102,6 +111,7 @@
   canPush={tables.canPush}
   {runner}
   bind:panel
+  {minWidth}
   inScore
   {composerHint}
   {banner}
@@ -111,7 +121,9 @@
   {selectionLabel}
   {selectionActive}
   bind:tab
+  {compose}
   {footer}
+  {bar}
   sheet={!!(tools || selection || footer)}
   {onanchor}
   oncomment={(kind, body, parent_id) =>
