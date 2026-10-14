@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { tick, untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
@@ -8,6 +9,7 @@
   import { commands, invoke } from "$lib/commands.ts";
   import type {
     CommandContext,
+    CommentAnchorInput,
     FacsimileTaskData,
     Result,
   } from "$lib/commands.ts";
@@ -201,11 +203,24 @@
   let selected = $state<{ p: number; z: number } | null>(null);
   /** The selected measure's number, prefilling a change request; '' for none. */
   const selectedLabel = $derived.by(() => {
-    const zone = selected ? pages[selected.p]?.zones[selected.z] : undefined;
+    const zone =
+      selected && tool === "measures"
+        ? pages[selected.p]?.zones[selected.z]
+        : undefined;
     return zone ? String(zone.override ?? zone.label) : "";
   });
-  // The zone whose controls show: the selected one.
-  const active = $derived(selected);
+
+  // On a touch screen a finger drag on the page scrolls it: a tap selects a
+  // box, the selected box and its handles drag, and new boxes are drawn only
+  // in draw mode.
+  const coarseQuery = new MediaQuery("(pointer: coarse)", false);
+  const coarse = $derived(coarseQuery.current);
+  let drawMode = $state(false);
+  // The side panel's tab; selecting a box shows its controls.
+  let panelTab = $state<"selection" | "comments">("selection");
+  $effect(() => {
+    if (selected) untrack(() => (panelTab = "selection"));
+  });
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the pages overflow and the desk scrolls horizontally.
@@ -461,6 +476,86 @@
     );
     selected = z >= 0 ? { p, z } : null;
   }
+  // A new comment carries the selected measure as its anchor.
+  const commentAnchor = (): CommentAnchorInput | undefined =>
+    selected && selectedLabel
+      ? {
+          page: String(selected.p + 1),
+          measure_start: selectedLabel,
+          measure_end: selectedLabel,
+        }
+      : undefined;
+
+  // On a touch screen a selected box narrower than TOUCH_BOX_PX is zoomed
+  // to that width so its handles can be dragged.
+  const TOUCH_BOX_PX = 96;
+  /** Scroll a box into view, centred when it was outside it; with `zoomIn`
+      also zoom a small box up to TOUCH_BOX_PX. */
+  async function revealBox(p: number, z: number, zoomIn = false) {
+    const box = items(p)[z]?.box;
+    if (!box) return;
+    const pg = pages[p];
+    if (zoomIn && canvasW[p]) {
+      const shown = ((box.lrx - box.ulx) / pg.width) * canvasW[p];
+      if (shown > 0 && shown < TOUCH_BOX_PX) {
+        zoom = Math.min(ZOOM_MAX, (zoom * TOUCH_BOX_PX) / shown);
+        fit = null;
+      }
+    }
+    await tick();
+    const svg = svgEls[p];
+    if (!desk || !svg) return;
+    const r = svg.getBoundingClientRect();
+    const d = desk.getBoundingClientRect();
+    const left = r.left + (box.ulx / pg.width) * r.width;
+    const right = r.left + (box.lrx / pg.width) * r.width;
+    const top = r.top + (box.uly / pg.height) * r.height;
+    const bottom = r.top + (box.lry / pg.height) * r.height;
+    if (
+      left >= d.left &&
+      right <= d.right &&
+      top >= d.top &&
+      bottom <= d.bottom
+    )
+      return;
+    desk.scrollLeft += (left + right) / 2 - (d.left + d.width / 2);
+    desk.scrollTop += (top + bottom) / 2 - (d.top + d.height / 2);
+    deskScrolled();
+  }
+  // Select a box on a touch screen: a tap, after which it can be dragged.
+  function tapSelect(p: number, z: number) {
+    if (!coarse) return;
+    selected = { p, z };
+    corner = null;
+    revealBox(p, z, true);
+  }
+  /** Select the box before (-1) or after (1) the selected one in reading
+      order, across pages. */
+  function stepSelection(delta: 1 | -1) {
+    let p = selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0;
+    let z = selected ? selected.z + delta : delta > 0 ? 0 : -1;
+    if (!selected && delta < 0) z = items(p).length - 1;
+    while (p >= 0 && p < pages.length && (z < 0 || z >= items(p).length)) {
+      p += delta;
+      if (p < 0 || p >= pages.length) return;
+      z = delta > 0 ? 0 : items(p).length - 1;
+    }
+    if (p < 0 || p >= pages.length) return;
+    selected = { p, z };
+    revealBox(p, z, coarse);
+  }
+  const hasPrev = $derived(
+    !!selected &&
+      (selected.z > 0 ||
+        pages.slice(0, selected.p).some((_, q) => items(q).length > 0)),
+  );
+  const hasNext = $derived(
+    !!selected &&
+      (selected.z < items(selected.p).length - 1 ||
+        pages
+          .slice(selected.p + 1)
+          .some((_, q) => items(selected!.p + 1 + q).length > 0)),
+  );
 
   function toPageModels(): PageModel[] {
     return pages.map((pg) => ({
@@ -823,6 +918,18 @@
           ? "h-nwse"
           : "h-nesw";
 
+  // The selected box's handles: the four edges, then the four corners.
+  const HANDLES = [
+    { edges: "n", side: "top edge" },
+    { edges: "s", side: "bottom edge" },
+    { edges: "w", side: "left edge" },
+    { edges: "e", side: "right edge" },
+    { edges: "nw", side: "top-left corner" },
+    { edges: "ne", side: "top-right corner" },
+    { edges: "sw", side: "bottom-left corner" },
+    { edges: "se", side: "bottom-right corner" },
+  ];
+
   const svgXY = (e: PointerEvent, p: number) =>
     pagePoint(e, svgEls[p].getBoundingClientRect(), pages[p]);
 
@@ -836,10 +943,14 @@
     kind: "move" | "resize",
     edges = "",
   ) {
+    // On a touch screen an unselected box lets the finger scroll the page;
+    // a tap selects it (tapSelect).
+    if (coarse && !(selected?.p === p && selected.z === z)) return;
     if (kind === "move") selected = { p, z };
     corner = null;
-    if (!canEdit) return;
+    // The page behind the box must not take the press as a deselect.
     e.stopPropagation();
+    if (!canEdit) return;
     selected = { p, z };
     const { x, y } = svgXY(e, p);
     drag = {
@@ -891,7 +1002,15 @@
   }
 
   function backgroundPointerDown(e: PointerEvent, p: number) {
+    // A touch on a box selects it on the tap (tapSelect), also in draw mode.
+    if (coarse && (e.target as Element).closest(".zone, .staff")) return;
     const deselected = selected !== null;
+    // On a touch screen outside draw mode the finger scrolls; a tap on the
+    // page deselects (backgroundTapEnd).
+    if (coarse && !drawMode) {
+      bgTap = { x: e.clientX, y: e.clientY };
+      return;
+    }
     selected = null;
     if (!canEdit) return;
     const { x, y } = svgXY(e, p);
@@ -944,9 +1063,43 @@
     commitGeometry(p, addBox(p, layer, box));
   }
 
+  // A tap on the page outside a box, on a touch screen outside draw mode,
+  // deselects; a scroll ends in pointercancel instead.
+  let bgTap: { x: number; y: number } | null = null;
+  function backgroundTapEnd(e: PointerEvent) {
+    const tap = bgTap;
+    bgTap = null;
+    if (
+      tap &&
+      Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 10 &&
+      !(e.target as Element).closest(".zone, .staff")
+    )
+      selected = null;
+  }
+
+  // While a finger resizes or draws a box, a magnifier above it shows the
+  // point under the finger: page coordinates and the finger's screen point.
+  let loupe = $state<{
+    p: number;
+    x: number;
+    y: number;
+    cx: number;
+    cy: number;
+  } | null>(null);
+  const LOUPE_PX = 120;
+  const LOUPE_ZOOM = 2;
+  const loupeAt = (e: PointerEvent, p: number, x: number, y: number) => {
+    loupe =
+      e.pointerType === "touch"
+        ? { p, x, y, cx: e.clientX, cy: e.clientY }
+        : null;
+  };
+
   function pointerMove(e: PointerEvent) {
     if (!drag) return;
     const { x, y } = svgXY(e, drag.p);
+    if (drag.kind !== "move" && (drag.kind !== "draw" || drag.started))
+      loupeAt(e, drag.p, x, y);
     const dx = x - drag.sx;
     const dy = y - drag.sy;
     const pg = pages[drag.p];
@@ -971,6 +1124,7 @@
   // A second finger turns the gesture into a pinch: the drag the first one
   // started is undone.
   function cancelDrag() {
+    loupe = null;
     if (!drag) return;
     const { kind, layer, p, z, started, orig } = drag;
     drag = null;
@@ -982,6 +1136,7 @@
   }
 
   function pointerUp() {
+    loupe = null;
     if (!drag) return;
     const { kind, layer, p, z, moved, started, deselected, sx, sy } = drag;
     drag = null;
@@ -1138,13 +1293,14 @@
     return "";
   };
 
-  // Measure/section colours reused for the box tint and the zone controls.
-  // Teal and purple are deliberately outside the piece-region palette
-  // (--zone-1…8), so a colour never carries two meanings.
-  const MEASURE_ACCENT = "#0e8195";
-  const MDIV_ACCENT = "#8b5fbf";
-  const accentFor = (p: number, z: number) =>
-    startsMovement(p, z) ? MDIV_ACCENT : MEASURE_ACCENT;
+  // The selected box's name in the side panel and in its handles' labels.
+  const itemName = (p: number, z: number) =>
+    tool === "measures"
+      ? `Measure ${pages[p].zones[z].label}`
+      : `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${z + 1}`;
+  const selectedItem = $derived(
+    selected && items(selected.p)[selected.z] ? selected : null,
+  );
 
   const boxName = $derived(
     tool === "staves"
@@ -1162,12 +1318,20 @@
   const MOD = mac ? "⌘" : "Ctrl+";
   const SHIFT = mac ? "⇧" : "Shift+";
   const helpLines = $derived([
-    ...(canEdit
+    ...(canEdit && coarse
       ? [
-          `Drag on the page, or click two opposite corners, to draw a ${boxName}. Drag a box to move it; its edges and corners resize it. Arrow keys nudge a selected box (${SHIFT}arrow moves 5 times as far). Esc clears a first corner.`,
+          `Tap a box to select it, then drag it or its edges and corners. Turn on Draw box to draw a ${boxName} with your finger; without it a finger drag scrolls the page. Pinch to zoom.`,
         ]
-      : []),
-    `${MOD}Z undo · ${MOD}${SHIFT}Z redo · ${mac ? "⌫" : "Delete"} removes the selected box · ← → change pages`,
+      : canEdit
+        ? [
+            `Drag on the page, or click two opposite corners, to draw a ${boxName}. Drag a box to move it; its edges and corners resize it. Arrow keys nudge a selected box (${SHIFT}arrow moves 5 times as far). Esc clears a first corner.`,
+          ]
+        : []),
+    ...(coarse
+      ? []
+      : [
+          `${MOD}Z undo · ${MOD}${SHIFT}Z redo · ${mac ? "⌫" : "Delete"} removes the selected box · ← → change pages`,
+        ]),
     omr
       ? "Wine red: staff · dark green: grand staff (the staves a brace joins) · teal: measure · thick purple: movement start"
       : "Thick purple: movement start",
@@ -1182,6 +1346,7 @@
 <svelte:window
   onpointermove={pointerMove}
   onpointerup={pointerUp}
+  onpointercancel={cancelDrag}
   onkeydown={keydown}
 />
 
@@ -1271,15 +1436,6 @@
               <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
             </label>
           {/if}
-          <button
-            type="button"
-            class="chip-switch"
-            class:on={showOverlaps}
-            aria-pressed={showOverlaps}
-            onclick={() => (showOverlaps = !showOverlaps)}
-            title="Show or hide the colour on areas where two boxes overlap"
-            ><span class="sw"></span>Show overlaps</button
-          >
           <span class="tspacer"></span>
           <span class="zoomset">
             <input
@@ -1466,9 +1622,11 @@
                       viewBox={`0 0 ${pg.width} ${pg.height}`}
                       class:staves={tool === "staves"}
                       class:grandstaves={tool === "grandstaves"}
+                      class:pan={coarse && !drawMode}
                       role="application"
                       aria-label={`Page ${p + 1} ${tool}`}
                       onpointerdown={(e) => backgroundPointerDown(e, p)}
+                      onpointerup={backgroundTapEnd}
                     >
                       <!-- Pages far from the view keep their size but draw nothing. -->
                       {#if nearPages.includes(p)}
@@ -1496,16 +1654,9 @@
                             height={staff.box.lry - staff.box.uly}
                             onpointerdown={(e) =>
                               startZoneDrag(e, p, s, "move")}
+                            onclick={() => tapSelect(p, s)}
                             onkeydown={(e) => zoneKeydown(e, p, s)}
                           />
-                          {#if canEdit && selected?.p === p && selected?.z === s}
-                            {@render handles(
-                              p,
-                              s,
-                              staff.box,
-                              `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}`,
-                            )}
-                          {/if}
                         {/each}
                         {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
                           <rect
@@ -1523,6 +1674,7 @@
                             height={zone.box.lry - zone.box.uly}
                             onpointerdown={(e) =>
                               startZoneDrag(e, p, z, "move")}
+                            onclick={() => tapSelect(p, z)}
                             onkeydown={(e) => zoneKeydown(e, p, z)}
                           >
                             {#if zoneTitle(p, z)}
@@ -1533,32 +1685,24 @@
                           {@const fs = labelFont(p, pg.width)}
                           {@const inset = fs * 0.6}
                           {@const lblW = lbl.length * fs * 0.62 + fs * 0.9}
-                          {@const editing =
-                            canEdit && selected?.p === p && selected?.z === z}
-                          {#if !editing}
-                            <rect
-                              class="labelbg"
-                              x={zone.box.ulx + inset}
-                              y={zone.box.uly + inset}
-                              width={lblW}
-                              height={fs * 1.55}
-                              rx={fs * 0.28}
-                            />
-                            <text
-                              class="zonelabel"
-                              x={zone.box.ulx + inset + lblW / 2}
-                              y={zone.box.uly + inset + fs * 1.12}
-                              text-anchor="middle"
-                              font-size={fs}>{lbl}</text
-                            >
-                          {:else}
-                            {@render handles(
-                              p,
-                              z,
-                              zone.box,
-                              `Measure ${zone.label}`,
-                            )}
-                          {/if}
+                          {@const on = selected?.p === p && selected?.z === z}
+                          <rect
+                            class="labelbg"
+                            class:on
+                            x={zone.box.ulx + inset}
+                            y={zone.box.uly + inset}
+                            width={lblW}
+                            height={fs * 1.55}
+                            rx={fs * 0.28}
+                          />
+                          <text
+                            class="zonelabel"
+                            class:on
+                            x={zone.box.ulx + inset + lblW / 2}
+                            y={zone.box.uly + inset + fs * 1.12}
+                            text-anchor="middle"
+                            font-size={fs}>{lbl}</text
+                          >
                         {/each}
                         {#each showOverlaps ? overlaps(pg) : [] as o, i (i)}
                           <rect
@@ -1580,64 +1724,8 @@
                       {/if}
                     </svg>
 
-                    {#if canEdit && tool === "measures" && active && active.p === p && pg.zones[active.z]}
-                      {@const z = active.z}
-                      {@const zone = pg.zones[z]}
-                      {@const box = zone.box}
-                      {@const inset = labelFont(p, pg.width) * 0.6}
-                      <div
-                        class="zc"
-                        style={`left:${((box.ulx + inset) / pg.width) * 100}%; top:${((box.uly + inset) / pg.height) * 100}%; --accent:${accentFor(p, z)}`}
-                      >
-                        <div
-                          class="zc-inner"
-                          role="group"
-                          aria-label={`Measure ${zone.label} controls`}
-                          onpointerdown={(e) => {
-                            selected = { p, z };
-                            e.stopPropagation();
-                          }}
-                        >
-                          <input
-                            class="znum"
-                            value={zone.override ?? zone.label}
-                            size={Math.max(
-                              2,
-                              String(zone.override ?? zone.label).length,
-                            )}
-                            onfocus={() => (selected = { p, z })}
-                            oninput={(e) =>
-                              setLabel(
-                                p,
-                                z,
-                                (e.target as HTMLInputElement).value,
-                              )}
-                            onchange={() => commit()}
-                            title="Measure number — type to override the automatic number (e.g. 10a); numbering continues after it"
-                          />
-                          <button
-                            type="button"
-                            class:on={sbActive(p, z)}
-                            onclick={() => toggleSb(p, z)}
-                            disabled={pbAt(z)}
-                            aria-pressed={sbActive(p, z)}
-                            title={pbAt(z)
-                              ? "System beginning — implied by the page break on a page's first measure"
-                              : "System beginning (sb)"}>↵</button
-                          >
-                          <button
-                            type="button"
-                            class:on={startsMovement(p, z)}
-                            onclick={() => toggleSection(p, z)}
-                            disabled={sectionLocked(p, z)}
-                            aria-pressed={startsMovement(p, z)}
-                            title={sectionLocked(p, z)
-                              ? "The first measure always opens the first section"
-                              : "Section beginning — starts a new movement/section (mdiv)"}
-                            >§</button
-                          >
-                        </div>
-                      </div>
+                    {#if canEdit && selectedItem?.p === p}
+                      {@render handles(p, selectedItem.z)}
                     {/if}
                   </div>
                 </div>
@@ -1649,123 +1737,223 @@
       </div>
     </div>
 
-    <!-- The resize handles and delete button of the selected box in the
-         active layer, shared by measures and staves. -->
-    {#snippet handles(p: number, z: number, b: MeasureBox, name: string)}
+    <!-- The selected box's body and its resize handles, over the page in
+         screen pixels: a body that drags the box, round corner handles and
+         edge strips, at touch size on a touch screen. Their percentages
+         place them on the box at any zoom. -->
+    {#snippet handles(p: number, z: number)}
       {@const pg = pages[p]}
-      <!-- Handle sizes are screen pixels, converted to page units by the
-           canvas scale: the corner dots are 5px in radius, the edge strips
-           12px thick. -->
-      {@const sc = canvasW[p] ? canvasW[p] / pg.width : 1}
-      {@const r = 5 / sc}
-      {@const g = 12 / sc}
-      {#each [{ edges: "n", side: "top edge", x: b.ulx + r, y: b.uly - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g }, { edges: "s", side: "bottom edge", x: b.ulx + r, y: b.lry - g / 2, w: Math.max(0, b.lrx - b.ulx - 2 * r), h: g }, { edges: "w", side: "left edge", x: b.ulx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) }, { edges: "e", side: "right edge", x: b.lrx - g / 2, y: b.uly + r, w: g, h: Math.max(0, b.lry - b.uly - 2 * r) }] as e (e.edges)}
-        <rect
-          class="edge {resizeCursor(e.edges)}"
-          role="button"
-          tabindex={0}
-          aria-label={`${name}: resize (${e.side})`}
-          x={e.x}
-          y={e.y}
-          width={e.w}
-          height={e.h}
-          onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", e.edges)}
-          onkeydown={(ev) => resizeKeydown(ev, p, z, e.edges)}
-        />
-      {/each}
-      {#each [{ edges: "nw", side: "top-left corner", cx: b.ulx, cy: b.uly }, { edges: "ne", side: "top-right corner", cx: b.lrx, cy: b.uly }, { edges: "sw", side: "bottom-left corner", cx: b.ulx, cy: b.lry }, { edges: "se", side: "bottom-right corner", cx: b.lrx, cy: b.lry }] as c (c.edges)}
-        <circle
-          class="handle {resizeCursor(c.edges)}"
-          vector-effect="non-scaling-stroke"
-          role="button"
-          tabindex={0}
-          aria-label={`${name}: resize (${c.side})`}
-          cx={c.cx}
-          cy={c.cy}
-          {r}
-          onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", c.edges)}
-          onkeydown={(ev) => resizeKeydown(ev, p, z, c.edges)}
-        />
-      {/each}
-      <!-- A 20px delete button centred in the box, drawn in screen pixels via
-           the inverse-scale transform. -->
-      {@const bx = (b.ulx + b.lrx) / 2 - 10 / sc}
-      {@const by = (b.uly + b.lry) / 2 - 10 / sc}
-      <g
-        class="delbtn"
-        role="button"
-        tabindex={0}
-        aria-label={`${name}: delete`}
-        transform={`translate(${bx}, ${by}) scale(${1 / sc})`}
-        onpointerdown={(ev) => ev.stopPropagation()}
-        onclick={() => deleteZone(p, z)}
-        onkeydown={(ev) => {
-          if (ev.key === "Enter" || ev.key === " ") {
-            ev.preventDefault();
-            deleteZone(p, z);
-          }
-        }}
+      {@const b = items(p)[z].box}
+      {@const name = itemName(p, z)}
+      <div
+        class="sel"
+        class:touch={coarse}
+        class:staves={tool === "staves"}
+        class:grandstaves={tool === "grandstaves"}
+        style:left={`${(b.ulx / pg.width) * 100}%`}
+        style:top={`${(b.uly / pg.height) * 100}%`}
+        style:width={`${((b.lrx - b.ulx) / pg.width) * 100}%`}
+        style:height={`${((b.lry - b.uly) / pg.height) * 100}%`}
       >
-        <title>Delete this {name.split(" ")[0].toLowerCase()}</title>
-        <rect width="20" height="20" rx="6" />
-        <path
-          d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
-        />
-      </g>
+        <div
+          class="selbody"
+          aria-hidden="true"
+          onpointerdown={(ev) => startZoneDrag(ev, p, z, "move")}
+        ></div>
+        {#each HANDLES as h (h.edges)}
+          <div
+            class="hd hd-{h.edges} {resizeCursor(h.edges)}"
+            role="button"
+            tabindex={0}
+            aria-label={`${name}: resize (${h.side})`}
+            onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", h.edges)}
+            onkeydown={(ev) => resizeKeydown(ev, p, z, h.edges)}
+          ></div>
+        {/each}
+      </div>
     {/snippet}
 
+    <!-- The task tools in the side panel: the layout steps (an OMR-prepared
+         piece) or the counts, draw mode on a touch screen, and the overlap
+         colouring. -->
     {#snippet tools()}
-      <!-- The snippet renders only while `data` is loaded (see its host). -->
-      {@const d = data!}
-      <div class="tbsection">
-        <span class="abcount">
-          {#if omr}{staffCount}
-            {staffCount === 1 ? "staff" : "staves"} · {grandstaffCount} grand
-            {grandstaffCount === 1
-              ? "staff"
-              : "staves"}{" · "}{/if}{measureCount} measure{measureCount === 1
-            ? ""
-            : "s"}
-          · {movementCount} movement{movementCount === 1 ? "" : "s"}
-        </span>
-        <PreTaskStatus {session} />
+      <div class="wtools">
         {#if omr}
           <div
-            class="seg steps"
+            class="steplist"
+            role="group"
+            aria-label="Steps"
             title="The three steps of the measure correction. Each step shows only its own boxes."
           >
-            <button
-              type="button"
-              class:on={layoutStep === 1}
-              aria-pressed={layoutStep === 1}
-              onclick={() => setLayoutStep(1)}
-              ><span class="swatch staff" aria-hidden="true"></span>1 · Staff
-              boxes</button
-            >
-            <button
-              type="button"
-              class:on={layoutStep === 2}
-              aria-pressed={layoutStep === 2}
-              onclick={() => setLayoutStep(2)}
-              ><span class="swatch grand" aria-hidden="true"></span>2 · Grand
-              staves</button
-            >
-            <button
-              type="button"
-              class:on={layoutStep === 3}
-              aria-pressed={layoutStep === 3}
-              onclick={() => setLayoutStep(3)}
-              ><span class="swatch measure" aria-hidden="true"></span>3 ·
-              Measures</button
-            >
+            {#each [{ step: 1, swatch: "staff", long: "Staff boxes", short: "Staves", count: `${staffCount}` }, { step: 2, swatch: "grand", long: "Grand staves", short: "Grand", count: `${grandstaffCount}` }, { step: 3, swatch: "measure", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} movement${movementCount === 1 ? "" : "s"}` }] as s (s.step)}
+              <button
+                type="button"
+                class:on={layoutStep === s.step}
+                aria-pressed={layoutStep === s.step}
+                onclick={() => setLayoutStep(s.step as 1 | 2 | 3)}
+                ><span class="swatch {s.swatch}" aria-hidden="true"></span><span
+                  class="steplong">{s.step} · {s.long}</span
+                ><span class="stepshort">{s.short}</span><span class="stepcount"
+                  >{s.count}</span
+                ></button
+              >
+            {/each}
           </div>
+        {:else}
+          <span class="abcount"
+            >{measureCount} measure{measureCount === 1 ? "" : "s"} · {movementCount}
+            movement{movementCount === 1 ? "" : "s"}</span
+          >
         {/if}
-        {#if d.status === "completed"}
-          <!-- A done task is shown for viewing only. -->
-        {:else if omr && layoutStep === 1}
+        <div class="toolrow">
+          {#if canEdit && coarse}
+            <button
+              type="button"
+              class="chip-switch"
+              class:on={drawMode}
+              aria-pressed={drawMode}
+              onclick={() => {
+                drawMode = !drawMode;
+                corner = null;
+              }}
+              title={`Draw a new ${boxName} with your finger. Off, a finger drag scrolls the page.`}
+              ><span class="sw"></span>Draw box</button
+            >
+          {/if}
           <button
             type="button"
-            class="btn btn-secondary submitbtn"
+            class="chip-switch"
+            class:on={showOverlaps}
+            aria-pressed={showOverlaps}
+            onclick={() => (showOverlaps = !showOverlaps)}
+            title="Show or hide the colour on areas where two boxes overlap"
+            ><span class="sw"></span>Show overlaps</button
+          >
+        </div>
+      </div>
+    {/snippet}
+
+    <!-- The selected box's controls: its name, previous and next box, and
+         for a measure its number and breaks. -->
+    {#snippet selection()}
+      {#if selectedItem}
+        {@const { p, z } = selectedItem}
+        <div class="selpanel">
+          <div class="selhead">
+            <span
+              class="swatch {tool === 'staves'
+                ? 'staff'
+                : tool === 'grandstaves'
+                  ? 'grand'
+                  : 'measure'}"
+              aria-hidden="true"
+            ></span>
+            <span class="selname">{itemName(p, z)}</span>
+            <span class="selwhere">page {p + 1}</span>
+            <button
+              type="button"
+              class="btn btn-icon"
+              onclick={() => stepSelection(-1)}
+              disabled={!hasPrev}
+              aria-label={`Previous ${boxName}`}
+              title={`Previous ${boxName}`}><Icon name="chevron-left" /></button
+            >
+            <button
+              type="button"
+              class="btn btn-icon"
+              onclick={() => stepSelection(1)}
+              disabled={!hasNext}
+              aria-label={`Next ${boxName}`}
+              title={`Next ${boxName}`}><Icon name="chevron-right" /></button
+            >
+            {#if coarse}
+              <button
+                type="button"
+                class="btn btn-icon"
+                onclick={() => (selected = null)}
+                aria-label={`Deselect the ${boxName}`}
+                title={`Deselect the ${boxName}`}><Icon name="close" /></button
+              >
+            {/if}
+          </div>
+          {#if tool === "measures"}
+            {@const zone = pages[p].zones[z]}
+            {#if canEdit}
+              <label class="selfield"
+                >Number
+                <input
+                  value={zone.override ?? zone.label}
+                  oninput={(e) =>
+                    setLabel(p, z, (e.target as HTMLInputElement).value)}
+                  onchange={() => commit()}
+                  title="Type to override the automatic number, e.g. 10a. The following measures count on from it."
+                />
+              </label>
+            {/if}
+            <div class="selflags">
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={sbActive(p, z)}
+                aria-pressed={sbActive(p, z)}
+                onclick={() => toggleSb(p, z)}
+                disabled={!canEdit || pbAt(z)}
+                title={pbAt(z)
+                  ? "The first measure on a page always starts a system"
+                  : "This measure starts a new system (line) of the score"}
+                ><span class="sw"></span>Starts a system</button
+              >
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={startsMovement(p, z)}
+                aria-pressed={startsMovement(p, z)}
+                onclick={() => toggleSection(p, z)}
+                disabled={!canEdit || sectionLocked(p, z)}
+                title={sectionLocked(p, z)
+                  ? "The first measure always starts the first section"
+                  : "This measure starts a new movement or section"}
+                ><span class="sw"></span>Starts a section</button
+              >
+            </div>
+          {/if}
+          <div class="selactions">
+            {#if canEdit}
+              <button
+                type="button"
+                class="btn btn-danger"
+                onclick={() => deleteZone(p, z)}
+                ><Icon name="trash" /> Delete {boxName}</button
+              >
+            {/if}
+            {#if selectedLabel && auth.user}
+              <button
+                type="button"
+                class="btn"
+                onclick={() => (panelTab = "comments")}
+                ><Icon name="comment" /> Comment on measure {selectedLabel}</button
+              >
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <p class="selnone">
+          {coarse ? "Tap" : "Click"} a box on the page to {canEdit
+            ? "edit it"
+            : "select it"}.
+        </p>
+      {/if}
+    {/snippet}
+
+    <!-- The task's action at the panel's bottom: the claim or the draft
+         state and give back, then the next step or the submission. -->
+    {#snippet footer()}
+      <div class="wfoot">
+        <span class="wstatus"><PreTaskStatus {session} /></span>
+        {#if omr && layoutStep === 1}
+          <button
+            type="button"
+            class="btn btn-secondary"
             onclick={() => setLayoutStep(2)}
             title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
           >
@@ -1774,16 +1962,16 @@
         {:else if omr && layoutStep === 2}
           <button
             type="button"
-            class="btn btn-secondary submitbtn"
+            class="btn btn-secondary"
             onclick={() => setLayoutStep(3)}
             title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
           >
             Next: measures
           </button>
-        {:else if d.status === "encoding_required"}
+        {:else}
           <button
             type="button"
-            class="btn btn-primary submitbtn"
+            class="btn btn-primary"
             onclick={() => submit()}
             disabled={busy || !canEdit || submitBlock !== null}
             title={submitBlock ??
@@ -1803,7 +1991,6 @@
           {session}
           {campaign}
           card={session.card}
-          {tools}
           prefill={() => ({
             page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
             m1: selectedLabel,
@@ -1822,10 +2009,69 @@
         {runner}
         bind:panel={sidePanel}
         {taskBox}
+        {tools}
+        {selection}
+        selectionLabel="Selection"
+        selectionActive={!!selectedItem}
+        bind:tab={panelTab}
+        footer={data.status === "encoding_required" ? footer : undefined}
+        composerHint={selectedLabel
+          ? `Comment on measure ${selectedLabel}…`
+          : ""}
         onanchor={showAnchorFor}
-        oncomment={(...args) => session.postComment(...args)}
+        oncomment={(task, kind, body, parent_id) =>
+          session.postComment(
+            task,
+            kind,
+            body,
+            parent_id,
+            kind === "comment" ? commentAnchor() : undefined,
+          )}
         onresolve={(id) => session.resolveComment(id)}
       />
+    {/if}
+
+    {#if loupe && pages[loupe.p]}
+      {@const pg = pages[loupe.p]}
+      {@const scale = canvasW[loupe.p] ? canvasW[loupe.p] / pg.width : 1}
+      {@const span = LOUPE_PX / (LOUPE_ZOOM * scale)}
+      {@const lx =
+        loupe.cx - LOUPE_PX - 24 < 8 ? loupe.cx + 24 : loupe.cx - LOUPE_PX - 24}
+      {@const ly = Math.max(8, loupe.cy - LOUPE_PX - 48)}
+      <div
+        class="loupe"
+        aria-hidden="true"
+        style:left={`${lx}px`}
+        style:top={`${ly}px`}
+        style:width={`${LOUPE_PX}px`}
+        style:height={`${LOUPE_PX}px`}
+      >
+        <svg
+          viewBox={`${loupe.x - span / 2} ${loupe.y - span / 2} ${span} ${span}`}
+          class:staves={tool === "staves"}
+          class:grandstaves={tool === "grandstaves"}
+        >
+          {#if pg.url}
+            <image href={pg.url} width={pg.width} height={pg.height} />
+          {/if}
+          {#each items(loupe.p) as it, i (i)}
+            <rect
+              class={tool === "measures" ? "zone" : "staff"}
+              class:grand={tool === "grandstaves"}
+              vector-effect="non-scaling-stroke"
+              x={it.box.ulx}
+              y={it.box.uly}
+              width={it.box.lrx - it.box.ulx}
+              height={it.box.lry - it.box.uly}
+            />
+          {/each}
+          <path
+            class="cross"
+            vector-effect="non-scaling-stroke"
+            d={`M${loupe.x - span / 6} ${loupe.y}H${loupe.x + span / 6}M${loupe.x} ${loupe.y - span / 6}V${loupe.y + span / 6}`}
+          />
+        </svg>
+      </div>
     {/if}
   {/if}
 </div>
@@ -1867,24 +2113,162 @@
     margin: 12px 16px 12px 0;
   }
 
-  /* --------------------------------------------------------------- task box
-     The task's status, actions and validation controls, pinned at the top of
-     the side panel. The tint follows the panel's piece colour (--zone). */
-  .tbsection {
+  /* ------------------------------------------------------------ side panel
+     The task tools, the selected box's controls and the footer action, in
+     the side panel's sections (SidePanel.svelte). */
+  .wtools {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
     gap: 8px;
-    padding: 10px 12px;
-    border-top: 1px solid var(--hairline, var(--line));
   }
   .abcount {
     font-size: 12.5px;
-    color: var(--ink-faint);
+    color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
   }
-  .submitbtn {
-    align-self: stretch;
+  .toolrow {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  /* The layout steps: a list with counts beside the content, three equal
+     cells in a docked sheet (DOCKED_QUERY in side-panels.ts). */
+  .steplist {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .steplist > button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 0 12px;
+    font: 400 13px var(--font);
+    color: var(--ink);
+    text-align: left;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .steplist > button.on {
+    font-weight: 600;
+    background: var(--accent-tint-strong);
+    border: 1.5px solid var(--accent);
+  }
+  .steplong {
+    flex: 1;
+  }
+  .stepshort {
+    display: none;
+  }
+  .stepcount {
+    color: var(--ink-faint);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+  @media (orientation: portrait) and (max-width: 860px) {
+    .steplist {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 2px;
+      padding: 3px;
+      background: var(--bg-tint);
+      border-radius: 999px;
+    }
+    .steplist > button {
+      justify-content: center;
+      min-height: 40px;
+      padding: 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 0;
+      border-radius: 999px;
+    }
+    .steplist > button.on {
+      color: var(--ink);
+      background: var(--card);
+      border: 0;
+      box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    }
+    .steplong,
+    .stepcount {
+      display: none;
+    }
+    .stepshort {
+      display: inline;
+    }
+    .toolrow .chip-switch {
+      min-height: 40px;
+    }
+  }
+  .selfield {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 120px;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+  .selfield input {
+    font:
+      400 14px ui-monospace,
+      monospace;
+    padding: 6px 10px;
+    min-height: 34px;
+    box-sizing: border-box;
+    color: var(--ink);
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 8px;
+  }
+  .selflags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .selflags .chip-switch:disabled {
+    opacity: 0.55;
+    cursor: default;
+  }
+  /* In a docked sheet every control is a 44px touch target. */
+  @media (orientation: portrait) and (max-width: 860px) {
+    .selfield {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      width: auto;
+    }
+    .selfield input {
+      width: 72px;
+    }
+    .selflags .chip-switch,
+    .selfield input {
+      min-height: 44px;
+      min-width: 44px;
+    }
+  }
+  .wfoot {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .wstatus {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+  @media (orientation: portrait) and (max-width: 860px) {
+    .wfoot :global(.btn) {
+      min-height: 44px;
+    }
   }
 
   .checkline {
@@ -2001,44 +2385,62 @@
       display: inline-flex;
     }
   }
-  /* Narrow tool column (NARROW_TOOL): the page navigation takes the first
-     line; zoom out, zoom in and fit width, then undo, redo and help at the
-     right, take the second, at touch size. The page-count switch, "Page 1
-     right", the overlap switch and fit page are hidden. The help opens over
-     the pages, so the desk keeps its height. */
+  /* Narrow tool column (NARROW_TOOL, a phone): the toolbar moves below the
+     pages, within thumb reach, as one row at touch size: undo and redo, the
+     page navigation, fit width and help. Zoom is a pinch. The page-count
+     switch, "Page 1 right", the zoom buttons and fit page are hidden. The
+     help opens above the toolbar, over the pages, so the desk keeps its
+     height. */
   @container (max-width: 559px) {
+    .tbar {
+      order: 2;
+      padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+    }
     .ctoolbar {
-      gap: 4px;
-      padding: 0 6px;
+      gap: 2px;
+      padding: 0 4px;
+      flex-wrap: nowrap;
     }
     .ctoolbar > .seg,
     .ctoolbar > .checkline,
-    .ctoolbar > .chip-switch,
     .ctoolbar > .tspacer,
+    .ctoolbar > .vline,
     .zoomset > .zoomslider,
     .zoomset > .zval,
+    .zoomset > .zoomstep,
     .zoomset > .fitpage,
     .pgnav > .vline {
       display: none;
     }
     .zoomset {
-      gap: 4px;
+      order: 2;
+      flex: none;
+      gap: 2px;
     }
-    .ctoolbar > .vline {
-      margin-left: auto;
-      background: none;
+    .helpbtn {
+      order: 3;
     }
     .pgnav {
-      order: -1;
-      flex: 1 0 100%;
+      order: 1;
+      flex: 1;
+      min-width: 0;
       justify-content: space-between;
+    }
+    /* The label gives up its reserved width so the row fits a phone. */
+    .pglabel {
+      flex: 1;
+      min-width: 0 !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
     }
     .helppanel {
       position: absolute;
-      top: 100%;
+      bottom: 100%;
       left: 0;
       right: 0;
       z-index: 5;
+      margin: 0 0 8px;
       max-height: calc(var(--desk-h) - 16px);
       box-sizing: border-box;
       overflow: auto;
@@ -2182,17 +2584,6 @@
     fill: #1a1a1a;
     pointer-events: none;
   }
-  .handle {
-    fill: #fff;
-    stroke: rgba(14, 129, 149, 0.85);
-    stroke-width: 1.5;
-  }
-  .staves .handle {
-    stroke: rgba(128, 34, 64, 0.9);
-  }
-  .grandstaves .handle {
-    stroke: rgba(38, 100, 60, 0.9);
-  }
   .staff.grand {
     fill: rgba(38, 100, 60, 0.16);
     stroke: rgba(38, 100, 60, 0.9);
@@ -2223,27 +2614,6 @@
     border-color: rgb(14, 129, 149);
     background: rgba(14, 129, 149, 0.2);
   }
-  /* Three equal cells; in a narrow panel a label wraps inside its cell. */
-  .steps {
-    align-self: stretch;
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    align-items: stretch;
-    border-radius: 12px;
-  }
-  .steps > button {
-    justify-content: center;
-    text-align: center;
-    white-space: normal;
-    line-height: 1.25;
-    padding: 4px 6px;
-    border-radius: 9px;
-  }
-  /* The side strips are invisible grab areas along the box edges; a
-     transparent fill still catches pointer events. */
-  .edge {
-    fill: transparent;
-  }
   .h-ns {
     cursor: ns-resize;
   }
@@ -2257,96 +2627,163 @@
     cursor: nesw-resize;
   }
 
-  /* The per-zone controls (number input · ↵ · §) stand in for the selected
-     measure's number label, at the same top-left anchor. The outer layer is a zero-size anchor; the inner
-     box re-enables the pointer. */
-  .zc {
+  /* The selected box's body and handles (the handles snippet), in screen
+     pixels over the page: --hit is a corner's target, --dot its visible
+     dot, --edge an edge strip's thickness. A touch screen gets 44px targets
+     and visible edge bars. */
+  .sel {
     position: absolute;
+    --hit: 20px;
+    --dot: 10px;
+    --edge: 12px;
+    --c: rgb(14, 129, 149);
     pointer-events: none;
-    z-index: 5;
+    z-index: 4;
   }
-  .zc-inner {
+  .sel.staves {
+    --c: rgb(128, 34, 64);
+  }
+  .sel.grandstaves {
+    --c: rgb(38, 100, 60);
+  }
+  .sel.touch {
+    --hit: 44px;
+    --dot: 18px;
+    --edge: 32px;
+  }
+  .selbody,
+  .hd {
+    position: absolute;
+    pointer-events: auto;
+    touch-action: none;
+  }
+  .selbody {
+    inset: 0;
+    cursor: move;
+  }
+  .hd {
     display: flex;
     align-items: center;
-    gap: 2px;
-    height: 22px;
-    pointer-events: auto;
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 4px;
-    padding: 0 2px;
-    box-shadow: 0 2px 6px rgba(31, 36, 51, 0.18);
-    white-space: nowrap;
+    justify-content: center;
   }
-  .zc-inner .znum,
-  .zc-inner button {
-    font:
-      600 11px ui-monospace,
-      monospace;
-    line-height: 1;
-    cursor: pointer;
+  .hd:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
-  .zc-inner .znum {
-    width: 32px;
-    height: 18px;
-    padding: 0 3px;
-    border: 1px solid var(--line-input);
-    border-radius: 3px;
-    background: var(--card);
-    color: var(--ink);
-    text-align: center;
-    font-variant-numeric: tabular-nums;
-    cursor: text;
+  .hd-nw,
+  .hd-ne,
+  .hd-sw,
+  .hd-se {
+    width: var(--hit);
+    height: var(--hit);
+    z-index: 1;
   }
-  .zc-inner button {
-    width: 20px;
-    height: 18px;
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: 3px;
-    background: transparent;
-    color: var(--ink-soft);
+  .hd-nw,
+  .hd-sw {
+    left: calc(var(--hit) / -2);
   }
-  @media (hover: hover) {
-    .zc-inner button:hover:not(:disabled) {
-      border-color: var(--line-input);
-    }
+  .hd-ne,
+  .hd-se {
+    right: calc(var(--hit) / -2);
   }
-  .zc-inner button.on {
-    background: var(--accent);
-    border-color: var(--accent);
-    color: #fff;
+  .hd-nw,
+  .hd-ne {
+    top: calc(var(--hit) / -2);
   }
-  /* Disabled (e.g. the system break implied by a page break): muted and
-     dashed, also when the state it shows is on. */
-  .zc-inner button:disabled,
-  .zc-inner button.on:disabled {
-    cursor: default;
-    color: var(--ink-faint);
-    background: var(--bg-alt);
-    border: 1px dashed var(--ink-faint);
+  .hd-sw,
+  .hd-se {
+    bottom: calc(var(--hit) / -2);
   }
-  .delbtn {
-    cursor: pointer;
+  .hd-nw::before,
+  .hd-ne::before,
+  .hd-sw::before,
+  .hd-se::before {
+    content: "";
+    width: var(--dot);
+    height: var(--dot);
+    box-sizing: border-box;
+    border-radius: 50%;
+    background: #fff;
+    border: 2px solid var(--c);
+    box-shadow: 0 1px 3px rgba(31, 36, 51, 0.35);
   }
-  .delbtn rect {
-    fill: var(--card);
-    stroke: var(--line-input);
+  .hd-n,
+  .hd-s {
+    left: calc(var(--hit) / 2);
+    right: calc(var(--hit) / 2);
+    height: var(--edge);
   }
-  .delbtn:focus-visible rect {
-    stroke: var(--danger);
+  .hd-n {
+    top: calc(var(--edge) / -2);
   }
-  @media (hover: hover) {
-    .delbtn:hover rect {
-      stroke: var(--danger);
-    }
+  .hd-s {
+    bottom: calc(var(--edge) / -2);
   }
-  .delbtn path {
-    fill: none;
-    stroke: var(--danger);
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+  .hd-w,
+  .hd-e {
+    top: calc(var(--hit) / 2);
+    bottom: calc(var(--hit) / 2);
+    width: var(--edge);
+  }
+  .hd-w {
+    left: calc(var(--edge) / -2);
+  }
+  .hd-e {
+    right: calc(var(--edge) / -2);
+  }
+  .touch .hd-n::before,
+  .touch .hd-s::before,
+  .touch .hd-w::before,
+  .touch .hd-e::before {
+    content: "";
+    border-radius: 999px;
+    background: #fff;
+    border: 2px solid var(--c);
+    box-shadow: 0 1px 3px rgba(31, 36, 51, 0.35);
+  }
+  .touch .hd-n::before,
+  .touch .hd-s::before {
+    width: 26px;
+    height: 10px;
+  }
+  .touch .hd-w::before,
+  .touch .hd-e::before {
+    width: 10px;
+    height: 26px;
+  }
+  /* The selected measure's number label in the measure colour. */
+  .labelbg.on {
+    fill: rgb(14, 129, 149);
+  }
+  .zonelabel.on {
+    fill: #fff;
+  }
+  /* On a touch screen outside draw mode a finger drag scrolls the page. */
+  svg.pan {
+    touch-action: pan-x pan-y;
+  }
+  /* The magnifier above a finger resizing or drawing a box. */
+  .loupe {
+    position: fixed;
+    z-index: 60;
+    border-radius: 50%;
+    overflow: hidden;
     pointer-events: none;
+    background: var(--facsimile-paper);
+    border: 3px solid var(--card);
+    box-shadow:
+      0 0 0 1px var(--line-strong),
+      0 6px 18px rgba(31, 36, 51, 0.3);
+  }
+  .loupe svg {
+    width: 100%;
+    height: 100%;
+    border: 0;
+    box-shadow: none;
+  }
+  .loupe .cross {
+    stroke: var(--accent);
+    stroke-width: 2px;
+    fill: none;
   }
 </style>

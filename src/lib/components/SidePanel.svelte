@@ -10,6 +10,13 @@
   of it opens and closes it. Docked or on a touch screen the comment field
   shows only after its button or a Reply is pressed, and closes again when
   left empty. The width persists per browser (side-panels.ts).
+
+  A score workspace (a task's own view) adds its task tools below the task
+  box, the selected item's controls as a tab beside the comments, and the
+  task's action in a footer pinned to the panel's bottom. Docked as a sheet
+  it shows only the tools (while something is selected, its controls) and
+  the footer until opened; without a footer the task box stays in view
+  instead.
 -->
 <script module lang="ts">
   // Whether resolved threads are hidden; held for the session across views.
@@ -54,6 +61,13 @@
     banner,
     info,
     taskBox,
+    tools,
+    selection,
+    selectionLabel = "Selection",
+    selectionActive = false,
+    tab = $bindable("selection"),
+    footer,
+    sheet = false,
     ondeselect,
     onanchor,
     oncomment,
@@ -86,6 +100,23 @@
     info?: Snippet;
     /** The task's record and controls, pinned above the comments. */
     taskBox?: Snippet;
+    /** The view's task tools, below the task box. */
+    tools?: Snippet;
+    /** The selected item's controls; with it the panel shows them and the
+        comments as two tabs. */
+    selection?: Snippet;
+    /** The selection tab's name. */
+    selectionLabel?: string;
+    /** Something is selected: a closed sheet shows the selection's
+        controls in place of the tools. */
+    selectionActive?: boolean;
+    /** The tab shown when the panel has a selection. */
+    tab?: "selection" | "comments";
+    /** The task's action, pinned to the panel's bottom. */
+    footer?: Snippet;
+    /** Docked, the panel is a sheet: closed it shows the tools and the
+        footer. */
+    sheet?: boolean;
     /** Return to the campaign; absent where the view is the task's own. */
     ondeselect?: () => void;
     /** Show a comment's measure range. */
@@ -114,6 +145,13 @@
   let drag = $state<number | null>(null);
   // A drag shows the list it may open; the field only once opened.
   const listShown = $derived(!docked || open || drag !== null);
+  // A closed sheet shows the tools and the footer; the task box stays in
+  // view only where there is no footer.
+  const peek = $derived(sheet && !listShown);
+  const taskBoxShown = $derived(!peek || !footer);
+  // With a selection the list area shows one of two tabs.
+  const commentsShown = $derived(!selection || tab === "comments");
+  let footHeight = $state(0);
   const posting = $derived(pendingVerdicts.isProcessing(`comment:${task}`));
   // Until the viewer sets a width, the panel beside the content keeps its
   // default share of the window as the window changes.
@@ -142,6 +180,15 @@
       : allThreads,
   );
 
+  // A docked sheet asked to show the comments (the host switching the tab,
+  // e.g. "Comment on measure 3") opens.
+  let shownTab = tab;
+  $effect(() => {
+    if (tab === shownTab) return;
+    shownTab = tab;
+    if (tab === "comments" && sheet && docked) open = true;
+  });
+
   // The comment a reply targets, shared by the thread list and the composer;
   // cleared when the panel changes task.
   let replyTo = $state<CommentRow | null>(null);
@@ -152,12 +199,17 @@
     fieldOpen = false;
   });
 
-  // What opening the docked panel adds below the header and the task box.
-  const hasMore = $derived(count > 0 || (!task && !!info));
+  // What opening the docked panel adds below the header and the task box; a
+  // sheet always opens to its task box and tabs.
+  const hasMore = $derived(sheet || count > 0 || (!task && !!info));
   const fieldShown = $derived(
-    (!docked || open) && (!fieldOnRequest || fieldOpen || !!replyTo),
+    (!docked || open) &&
+      commentsShown &&
+      (!fieldOnRequest || fieldOpen || !!replyTo),
   );
-  const writeShown = $derived((!docked || open) && !fieldShown && !!auth.user);
+  const writeShown = $derived(
+    (!docked || open) && commentsShown && !fieldShown && !!auth.user,
+  );
   const writeLabel = $derived(
     composerHint ? composerHint.replace(/…$/, "") : "Write a comment",
   );
@@ -176,12 +228,14 @@
   }
   function openField() {
     open = true;
+    tab = "comments";
     fieldOpen = true;
     focusField();
   }
   function startReply(c: CommentRow) {
     replyTo = c;
     open = true;
+    tab = "comments";
     focusField();
   }
   // Closing keeps a draft; an empty field closes with the panel.
@@ -262,6 +316,7 @@
 <div
   class="spwrap"
   class:docked
+  class:sheet={docked && sheet}
   class:cramped
   class:dragging={drag !== null}
   style={docked
@@ -289,9 +344,10 @@
     class="sp"
     style={zone ? `--zone: var(--zone-${zone})` : ""}
     aria-label={task ? "Task" : "Campaign"}
+    style:--spfoot-h={`${footer ? footHeight : 0}px`}
   >
     {@render banner?.()}
-    <div class="sphead">
+    <div class="sphead" class:hidden={peek}>
       {#if ondeselect}
         <button
           type="button"
@@ -318,20 +374,60 @@
       {/if}
     </div>
     {#if taskBox}
-      <div class="pinhead">{@render taskBox()}</div>
+      {#if taskBoxShown}<div class="pinhead">{@render taskBox()}</div>{/if}
     {:else if emptyLine && listShown}
       <p class="empty">{emptyLine}</p>
     {/if}
-    {#if listShown}
+    {#if peek && selection && selectionActive}
+      <div class="spsel">{@render selection()}</div>
+    {:else if tools}
+      <div class="sptools">{@render tools()}</div>
+    {/if}
+    {#if selection && listShown}
+      <div class="seg sptabs" role="tablist" aria-label="Panel content">
+        <button
+          type="button"
+          role="tab"
+          class:on={tab === "selection"}
+          aria-selected={tab === "selection"}
+          onclick={() => (tab = "selection")}>{selectionLabel}</button
+        >
+        <button
+          type="button"
+          role="tab"
+          class:on={tab === "comments"}
+          aria-selected={tab === "comments"}
+          onclick={() => (tab = "comments")}
+          >{#if posting}<span
+              class="spinner"
+              title="Processing comment"
+              aria-label="Processing comment"
+            ></span>{/if}Comments · {count}</button
+        >
+      </div>
+      {#if tab === "selection"}
+        <div class="spsel" role="tabpanel" aria-label={selectionLabel}>
+          {@render selection()}
+        </div>
+      {/if}
+    {/if}
+    {#if listShown && commentsShown}
       <div class="clist">
         {#if !task}{@render info?.()}{/if}
         <!-- In a docked or short panel, no comments means no list: the
              composer sits right under the task box. -->
         {#if !(cramped && count === 0 && (task || !info))}
-          <div class="sechead" class:review>
-            <span class="secdot"></span>
-            {task ? "Comments" : "Campaign comments"}
-            <span class="seccount">{count}</span>
+          <!-- Below the tabs the heading only carries the resolved filter. -->
+          <div
+            class="sechead"
+            class:review
+            class:hidden={!!selection && resolvedCount === 0}
+          >
+            {#if !selection}
+              <span class="secdot"></span>
+              {task ? "Comments" : "Campaign comments"}
+              <span class="seccount">{count}</span>
+            {/if}
             {#if resolvedCount > 0}
               <button
                 type="button"
@@ -384,6 +480,11 @@
       </div>
     {/if}
     {@render composer()}
+    {#if footer}
+      <div class="spfoot" bind:offsetHeight={footHeight}>
+        {@render footer()}
+      </div>
+    {/if}
   </aside>
 </div>
 
@@ -475,13 +576,60 @@
   .composerwrap {
     flex: none;
     position: sticky;
-    bottom: 0;
+    bottom: var(--spfoot-h, 0px);
     background: var(--bg-inset);
     box-shadow: 0 16px 0 var(--bg-inset);
     padding-top: 6px;
   }
-  .composerwrap.hidden {
+  .composerwrap.hidden,
+  .sphead.hidden,
+  .sechead.hidden {
     display: none;
+  }
+  /* A score workspace's tools, tabs and selection controls keep their
+     height; the footer stays at the panel's bottom, the composer above it. */
+  .sptools {
+    flex: none;
+  }
+  .sptabs {
+    flex: none;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sptabs > button {
+    justify-content: center;
+    min-height: 30px;
+  }
+  .docked .sptabs > button {
+    min-height: 40px;
+  }
+  .spsel {
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .cramped .spsel {
+    flex: none;
+    overflow-y: visible;
+  }
+  .spfoot {
+    flex: none;
+    margin-top: auto;
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    padding-top: 10px;
+    border-top: 1px solid var(--line);
+    background: var(--bg-inset);
+    box-shadow: 0 16px 0 var(--bg-inset);
+  }
+  /* A sheet's rounded top edge; its footer clears the home indicator. */
+  .spwrap.sheet {
+    border-radius: 14px 14px 0 0;
+  }
+  .sheet .sp {
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
   }
   /* Docked or in a short window the list is no scroll area of its own: the
      panel scrolls as one, the comments right below the task box. */

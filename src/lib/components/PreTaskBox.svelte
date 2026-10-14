@@ -20,8 +20,8 @@
     session: PreTaskSession;
     campaign: string;
     card: BoardCard;
-    /** The editor's own controls. */
-    tools: Snippet;
+    /** The editor's own controls, below the status row. */
+    tools?: Snippet;
     /** The anchor a fresh fail form opens with. */
     prefill: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */

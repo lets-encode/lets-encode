@@ -961,3 +961,57 @@ textarea.input {
     gap: 0 !important;
   }
 }
+
+/* ------------------------------------------------------- selection controls
+   The selected box or measure in a score workspace's side panel (its
+   Selection tab, SidePanel.svelte): a card with the item's name, where it
+   is, and its actions. Markup: <div class="selpanel"><div class="selhead">
+   <span class="selname"/> <span class="selwhere"/> buttons</div>
+   … <div class="selactions">buttons</div></div>, or <p class="selnone">. */
+.selpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.selhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.selname {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.selwhere {
+  flex: 1;
+  font-size: 11.5px;
+  color: var(--ink-faint);
+}
+.selactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.selnone {
+  margin: 0;
+  padding: 4px 2px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+/* Docked as a sheet (DOCKED_QUERY in side-panels.ts): tighter, with 44px
+   touch targets. */
+@media (orientation: portrait) and (max-width: 860px) {
+  .selpanel {
+    gap: 8px;
+    padding: 8px 10px;
+  }
+  .selhead .btn-icon,
+  .selactions .btn {
+    min-height: 44px;
+    min-width: 44px;
+  }
+}

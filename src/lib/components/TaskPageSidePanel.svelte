@@ -2,7 +2,8 @@
   The side panel of the full-screen task views (review, zones, score setup):
   derives the colour slot of the task's piece from the campaign tables and
   renders SidePanel on the task, with the view's task box pinned on top. The
-  view is the task's own, so the panel has no Campaign state.
+  view is the task's own, so the panel has no Campaign state. A view passing
+  tools, a selection or a footer gets the score-workspace panel (SidePanel).
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -26,8 +27,15 @@
     panel = $bindable(),
     review = false,
     done = false,
+    composerHint = "",
     banner,
     taskBox,
+    tools,
+    selection,
+    selectionLabel,
+    selectionActive = false,
+    tab = $bindable("selection"),
+    footer,
     onanchor,
     oncomment,
     onresolve,
@@ -42,9 +50,21 @@
     review?: boolean;
     /** The task is done: its change requests read as history. */
     done?: boolean;
+    /** Composer placeholder override (e.g. when a measure is selected). */
+    composerHint?: string;
     banner?: Snippet;
     /** The task's record and controls, pinned above the comments. */
     taskBox: Snippet;
+    /** The view's task tools, below the task box. */
+    tools?: Snippet;
+    /** The selected item's controls, as a tab beside the comments. */
+    selection?: Snippet;
+    selectionLabel?: string;
+    /** Something is selected (SidePanel). */
+    selectionActive?: boolean;
+    tab?: "selection" | "comments";
+    /** The task's action, pinned to the panel's bottom. */
+    footer?: Snippet;
     /** Show a comment's measure range in the view's own viewer. */
     onanchor: (comment: CommentRow) => void;
     oncomment: (
@@ -83,8 +103,16 @@
   {runner}
   bind:panel
   inScore
+  {composerHint}
   {banner}
   {taskBox}
+  {tools}
+  {selection}
+  {selectionLabel}
+  {selectionActive}
+  bind:tab
+  {footer}
+  sheet={!!(tools || selection || footer)}
   {onanchor}
   oncomment={(kind, body, parent_id) =>
     oncomment(taskId, kind, body, parent_id)}

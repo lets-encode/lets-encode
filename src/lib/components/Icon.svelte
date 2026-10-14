@@ -39,7 +39,11 @@
     | "undo"
     | "redo"
     | "help"
-    | "minus";
+    | "minus"
+    | "trash"
+    | "draw-box"
+    | "comment"
+    | "more";
   let {
     name,
     size = 14,
@@ -86,6 +90,10 @@
     undo: "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
     redo: "M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
     help: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM9.2 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
+    trash: "M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10.5 10.5v5M13.5 10.5v5",
+    "draw-box": "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
+    comment: "M5 5h14v10h-9l-4 4v-4H5z",
+    more: "M5 12h.01M12 12h.01M19 12h.01",
   };
 </script>
 

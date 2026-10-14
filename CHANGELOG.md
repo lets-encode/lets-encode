@@ -5,6 +5,10 @@ parentheses.
 
 ## 2026-10-13
 
+- Measure correction, review and the score view show the selected measure in the side panel and anchor new comments to it.
+- On phones and upright tablets the side panel is a bottom sheet and the toolbar sits below the pages.
+- Measure correction box handles are touch-sized, with a magnifier while a finger drags one.
+- Task pages hide the page footer on phones and upright tablets.
 - The wizard's upload card keeps its height for the first file, and only the file list scrolls.
 - The wizard's page toolbars group their buttons, and pages are centred.
 - The campaign title stays on one line, and the repository link shows only on desktop.

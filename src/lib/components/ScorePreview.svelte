@@ -180,6 +180,10 @@
     );
     return Math.min(1, Math.max(PV_ZOOM_MIN, Math.floor(z * 1000) / 1000));
   });
+  // A narrow preview has no whole-page fit: it opens at the page width.
+  $effect(() => {
+    if (pvNarrow && pvFit === "page") pvFit = "width";
+  });
   $effect(() => {
     if (pvFit === "width") pvZoom = 1;
     else if (pvFit === "page") pvZoom = pvFitPage;
@@ -396,6 +400,11 @@
   }
 
   /** Show or hide the measure zones on the facsimile. */
+  /** Clear the measure selection. */
+  export function clearSelection() {
+    if (selected !== null) selectMeasure(selected);
+  }
+
   export function setZones(on: boolean) {
     showZones = on;
   }
@@ -889,28 +898,6 @@
       white-space: nowrap;
     }
   }
-  /* Narrow (PV_NARROW): the pane switch and the page navigation at touch
-     size; the page-count switch, "Page 1 right", the zone switch, the zoom
-     slider and the fit buttons are hidden. Zoom stays reachable by pinch
-     and Ctrl/Cmd + scroll. */
-  @container (max-width: 559px) {
-    .ptoolbar {
-      min-height: 48px;
-      gap: 4px;
-      padding: 1px 4px;
-    }
-    .viewseg,
-    .pcheck,
-    .zonesw,
-    .zoomgrp,
-    .pgnav > .vline {
-      display: none;
-    }
-    .ptoolbar .pgbtn {
-      min-width: 44px;
-      min-height: 44px;
-    }
-  }
   .pcheck {
     display: flex;
     align-items: center;
@@ -918,6 +905,54 @@
     font-size: 11px;
     color: var(--ink-soft);
     white-space: nowrap;
+  }
+  /* Narrow (PV_NARROW, a phone): the toolbar moves below the pages, within
+     thumb reach, as one row at touch size: the pane switch, the page
+     navigation and fit width. The page-count switch, "Page 1 right", the
+     zone switch, the measure chip, the zoom slider and fit page are hidden;
+     zoom is a pinch or Ctrl/Cmd + scroll. */
+  @container (max-width: 559px) {
+    .ptoolbar {
+      order: 2;
+      min-height: 48px;
+      margin: 8px 0 0;
+      gap: 2px;
+      padding: 1px 4px;
+      flex-wrap: nowrap;
+    }
+    .viewseg,
+    .pcheck,
+    .zonesw,
+    .tchip,
+    .mspacer,
+    .zoomgrp > .zoomslider,
+    .zoomgrp > .zval,
+    .zoomgrp > .fitbtn + .fitbtn,
+    .pgnav > .vline {
+      display: none;
+    }
+    .zoomgrp {
+      order: 2;
+      flex: none;
+    }
+    .pgnav {
+      flex: 1;
+      min-width: 0;
+      justify-content: space-between;
+    }
+    .pglabel {
+      flex: 1;
+      min-width: 0 !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+    }
+    .ptoolbar .pgbtn,
+    .ptoolbar .fitbtn,
+    .paneseg button {
+      min-width: 44px;
+      min-height: 44px;
+    }
   }
   /* ---------------------------------------------------------------- panes */
   .pbody-panes {
