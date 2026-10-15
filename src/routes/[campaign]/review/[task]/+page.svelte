@@ -2,11 +2,13 @@
   The review view: a full-screen surface for validating an encoding task. The
   score fills the window, facsimile and rendered encoding side by side, and
   the side panel on the right carries the task box — the campaign page's
-  TaskBox with the Approve and Request changes buttons — pinned above the task's comments.
-  Clicking a measure in either pane highlights it in both and prefills the
-  fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
+  TaskBox with the Approve and Request changes buttons — above the selected
+  measure and the task's comments, as two tabs. Clicking a measure in either
+  pane highlights it in both, prefills the fail form's anchor and anchors a
+  new comment. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
+  import { untrack, type Snippet } from "svelte";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
@@ -19,7 +21,12 @@
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
-  import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
+  import type {
+    CommandContext,
+    CommentAnchorInput,
+    Result,
+    FailComment,
+  } from "$lib/commands.ts";
   import { CampaignResolution } from "$lib/campaign-resolution.svelte.ts";
   import { campaignLoadFailure } from "$lib/campaign-resolve.ts";
   import {
@@ -47,6 +54,7 @@
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
+  import Icon from "$lib/components/Icon.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -140,6 +148,20 @@
     preview?.setZones(true);
     preview?.showPage(anchor.page - 1);
   }
+  // The side panel's tab: the comments, until a measure is selected.
+  let panelTab = $state<"selection" | "comments">("comments");
+  $effect(() => {
+    if (selectedMeasure) untrack(() => (panelTab = "selection"));
+  });
+  // A new comment carries the selected measure as its anchor.
+  const selectedAnchor = (): CommentAnchorInput | undefined =>
+    selectedMeasure
+      ? {
+          page: String((preview?.pageOfMeasure(selectedMeasure) ?? 0) + 1),
+          measure_start: selectedMeasure,
+          measure_end: selectedMeasure,
+        }
+      : undefined;
   // A fresh fail form opens anchored to what the viewer is looking at.
   const prefill = () => ({
     page: String((preview?.currentPage() ?? 0) + 1),
@@ -296,7 +318,13 @@
     run((c) =>
       invoke(
         commands.submitComment,
-        commentInput(task_id, kind, body, parent_id),
+        commentInput(
+          task_id,
+          kind,
+          body,
+          parent_id,
+          kind === "comment" ? selectedAnchor() : undefined,
+        ),
         c,
       ),
     );
@@ -318,8 +346,9 @@
   />
 {/if}
 
+<!-- The last command's result, in the task box. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar />
+  <RunnerBanner {runner} bar collapsible />
 {/snippet}
 
 <div class="review sidehost">
@@ -362,7 +391,7 @@
   {:else if card.pre}
     <!-- Replaced by the pre-task's own editor (the redirect above). -->
   {:else}
-    {#snippet taskBox()}
+    {#snippet taskBox(headAction: Snippet | undefined)}
       <TaskBox
         {card}
         pieceName={card.piece}
@@ -375,6 +404,8 @@
         {runner}
         inView
         {prefill}
+        tools={resultBanner}
+        {headAction}
         onclaim={claim}
         onabandon={abandon}
         onvalidate={validate}
@@ -414,6 +445,40 @@
         </p>
       {/if}
     </div>
+    <!-- The selected measure, in the side panel's Selection tab. -->
+    {#snippet measureSelection()}
+      {#if selectedMeasure}
+        {@const p = preview?.pageOfMeasure(selectedMeasure) ?? -1}
+        <div class="selpanel">
+          <div class="selhead">
+            <span class="selname">Measure {selectedMeasure}</span>
+            {#if p >= 0}<span class="selwhere">page {p + 1}</span>{/if}
+            <button
+              type="button"
+              class="btn btn-icon"
+              onclick={() => preview?.clearSelection()}
+              aria-label="Clear the measure selection"
+              title="Clear the measure selection"><Icon name="close" /></button
+            >
+          </div>
+          {#if auth.user}
+            <div class="selactions">
+              <button
+                type="button"
+                class="btn"
+                onclick={() => (panelTab = "comments")}
+                ><Icon name="comment" /> Comment on measure {selectedMeasure}</button
+              >
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <p class="selnone">
+          Select a measure on the score to comment on it or to anchor a change
+          request.
+        </p>
+      {/if}
+    {/snippet}
     <TaskPageSidePanel
       tables={panelTables}
       {taskId}
@@ -422,8 +487,14 @@
       bind:panel={sidePanel}
       review={card.column === "validation"}
       done={card.column === "done"}
-      banner={resultBanner}
       {taskBox}
+      selection={measureSelection}
+      selectionLabel="Selection"
+      selectionActive={!!selectedMeasure}
+      bind:tab={panelTab}
+      composerHint={selectedMeasure
+        ? `Comment on measure ${selectedMeasure}…`
+        : ""}
       onanchor={showAnchorFor}
       oncomment={postComment}
       onresolve={resolveCommentRow}
@@ -469,7 +540,7 @@
   /* The side panel brings no outer spacing of its own; the score view's
      host row provides it there. Docked below the score it spans the width. */
   .review > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 12px 0;
+    margin: 12px 16px 4px 0;
   }
   /* The score column: the preview's toolbar and the side panel share their
      top edge, 12px below the navigation bar. */

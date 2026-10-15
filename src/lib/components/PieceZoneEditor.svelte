@@ -107,6 +107,8 @@
     /** A background press that cleared a selection only deselects; it never
         sets a corner. */
     deselected?: boolean;
+    /** A Cmd/Ctrl move drags a copy: the index of the region it copies. */
+    copyOf?: number;
   };
   let drag: Drag | null = null;
   // The first corner of a region drawn by two clicks instead of a drag, in
@@ -146,9 +148,12 @@
   /** Undo the edit in progress: a drawn region goes, a moved one returns. */
   function cancelDrag() {
     if (!drag) return;
-    const { kind, piece, zone, origin, started } = drag;
+    const { kind, piece, zone, origin, started, copyOf } = drag;
     drag = null;
-    if (kind === "draw") {
+    if (copyOf !== undefined) {
+      pieces[piece].zones.splice(zone, 1);
+      selectedZone = { piece, zone: copyOf };
+    } else if (kind === "draw") {
       if (started) {
         pieces[piece].zones.splice(zone, 1);
         selectedZone = null;
@@ -237,16 +242,23 @@
     e.stopPropagation();
     if (!mayEdit(e)) return;
     firstCorner = null;
-    selectedZone = { piece: p, zone: z };
+    const origin = { ...pieces[p].zones[z] };
+    // Cmd (Mac) or Ctrl drags a copy of the region; the original stays.
+    const copy = /Mac|iPhone|iPad/.test(navigator.userAgent)
+      ? e.metaKey
+      : e.ctrlKey;
+    const zone = copy ? pieces[p].zones.push({ ...origin }) - 1 : z;
+    selectedZone = { piece: p, zone };
     const { x, y } = svgXY(e, surface);
     drag = {
       kind: "move",
       page: surface,
       piece: p,
-      zone: z,
+      zone,
       sx: x,
       sy: y,
-      origin: { ...pieces[p].zones[z] },
+      origin,
+      copyOf: copy ? z : undefined,
     };
   }
 
@@ -427,6 +439,7 @@
       deselected,
       sx,
       sy,
+      copyOf,
     } = drag;
     drag = null;
     // A draw that never crossed the drag threshold was a plain click.
@@ -436,6 +449,16 @@
     }
     notice = null;
     const zone = pieces[piece].zones[z];
+    // A copy left where the original is was a Cmd/Ctrl click: no copy.
+    if (
+      copyOf !== undefined &&
+      zone.ulx === origin.ulx &&
+      zone.uly === origin.uly
+    ) {
+      pieces[piece].zones.splice(z, 1);
+      selectedZone = { piece, zone: copyOf };
+      return;
+    }
     const minSize = minSizeOn(page);
     // A tiny rectangle was a click on the background, not a region.
     if (
@@ -449,9 +472,9 @@
     const clash = overlappingPiece(pieces, piece, zone);
     if (clash === -1) return;
     notice = overlapNotice(clash, page);
-    if (kind === "draw") {
+    if (kind === "draw" || copyOf !== undefined) {
       pieces[piece].zones.splice(z, 1);
-      selectedZone = null;
+      selectedZone = copyOf === undefined ? null : { piece, zone: copyOf };
     } else {
       Object.assign(zone, origin);
     }
@@ -610,7 +633,12 @@
         >
       </span>
     {:else}
-      <span class="drag-hint">
+      <span
+        class="drag-hint"
+        title={pieces[selectedPiece]?.kind === "facsimile"
+          ? `Drag on a page, or click two corners, to give a region to ${labelFor(selectedPiece)}. ${/Mac|iPhone|iPad/.test(navigator.userAgent) ? "⌘" : "Ctrl+"}drag a region to copy it.`
+          : `${labelFor(selectedPiece)} is an uploaded encoding — it needs no regions`}
+      >
         {#if pieces[selectedPiece]?.kind === "facsimile"}
           Drag on a page, or click two corners, to give a region to
           <strong style="color: {pieceColour(selectedPiece)}"
@@ -836,13 +864,17 @@
     stroke-width: 2px;
     pointer-events: none;
   }
+  /* Up to two lines in the toolbar; the title carries the whole text. */
   .drag-hint {
     min-width: 0;
     font-size: 12px;
+    line-height: 1.35;
     color: var(--ink-soft);
-    white-space: nowrap;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
   }
   /* The piece picker: a chip over a transparent native select. */
   .pchip {

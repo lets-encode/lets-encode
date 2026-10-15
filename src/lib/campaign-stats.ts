@@ -443,6 +443,18 @@ export interface FeedComment {
   logins: Record<string, string>;
 }
 
+/** Unresolved change requests (fail comments) on unfinished tasks. */
+function openChangeRequests(stats: CampaignStats) {
+  const done = new Set(
+    stats.rows
+      .filter((r) => r.subtask_id === "" && r.status === "completed")
+      .map((r) => r.task_id),
+  );
+  return stats.comments.filter(
+    (c) => c.kind === "fail" && c.resolved !== "true" && !done.has(c.task_id),
+  );
+}
+
 /**
  * Unfinished tasks with an unresolved change request (fail comment), each
  * with its display title.
@@ -450,28 +462,16 @@ export interface FeedComment {
 export function changeRequestTasks(
   stats: CampaignStats,
 ): { task: string; title: string }[] {
-  const done = new Set(
-    stats.rows
-      .filter((r) => r.subtask_id === "" && r.status === "completed")
-      .map((r) => r.task_id),
-  );
-  const tasks = new Set(
-    stats.comments
-      .filter(
-        (c) =>
-          c.kind === "fail" && c.resolved !== "true" && !done.has(c.task_id),
-      )
-      .map((c) => c.task_id),
-  );
+  const tasks = new Set(openChangeRequests(stats).map((c) => c.task_id));
   return [...tasks].map((task) => {
     const def = findRow(stats.taskDefs, task, "");
     return { task, title: def ? titleOf(stats, def) : task };
   });
 }
 
-/** Unfinished tasks with an unresolved change request (fail comment). */
+/** The number of unresolved change requests on unfinished tasks. */
 export function attentionCount(stats: CampaignStats): number {
-  return changeRequestTasks(stats).length;
+  return openChangeRequests(stats).length;
 }
 
 /** The viewer's tasks in one campaign, grouped by what needs doing. */

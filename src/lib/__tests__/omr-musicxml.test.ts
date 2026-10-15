@@ -111,6 +111,24 @@ test("proposeScoreDef: signatures are read from the given sources before the cle
   assert.equal(`${proposal.meterCount}/${proposal.meterUnit}`, "6/8");
 });
 
+test("proposeScoreDef: a staff reading another key than the score's keeps it as its own", () => {
+  const key = (f: number) => `<key><fifths>${f}</fifths></key>`;
+  const proposal = proposeScoreDef([
+    staff(key(-1) + G),
+    staff(key(1) + G),
+    staff(key(-1) + F),
+  ]);
+  assert.equal(proposal.keysig, "1f");
+  assert.deepEqual(
+    proposal.staves.map((s) => s.keysig),
+    [undefined, "1s", undefined],
+  );
+  // Without a staff reading the score's key, no staff keeps its own.
+  const unread = proposeScoreDef([staff(key(0) + G)], [staff(key(-2) + G)]);
+  assert.equal(unread.keysig, "2f");
+  assert.equal(unread.staves[0].keysig, undefined);
+});
+
 const C3 = "<clef><sign>C</sign><line>3</line></clef>";
 const doc = (...measures: string[]) =>
   `<score-partwise><part id="P1">${measures.map((m) => `<measure>${m}</measure>`).join("")}</part></score-partwise>`;

@@ -336,7 +336,7 @@
       {/if}
       <button
         type="submit"
-        class="btn btn-lg btn-primary"
+        class="btn btn-primary"
         disabled={!canAdvance || claiming}
         aria-describedby={!canAdvance && blockReason
           ? "name-block-reason"

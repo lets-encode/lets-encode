@@ -1,7 +1,19 @@
+<script module lang="ts">
+  // The source side's share of the work area's width in each step, kept
+  // across tasks for the session, as the wizard keeps its panes' sizes. Step
+  // 2 gives the preview, where the groups are marked, most of the width.
+  const split = $state<Record<1 | 2, number>>({ 1: 0.5, 2: 0.3 });
+</script>
+
 <script lang="ts">
-  import { commentAnchor, type MeasureAnchor } from "$lib/campaign-tables.ts";
+  import { commentAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import GlyphSelect from "$lib/components/GlyphSelect.svelte";
+  import MusicGlyph, {
+    type MusicGlyphName,
+  } from "$lib/components/MusicGlyph.svelte";
   import { page } from "$app/state";
+  import { tick, untrack, type Snippet } from "svelte";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
@@ -12,16 +24,45 @@
     FacsimileTaskData,
   } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { readSidePanel } from "$lib/side-panels.ts";
-  import { buildBlankScoreMei, DEFAULT_SCORE_DEF } from "$lib/mei-facsimile.ts";
+  import { DOCKED_QUERY, readSidePanel } from "$lib/side-panels.ts";
+  import { MediaQuery, SvelteSet } from "svelte/reactivity";
+  import {
+    buildBlankScoreMei,
+    DEFAULT_SCORE_DEF,
+    staffKeysig,
+  } from "$lib/mei-facsimile.ts";
+  import {
+    COMMON_TRANSPOSITIONS,
+    PITCHES,
+    fromCustom,
+    keysigText,
+    soundsText,
+    toCustom,
+    transpositionFromLabel,
+    writtenKeysig,
+  } from "$lib/transposition.ts";
+  import type { Transposition } from "$lib/transposition.ts";
   import type {
     MeasureBox,
     ScoreDefModel,
     StaffModel,
     StaffGroupModel,
   } from "$lib/mei-facsimile.ts";
+  import {
+    groupDepth,
+    groupsValid as groupsFit,
+    guessOneInstrument,
+    moveStaffInGroups,
+    removeStaffFromGroups,
+    sortGroups,
+    spanProblem,
+  } from "$lib/staff-groups.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
-  import { pageSystems, staffCountOf } from "$lib/omr-layout.ts";
+  import {
+    grandStaffSpans,
+    pageSystems,
+    staffCountOf,
+  } from "$lib/omr-layout.ts";
   import {
     clefStaff,
     clefToken,
@@ -43,10 +84,11 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
-  import ScorePreview from "$lib/components/ScorePreview.svelte";
+  import FacsimileFrame from "$lib/components/FacsimileFrame.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
+  import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
@@ -54,51 +96,49 @@
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
 
-  // The clefs and staff kinds the form offers. Each option carries the staff
-  // values it sets: clef shape, octave displacement and notation type as MEI
-  // writes them, the shape's conventional line, and the staff's line count.
-  // A modern (guitar) tablature staff shows the TAB lettering as its clef;
-  // the lute kinds carry no clef.
+  // The clefs and staff kinds the form offers, by name. Each option carries
+  // the staff values it sets: clef shape, line, octave displacement and
+  // notation type as MEI writes them, and the staff's line count. A modern
+  // (guitar) tablature staff shows the TAB lettering as its clef; the lute
+  // kinds carry no clef.
+  const pitchedClef = (
+    value: string,
+    label: string,
+    clefShape: string,
+    clefLine: number,
+    clefDis = "",
+  ) => ({
+    value,
+    label,
+    glyph: (clefDis
+      ? "gClef8vb"
+      : clefShape === "G"
+        ? "gClef"
+        : clefShape === "F"
+          ? "fClef"
+          : "cClef") as MusicGlyphName,
+    clefShape,
+    clefDis,
+    notationType: "",
+    clefLine,
+    lines: 5,
+  });
   const CLEF_OPTIONS = [
-    {
-      value: "G",
-      label: "G (treble)",
-      clefShape: "G",
-      clefDis: "",
-      notationType: "",
-      clefLine: 2,
-      lines: 5,
-    },
-    {
-      value: "G8",
-      label: "G, octave down",
-      clefShape: "G",
-      clefDis: "8",
-      notationType: "",
-      clefLine: 2,
-      lines: 5,
-    },
-    {
-      value: "F",
-      label: "F (bass)",
-      clefShape: "F",
-      clefDis: "",
-      notationType: "",
-      clefLine: 4,
-      lines: 5,
-    },
-    {
-      value: "C",
-      label: "C (alto, tenor)",
-      clefShape: "C",
-      clefDis: "",
-      notationType: "",
-      clefLine: 3,
-      lines: 5,
-    },
+    pitchedClef("G2", "Treble", "G", 2),
+    pitchedClef("G2-8", "Treble, octave lower", "G", 2, "8"),
+    pitchedClef("G1", "French violin", "G", 1),
+    pitchedClef("C1", "Soprano", "C", 1),
+    pitchedClef("C2", "Mezzo-soprano", "C", 2),
+    pitchedClef("C3", "Alto", "C", 3),
+    pitchedClef("C4", "Tenor", "C", 4),
+    pitchedClef("C5", "Baritone (C clef)", "C", 5),
+    pitchedClef("F3", "Baritone (F clef)", "F", 3),
+    pitchedClef("F4", "Bass", "F", 4),
+    pitchedClef("F5", "Sub-bass", "F", 5),
     {
       value: "perc",
       label: "Percussion",
+      glyph: "percussion" as MusicGlyphName,
       clefShape: "perc",
       clefDis: "",
       notationType: "",
@@ -108,6 +148,7 @@
     {
       value: "TAB",
       label: "Tablature, modern",
+      glyph: "tab" as MusicGlyphName,
       clefShape: "TAB",
       clefDis: "",
       notationType: "tab.guitar",
@@ -142,37 +183,55 @@
       lines: 6,
     },
   ] as const;
-  // The option behind a staff's stored values; an unlisted combination falls
-  // back to its shape.
-  const clefKey = (staff: StaffModel): string => {
-    const exact = CLEF_OPTIONS.find(
+  // The clefs most staves open with, listed first in the clef menu.
+  const COMMON_CLEFS = ["G2", "F4", "C3"];
+  // The option behind a staff's stored values: the one with its shape,
+  // displacement and notation type, and for a pitched clef its line too.
+  // An unlisted combination (an OMR reading, an imported file) has none.
+  const clefOption = (staff: StaffModel) =>
+    CLEF_OPTIONS.find(
       (o) =>
         o.clefShape === staff.clefShape &&
         o.clefDis === staff.clefDis &&
-        o.notationType === staff.notationType,
+        o.notationType === staff.notationType &&
+        (unpitched(staff) || o.clefLine === staff.clefLine),
     );
-    const byShape = CLEF_OPTIONS.find((o) => o.clefShape === staff.clefShape);
-    return (exact ?? byShape ?? CLEF_OPTIONS[0]).value;
-  };
-  // The clef line is only meaningful on the pitched shapes.
-  const clefLineFixed = (staff: StaffModel): boolean =>
+  const unpitched = (staff: StaffModel): boolean =>
     staff.clefShape === "perc" || staff.clefShape === "TAB";
-  const CLEF_LINES = [1, 2, 3, 4, 5];
+  /** The symbol of a staff's clef: its option's, else its shape's. */
+  function clefGlyph(staff: StaffModel): MusicGlyphName | undefined {
+    const option = clefOption(staff);
+    if (option) return "glyph" in option ? option.glyph : undefined;
+    return (
+      { G: "gClef", F: "fClef", C: "cClef" } as Record<string, MusicGlyphName>
+    )[staff.clefShape];
+  }
+  /** A staff's clef as text. */
+  function clefText(staff: StaffModel): string {
+    const option = clefOption(staff);
+    if (option) return option.label;
+    const octaves =
+      { "8": "an octave", "15": "two octaves", "22": "three octaves" }[
+        staff.clefDis
+      ] ?? "";
+    const octave = octaves
+      ? `, ${octaves} ${staff.clefDisPlace === "above" ? "higher" : "lower"}`
+      : "";
+    return `${staff.clefShape} clef on line ${staff.clefLine}${octave}`;
+  }
   // A percussion staff has up to 5 lines; a tablature one line (string or
   // course) per string, 4 to 8.
   const linesChoices = (staff: StaffModel): number[] =>
     staff.clefShape === "perc" ? [1, 2, 3, 4, 5] : [4, 5, 6, 7, 8];
-  const KEY_SIGNATURES = [
-    { value: "0", label: "No sharps or flats" },
-    ...Array.from({ length: 7 }, (_, i) => ({
-      value: `${i + 1}s`,
-      label: `${i + 1} sharp${i === 0 ? "" : "s"}`,
-    })),
-    ...Array.from({ length: 7 }, (_, i) => ({
-      value: `${i + 1}f`,
-      label: `${i + 1} flat${i === 0 ? "" : "s"}`,
-    })),
-  ];
+  const KEY_SIGNATURES = ["0", "1s", "2s", "3s", "4s", "5s", "6s", "7s"]
+    .concat(["1f", "2f", "3f", "4f", "5f", "6f", "7f"])
+    .map((value) => ({ value, label: keysigText(value) }));
+  const METER_NAMES = { common: "Common time", cut: "Cut time" };
+  const METER_KINDS = [
+    { value: "numeric", label: "Numbers", glyph: "threeFour" },
+    { value: "common", label: METER_NAMES.common, glyph: "common" },
+    { value: "cut", label: METER_NAMES.cut, glyph: "cut" },
+  ] as const;
   const METER_UNITS = [1, 2, 4, 8, 16];
   const MAX_STAVES = 24;
 
@@ -193,6 +252,9 @@
       loaded(d) {
         staves = d.model.scoreDef.staves.map((s) => ({ ...s }));
         groups = d.model.scoreDef.groups.map((g) => ({ ...g }));
+        // A loaded group's one-instrument value is kept, not guessed again.
+        instrChosen.clear();
+        groups.forEach((g) => instrChosen.add(g));
         keysig = d.model.scoreDef.keysig;
         meterType =
           d.model.scoreDef.meterSym === ""
@@ -248,17 +310,8 @@
     meterType !== "numeric" || /^[1-9]\d*$/.test(meterCount.trim()),
   );
 
-  // Groups must fit the staves and must not overlap one another.
-  const groupsValid = $derived.by(() => {
-    const sorted = [...groups].sort((a, b) => a.start - b.start);
-    return sorted.every(
-      (g, i) =>
-        g.start >= 1 &&
-        g.end >= g.start &&
-        g.end <= staves.length &&
-        (i === 0 || g.start > sorted[i - 1].end),
-    );
-  });
+  // Groups must fit the staves and nest without crossing (staff-groups.ts).
+  const groupsValid = $derived(groupsFit(groups, staves.length));
 
   // A symbol signature implies its numeric meter — common time is 4/4, cut
   // time 2/2 — matching what parseScoreDef reads back.
@@ -286,14 +339,126 @@
   // The side panel beside the tool. Posting and resolving refresh the tables
   // only: a full reload would discard unsubmitted form values.
   let sidePanel = $state(readSidePanel());
-  // A comment anchor turns the reference score to its page and highlights the
-  // range; the measure zones show so the range is visible.
-  let refPreview = $state<ReturnType<typeof ScorePreview>>();
-  let anchor = $state<MeasureAnchor | null>(null);
+  // The source side of the work area: the first measure's page, framed on
+  // the measure and the names in front of its system, the measure outlined.
+  // The first measure is the first zone of the first page with zones. The
+  // frame runs from the system's first staff to its last where the layout
+  // has staff boxes (an OMR-prepared piece), else over the measure's zone. A
+  // comment anchor shows its page whole until the fit button returns.
+  const firstMeasure = $derived.by(() => {
+    const i = data?.model.pages.findIndex((p) => p.zones.length > 0) ?? -1;
+    if (!data || i < 0) return null;
+    const pg = data.model.pages[i];
+    const box = pg.zones[0].box;
+    const system = pg.staves?.length ? pageSystems(pg).systems[0] : undefined;
+    const staffBoxes = system?.length ? system : null;
+    return {
+      page: i,
+      box,
+      staves: staffBoxes,
+      frame: {
+        ulx: 0,
+        uly: staffBoxes ? staffBoxes[0].uly : box.uly,
+        lrx: box.lrx,
+        lry: staffBoxes ? staffBoxes[staffBoxes.length - 1].lry : box.lry,
+      },
+    };
+  });
+  let anchorPage = $state<number | null>(null);
+  $effect(() => {
+    void taskId;
+    anchorPage = null;
+  });
   function showAnchorFor(c: CommentRow) {
-    anchor = commentAnchor(c);
-    refPreview?.setZones(true);
-    if (anchor.page) refPreview?.showPage(anchor.page - 1);
+    const p = commentAnchor(c).page - 1;
+    anchorPage = data && p >= 0 && p < data.model.pages.length ? p : null;
+  }
+  const shownPage = $derived(anchorPage ?? firstMeasure?.page ?? 0);
+
+  // Like for like: the source's first system is scaled and placed so its
+  // staves line up with the preview's. With as many staves on both sides
+  // the first and last staves meet; otherwise the staff spacing is matched,
+  // from the first staff down.
+  let previewStaves = $state<{
+    top: number;
+    lastTop: number;
+    bottom: number;
+    count: number;
+  } | null>(null);
+  // The source box ends where the preview's sheet ends, so the two boxes
+  // match and the view does not reach far past the page.
+  let facsEl = $state<HTMLElement>();
+  let facsHeight = $state<number | null>(null);
+  function measurePreviewStaves() {
+    if (sheetEl && facsEl)
+      facsHeight =
+        sheetEl.getBoundingClientRect().bottom -
+        facsEl.getBoundingClientRect().top;
+    const lines = staffEls().map((g) => {
+      let top = Infinity;
+      let bottom = -Infinity;
+      for (const line of g.children) {
+        if (line.tagName !== "path") continue;
+        const r = line.getBoundingClientRect();
+        top = Math.min(top, r.top);
+        bottom = Math.max(bottom, r.bottom);
+      }
+      return { top, bottom };
+    });
+    const first = lines[0];
+    const last = lines[lines.length - 1];
+    previewStaves =
+      first && last && last.bottom > first.top
+        ? {
+            top: first.top,
+            lastTop: last.top,
+            bottom: last.bottom,
+            count: lines.length,
+          }
+        : null;
+  }
+  const align = $derived.by(() => {
+    const p = previewStaves;
+    const fm = firstMeasure;
+    if (!p || !fm || anchorPage !== null) return null;
+    const boxes = fm.staves;
+    if (!boxes || boxes.length === p.count || boxes.length < 2 || p.count < 2)
+      return { top: p.top, bottom: p.bottom };
+    const scale =
+      (p.lastTop - p.top) /
+      (p.count - 1) /
+      ((boxes[boxes.length - 1].uly - boxes[0].uly) / (boxes.length - 1));
+    return {
+      top: p.top,
+      bottom: p.top + (fm.frame.lry - fm.frame.uly) * scale,
+    };
+  });
+
+  // Dragging the divider, or its arrow keys, moves the boundary between the
+  // source and the preview; each keeps at least a fifth of the width.
+  let desk = $state<HTMLDivElement>();
+  let splitting = false;
+  const clampSplit = (v: number) => Math.min(0.8, Math.max(0.2, v));
+  function splitDown(e: PointerEvent) {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    splitting = true;
+  }
+  // One update per frame, however often the pointer moves.
+  let splitFrame = 0;
+  function splitMove(e: PointerEvent) {
+    if (!splitting || !desk) return;
+    const box = desk.getBoundingClientRect();
+    const to = clampSplit((e.clientX - box.left) / box.width);
+    cancelAnimationFrame(splitFrame);
+    splitFrame = requestAnimationFrame(() => (split[setupStep] = to));
+  }
+  const splitUp = () => (splitting = false);
+  function splitKey(e: KeyboardEvent) {
+    const d = e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
+    if (!d) return;
+    e.preventDefault();
+    split[setupStep] = clampSplit(split[setupStep] + d);
   }
 
   const submit = () =>
@@ -335,17 +500,19 @@
   // staff in the submitted clef until the model reads a real change. The instrument
   // labels are those read in front of the first system, where they are
   // usually written out, and in front of the fullest system for a staff the
-  // first leaves out; a staff that already has a label keeps it. Groups are
+  // first leaves out; a staff that already has a label keeps it. Braces come
+  // from the corrected grand-staff boxes of the fullest system; brackets are
   // not recognised. The count stays editable until the piece holds notation,
   // since the setup submission rebuilds empty measures for it until then.
   const omr = $derived(data?.preparation === "omr");
-  // Below this width the form and the source pages take turns, chosen by a
-  // switch, instead of sharing the row. At 680px both still fit beside the
-  // side panel in a 1024px window, at about 330px each.
-  const NARROW_DESK = 680;
-  let mainW = $state(0);
-  const narrow = $derived(mainW > 0 && mainW < NARROW_DESK);
-  let shownCol = $state<"form" | "pages">("form");
+  // The form sits in the side panel. Docked below the score as a sheet
+  // (DOCKED_QUERY) it shows one section at a time, chosen by a switch.
+  const dockedQuery = new MediaQuery(DOCKED_QUERY, false);
+  const docked = $derived(dockedQuery.current);
+  // The setup's two steps: the staves with the key and time signature, then
+  // the groups.
+  let setupStep = $state<1 | 2>(1);
+  let panelTab = $state<"selection" | "comments">("selection");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
   let recognition = $state<PieceRecognition | null>(null);
@@ -506,6 +673,21 @@
       filled++;
       return { ...staff, label: read[i] };
     });
+    staves.forEach(fillFromLabel);
+    // The fullest system's grand-staff boxes become braces, unless the
+    // definition has groups already; a span repeating or crossing an earlier
+    // one is left out.
+    const braces: StaffGroupModel[] = [];
+    if (!groups.length)
+      for (const { start, end } of grandStaffSpans(
+        fullest.staves,
+        d.model.pages[fullest.p].grandstaves ?? [],
+      )) {
+        const repeated = braces.some((b) => b.start === start && b.end === end);
+        if (!repeated && !spanProblem(braces, start, end))
+          braces.push(newGroup(start, end, "brace"));
+      }
+    if (braces.length) groups = braces;
     const clefs = proposal.staves
       .map(
         (s) =>
@@ -516,7 +698,7 @@
       proposal.meterSym || `${proposal.meterCount}/${proposal.meterUnit}`;
     return {
       note:
-        ` Filled in: clefs ${clefs}, each where its staff first appears; key signature ${proposal.keysig} and time signature ${meter} from the first system; instrument labels for ${filled} of ${staves.length} staves.` +
+        ` Filled in: clefs ${clefs}, each where its staff first appears; key signature ${proposal.keysig} and time signature ${meter} from the first system; instrument labels for ${filled} of ${staves.length} staves${braces.length ? `; ${braces.length} brace${braces.length === 1 ? "" : "s"} from the grand staves` : ""}.` +
         " Check the values, then submit.",
     };
   }
@@ -601,35 +783,350 @@
     if (staves.length >= MAX_STAVES) return;
     staves = [...staves, plainStaff()];
   }
+  // ------------------------------------------------------------------------
+  // Staff groups
+  //
+  // A group is made in step 2 by marking its staves in the preview (the
+  // first staff, then the last: a click or tap on each, or a mouse drag from
+  // one to the other) and choosing its symbol. Its values are edited in its
+  // row in the panel, opened from its line or from a marked staff.
+  const newGroup = (
+    start: number,
+    end: number,
+    symbol: string,
+  ): StaffGroupModel => ({
+    start,
+    end,
+    symbol,
+    label: "",
+    barThru: true,
+    oneInstrument:
+      symbol === "brace" &&
+      guessOneInstrument({ start, end, label: "" }, staves),
+  });
+  // Groups whose one-instrument value the volunteer set or the file holds;
+  // the others follow the guess from the labels and clefs.
+  const instrChosen = new SvelteSet<StaffGroupModel>();
+  $effect(() => {
+    for (const g of groups) {
+      if (instrChosen.has(g)) continue;
+      const guess = g.symbol === "brace" && guessOneInstrument(g, staves);
+      if (g.oneInstrument !== guess) g.oneInstrument = guess;
+    }
+  });
+  function setOneInstrument(g: StaffGroupModel, value: boolean) {
+    g.oneInstrument = value;
+    instrChosen.add(g);
+  }
+  // The marked staves, 0-based: the first, then the last (null until marked).
+  let markFrom = $state<number | null>(null);
+  let markTo = $state<number | null>(null);
+  let openGroup = $state<StaffGroupModel | null>(null);
+  let hoveredGroup = $state<StaffGroupModel | null>(null);
+  let announce = $state("");
+  const openG = $derived(
+    openGroup && groups.includes(openGroup) ? openGroup : null,
+  );
+  const ordered = $derived(sortGroups(groups));
+  const marked = $derived(
+    markFrom === null
+      ? null
+      : {
+          start: Math.min(markFrom, markTo ?? markFrom) + 1,
+          end: Math.max(markFrom, markTo ?? markFrom) + 1,
+        },
+  );
+  const markSpan = $derived(markTo === null ? null : marked);
+  const sameGroup = $derived(
+    markSpan
+      ? groups.find((g) => g.start === markSpan.start && g.end === markSpan.end)
+      : undefined,
+  );
+  const markProblem = $derived(
+    markSpan && !sameGroup
+      ? spanProblem(groups, markSpan.start, markSpan.end)
+      : null,
+  );
+  const liveText = $derived(markProblem ?? announce);
+  const symbolName = (symbol: string) =>
+    symbol === "brace" ? "Brace" : "Bracket";
+  const symbolGlyph = (symbol: string): MusicGlyphName =>
+    symbol === "brace" ? "brace" : "bracket";
+  /** "staves 7–8 · Pianoforte · one instrument · barlines through" */
+  const groupText = (g: StaffGroupModel) =>
+    [
+      `staves ${g.start}–${g.end}`,
+      g.label.trim(),
+      g.symbol === "brace"
+        ? g.oneInstrument
+          ? "one instrument"
+          : "separate staves"
+        : "",
+      g.barThru ? "barlines through" : "barlines per staff",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  /** The groups holding staff `n` (1-based), outer first. */
+  const containing = (n: number) =>
+    ordered.filter((g) => g.start <= n && n <= g.end);
+  function clearMark() {
+    markFrom = null;
+    markTo = null;
+  }
+  function addMarked(symbol: string) {
+    if (!markSpan || markProblem || sameGroup) return;
+    const { start, end } = markSpan;
+    groups = [...groups, newGroup(start, end, symbol)];
+    openGroup = groups[groups.length - 1];
+    announce = `${symbolName(symbol)} added over staves ${start}–${end}.`;
+    clearMark();
+  }
+  function toggleRow(g: StaffGroupModel) {
+    openGroup = openG === g ? null : g;
+    clearMark();
+  }
+  // "Add group", the path without the preview: the first two neighbouring
+  // staves a new group can join.
+  const freePair = $derived.by(() => {
+    for (let n = 1; n < staves.length; n++) {
+      const taken = groups.some((g) => g.start === n && g.end === n + 1);
+      if (!taken && !spanProblem(groups, n, n + 1)) return n;
+    }
+    return null;
+  });
   function addGroup() {
-    groups = [
-      ...groups,
-      { start: 1, end: Math.min(2, staves.length), symbol: "brace", label: "" },
-    ];
+    if (freePair === null) return;
+    groups = [...groups, newGroup(freePair, freePair + 1, "brace")];
+    openGroup = groups[groups.length - 1];
+    clearMark();
   }
-  function removeGroup(i: number) {
-    groups = groups.filter((_, n) => n !== i);
+  function removeGroup(g: StaffGroupModel) {
+    groups = groups.filter((h) => h !== g);
+    announce = `${symbolName(g.symbol)} over staves ${g.start}–${g.end} removed.`;
   }
+  /** Whether the groups stay valid with one group's values changed. */
+  const fitsWith = (g: StaffGroupModel, change: Partial<StaffGroupModel>) =>
+    groupsFit(
+      groups.map((h) => (h === g ? { ...h, ...change } : h)),
+      staves.length,
+    );
   function setClef(staff: StaffModel, key: string) {
-    const option = CLEF_OPTIONS.find((o) => o.value === key) ?? CLEF_OPTIONS[0];
+    const option = CLEF_OPTIONS.find((o) => o.value === key);
+    if (!option) return;
     staff.clefShape = option.clefShape;
     staff.clefDis = option.clefDis;
     staff.clefDisPlace = option.clefDis ? "below" : "";
     staff.notationType = option.notationType;
     staff.clefLine = option.clefLine;
     staff.lines = option.lines;
+    // Percussion and tablature staves do not transpose or carry a key.
+    if (unpitched(staff)) {
+      setTransposition(staff, null);
+      delete staff.keysig;
+    }
   }
+
+  // Transposition and key per staff. A staff's key follows the score's,
+  // moved by its transposition, unless it has its own (`keysig`); a key set
+  // equal to the one it would follow is dropped, so it keeps following.
+  const transOf = (staff: StaffModel): Transposition => ({
+    diat: staff.transDiat ?? 0,
+    semi: staff.transSemi ?? 0,
+  });
+  const transposes = (staff: StaffModel) =>
+    !!(staff.transDiat || staff.transSemi);
+  const followedKey = (staff: StaffModel) =>
+    writtenKeysig(keysig, transOf(staff));
+  function settleKey(staff: StaffModel) {
+    if (staff.keysig !== undefined && staff.keysig === followedKey(staff))
+      delete staff.keysig;
+  }
+  function setTransposition(staff: StaffModel, t: Transposition | null) {
+    if (t && (t.diat || t.semi)) {
+      staff.transDiat = t.diat;
+      staff.transSemi = t.semi;
+    } else {
+      delete staff.transDiat;
+      delete staff.transSemi;
+    }
+    settleKey(staff);
+  }
+  // Staves whose transposition the volunteer chose, which a label no longer
+  // fills, and those showing the pitch fields although a listed
+  // transposition matches.
+  const transChosen = new SvelteSet<StaffModel>();
+  const transCustom = new SvelteSet<StaffModel>();
+  /** The transposition select's value: 'none', a list index, or 'other'. */
+  function transValue(staff: StaffModel): string {
+    if (transCustom.has(staff)) return "other";
+    if (!transposes(staff)) return "none";
+    const i = COMMON_TRANSPOSITIONS.findIndex(
+      (t) => t.diat === staff.transDiat && t.semi === staff.transSemi,
+    );
+    return i < 0 ? "other" : String(i);
+  }
+  function pickTransposition(staff: StaffModel, value: string) {
+    transChosen.add(staff);
+    if (value === "other") {
+      transCustom.add(staff);
+      return;
+    }
+    transCustom.delete(staff);
+    setTransposition(
+      staff,
+      value === "none" ? null : COMMON_TRANSPOSITIONS[Number(value)],
+    );
+  }
+  /** The pitch fields of a staff with a transposition outside the list. */
+  const customOf = (staff: StaffModel) =>
+    toCustom(transOf(staff)) ?? { pitch: "C", higher: false, octaves: 0 };
+  function setCustom(
+    staff: StaffModel,
+    change: Partial<ReturnType<typeof customOf>>,
+  ) {
+    setTransposition(staff, fromCustom({ ...customOf(staff), ...change }));
+  }
+  /** Fill a staff's transposition from its label, unless one is set or was chosen. */
+  function fillFromLabel(staff: StaffModel) {
+    if (transChosen.has(staff) || transposes(staff) || unpitched(staff)) return;
+    const t = transpositionFromLabel(staff.label);
+    if (t) setTransposition(staff, t);
+  }
+  // Labels already in the file or a saved draft fill the transpositions
+  // once the holder opens the task.
+  let labelsReadFor = $state<string | null>(null);
+  $effect(() => {
+    if (!canEdit || staves.length === 0 || labelsReadFor === taskId) return;
+    labelsReadFor = taskId;
+    untrack(() => staves.forEach(fillFromLabel));
+  });
+  /** "in B♭, sounds a major 2nd lower", or '' for a staff that does not transpose. */
+  function transText(staff: StaffModel): string {
+    if (!transposes(staff)) return "";
+    const c = toCustom(transOf(staff));
+    const pitch =
+      c && !(c.pitch === "C" && c.octaves > 0) ? `in ${c.pitch}, ` : "";
+    return `${pitch}sounds ${soundsText(transOf(staff))}`;
+  }
+  const STAFF_KEYS = KEY_SIGNATURES;
   function removeStaff(i: number) {
     if (staves.length <= 1) return;
+    groups = removeStaffFromGroups(groups, i);
+    clearMark();
     staves = staves.filter((_, n) => n !== i);
   }
-  function moveStaff(i: number, delta: number) {
-    const j = i + delta;
-    if (j < 0 || j >= staves.length) return;
+  function moveStaff(from: number, to: number) {
+    if (from === to || to < 0 || to >= staves.length) return;
+    groups = moveStaffInGroups(groups, staves.length, from, to);
+    clearMark();
+    reorderStaves(from, to);
+  }
+  function reorderStaves(from: number, to: number) {
     const next = [...staves];
-    [next[i], next[j]] = [next[j], next[i]];
+    const [staff] = next.splice(from, 1);
+    next.splice(to, 0, staff);
     staves = next;
   }
+
+  // Reordering by a staff's handle (its number): dragged, the staff takes
+  // the place of each row the pointer crosses, and the list scrolls near its
+  // container's edges. A click picks the staff and a click on another
+  // staff's handle moves it there; the arrow keys move it by one.
+  let staffList = $state<HTMLOListElement | null>(null);
+  let dragging = $state<number | null>(null);
+  let picked = $state<number | null>(null);
+  // A drag's groups follow one move from the row it began on, as a click
+  // move would: each row crossed starts again from the groups' ranges then.
+  let gesture: {
+    x: number;
+    y: number;
+    moved: boolean;
+    origin: number;
+    groups: { g: StaffGroupModel; start: number; end: number }[];
+  } | null = null;
+  let swallowClick = false;
+  function handleDown(i: number, e: PointerEvent) {
+    if (e.button !== 0) return;
+    gesture = {
+      x: e.clientX,
+      y: e.clientY,
+      moved: false,
+      origin: i,
+      groups: groups.map((g) => ({ g, start: g.start, end: g.end })),
+    };
+    dragging = i;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function handleMove(e: PointerEvent) {
+    if (!gesture || dragging === null || !staffList) return;
+    if (!gesture.moved) {
+      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
+      gesture.moved = true;
+      picked = null;
+    }
+    const rows = [...staffList.children] as HTMLElement[];
+    const over = rows.findIndex((row) => {
+      const box = row.getBoundingClientRect();
+      return e.clientY >= box.top && e.clientY < box.bottom;
+    });
+    if (over >= 0 && over !== dragging) {
+      for (const { g, start, end } of gesture.groups) {
+        g.start = start;
+        g.end = end;
+      }
+      groups = moveStaffInGroups(
+        gesture.groups.map(({ g }) => g),
+        staves.length,
+        gesture.origin,
+        over,
+      );
+      clearMark();
+      reorderStaves(dragging, over);
+      dragging = over;
+    }
+    let scroller = staffList.parentElement;
+    while (
+      scroller &&
+      !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+    )
+      scroller = scroller.parentElement;
+    if (!scroller) return;
+    const box = scroller.getBoundingClientRect();
+    if (e.clientY < box.top + 40) scroller.scrollTop -= 10;
+    else if (e.clientY > box.bottom - 40) scroller.scrollTop += 10;
+  }
+  function handleUp() {
+    swallowClick = !!gesture?.moved;
+    gesture = null;
+    dragging = null;
+  }
+  function handleClick(i: number) {
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
+    if (picked === null) picked = i;
+    else {
+      moveStaff(picked, i);
+      picked = null;
+    }
+  }
+  async function handleKey(i: number, e: KeyboardEvent) {
+    const to =
+      e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : null;
+    if (e.key === "Escape") picked = null;
+    if (to === null || to < 0 || to >= staves.length) return;
+    e.preventDefault();
+    moveStaff(i, to);
+    await tick();
+    staffList?.querySelectorAll<HTMLElement>(".staffgrip")[to]?.focus();
+  }
+  const handleTitle = (i: number) =>
+    picked === null
+      ? "Drag to move this staff. Or click it, then click the staff whose place it takes. The arrow keys move it up and down."
+      : picked === i
+        ? "Click again to leave this staff where it is."
+        : `Click to move staff ${picked + 1} here.`;
 
   // ------------------------------------------------------------------------
   // Preview
@@ -659,7 +1156,186 @@
       });
     return () => (dropped = true);
   });
+
+  // The staves a row of the form or the summary points at (hovered, else
+  // focused), the marked staves and the open group's are coloured in the
+  // preview: the rendered measure's staves are in staff order.
+  let sheetEl = $state<HTMLElement | null>(null);
+  let hoveredStaff = $state<number | null>(null);
+  let focusedStaff = $state<number | null>(null);
+  const pointedStaff = $derived(hoveredStaff ?? focusedStaff);
+  const staffEls = () => [
+    ...(sheetEl?.querySelectorAll<SVGGElement>("g.measure > g.staff") ?? []),
+  ];
+  // Groups are marked in step 2, by the volunteer holding the task.
+  const markable = $derived(canEdit && setupStep === 2 && staves.length > 1);
+  const lit = $derived.by(() => {
+    if (markable && marked) return marked;
+    const g = hoveredGroup ?? (setupStep === 2 ? openG : null);
+    if (g) return { start: g.start, end: g.end };
+    return pointedStaff === null
+      ? null
+      : { start: pointedStaff + 1, end: pointedStaff + 1 };
+  });
+  $effect(() => {
+    void previewSvg;
+    const range = lit;
+    staffEls().forEach((g, i) =>
+      g.classList.toggle(
+        "pointed",
+        !!range && i + 1 >= range.start && i + 1 <= range.end,
+      ),
+    );
+  });
+
+  // The staff numbers beside the preview, for orientation: each at the
+  // middle of its rendered staff, measured in the sheet's scrolled content,
+  // again after every render and every change of the sheet's size.
+  let staffMarks = $state<number[]>([]);
+  function placeStaffMarks() {
+    const el = sheetEl;
+    if (!el) return;
+    const top = el.getBoundingClientRect().top - el.scrollTop;
+    staffMarks = staffEls().map((g) => {
+      const box = g.getBoundingClientRect();
+      return (box.top + box.bottom) / 2 - top;
+    });
+  }
+  $effect(() => {
+    void previewSvg;
+    void minSheetHeight;
+    const el = sheetEl;
+    if (!el) return;
+    const place = () => {
+      placeStaffMarks();
+      measurePreviewStaves();
+    };
+    place();
+    const observer = new ResizeObserver(place);
+    observer.observe(el);
+    const svg = el.querySelector("svg");
+    if (svg) observer.observe(svg);
+    // The source follows the preview scrolled while groups are marked.
+    el.addEventListener("scroll", measurePreviewStaves, { passive: true });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener("scroll", measurePreviewStaves);
+    };
+  });
+
+  // Marking: a staff's target is the band of the preview's full width
+  // nearest its middle. A click or tap marks the first staff, then the last;
+  // a mouse drag marks both at once. On touch a drag scrolls the preview.
+  function staffAt(y: number): number | null {
+    let best: number | null = null;
+    let distance = Infinity;
+    staffEls().forEach((g, i) => {
+      const box = g.getBoundingClientRect();
+      const d = Math.abs(y - (box.top + box.bottom) / 2);
+      if (d < distance) {
+        distance = d;
+        best = i;
+      }
+    });
+    return best;
+  }
+  let dragFrom: number | null = null;
+  let dragMoved = false;
+  function sheetDown(e: PointerEvent) {
+    if (!markable || e.pointerType !== "mouse" || e.button !== 0) return;
+    dragFrom = staffAt(e.clientY);
+    dragMoved = false;
+  }
+  function sheetMove(e: PointerEvent) {
+    if (dragFrom === null || !(e.buttons & 1)) return;
+    const i = staffAt(e.clientY);
+    if (i === null || (i === dragFrom && !dragMoved)) return;
+    dragMoved = true;
+    markFrom = dragFrom;
+    markTo = i;
+    openGroup = null;
+  }
+  function sheetClick(e: MouseEvent) {
+    dragFrom = null;
+    if (!markable) return;
+    if (dragMoved) {
+      dragMoved = false;
+      return;
+    }
+    const i = staffAt(e.clientY);
+    if (i === null) return;
+    openGroup = null;
+    if (markFrom === null || markTo !== null) {
+      markFrom = i;
+      markTo = null;
+    } else if (i === markFrom) clearMark();
+    else markTo = i;
+  }
+
+  // While groups are marked, each staff keeps at least 32px of the
+  // preview's height and the preview scrolls when the system needs more —
+  // up to the rendering's height at the preview's full width.
+  let minSheetHeight = $state(0);
+  let resized = $state(0);
+  $effect(() => {
+    void previewSvg;
+    void split[setupStep];
+    void resized;
+    const el = sheetEl;
+    if (!markable || !el) {
+      minSheetHeight = 0;
+      return;
+    }
+    void tick().then(() => {
+      const svg = el.querySelector("svg");
+      const box = svg?.viewBox.baseVal;
+      const gs = staffEls();
+      if (!svg || !box?.height || gs.length < 2) return;
+      const size = svg.getBoundingClientRect();
+      if (!size.width || !size.height) return;
+      const scale = Math.min(size.width / box.width, size.height / box.height);
+      const pitch =
+        (gs[gs.length - 1].getBoundingClientRect().top -
+          gs[0].getBoundingClientRect().top) /
+        (gs.length - 1) /
+        scale;
+      if (pitch > 0)
+        minSheetHeight = Math.round(
+          Math.min(
+            (box.height * 32) / pitch,
+            (box.height * size.width) / box.width,
+          ),
+        );
+    });
+  });
+  const pointAt = (i: number) => ({
+    onmouseenter: () => (hoveredStaff = i),
+    onmouseleave: () => (hoveredStaff = null),
+    onfocusin: () => (focusedStaff = i),
+    onfocusout: (e: FocusEvent) => {
+      const row = e.currentTarget as HTMLElement;
+      if (!row.contains(e.relatedTarget as Node | null)) focusedStaff = null;
+    },
+  });
+
+  const coarseQuery = new MediaQuery("(pointer: coarse)", false);
+  const tapWord = $derived(coarseQuery.current ? "Tap" : "Click");
+  // Docked, the sheet shows the marking line or the open group until it is
+  // opened; the list of groups is in the opened sheet.
+  let sheetOpen = $state(false);
+  const compact = $derived(docked && !sheetOpen);
+  function goStep(step: 1 | 2) {
+    setupStep = step;
+    clearMark();
+  }
 </script>
+
+<svelte:window
+  onresize={() => resized++}
+  onkeydown={(e) => {
+    if (e.key === "Escape" && markFrom !== null) clearMark();
+  }}
+/>
 
 <svelte:head>
   <title>Score setup · {session.pieceName || campaign} · Let's Encode!</title>
@@ -726,64 +1402,321 @@
       </div>
     </div>
   {:else if data}
-    <div class="main" bind:clientWidth={mainW}>
-      <RunnerBanner {runner} bar />
+    <!-- The work area: the source's first measure beside the preview of
+         the setup, split by a divider that moves the boundary. A piece
+         without page images has the preview alone. -->
+    <div class="main">
       <TaskRunState task={taskId} bar />
+      <div class="desk" bind:this={desk}>
+        {#if firstMeasure && data.imageUrls[shownPage]}
+          {@const pg = data.model.pages[shownPage]}
+          <section
+            class="facscol"
+            style:flex-basis={`${split[setupStep] * 100}%`}
+            aria-label="Source"
+          >
+            <span class="sb-label"
+              >{anchorPage === null
+                ? "Source · first measure"
+                : `Source · page ${shownPage + 1}`}</span
+            >
+            <div
+              class="facsbox"
+              bind:this={facsEl}
+              style:max-height={facsHeight ? `${facsHeight}px` : null}
+            >
+              <FacsimileFrame
+                url={data.imageUrls[shownPage]}
+                width={pg.width}
+                height={pg.height}
+                frame={anchorPage === null
+                  ? firstMeasure.frame
+                  : { ulx: 0, uly: 0, lrx: pg.width, lry: pg.height }}
+                mark={shownPage === firstMeasure.page
+                  ? firstMeasure.box
+                  : undefined}
+                label={`Page ${shownPage + 1} of the source`}
+                fitLabel="Show the first measure"
+                away={anchorPage !== null}
+                onfit={() => (anchorPage = null)}
+                {align}
+              />
+            </div>
+          </section>
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
+          <div
+            class="pane-grip"
+            role="separator"
+            tabindex="0"
+            aria-label="Resize the source and the preview"
+            aria-orientation="vertical"
+            aria-valuenow={Math.round(split[setupStep] * 100)}
+            aria-valuemin={20}
+            aria-valuemax={80}
+            onpointerdown={splitDown}
+            onpointermove={splitMove}
+            onpointerup={splitUp}
+            onpointercancel={splitUp}
+            onkeydown={splitKey}
+          ></div>
+        {/if}
+        <section class="previewbox" aria-label="Preview of the setup">
+          <span class="sb-label">Preview of the setup</span>
+          {#if !meterValid}
+            <p class="muted">
+              Enter a whole number of beats to see the preview.
+            </p>
+          {:else if !groupsValid}
+            <p class="muted">Fix the staff groups to see the preview.</p>
+          {:else if previewError}
+            <p class="muted">{previewError}</p>
+          {:else if previewSvg}
+            <!-- In step 2 the staves take clicks and taps; the Groups section
+                 of the panel is the path without a pointer. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+            <div
+              class="sheet"
+              class:marking={markable}
+              style:--min-h={minSheetHeight ? `${minSheetHeight}px` : null}
+              bind:this={sheetEl}
+              onpointerdown={sheetDown}
+              onpointermove={sheetMove}
+              onclick={sheetClick}
+            >
+              <!-- Rendered by Verovio and sanitised in verovio-render.ts. -->
+              <!-- eslint-disable-next-line svelte/no-at-html-tags -->
+              {@html previewSvg}
+              <!-- The staff numbers, drawn over the rendering's left margin;
+                   they take no clicks. -->
+              {#each staffMarks as y, i (i)}
+                <span
+                  class="staffmark"
+                  class:lit={!!lit && i + 1 >= lit.start && i + 1 <= lit.end}
+                  style:top="{y}px"
+                  aria-hidden="true">{i + 1}</span
+                >
+              {/each}
+            </div>
+          {:else}
+            <p class="muted">Rendering…</p>
+          {/if}
+        </section>
+      </div>
+      <DraftBubble {session} />
+    </div>
 
-      {#if narrow}
-        <div class="colswitch">
-          <div class="seg" role="group" aria-label="Shown column">
-            <button
-              type="button"
-              class:on={shownCol === "form"}
-              aria-pressed={shownCol === "form"}
-              onclick={() => (shownCol = "form")}>Setup</button
-            >
-            <button
-              type="button"
-              class:on={shownCol === "pages"}
-              aria-pressed={shownCol === "pages"}
-              onclick={() => (shownCol = "pages")}>Source pages</button
-            >
-          </div>
+    <!-- The setup form, in the side panel's Setup tab. -->
+    {#snippet setupForm()}
+      {#if !holds}
+        <!-- The submitted values as text, for what the rendering leaves
+             open: the transposition, an octave clef, which label belongs to
+             a staff or a group. -->
+        <div class="summary">
+          <dl class="sumrest">
+            <dt>Key signature</dt>
+            <dd>
+              {KEY_SIGNATURES.find((k) => k.value === keysig)?.label ?? keysig}
+            </dd>
+            <dt>Time signature</dt>
+            <dd>
+              {#if meterType === "numeric"}
+                {meterCount}/{meterUnit}
+              {:else}
+                <MusicGlyph name={meterType} />
+                {METER_NAMES[meterType]}
+              {/if}
+            </dd>
+          </dl>
+          <ol class="sumstaves">
+            {#each staves as staff, i (i)}
+              <li
+                class:pointed={pointedStaff === i}
+                onmouseenter={() => (hoveredStaff = i)}
+                onmouseleave={() => (hoveredStaff = null)}
+              >
+                <span class="staffno">{i + 1}</span>
+                <span class="sumbody">
+                  <span class="sumname" class:unnamed={!staff.label}
+                    >{staff.label || "No instrument name"}</span
+                  >
+                  <span class="summeta">
+                    <span class="clefname"
+                      >{#if clefGlyph(staff)}<MusicGlyph
+                          name={clefGlyph(staff)!}
+                        />{/if}
+                      {clefText(staff)}</span
+                    >
+                    {#if transposes(staff)}
+                      <span>{transText(staff)}</span>
+                    {/if}
+                    {#if !unpitched(staff) && staffKeysig(keysig, staff) !== keysig}
+                      <span>Key: {keysigText(staffKeysig(keysig, staff))}</span>
+                    {/if}
+                  </span>
+                </span>
+              </li>
+            {/each}
+          </ol>
+          {#if groups.length}
+            <ul class="sumgroups">
+              {#each ordered as group (group)}
+                <li
+                  class:inner={groupDepth(groups, group) > 0}
+                  class:pointed={hoveredGroup === group}
+                  onmouseenter={() => (hoveredGroup = group)}
+                  onmouseleave={() => (hoveredGroup = null)}
+                >
+                  <span class="sumname"
+                    ><MusicGlyph name={symbolGlyph(group.symbol)} />
+                    {symbolName(group.symbol)}</span
+                  >
+                  <span class="summeta">{groupText(group)}</span>
+                </li>
+              {/each}
+            </ul>
+          {/if}
         </div>
-      {/if}
-      <div class="desk" class:narrow>
-        <div class="formcol" class:hidden={narrow && shownCol !== "form"}>
-          <form class="setup" onsubmit={(e) => e.preventDefault()}>
-            <fieldset disabled={!canEdit}>
+      {:else}
+        <form class="setup" class:docked onsubmit={(e) => e.preventDefault()}>
+          {#if docked}{@render steps()}{/if}
+          {#if setupStep === 1}
+            <fieldset disabled={!canEdit} class="sec-meter">
+              <p class="grouphead">Key and time signature</p>
+              <div class="meterrow">
+                <label class="mfield">
+                  <span>Key signature</span>
+                  <select
+                    class="ctl"
+                    bind:value={keysig}
+                    title="The accidentals the score opens with, on the staves that do not transpose."
+                  >
+                    {#each KEY_SIGNATURES as key (key.value)}
+                      <option value={key.value}>{key.label}</option>
+                    {/each}
+                  </select>
+                </label>
+                <div class="mfield">
+                  <span>Time signature</span>
+                  <GlyphSelect
+                    class="ctl"
+                    options={METER_KINDS}
+                    value={meterType}
+                    onchange={(v) => (meterType = v as typeof meterType)}
+                    label="Time signature"
+                    title="Numbers (beats over a beat unit), or a symbol: common time or cut time."
+                  />
+                </div>
+              </div>
+              {#if meterType === "numeric"}
+                <div class="meterrow">
+                  <label class="mfield">
+                    <span>Beats</span>
+                    <input
+                      class="ctl"
+                      type="text"
+                      inputmode="numeric"
+                      bind:value={meterCount}
+                      class:bad={!meterValid}
+                      title="The number of beats in a bar — the upper number of the time signature."
+                    />
+                  </label>
+                  <label class="mfield">
+                    <span>Beat unit</span>
+                    <select
+                      class="ctl"
+                      bind:value={meterUnit}
+                      title="The note value that counts as one beat — the lower number of the time signature."
+                    >
+                      {#each METER_UNITS as unit (unit)}
+                        <option value={String(unit)}>{unit}</option>
+                      {/each}
+                    </select>
+                  </label>
+                </div>
+              {/if}
+            </fieldset>
+
+            <fieldset disabled={!canEdit} class="sec-staves">
               <p class="grouphead">Staves</p>
-              <ol class="staves">
+              <ol class="staves" bind:this={staffList}>
                 {#each staves as staff, i (i)}
-                  <li class="staffrow">
-                    <span class="staffno">{i + 1}</span>
-                    <label class="field">
-                      <span>Clef</span>
-                      <select
-                        value={clefKey(staff)}
-                        onchange={(e) =>
-                          setClef(staff, (e.target as HTMLSelectElement).value)}
-                        title="The clef this staff opens with. Picking one sets its usual line."
+                  <li
+                    class="staffrow"
+                    class:transposing={!unpitched(staff) && transposes(staff)}
+                    class:pointed={pointedStaff === i}
+                    class:dragged={dragging === i && picked === null}
+                    class:picked={picked === i}
+                    {...pointAt(i)}
+                  >
+                    {#if canEdit && staves.length > 1}
+                      <button
+                        type="button"
+                        class="staffgrip"
+                        class:target={picked !== null && picked !== i}
+                        style:grid-row="2 / span {transValue(staff) ===
+                          'other' && !unpitched(staff)
+                          ? 2
+                          : 1}"
+                        aria-label={`Staff ${i + 1}: move`}
+                        aria-pressed={picked === i}
+                        title={handleTitle(i)}
+                        onpointerdown={(e) => handleDown(i, e)}
+                        onpointermove={handleMove}
+                        onpointerup={handleUp}
+                        onpointercancel={handleUp}
+                        onclick={() => handleClick(i)}
+                        onkeydown={(e) => handleKey(i, e)}
                       >
-                        {#each CLEF_OPTIONS as option (option.value)}
-                          <option value={option.value}>{option.label}</option>
-                        {/each}
-                      </select>
-                    </label>
-                    {#if staff.notationType === "tab.lute.german"}
-                      <label class="field narrow">
-                        <span>Lines</span>
-                        <select
-                          disabled
-                          title="German tablature is written in letters, without staff lines."
+                        <Icon name="grip" />
+                      </button>
+                    {/if}
+                    <span class="staffno">{i + 1}</span>
+                    <div class="staffline">
+                      <input
+                        class="ctl grow"
+                        type="text"
+                        bind:value={staff.label}
+                        oninput={() => fillFromLabel(staff)}
+                        placeholder="Instrument"
+                        aria-label={`Staff ${i + 1}: instrument`}
+                        title="The instrument or voice name printed in front of this staff. Leave empty for none. A name with a pitch, like Clarinetto in B, sets the transposition."
+                      />
+                      {#if canEdit}
+                        <button
+                          type="button"
+                          class="btn btn-icon btn-danger"
+                          onclick={() => removeStaff(i)}
+                          disabled={staves.length <= 1 ||
+                            (omr && data?.hasNotation)}
+                          aria-label={`Remove staff ${i + 1}`}
+                          title={omr && data?.hasNotation
+                            ? "The staff count is fixed once the piece holds notation"
+                            : "Remove this staff"}><Icon name="trash" /></button
                         >
-                          <option>—</option>
-                        </select>
-                      </label>
-                    {:else if clefLineFixed(staff)}
-                      <label class="field narrow">
-                        <span>Lines</span>
+                      {/if}
+                    </div>
+                    <div class="staffline">
+                      <GlyphSelect
+                        class="ctl clef"
+                        options={clefOption(staff)
+                          ? CLEF_OPTIONS
+                          : [
+                              {
+                                value: "",
+                                label: clefText(staff),
+                                glyph: clefGlyph(staff),
+                              },
+                              ...CLEF_OPTIONS,
+                            ]}
+                        top={COMMON_CLEFS}
+                        value={clefOption(staff)?.value ?? ""}
+                        onchange={(v) => setClef(staff, v)}
+                        label={`Staff ${i + 1}: clef`}
+                        title="The clef this staff opens with."
+                      />
+                      {#if unpitched(staff) && staff.notationType !== "tab.lute.german"}
                         <select
+                          class="ctl lines"
                           value={String(staff.lines)}
                           onchange={(e) => {
                             staff.lines = Number(
@@ -793,70 +1726,116 @@
                             // it actually has.
                             staff.clefLine = Math.ceil(staff.lines / 2);
                           }}
+                          aria-label={`Staff ${i + 1}: lines`}
                           title="How many lines the staff has — one per string for a tablature, up to five for percussion."
                         >
                           {#each linesChoices(staff) as count (count)}
-                            <option value={String(count)}>{count}</option>
+                            <option value={String(count)}
+                              >{count} line{count === 1 ? "" : "s"}</option
+                            >
                           {/each}
                         </select>
-                      </label>
-                    {:else}
-                      <label class="field narrow">
-                        <span>Line</span>
+                      {:else if !unpitched(staff)}
                         <select
-                          value={String(staff.clefLine)}
+                          class="ctl trans"
+                          value={transValue(staff)}
                           onchange={(e) =>
-                            (staff.clefLine = Number(
+                            pickTransposition(
+                              staff,
                               (e.target as HTMLSelectElement).value,
-                            ))}
-                          title="The staff line the clef sits on, counted from the bottom line up."
+                            )}
+                          aria-label={`Staff ${i + 1}: transposition`}
+                          title={transposes(staff)
+                            ? `Sounds ${soundsText(transOf(staff))} than written.`
+                            : "Whether the instrument transposes: its music is written at another pitch than it sounds."}
                         >
-                          {#each CLEF_LINES as line (line)}
-                            <option value={String(line)}>{line}</option>
+                          <option value="none">Not transposing</option>
+                          {#each COMMON_TRANSPOSITIONS as t, n (n)}
+                            <option value={String(n)}>{t.label}</option>
+                          {/each}
+                          <option value="other">Other…</option>
+                        </select>
+                        <select
+                          class="ctl key"
+                          value={staff.keysig ?? ""}
+                          onchange={(e) => {
+                            const v = (e.target as HTMLSelectElement).value;
+                            if (v === "") delete staff.keysig;
+                            else staff.keysig = v;
+                            settleKey(staff);
+                          }}
+                          aria-label={`Staff ${i + 1}: key signature`}
+                          title={staff.keysig === undefined
+                            ? transposes(staff)
+                              ? "The key signature of this staff: the score's, moved by the transposition."
+                              : "The key signature of this staff: the score's."
+                            : "The key signature of this staff, chosen for it alone."}
+                        >
+                          <optgroup
+                            label={transposes(staff)
+                              ? "Score key, transposed"
+                              : "Score key"}
+                          >
+                            <option value=""
+                              >{keysigText(followedKey(staff))}</option
+                            >
+                          </optgroup>
+                          <optgroup label="This staff only">
+                            {#each STAFF_KEYS as k (k.value)}
+                              <option value={k.value}>{k.label}</option>
+                            {/each}
+                          </optgroup>
+                        </select>
+                      {/if}
+                    </div>
+                    {#if transValue(staff) === "other" && !unpitched(staff)}
+                      {@const c = customOf(staff)}
+                      <div class="staffline custom">
+                        <select
+                          class="ctl"
+                          value={c.pitch}
+                          onchange={(e) =>
+                            setCustom(staff, {
+                              pitch: (e.target as HTMLSelectElement).value,
+                            })}
+                          aria-label={`Staff ${i + 1}: instrument pitch`}
+                          title="The pitch the instrument is in: the note that sounds when a C is written."
+                        >
+                          {#each PITCHES as p (p.name)}
+                            <option value={p.name}>in {p.name}</option>
                           {/each}
                         </select>
-                      </label>
-                    {/if}
-                    <label class="field wide">
-                      <span>Instrument</span>
-                      <input
-                        type="text"
-                        bind:value={staff.label}
-                        placeholder={canEdit ? "optional" : "—"}
-                        title="The instrument or voice name printed in front of this staff. Leave empty for none."
-                      />
-                    </label>
-                    {#if canEdit}
-                      <div class="rowbtns">
-                        <button
-                          type="button"
-                          class="btn btn-icon"
-                          onclick={() => moveStaff(i, -1)}
-                          disabled={i === 0}
-                          aria-label={`Move staff ${i + 1} up`}
-                          title="Move this staff up"
-                          ><Icon name="arrow-up" /></button
+                        <select
+                          class="ctl"
+                          value={c.higher ? "higher" : "lower"}
+                          onchange={(e) =>
+                            setCustom(staff, {
+                              higher:
+                                (e.target as HTMLSelectElement).value ===
+                                "higher",
+                            })}
+                          aria-label={`Staff ${i + 1}: sounds higher or lower`}
+                          title="Whether the instrument sounds higher or lower than written."
                         >
-                        <button
-                          type="button"
-                          class="btn btn-icon"
-                          onclick={() => moveStaff(i, 1)}
-                          disabled={i === staves.length - 1}
-                          aria-label={`Move staff ${i + 1} down`}
-                          title="Move this staff down"
-                          ><Icon name="arrow-down" /></button
+                          <option value="lower">sounds lower</option>
+                          <option value="higher">sounds higher</option>
+                        </select>
+                        <select
+                          class="ctl"
+                          value={String(c.octaves)}
+                          onchange={(e) =>
+                            setCustom(staff, {
+                              octaves: Number(
+                                (e.target as HTMLSelectElement).value,
+                              ),
+                            })}
+                          aria-label={`Staff ${i + 1}: added octaves`}
+                          title="Whole octaves added to the interval, as for a bass clarinet."
                         >
-                        <button
-                          type="button"
-                          class="btn btn-icon"
-                          onclick={() => removeStaff(i)}
-                          disabled={staves.length <= 1 ||
-                            (omr && data?.hasNotation)}
-                          aria-label={`Remove staff ${i + 1}`}
-                          title={omr && data?.hasNotation
-                            ? "The staff count is fixed once the piece holds notation"
-                            : "Remove this staff"}><Icon name="close" /></button
-                        >
+                          <option value="0">no octave</option>
+                          <option value="1">+1 octave</option>
+                          <option value="2">+2 octaves</option>
+                        </select>
                       </div>
                     {/if}
                   </li>
@@ -874,211 +1853,336 @@
                     : "Add a staff below the last one."}>Add staff</button
                 >
               {/if}
-
-              {#if staves.length > 1 || groups.length > 0}
-                <p class="grouphead sub">Groups</p>
-                {#each groups as group, i (i)}
-                  <div class="grouprow">
-                    <label class="field">
-                      <span>Symbol</span>
-                      <select
-                        bind:value={group.symbol}
-                        title="A brace joins the staves of one instrument, like a piano. A bracket joins a section, like the strings."
-                      >
-                        <option value="brace">Brace (one instrument)</option>
-                        <option value="bracket">Bracket (section)</option>
-                      </select>
-                    </label>
-                    <label class="field narrow">
-                      <span>From staff</span>
-                      <select
-                        bind:value={group.start}
-                        title="The group's first staff."
-                      >
-                        {#each staves as _, n (n)}
-                          <option value={n + 1}>{n + 1}</option>
-                        {/each}
-                      </select>
-                    </label>
-                    <label class="field narrow">
-                      <span>To staff</span>
-                      <select
-                        bind:value={group.end}
-                        title="The group's last staff."
-                      >
-                        {#each staves as _, n (n)}
-                          <option value={n + 1}>{n + 1}</option>
-                        {/each}
-                      </select>
-                    </label>
-                    <label class="field grow">
-                      <span>Label</span>
-                      <input
-                        type="text"
-                        bind:value={group.label}
-                        placeholder={canEdit ? "optional" : "—"}
-                        title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
-                      />
-                    </label>
-                    {#if canEdit}
-                      <div class="rowbtns">
+            </fieldset>
+          {:else}
+            <fieldset disabled={!canEdit} class="sec-groups">
+              <p class="grouphead">Groups</p>
+              <p class="vh" aria-live="polite">{liveText}</p>
+              <!-- The marking in the preview: the first staff, the last, the
+                   symbol. Docked and closed, the sheet shows this line or the
+                   open group. -->
+              {#if markable && !(compact && openG && markFrom === null)}
+                <div class="markline">
+                  {#if markFrom === null}
+                    <p class="markhint">
+                      {tapWord} the first staff of a group in the preview.
+                    </p>
+                  {:else if markTo === null}
+                    <p class="markhint">
+                      <strong>Staff {markFrom + 1}</strong> · {tapWord.toLowerCase()}
+                      the last staff of the group.
+                    </p>
+                    <div class="markbtns">
+                      {#each containing(markFrom + 1) as g (g)}
                         <button
                           type="button"
-                          class="btn btn-icon"
-                          onclick={() => removeGroup(i)}
-                          aria-label={`Remove group ${i + 1}`}
-                          title="Remove this group"
-                          ><Icon name="close" /></button
+                          class="btn"
+                          onclick={() => toggleRow(g)}
+                          title="Open this group"
+                          ><MusicGlyph
+                            name={symbolGlyph(g.symbol)}
+                          />{symbolName(g.symbol)}
+                          {g.start}–{g.end}</button
                         >
-                      </div>
+                      {/each}
+                      <button type="button" class="btn" onclick={clearMark}
+                        >Cancel</button
+                      >
+                    </div>
+                  {:else if markSpan}
+                    <p class="markhint">
+                      <strong>Staves {markSpan.start}–{markSpan.end}</strong>
+                    </p>
+                    {#if markProblem}
+                      <p class="groupwarn">{markProblem}</p>
                     {/if}
-                  </div>
-                {/each}
-                {#if canEdit}
+                    <div class="markbtns">
+                      {#if sameGroup}
+                        <button
+                          type="button"
+                          class="btn"
+                          onclick={() => toggleRow(sameGroup)}
+                          title="Open this group"
+                          ><MusicGlyph
+                            name={symbolGlyph(sameGroup.symbol)}
+                          />{symbolName(sameGroup.symbol)}
+                          {sameGroup.start}–{sameGroup.end}</button
+                        >
+                      {:else if !markProblem}
+                        <button
+                          type="button"
+                          class="btn"
+                          onclick={() => addMarked("brace")}
+                          title="Join the staves with a brace: the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2."
+                          ><MusicGlyph name="brace" />Brace</button
+                        >
+                        <button
+                          type="button"
+                          class="btn"
+                          onclick={() => addMarked("bracket")}
+                          title="Join the staves with a bracket: a section, like the woodwinds or the strings."
+                          ><MusicGlyph name="bracket" />Bracket</button
+                        >
+                      {/if}
+                      <button type="button" class="btn" onclick={clearMark}
+                        >Cancel</button
+                      >
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+              {#if compact}
+                {#if openG && markFrom === null}{@render groupRow(openG)}{/if}
+              {:else}
+                <ul class="glist">
+                  {#each ordered as g (g)}
+                    <li>{@render groupRow(g)}</li>
+                  {:else}
+                    <li class="muted">No groups.</li>
+                  {/each}
+                </ul>
+                {#if canEdit && freePair !== null}
                   <button
                     type="button"
                     class="btn addbtn"
                     onclick={() => addGroup()}
-                    title="Join a run of staves with a brace or bracket."
+                    title="Join two neighbouring staves with a brace. Its staves and symbol can be changed below."
                     >Add group</button
                   >
                 {/if}
-                {#if !groupsValid}
-                  <p class="groupwarn">
-                    Groups must fit the staves and must not overlap.
-                  </p>
-                {/if}
               {/if}
-            </fieldset>
-
-            <fieldset disabled={!canEdit}>
-              <p class="grouphead">Key and time signature</p>
-              <div class="pair">
-                <label class="field">
-                  <span>Key signature</span>
-                  <select
-                    bind:value={keysig}
-                    title="The accidentals the score opens with, on every staff."
-                  >
-                    {#each KEY_SIGNATURES as key (key.value)}
-                      <option value={key.value}>{key.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <label class="field">
-                  <span>Time signature</span>
-                  <select
-                    bind:value={meterType}
-                    title="Numbers (beats over a beat unit), or a symbol: common time (C) or cut time (¢)."
-                  >
-                    <option value="numeric">Numbers</option>
-                    <option value="common">Common time (C)</option>
-                    <option value="cut">Cut time (¢)</option>
-                  </select>
-                </label>
-                {#if meterType === "numeric"}
-                  <label class="field narrow">
-                    <span>Beats</span>
-                    <input
-                      type="text"
-                      inputmode="numeric"
-                      bind:value={meterCount}
-                      class:bad={!meterValid}
-                      title="The number of beats in a bar — the upper number of the time signature."
-                    />
-                  </label>
-                  <label class="field narrow">
-                    <span>Beat unit</span>
-                    <select
-                      bind:value={meterUnit}
-                      title="The note value that counts as one beat — the lower number of the time signature."
-                    >
-                      {#each METER_UNITS as unit (unit)}
-                        <option value={String(unit)}>{unit}</option>
-                      {/each}
-                    </select>
-                  </label>
-                {/if}
-              </div>
-            </fieldset>
-
-            <section class="previewbox">
-              <span class="sb-label">Preview</span>
-              {#if !meterValid}
-                <p class="muted">
-                  Enter a whole number of beats to see the preview.
+              {#if !groupsValid}
+                <p class="groupwarn">
+                  Groups must fit the staves and must contain whole groups.
                 </p>
-              {:else if !groupsValid}
-                <p class="muted">Fix the staff groups to see the preview.</p>
-              {:else if previewError}
-                <p class="muted">{previewError}</p>
-              {:else if previewSvg}
-                <!-- Rendered by Verovio and sanitised in verovio-render.ts. -->
-                <!-- eslint-disable-next-line svelte/no-at-html-tags -->
-                <div class="sheet">{@html previewSvg}</div>
-              {:else}
-                <p class="muted">Rendering…</p>
               {/if}
-            </section>
-          </form>
-        </div>
+            </fieldset>
+          {/if}
+        </form>
+      {/if}
+    {/snippet}
 
-        <!-- The piece's committed score beside the form — the same viewer the
-             console uses, so the source pages can be read while the staves,
-             clefs, key signature and meter are entered. Opens on the facsimile
-             with the measure zones hidden: the setup is read off the source
-             image, not the measure grid. -->
-        <div class="refcol" class:hidden={narrow && shownCol !== "pages"}>
-          <ScorePreview
-            bind:this={refPreview}
-            {owner}
-            {repo}
-            fragment={data.fragment}
-            initialPane="facs"
-            initialZones={false}
-            {anchor}
-          />
-        </div>
-      </div>
-    </div>
-
-    {#snippet tools()}
-      <div class="tbsection">
-        <span class="abcount">
-          {staves.length} stave{staves.length === 1 ? "" : "s"}
-          · {meterType === "numeric"
-            ? `${meterCount}/${meterUnit}`
-            : meterType === "common"
-              ? "common time"
-              : "cut time"}
-        </span>
-        <PreTaskStatus {session} />
-        {#if omr && canEdit && recognition && recognition.failed.length > 0}
-          <button
-            type="button"
-            class="btn"
-            onclick={() => recognise()}
-            disabled={busy}
-            title="Run the staff model again on the {recognition.failed
-              .length} staves it could not transcribe"
+    <!-- A group: its line (symbol, staves, label), opening its values. -->
+    {#snippet groupRow(g: StaffGroupModel)}
+      <div
+        class="gitem"
+        class:open={openG === g}
+        class:inner={groupDepth(groups, g) > 0}
+        role="group"
+        aria-label={`${symbolName(g.symbol)}, staves ${g.start} to ${g.end}`}
+        onmouseenter={() => (hoveredGroup = g)}
+        onmouseleave={() => (hoveredGroup = null)}
+      >
+        <button
+          type="button"
+          class="gline"
+          aria-expanded={openG === g}
+          onclick={() => toggleRow(g)}
+          title={openG === g ? "Close this group" : "Open this group"}
+        >
+          <span class="gsym"
+            ><MusicGlyph name={symbolGlyph(g.symbol)} />
+            {symbolName(g.symbol)}</span
           >
-            Transcribe failed staves again
-          </button>
-        {:else if omr && canEdit && !recognition && recognisedFor === taskId}
-          <button
-            type="button"
-            class="btn"
-            onclick={() => recognise()}
-            disabled={busy}
-            title="Transcribe the staves again; staves already transcribed in this browser are kept"
-          >
-            Transcribe the staves again
-          </button>
+          <span class="gstaves">{g.start}–{g.end}</span>
+          <span class="glabel">{g.label.trim()}</span>
+        </button>
+        {#if openG === g}
+          <div class="gfields">
+            <div class="gfirst">
+              <div class="field">
+                <span>Symbol</span>
+                <GlyphSelect
+                  options={[
+                    {
+                      value: "brace",
+                      label: "Brace",
+                      glyph: "brace",
+                      disabled: !fitsWith(g, { symbol: "brace" }),
+                    },
+                    { value: "bracket", label: "Bracket", glyph: "bracket" },
+                  ]}
+                  value={g.symbol}
+                  onchange={(v) => (g.symbol = v)}
+                  label="Symbol"
+                  title="A brace joins the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2. A bracket joins a section, like the strings."
+                />
+              </div>
+              <label class="field narrow">
+                <span>From staff</span>
+                <select bind:value={g.start} title="The group's first staff.">
+                  {#each staves as _, n (n)}
+                    <option
+                      value={n + 1}
+                      disabled={!fitsWith(g, { start: n + 1 })}>{n + 1}</option
+                    >
+                  {/each}
+                </select>
+              </label>
+              <label class="field narrow">
+                <span>To staff</span>
+                <select bind:value={g.end} title="The group's last staff.">
+                  {#each staves as _, n (n)}
+                    <option
+                      value={n + 1}
+                      disabled={!fitsWith(g, { end: n + 1 })}>{n + 1}</option
+                    >
+                  {/each}
+                </select>
+              </label>
+              {#if canEdit}
+                <button
+                  type="button"
+                  class="btn btn-icon btn-danger"
+                  onclick={() => removeGroup(g)}
+                  aria-label={`Remove the ${symbolName(g.symbol).toLowerCase()} over staves ${g.start}–${g.end}`}
+                  title="Remove this group"><Icon name="trash" /></button
+                >
+              {/if}
+            </div>
+            <label class="field">
+              <span>Label</span>
+              <input
+                type="text"
+                bind:value={g.label}
+                placeholder={canEdit ? "optional" : "—"}
+                title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
+              />
+            </label>
+            <div class="gtoggles">
+              <div class="mfield">
+                <span id="gbar-{g.start}-{g.end}">Barlines</span>
+                <div
+                  class="seg gseg"
+                  role="group"
+                  aria-labelledby="gbar-{g.start}-{g.end}"
+                  title="Whether the barlines run through the group's staves or stop at each staff, as on the page."
+                >
+                  <button
+                    type="button"
+                    class:on={g.barThru}
+                    aria-pressed={g.barThru}
+                    onclick={() => (g.barThru = true)}>Through</button
+                  >
+                  <button
+                    type="button"
+                    class:on={!g.barThru}
+                    aria-pressed={!g.barThru}
+                    onclick={() => (g.barThru = false)}>Per staff</button
+                  >
+                </div>
+              </div>
+              {#if g.symbol === "brace"}
+                <div class="mfield">
+                  <span id="ginstr-{g.start}-{g.end}">Staves</span>
+                  <div
+                    class="seg gseg"
+                    role="group"
+                    aria-labelledby="ginstr-{g.start}-{g.end}"
+                    title="One instrument: one player's part over several staves, like a piano or a harp. Separate staves: one instrument per staff, like Horn 1 and 2. Set from the labels until chosen here."
+                  >
+                    <button
+                      type="button"
+                      class:on={g.oneInstrument}
+                      aria-pressed={g.oneInstrument}
+                      onclick={() => setOneInstrument(g, true)}
+                      >One instrument</button
+                    >
+                    <button
+                      type="button"
+                      class:on={!g.oneInstrument}
+                      aria-pressed={!g.oneInstrument}
+                      onclick={() => setOneInstrument(g, false)}
+                      >Separate staves</button
+                    >
+                  </div>
+                </div>
+              {/if}
+            </div>
+          </div>
         {/if}
-        {#if data?.status === "encoding_required"}
+      </div>
+    {/snippet}
+
+    <!-- The setup's steps: in the task tools beside the content, at the top
+         of the form in a docked sheet, where the tools give way to the form. -->
+    {#snippet steps()}
+      <div
+        class="steplist"
+        role="group"
+        aria-label="Steps"
+        title="The two steps of the score setup."
+      >
+        {#each [{ step: 1, long: "Staves", count: `${staves.length}` }, { step: 2, long: "Groups", count: `${groups.length}` }] as st (st.step)}
           <button
             type="button"
-            class="btn btn-primary submitbtn"
+            class:on={setupStep === st.step}
+            aria-pressed={setupStep === st.step}
+            onclick={() => goStep(st.step as 1 | 2)}
+            aria-label={`${st.step} · ${st.long}, ${st.count}`}
+            ><span class="steplong">{st.step} · {st.long}</span><span
+              class="stepcount">{st.count}</span
+            ></button
+          >
+        {/each}
+      </div>
+    {/snippet}
+
+    <!-- The task tools: the setup's steps, and transcribing the staves
+         again (an OMR-prepared piece). -->
+    {#snippet tools()}
+      {#if !docked}{@render steps()}{/if}
+      {#if omr && canEdit && recognition && recognition.failed.length > 0}
+        <button
+          type="button"
+          class="btn"
+          onclick={() => recognise()}
+          disabled={busy}
+          title="Run the staff model again on the {recognition.failed
+            .length} staves it could not transcribe"
+        >
+          Transcribe failed staves again
+        </button>
+      {:else if omr && canEdit && !recognition && recognisedFor === taskId}
+        <button
+          type="button"
+          class="btn"
+          onclick={() => recognise()}
+          disabled={busy}
+          title="Transcribe the staves again; staves already transcribed in this browser are kept"
+        >
+          Transcribe the staves again
+        </button>
+      {/if}
+    {/snippet}
+
+    <!-- The task's action at the panel's bottom. -->
+    {#snippet footer()}
+      <div class="wfoot">
+        <span class="wstatus">
+          <span class="abcount">
+            {staves.length} stave{staves.length === 1 ? "" : "s"}
+            · {meterType === "numeric"
+              ? `${meterCount}/${meterUnit}`
+              : meterType === "common"
+                ? "common time"
+                : "cut time"}
+          </span>
+          <PreTaskStatus {session} />
+        </span>
+        {#if setupStep === 1}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onclick={() => goStep(2)}
+            title="Go on to step 2: the braces and brackets that join staves. Submission is in step 2."
+          >
+            Next: groups
+          </button>
+        {:else}
+          <button
+            type="button"
+            class="btn btn-primary"
             onclick={() => submit()}
             disabled={busy ||
               !canEdit ||
@@ -1095,15 +2199,21 @@
       </div>
     {/snippet}
 
-    {#snippet taskBox()}
+    <!-- The last command's result, in the task box. -->
+    {#snippet resultNote()}
+      <RunnerBanner {runner} bar collapsible />
+    {/snippet}
+
+    {#snippet taskBox(headAction: Snippet | undefined)}
       {#if session.card}
         <PreTaskBox
           {session}
           {campaign}
           card={session.card}
-          {tools}
+          tools={resultNote}
+          {headAction}
           prefill={() => ({
-            page: String((refPreview?.currentPage() ?? 0) + 1),
+            page: String(shownPage + 1),
             m1: "",
             m2: "",
           })}
@@ -1121,6 +2231,13 @@
         {runner}
         bind:panel={sidePanel}
         {taskBox}
+        tools={canEdit ? tools : undefined}
+        selection={setupForm}
+        selectionLabel="Setup"
+        selectionActive={canEdit}
+        bind:tab={panelTab}
+        bind:open={sheetOpen}
+        footer={data.status === "encoding_required" ? footer : undefined}
         onanchor={showAnchorFor}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
@@ -1162,7 +2279,7 @@
   /* The side panel brings no outer spacing of its own; the score view's
      host row provides it there. Docked below the tool it spans the width. */
   .corrector > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 12px 0;
+    margin: 12px 16px 4px 0;
   }
   .deskwrap {
     flex: 1;
@@ -1178,78 +2295,147 @@
     display: flex;
     flex-direction: column;
   }
-  /* The form and the source pages start 12px below the navigation bar, on
-     the side panel's top edge. */
+  /* The source's first measure on the left, the preview of the setup
+     beside it, both at the work area's full height, the divider (.pane-grip
+     in ui.css) between them. */
   .desk {
     flex: 1;
     min-height: 0;
     display: flex;
-    gap: 16px;
     padding: 12px 16px;
     box-sizing: border-box;
     overflow: hidden;
   }
-  /* The form and the source pages scroll independently, so a page far down
-     the piece can be read next to the form. */
-  .formcol {
-    flex: 1;
-    min-width: 0;
-    overflow-y: auto;
-    container-type: inline-size;
-  }
-  /* A narrow form: a staff row's clef and instrument fields take their own
-     lines' width, the line count, line and buttons wrap after them. */
-  @container (max-width: 520px) {
-    .staffrow {
-      flex-wrap: wrap;
-    }
-    .staffrow > .field:not(.narrow) {
-      flex: 1 1 140px;
-    }
-    .grouprow .field {
-      width: auto;
-      flex: 1 1 140px;
-    }
-  }
-  .refcol {
-    flex: 1;
+  .facscol {
+    flex-grow: 0;
+    flex-shrink: 0;
     min-width: 0;
     min-height: 0;
     display: flex;
-    border: 1px solid var(--line);
+    flex-direction: column;
+    gap: 6px;
+  }
+  /* The page lies on the inset ground of the score viewer's panes
+     (ScorePreview.svelte), which shows where the view reaches past it. */
+  .facsbox {
+    flex: 1;
+    min-height: 0;
+    display: flex;
     border-radius: 10px;
-    background: var(--card);
+    background: var(--bg-inset);
+    box-shadow: var(--shadow-inset);
     overflow: hidden;
   }
-  /* Narrow (NARROW_DESK): one column at a time; the hidden one stays
-     mounted so the preview keeps its page and zoom. */
-  .colswitch {
-    flex: none;
-    padding: 12px 16px 0;
-  }
-  .colswitch .seg {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .colswitch .seg > button {
-    justify-content: center;
-    min-height: 38px;
-  }
-  .desk.narrow {
-    padding-top: 10px;
-  }
-  .hidden {
-    display: none;
+  @media (orientation: portrait) and (max-width: 860px) {
+    .desk {
+      padding: 8px;
+    }
   }
   /* Banner styles are shared app-wide in ui.css. */
 
   /* ------------------------------------------------------------------- form */
-  .setup {
-    max-width: 780px;
-    margin: 0 auto;
+  /* The setup's steps: a list with counts beside the content, two equal
+     cells in a docked sheet (DOCKED_QUERY in side-panels.ts), as in the
+     measure correction. */
+  .steplist {
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 6px;
+  }
+  .steplist > button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 0 12px;
+    font: 400 13px var(--font);
+    color: var(--ink);
+    text-align: left;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .steplist > button.on {
+    font-weight: 600;
+    background: var(--accent-tint-strong);
+    border: 1.5px solid var(--accent);
+  }
+  .steplong {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .stepcount {
+    color: var(--ink-faint);
+    font-weight: 400;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .steplist > button.on .stepcount {
+    color: var(--ink-soft);
+  }
+  @media (orientation: portrait) and (max-width: 860px) {
+    .steplist {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 2px;
+      padding: 2px;
+      background: var(--card);
+      box-shadow: inset 0 0 0 1px var(--line);
+      border-radius: 999px;
+    }
+    .steplist > button {
+      position: relative;
+      justify-content: center;
+      min-height: 28px;
+      padding: 0 6px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--ink-soft);
+      background: transparent;
+      border: 0;
+      border-radius: 999px;
+    }
+    .steplist > button::after {
+      content: "";
+      position: absolute;
+      inset: -8px 0;
+    }
+    .steplist > button.on {
+      color: var(--ink);
+      background: var(--accent-tint-strong);
+      border: 0;
+    }
+    .steplong {
+      flex: none;
+    }
+  }
+
+  /* The form in the side panel: the step's sections. */
+  .setup {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    container-type: inline-size;
+  }
+  /* Docked, the 32px buttons take a 44px press through an invisible
+     ::after. */
+  .setup.docked .field select,
+  .setup.docked .field input,
+  .setup.docked .ctl,
+  .setup.docked :global(.gsel) {
+    min-height: 32px;
+  }
+  .setup.docked :global(.btn) {
+    position: relative;
+  }
+  .setup.docked :global(.btn)::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
   }
   .setup fieldset {
     border: 1px solid var(--line);
@@ -1264,27 +2450,111 @@
     font-size: 12px;
     font-weight: 600;
   }
-  .grouphead.sub {
-    margin-top: 16px;
+  /* The marking in the preview: what to do next, then its buttons. */
+  .markline {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
   }
-  .grouprow {
+  .markhint {
+    margin: 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+  }
+  .markhint strong {
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .markbtns {
     display: flex;
     flex-wrap: wrap;
-    align-items: flex-end;
-    gap: 10px;
-    margin-bottom: 8px;
+    gap: 8px;
   }
-  .grouprow .field {
-    flex: none;
-    width: 160px;
+  .markline > .groupwarn {
+    margin: 0;
   }
-  .grouprow .field.narrow {
-    width: 88px;
+  /* The groups, one line each in staff order, an inner group indented
+     under the group holding it; the open one shows its values below. */
+  .glist {
+    list-style: none;
+    margin: 0 0 12px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
   }
-  .grouprow .field.grow {
+  .gitem {
+    border-radius: 8px;
+    background: var(--bg-tint);
+  }
+  .gitem.inner {
+    margin-left: 16px;
+  }
+  .gitem.open {
+    background: var(--accent-tint-strong);
+  }
+  .gline {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    min-height: 32px;
+    padding: 6px 10px;
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    color: var(--ink);
+    background: none;
+    border: 0;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  .gline:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .gsym {
+    font-weight: 600;
+  }
+  .gstaves {
+    color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+  }
+  .glabel {
     flex: 1;
-    width: auto;
-    min-width: 120px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--ink-soft);
+  }
+  .gfields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 2px 10px 10px;
+  }
+  .gfirst {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+  }
+  .gfirst > .field.narrow {
+    width: 72px;
+  }
+  .gtoggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+  }
+  .gseg {
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+  }
+  .gseg > button {
+    justify-content: center;
   }
   .groupwarn {
     margin: 8px 0 0;
@@ -1299,34 +2569,275 @@
     flex-direction: column;
     gap: 8px;
   }
+  /* A staff, as a tinted block: its number beside the instrument with the
+     row's buttons, the clef, transposition and key below it, and the pitch
+     fields of an unlisted transposition below that. */
   .staffrow {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    column-gap: 6px;
+    row-gap: 6px;
+    padding: 8px 2px 8px 6px;
+    border-radius: 8px;
+    background: var(--bg-tint);
+  }
+  .staffrow > .staffno {
+    grid-column: 1;
+    grid-row: 1;
+    align-self: center;
+    width: auto;
+    text-align: center;
+  }
+  .staffrow > .staffline {
+    grid-column: 2;
+  }
+  .staffrow > .staffline + .staffline {
+    gap: 4px;
+  }
+  /* A transposing instrument's staff, in a tint of its own. */
+  .staffrow.transposing {
+    background: var(--pre-wash);
+  }
+  .staffrow.pointed {
+    background: var(--accent-tint-strong);
+  }
+  /* The grab bar: a pill of dots under the staff's number, centred on the
+     lines below the first (its row span is set per staff), with a press
+     area of 24 by 40px around it. */
+  .staffgrip {
+    grid-column: 1;
+    justify-self: center;
+    align-self: center;
+    position: relative;
     display: flex;
-    align-items: flex-end;
-    gap: 10px;
+    align-items: center;
+    justify-content: center;
+    width: 12px;
+    height: 28px;
+    padding: 0;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--line) 55%, transparent);
+    color: var(--ink-soft);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  .staffgrip::after {
+    content: "";
+    position: absolute;
+    inset: -6px -6px;
+  }
+  .staffgrip :global(svg) {
+    width: 12px;
+    height: 18px;
+  }
+  .staffgrip:active {
+    cursor: grabbing;
+  }
+  @media (hover: hover) {
+    .staffgrip:hover {
+      color: var(--ink);
+      background: var(--line);
+    }
+  }
+  .staffgrip.target {
+    cursor: pointer;
+  }
+  .staffrow.dragged {
+    background: var(--accent-tint-strong);
+    box-shadow: 0 2px 8px rgba(31, 36, 51, 0.14);
+  }
+  .staffrow.picked {
+    background: var(--accent-tint-strong);
+    outline: 1.5px solid var(--accent);
+  }
+  .staffline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .staffline > .ctl,
+  .staffline > :global(.gsel) {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .staffline > :global(.gsel.clef) {
+    flex: 0 1 96px;
+  }
+  .staffline > .ctl.key {
+    flex: 0 0 68px;
+  }
+  /* The staff blocks take the section's width up to a narrow margin. */
+  .setup fieldset.sec-staves {
+    padding-inline: 8px;
+  }
+  .staffline.custom > .ctl:first-child {
+    flex: 0 0 72px;
+  }
+  /* Docked, the text is larger: the transposition takes its own line below
+     the clef and key. */
+  .setup.docked .staffline + .staffline {
+    flex-wrap: wrap;
+  }
+  .setup.docked .staffline > :global(.gsel.clef) {
+    flex: 1 1 0;
+  }
+  .setup.docked .staffline > .ctl.key {
+    flex: 1 1 0;
+  }
+  .setup.docked .staffline > .ctl.trans {
+    order: 1;
+    flex-basis: 100%;
+  }
+  .staffline > .ctl.lines {
+    flex: 0 0 96px;
   }
   .staffno {
     flex: none;
     width: 22px;
-    padding-bottom: 7px;
     font-size: 12.5px;
     font-weight: 600;
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
   }
-  .pair {
+  .ctl,
+  .setup :global(.gsel) {
+    font: inherit;
+    font-size: 13px;
+    box-sizing: border-box;
+    height: 30px;
+    padding: 4px 8px;
+    border: 1px solid var(--line-input);
+    border-radius: 8px;
+    background: var(--card);
+    color: var(--ink);
+    text-overflow: ellipsis;
+  }
+  /* The select's arrow brings its own space on the right. */
+  select.ctl {
+    padding: 4px 2px 4px 6px;
+  }
+  .ctl:disabled,
+  .setup :global(.gsel:disabled) {
+    color: var(--ink-faint);
+    background: var(--bg-tint);
+    cursor: not-allowed;
+  }
+
+  /* ---------------------------------------------------------------- summary
+     The submitted setup as text, for the reviewer and everyone not holding
+     the task. */
+  .summary {
     display: flex;
-    align-items: flex-end;
-    gap: 10px;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .sumstaves {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sumstaves > li {
+    display: flex;
+    gap: 6px;
+    padding: 8px 8px 8px 4px;
+    border-radius: 8px;
+    background: var(--bg-tint);
+  }
+  .sumstaves > li.pointed {
+    background: var(--accent-tint-strong);
+  }
+  .sumstaves .staffno {
+    width: 16px;
+    text-align: right;
+  }
+  .sumbody {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .sumname {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .sumname.unnamed {
+    font-weight: 400;
+    color: var(--ink-faint);
+  }
+  .summeta {
+    display: flex;
     flex-wrap: wrap;
+    column-gap: 10px;
+    font-size: 12.5px;
+    color: var(--ink-soft);
   }
-  /* Fixed widths: showing or hiding the beats and unit fields must not
-     resize the selects beside them. */
-  .pair .field {
-    flex: none;
-    width: 180px;
+  .sumrest {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: 4px 12px;
+    margin: 0;
+    font-size: 12.5px;
   }
-  .pair .field.narrow {
-    width: 88px;
+  .sumrest dt {
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .sumrest dd {
+    margin: 0;
+    color: var(--ink);
+  }
+  .sumgroups {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .sumgroups > li {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 8px;
+    border-radius: 8px;
+    background: var(--bg-tint);
+  }
+  .sumgroups > li.inner {
+    margin-left: 16px;
+  }
+  .sumgroups > li.pointed {
+    background: var(--accent-tint-strong);
+  }
+  /* Key and time signature: two controls to a row, labelled like the
+     group rows, set like the staff rows. */
+  .meterrow {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .meterrow + .meterrow {
+    margin-top: 8px;
+  }
+  .mfield {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .mfield > span {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .mfield > .ctl.bad {
+    border-color: var(--danger-line);
   }
   .field {
     flex: 1;
@@ -1338,9 +2849,6 @@
   .field.narrow {
     flex: none;
     width: 88px;
-  }
-  .field.wide {
-    flex: 2;
   }
   .field span {
     font-size: 11.5px;
@@ -1359,33 +2867,11 @@
     background: var(--card);
     color: var(--ink);
   }
-  .field input.bad {
-    border-color: var(--danger-line);
-  }
   .field select:disabled,
   .field input:disabled {
     color: var(--ink-faint);
     background: var(--bg-tint);
     cursor: not-allowed;
-  }
-  /* Read-only (the viewer does not hold the task): the values are what is
-     being reviewed, so they read as plain text in full ink, not as dimmed
-     controls. */
-  fieldset:disabled .field select,
-  fieldset:disabled .field input {
-    appearance: none;
-    color: var(--ink);
-    -webkit-text-fill-color: var(--ink);
-    opacity: 1;
-    background: transparent;
-    border-color: transparent;
-    padding-left: 0;
-    padding-right: 0;
-    cursor: default;
-  }
-  fieldset:disabled .field input::placeholder {
-    color: var(--ink-faint);
-    -webkit-text-fill-color: var(--ink-faint);
   }
   .rowbtns {
     flex: none;
@@ -1395,34 +2881,94 @@
   .addbtn {
     align-self: flex-start;
   }
+  /* The preview column: the rendered setup at the column's width, scaled
+     down to its height when the staves need more. */
   .previewbox {
+    flex: 1 1 0;
+    min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 6px;
+    min-height: 0;
   }
   .sheet {
+    position: relative;
+    flex: 0 1 auto;
+    min-height: 0;
+    display: flex;
     background: #fff;
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 8px;
-    overflow: auto;
+    padding: 8px 8px 8px 28px;
+    overflow: hidden;
   }
-  .sheet :global(svg) {
+  /* A staff's number in the sheet's left gutter, on the paper's white in
+     both themes. */
+  .staffmark {
+    position: absolute;
+    left: 0;
+    width: 24px;
+    transform: translateY(-50%);
+    font: 600 11px var(--font);
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    text-align: right;
+    color: #666d83;
+    pointer-events: none;
+  }
+  .staffmark.lit {
+    color: #1b66c7;
+  }
+  .sheet > :global(svg) {
     display: block;
     width: 100%;
     height: auto;
+    max-height: 100%;
+  }
+  /* Step 2: the staves take clicks and taps, and keep a height they can be
+     hit at (--min-h), the preview scrolling past it. */
+  .sheet.marking {
+    overflow-y: auto;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .sheet.marking > :global(svg) {
+    flex: none;
+    min-height: var(--min-h, 0);
+  }
+  /* The staves a row of the form points at, and the marked ones. */
+  .sheet :global(g.staff.pointed),
+  .sheet :global(g.staff.pointed *) {
+    fill: #1b66c7;
+    stroke: #1b66c7;
   }
 
-  /* --------------------------------------------------------------- task box
-     The task's status, actions and validation controls, pinned at the top of
-     the side panel. The tint follows the panel's piece colour (--zone). */
-  .tbsection {
+  /* ------------------------------------------------------------ side panel
+     The footer action (SidePanel.svelte). */
+  .wfoot {
     display: flex;
-    flex-direction: column;
-    align-items: flex-start;
+    align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
-    padding: 10px 12px;
-    border-top: 1px solid var(--hairline, var(--line));
+  }
+  .wstatus {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+  }
+  @media (orientation: portrait) and (max-width: 860px) {
+    .wfoot :global(.btn) {
+      position: relative;
+    }
+    .wfoot :global(.btn)::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+    }
   }
   .sb-label {
     font-size: 10.5px;
@@ -1436,8 +2982,5 @@
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
     white-space: nowrap;
-  }
-  .submitbtn {
-    align-self: stretch;
   }
 </style>

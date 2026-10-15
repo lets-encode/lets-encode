@@ -160,7 +160,7 @@
     </label>
     <button
       type="button"
-      class="btn btn-lg btn-secondary"
+      class="btn btn-secondary"
       onclick={previousStep}
       disabled={busy}
     >
@@ -168,7 +168,7 @@
     </button>
     <button
       type="button"
-      class="btn btn-lg btn-primary"
+      class="btn btn-primary"
       onclick={continueToNextStep}
       disabled={!canContinue}
     >

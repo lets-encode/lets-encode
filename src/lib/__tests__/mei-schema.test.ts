@@ -197,6 +197,14 @@ test("a score rebuilt around a submitted score definition validates", async () =
       { ...plain, clefShape: "perc", clefLine: 3, lines: 1, label: "Drums" },
       {
         ...plain,
+        clefShape: "G",
+        clefLine: 2,
+        label: "Clarinetto in B",
+        transDiat: -1,
+        transSemi: -2,
+      },
+      {
+        ...plain,
         clefShape: "TAB",
         clefLine: 3,
         lines: 6,
@@ -213,14 +221,36 @@ test("a score rebuilt around a submitted score definition validates", async () =
       },
     ],
     groups: [
-      { start: 1, end: 2, symbol: "brace", label: "Piano" },
-      { start: 4, end: 6, symbol: "bracket", label: "" },
+      {
+        start: 1,
+        end: 2,
+        symbol: "brace",
+        label: "Piano",
+        barThru: true,
+        oneInstrument: true,
+      },
+      {
+        start: 4,
+        end: 7,
+        symbol: "bracket",
+        label: "",
+        barThru: false,
+        oneInstrument: false,
+      },
+      {
+        start: 4,
+        end: 5,
+        symbol: "brace",
+        label: "",
+        barThru: true,
+        oneInstrument: false,
+      },
     ],
   };
   const richCheck = await validateMei(buildBlankScoreMei(head, 0, rich));
   assert.ok(
     richCheck.ok,
-    `set-up blank score with groups and unpitched staves: ${richCheck.error}`,
+    `set-up blank score with groups, unpitched and transposed staves: ${richCheck.error}`,
   );
 });
 
@@ -286,6 +316,47 @@ test("an optimized score with a resting, unprinted staff validates", async () =>
   assert.notEqual(drafted, mei);
   const check = await validateMei(drafted);
   assert.ok(check.ok, `score with a reduced system: ${check.error}`);
+});
+
+test("a key change restating a transposing staff's own key validates", async () => {
+  // What a page draft writes before the measure where the key changes.
+  const plain = { clefDis: "", clefDisPlace: "", lines: 5, notationType: "" };
+  const scoreDef: ScoreDefModel = {
+    staves: [
+      { ...plain, clefShape: "G", clefLine: 2, label: "Flauto" },
+      {
+        ...plain,
+        clefShape: "G",
+        clefLine: 2,
+        label: "Clarinetto in A",
+        transDiat: -2,
+        transSemi: -3,
+      },
+    ],
+    groups: [],
+    keysig: "3s",
+    meterCount: "4",
+    meterUnit: "4",
+    meterSym: "",
+  };
+  const head = buildPieceHead(
+    {
+      title: "Sonata No. 1",
+      composer: "L. van Beethoven",
+      license: "CC BY 4.0",
+    },
+    source(),
+  );
+  const mei = buildBlankScoreMei(head, 2, scoreDef);
+  const measures = [...mei.matchAll(/<measure\b/g)];
+  assert.ok(measures.length >= 2);
+  const at = measures[1].index!;
+  const changed =
+    mei.slice(0, at) +
+    '<scoreDef><keySig sig="4s"/><staffGrp><staffDef n="2"><keySig sig="1s"/></staffDef></staffGrp></scoreDef>' +
+    mei.slice(at);
+  const check = await validateMei(changed);
+  assert.ok(check.ok, `key change with a transposing staff: ${check.error}`);
 });
 
 test("a document carrying a DOCTYPE declaration is rejected outright", async () => {

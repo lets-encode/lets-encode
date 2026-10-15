@@ -3,14 +3,68 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-15
+
+- The draft note sits centred just above the docked side panel.
+- On phones the task sheet fades at an edge with more to scroll.
+- The score viewer's pane switch uses the toolbar's joined buttons, and on phones its page label shows the numbers only.
+- A Comments button in the task box heading replaces the selection and comments tabs of the task views.
+- The score setup shows the source's first measure beside the preview, split by a draggable divider.
+- The score setup scales the source's first system so its staves line up with the preview's.
+- On phones the closed task sheet can be dragged lower to give the work area more room.
+- On phones a dragged task sheet moves over the work area and shows the task box only once opened.
+- The score setup task description explains the source view, the divider and marking groups.
+- Score setup staves of transposing instruments have a tint of their own.
+- The score setup clef menu lists Treble, Bass and Alto first, above the full list.
+- The score setup shows the brace, bracket and numeric time signature symbols beside their names.
+
+## 2026-10-14
+
+- The score setup preview numbers the staves in its left margin.
+- On phones the score viewer's toolbar buttons are set like the measure correction's.
+- Score setup braces and brackets are marked by clicking or tapping staves in the preview and nest two levels deep.
+- Score setup groups record whether their barlines run through and whether a brace is one instrument.
+- OMR score setups start with braces from the corrected grand-staff boxes.
+- On phones the closed task sheet takes at most half the screen, so the score setup page stays in view.
+- Score setup shows the source page beside the preview and records transposing instruments and per-staff key signatures.
+- Reviewers of a score setup see the submitted values as text.
+- OMR page drafts keep each transposing staff in its own key.
+- The score setup lists each staff as a tinted block.
+- Score setup staves are reordered by dragging their handle and removed with the trashcan.
+- The campaign and task pages show the last result in the side panel, foldable by an arrow.
+- The score setup has two steps, staves with the key and time signature, then groups.
+- The score setup key and time controls match the staff rows and show ♯ and ♭.
+- Score setup clefs and the common and cut time signatures are chosen by their drawn symbols.
+- Measure correction can be used with the keyboard, and Cmd/Ctrl+drag copies a box or a wizard region.
+- Measure correction on touch screens has Scroll and Draw modes and a magnifier on touch.
+- The measure correction toolbar and side panel are rearranged for phones and tablets.
+- Measure correction marks system and section starts and shows why Submit is not available.
+- Screen readers describe measure correction boxes, and form controls have 3:1 contrast.
+- The draft save state shows as a bubble over the pages.
+- All buttons are at most 32px tall.
+- A claimed task is labelled "Ongoing" instead of "Encoding".
+- The under-construction banner stays on one line.
+
 ## 2026-10-13
 
+- Measure correction, review and the score view show the selected measure in the side panel and anchor new comments to it.
+- On phones and upright tablets the side panel is a bottom sheet and the toolbar sits below the pages.
+- Measure correction box handles are touch-sized, with a magnifier while a finger drags one.
+- Task pages hide the page footer on phones and upright tablets.
 - The wizard's upload card keeps its height for the first file, and only the file list scrolls.
 - The wizard's page toolbars group their buttons, and pages are centred.
 - The campaign title stays on one line, and the repository link shows only on desktop.
 - The wizard drops the step count and the Campaign setup label.
 - Drawing a piece's first region on a phone no longer resizes the pages, and scroll mode hides the delete button.
 - The preparation step says it is about using optical music recognition.
+
+## 2026-10-13
+
+- On phones, measure correction keeps the zoom buttons together, opens at page width and shows its help over the pages.
+- Wizard pages can be moved by holding one and then clicking or tapping where it goes, and every move is announced.
+- Change requests have one name everywhere, and campaign rows count them instead of tasks.
+- Comment links say "Show on page N" or "Show m. N in the score".
+- The wizard's Pieces hint wraps to two lines and shows its full text on hover.
 
 ## 2026-10-12
 

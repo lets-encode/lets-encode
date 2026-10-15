@@ -25,6 +25,7 @@ import { addXmlIds } from "./mei-ids.ts";
 import { MEI_SCHEMA_URL } from "./mei-schema.ts";
 import { xmlEscape, xmlUnescape } from "./mei-xml.ts";
 import { pageSystems } from "./omr-layout.ts";
+import { writtenKeysig } from "./transposition.ts";
 
 /** The XML declaration, schema association and <mei> start tag of a generated score. */
 const MEI_OPENING =
@@ -101,11 +102,34 @@ export interface StaffModel {
   notationType: string;
   /** Instrument label, written as a <label> child; '' emits none. */
   label: string;
+  /**
+   * MEI staffDef @trans.diat and @trans.semi: the interval from written to
+   * sounding pitch of a transposing instrument (a clarinet in B♭: -1, -2).
+   * Absent or both 0 is no transposition.
+   */
+  transDiat?: number;
+  transSemi?: number;
+  /**
+   * The staff's own key signature (MEI @keysig) where it differs from the
+   * one its transposition gives (`staffKeysig`); absent follows it.
+   */
+  keysig?: string;
 }
 
-/** A run of staves joined by one symbol: a brace (one instrument, like a
- * piano — its barlines run through) or a bracket (a section, like the
- * strings). Staff numbers are 1-based and inclusive. */
+/** The key signature a staff is written in: its own, else the score's moved by its transposition. */
+export function staffKeysig(scoreKeysig: string, staff: StaffModel): string {
+  return (
+    staff.keysig ??
+    writtenKeysig(scoreKeysig, {
+      diat: staff.transDiat ?? 0,
+      semi: staff.transSemi ?? 0,
+    })
+  );
+}
+
+/** A run of staves joined by one symbol: a brace (a piano; a pair of horns)
+ * or a bracket (a section, like the strings). Staff numbers are 1-based and
+ * inclusive. A group within another's staves nests inside it (staff-groups.ts). */
 export interface StaffGroupModel {
   start: number;
   end: number;
@@ -113,6 +137,14 @@ export interface StaffGroupModel {
   symbol: string;
   /** Group label, written as a <label> child; '' emits none. */
   label: string;
+  /** MEI staffGrp @bar.thru: the barlines run through the group's staves. */
+  barThru: boolean;
+  /**
+   * The staves are one instrument (a piano, a harp: one part over several
+   * staves), written as an <instrDef> in the <staffGrp>; false for staves of
+   * separate instruments (Horn 1, 2). Braces only.
+   */
+  oneInstrument: boolean;
 }
 
 /** The initial score definition: staves with clefs, key signature and meter. */
@@ -250,10 +282,12 @@ export function initialFacsimileModel(pages: FacsimilePage[]): FacsimileModel {
 }
 
 // The <scoreDef> block at its fixed indentation inside <score>: the key
-// signature on the scoreDef, one staffDef per staff carrying its clef, the
-// meter and an optional <label>. keysig '0' means no accidentals and emits no
-// attribute. Grouped staves nest in their own <staffGrp>; a brace joins the
-// staves of one instrument, so its barlines run through (bar.thru).
+// signature on the scoreDef, one staffDef per staff carrying its clef, its
+// own key signature where it differs from the scoreDef's, its transposition,
+// the meter and an optional <label>. keysig '0' means no accidentals and emits no
+// attribute. Grouped staves nest in their own <staffGrp>, an inner group
+// inside the outer one, with bar.thru where the barlines run through and an
+// <instrDef> where a brace's staves are one instrument.
 // `optimize` marks a score whose systems leave out staves (@optimize): a
 // renderer hides a staff that holds only rests.
 function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
@@ -273,13 +307,20 @@ function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
     const notation = staff.notationType
       ? ` notationtype="${xmlEscape(staff.notationType)}"`
       : "";
+    const trans =
+      staff.transDiat || staff.transSemi
+        ? ` trans.diat="${staff.transDiat ?? 0}" trans.semi="${staff.transSemi ?? 0}"`
+        : "";
+    const ownKey = staffKeysig(scoreDef.keysig, staff);
+    const key =
+      ownKey === scoreDef.keysig ? "" : ` keysig="${xmlEscape(ownKey)}"`;
     // A lute tablature staff carries no clef; the TAB lettering belongs to
     // the modern (guitar) kind only.
     const clef = staff.notationType.startsWith("tab.lute.")
       ? ""
       : ` clef.shape="${xmlEscape(staff.clefShape)}" clef.line="${staff.clefLine}"${dis}`;
     const open =
-      `${indent}<staffDef n="${n}" lines="${staff.lines}"${notation}${clef} ` +
+      `${indent}<staffDef n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
       meter;
     if (!staff.label) return `${open}/>`;
     return (
@@ -288,28 +329,40 @@ function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
       `${indent}</staffDef>`
     );
   };
-  const groups = [...scoreDef.groups].sort((a, b) => a.start - b.start);
-  const base = "                     ";
+  // Outer groups first, so each group is found before the groups inside it.
+  const groups = [...scoreDef.groups].sort(
+    (a, b) => a.start - b.start || b.end - a.end,
+  );
+  const count = scoreDef.staves.length;
+  const written = new Set<StaffGroupModel>();
   const rows: string[] = [];
-  let n = 1;
-  while (n <= scoreDef.staves.length) {
-    const group = groups.find((g) => g.start === n);
-    if (!group) {
-      rows.push(staffDefXml(scoreDef.staves[n - 1], n, base));
-      n++;
-      continue;
+  const emit = (from: number, to: number, indent: string) => {
+    let n = from;
+    while (n <= to) {
+      const group = groups.find(
+        (g) => !written.has(g) && g.start === n && Math.min(g.end, count) <= to,
+      );
+      if (!group) {
+        rows.push(staffDefXml(scoreDef.staves[n - 1], n, indent));
+        n++;
+        continue;
+      }
+      written.add(group);
+      const end = Math.min(group.end, count);
+      const thru = group.barThru ? ' bar.thru="true"' : "";
+      rows.push(
+        `${indent}<staffGrp symbol="${xmlEscape(group.symbol)}"${thru}>`,
+      );
+      if (group.label)
+        rows.push(`${indent}   <label>${xmlEscape(group.label)}</label>`);
+      if (group.symbol === "brace" && group.oneInstrument)
+        rows.push(`${indent}   <instrDef/>`);
+      emit(n, end, `${indent}   `);
+      rows.push(`${indent}</staffGrp>`);
+      n = end + 1;
     }
-    const end = Math.min(group.end, scoreDef.staves.length);
-    const thru = group.symbol === "brace" ? ' bar.thru="true"' : "";
-    rows.push(`${base}<staffGrp symbol="${xmlEscape(group.symbol)}"${thru}>`);
-    if (group.label)
-      rows.push(`${base}   <label>${xmlEscape(group.label)}</label>`);
-    while (n <= end) {
-      rows.push(staffDefXml(scoreDef.staves[n - 1], n, `${base}   `));
-      n++;
-    }
-    rows.push(`${base}</staffGrp>`);
-  }
+  };
+  emit(1, count, "                     ");
   return (
     `               <scoreDef${keysig}${optimize ? ' optimize="true"' : ""}>\n` +
     `                  <staffGrp>\n` +
@@ -574,7 +627,7 @@ export function parseScoreDef(text: string): ScoreDefModel {
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
     const tab = notationType.startsWith("tab");
-    staves.push({
+    const staff: StaffModel = {
       clefShape: attr(tag, "clef\\.shape") ?? (tab ? "TAB" : "G"),
       clefLine: Number(attr(tag, "clef\\.line") ?? (tab ? 3 : 2)),
       clefDis: attr(tag, "clef\\.dis") ?? "",
@@ -582,47 +635,59 @@ export function parseScoreDef(text: string): ScoreDefModel {
       lines: Number(attr(tag, "lines") ?? 5),
       notationType,
       label: label ? xmlUnescape(label.trim()) : "",
-    });
+    };
+    const diat = Number(attr(tag, "trans\\.diat") ?? 0);
+    const semi = Number(attr(tag, "trans\\.semi") ?? 0);
+    if (diat || semi) {
+      staff.transDiat = diat;
+      staff.transSemi = semi;
+    }
+    // A staffDef without a key signature has the scoreDef's; the model keeps
+    // a key only where it differs from the one the transposition gives.
+    const scoreKeysig = attr(open, "keysig") ?? "0";
+    const ownKey = attr(tag, "keysig") ?? scoreKeysig;
+    if (ownKey !== staffKeysig(scoreKeysig, staff)) staff.keysig = ownKey;
+    staves.push(staff);
   }
   if (!staves.length) return defaultScoreDef();
   // Nested <staffGrp> elements (below the root one) are the staff groups,
-  // each spanning the staffDefs it wraps, in document order.
+  // each spanning the staffDefs it wraps, outer groups before inner ones.
   const groups: StaffGroupModel[] = [];
   let staffNo = 0;
+  const pending: Omit<StaffGroupModel, "end">[] = [];
   let depth = 0;
-  let inner: { start: number; symbol: string; label: string } | null = null;
   const tokenRe = /<staffGrp\b[^>]*>|<\/staffGrp>|<staffDef\b/g;
   let token: RegExpExecArray | null;
   while ((token = tokenRe.exec(block))) {
     if (token[0] === "<staffDef") {
       staffNo++;
     } else if (token[0].startsWith("</")) {
-      if (depth === 2 && inner && staffNo >= inner.start) {
-        groups.push({
-          start: inner.start,
-          end: staffNo,
-          symbol: inner.symbol,
-          label: inner.label,
-        });
+      if (depth >= 2) {
+        const group = pending.pop()!;
+        if (staffNo >= group.start) groups.push({ ...group, end: staffNo });
       }
-      if (depth === 2) inner = null;
       depth--;
     } else {
       depth++;
-      if (depth === 2) {
+      if (depth >= 2) {
         // A label directly after the open tag names the group (a staff's
-        // own label sits inside its staffDef instead).
-        const label = /^\s*<label\b[^>]*>([\s\S]*?)<\/label>/.exec(
-          block.slice(tokenRe.lastIndex),
-        )?.[1];
-        inner = {
+        // own label sits inside its staffDef instead); an <instrDef> after
+        // it makes the staves one instrument.
+        const head =
+          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(<instrDef\b)?/.exec(
+            block.slice(tokenRe.lastIndex),
+          )!;
+        pending.push({
           start: staffNo + 1,
           symbol: attr(token[0], "symbol") ?? "bracket",
-          label: label ? xmlUnescape(label.trim()) : "",
-        };
+          label: head[1] ? xmlUnescape(head[1].trim()) : "",
+          barThru: attr(token[0], "bar\\.thru") === "true",
+          oneInstrument: !!head[2],
+        });
       }
     }
   }
+  groups.sort((a, b) => a.start - b.start || b.end - a.end);
   const firstStaff = /<staffDef\b[^>]*>/.exec(block)?.[0] ?? "";
   // A symbol signature implies its numeric meter — common time is 4/4, cut
   // time 2/2 — so the model stays complete either way.

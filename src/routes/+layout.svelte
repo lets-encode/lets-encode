@@ -229,7 +229,7 @@
   {/if}
 </main>
 
-<footer>
+<footer class:workspace={corrector}>
   <span class="flong"
     >© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span
   >
@@ -459,9 +459,15 @@
     }
   }
   /* A short window: the under-construction notice takes the footer's place
-     (ConstructionNotice.svelte). */
+     (ConstructionNotice.svelte). A score workspace on a phone or an upright
+     tablet (DOCKED_QUERY in side-panels.ts) leaves the height to the score. */
   @media (max-height: 500px) {
     footer {
+      display: none;
+    }
+  }
+  @media (orientation: portrait) and (max-width: 860px) {
+    footer.workspace {
       display: none;
     }
   }

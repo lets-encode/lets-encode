@@ -21,6 +21,7 @@
   let {
     label,
     panel = $bindable(),
+    min = PANEL_MIN,
     docked = false,
     drag = $bindable(null),
     dockLevel = 0,
@@ -36,6 +37,8 @@
     /** The separator's accessible name. */
     label: string;
     panel: SidePanelState;
+    /** The narrowest width a drag beside the content leaves the panel. */
+    min?: number;
     /** The panel is docked below the content: the bar drags its height. */
     docked?: boolean;
     /** Docked: the panel's height in pixels while a drag is under way. */
@@ -103,7 +106,7 @@
     if (dragDocked && !dockDown) delta = Math.max(delta, -STRETCH);
     next = dragDocked
       ? clampPanelHeight(startSize + delta, window.innerHeight)
-      : clampPanelWidth(startSize + delta, window.innerWidth);
+      : clampPanelWidth(startSize + delta, window.innerWidth, min);
     if (!frame) frame = requestAnimationFrame(apply);
   }
   function end() {
@@ -137,7 +140,7 @@
     ];
     if (delta === undefined) return;
     e.preventDefault();
-    panel.width = clampPanelWidth(panel.width + delta, window.innerWidth);
+    panel.width = clampPanelWidth(panel.width + delta, window.innerWidth, min);
     writeSidePanel({ ...panel });
   }
 </script>
@@ -154,10 +157,10 @@
   aria-orientation={docked ? "horizontal" : "vertical"}
   aria-label={label}
   aria-valuenow={docked ? dockLevel : panel.width}
-  aria-valuemin={docked ? dockMin : PANEL_MIN}
+  aria-valuemin={docked ? dockMin : min}
   aria-valuemax={docked
     ? dockLevels - 1
-    : clampPanelWidth(Infinity, window.innerWidth)}
+    : clampPanelWidth(Infinity, window.innerWidth, min)}
   aria-valuetext={docked ? dockText : `${panel.width} pixels`}
   onkeydown={key}
   onpointerdown={begin}
@@ -179,7 +182,6 @@
     background-clip: padding-box;
     border-radius: 12px;
     background-color: var(--line-input);
-    opacity: 0.65;
     cursor: col-resize;
     touch-action: none;
     position: relative;
@@ -241,7 +243,7 @@
     height: 5px;
     transform: translate(-50%, -50%);
     border-radius: 3px;
-    background: var(--line-strong);
+    background: var(--line-input);
   }
   .handle.docked::after {
     inset: -24px -40px -4px;

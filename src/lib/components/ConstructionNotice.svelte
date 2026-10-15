@@ -7,6 +7,7 @@
   The banner's close button hides it for the browser session.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import { page } from "$app/state";
   import Icon from "./Icon.svelte";
   import { bugReportHref } from "$lib/bug-report.ts";
@@ -70,6 +71,31 @@
   // current height, read as --notice-h.
   const withBanner = $derived((!withDialog || confirmed) && !closed);
   let bannerHeight = $state(0);
+
+  // The banner keeps to one line: where its text does not fit, it gives the
+  // short sentence (level 1), then drops the bug report link (2), then the
+  // sentence (3). It refits whenever the banner's width changes.
+  let level = $state(0);
+  let textEl = $state<HTMLElement>();
+  async function fit() {
+    level = 0;
+    await tick();
+    while (level < 3 && textEl && textEl.scrollWidth > textEl.clientWidth) {
+      level++;
+      await tick();
+    }
+  }
+  function oneLine(el: HTMLElement) {
+    let width = -1;
+    fit();
+    const ro = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width === width) return;
+      width = entry.contentRect.width;
+      fit();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }
   $effect(() => {
     document.documentElement.style.setProperty(
       "--notice-h",
@@ -79,21 +105,27 @@
 </script>
 
 {#if withBanner}
-  <div class="banner" role="note" bind:offsetHeight={bannerHeight}>
+  <div
+    class="banner"
+    role="note"
+    bind:offsetHeight={bannerHeight}
+    {@attach oneLine}
+  >
     <Icon name="warning" size={16} />
-    <span class="banner-text"
+    <span class="banner-text" bind:this={textEl}
       ><strong>Under construction.</strong>
-      <span class="long"
-        >Data on this platform can be reset at any time. GitHub repositories
+      {#if level === 0}
+        Data on this platform can be reset at any time. GitHub repositories
         created with the platform are kept, but the platform may no longer open
-        them.</span
-      >
-      <span class="short">Data on this platform can be reset at any time.</span>
+        them.
+      {:else if level < 3}
+        Data on this platform can be reset at any time.
+      {/if}
       <span class="banner-links">
         <button type="button" class="link" onclick={open}>Details</button>
-        <a class="long" href={reportHref} target="_blank" rel="noopener"
-          >Report a bug</a
-        >
+        {#if level < 2}
+          <a href={reportHref} target="_blank" rel="noopener">Report a bug</a>
+        {/if}
       </span></span
     >
     <button
@@ -164,10 +196,10 @@
           /></a
         >
         <div class="buttons">
-          <a class="btn btn-lg" href={reportHref} target="_blank" rel="noopener"
+          <a class="btn" href={reportHref} target="_blank" rel="noopener"
             >Report a bug</a
           >
-          <button type="button" class="btn btn-lg btn-primary" onclick={confirm}
+          <button type="button" class="btn btn-primary" onclick={confirm}
             >I understand</button
           >
         </div>
@@ -203,6 +235,16 @@
   .banner strong {
     font-weight: 600;
   }
+  /* One line (oneLine); the padding keeps the links' 24px press inside the
+     clipped box. */
+  .banner-text {
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    padding-block: 3px;
+    margin-block: -3px;
+  }
   /* 32px to tap, without growing the banner. */
   .close {
     flex: none;
@@ -231,22 +273,16 @@
     margin-left: 12px;
     white-space: nowrap;
   }
-  /* Phones: one line; the footer carries the bug report link there. */
+  /* Phones: tighter and smaller. */
   @media (max-width: 560px) {
     .banner {
       padding: 6px 12px;
       font-size: 12.5px;
       align-items: center;
     }
-    .banner .long {
-      display: none;
-    }
     .banner-links {
       margin-left: 8px;
     }
-  }
-  .banner .short {
-    display: none;
   }
   /* A short window (a phone in landscape): the notice takes the footer's
      place at the bottom as one line, and the layout hides the footer. */
@@ -258,13 +294,6 @@
       align-items: center;
       border-bottom: 0;
       border-top: 1px solid var(--warn-line);
-    }
-    .banner .long {
-      display: none;
-    }
-    .banner .short,
-    .banner-links .long {
-      display: inline;
     }
   }
   .banner-links a,

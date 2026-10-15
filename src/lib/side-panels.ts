@@ -17,8 +17,8 @@ export const CONTENT_BESIDE_MIN = 474;
     windows up to 860px wide, phones and tablets held upright (an 11-inch iPad
     is 834px). Narrower than PANEL_MIN beside CONTENT_BESIDE_MIN the panel
     cannot sit beside the content at all; up to 860px it would take the width
-    the page images need. ui.css, ScoreView.svelte and the campaign page repeat
-    the width in their media queries. */
+    the page images need. ui.css, ScoreView.svelte, DraftBubble.svelte and the
+    campaign page repeat the width in their media queries. */
 export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 860px)";
 /** The widest default panel beside the content (defaultPanelWidth). */
 export const DEFAULT_PANEL_WIDTH = 400;
@@ -28,6 +28,10 @@ const DOCKED_GAP = 160;
 /** The docked panel's highest height as CSS, following the dynamic viewport
     so a mobile browser's address bar showing or hiding resizes it. */
 export const DOCKED_MAX_CSS = `calc(100dvh - ${DOCKED_GAP}px)`;
+/** A closed docked sheet's highest height as CSS: half the dynamic viewport,
+    so a long selection scrolls inside the sheet and leaves the other half to
+    the content above it. */
+export const SHEET_PEEK_MAX_CSS = "50dvh";
 
 /** A dragged docked height, kept between 120px and DOCKED_MAX_CSS. */
 export function clampPanelHeight(h: number, viewport: number): number {
@@ -119,9 +123,14 @@ export function writeLastTask(campaign: string, task: string | null): void {
   }
 }
 
-/** A panel width, kept between the minimum and half the viewport, and
-    leaving CONTENT_BESIDE_MIN beside it where the viewport allows. */
-export function clampPanelWidth(w: number, viewport: number): number {
+/** A panel width, kept between the minimum (PANEL_MIN unless a view sets
+    its own) and half the viewport, and leaving CONTENT_BESIDE_MIN beside it
+    where the viewport allows. */
+export function clampPanelWidth(
+  w: number,
+  viewport: number,
+  min = PANEL_MIN,
+): number {
   const max = Math.min(viewport / 2, viewport - CONTENT_BESIDE_MIN);
-  return Math.round(Math.min(Math.max(w, PANEL_MIN), Math.max(PANEL_MIN, max)));
+  return Math.round(Math.min(Math.max(w, min), Math.max(min, max)));
 }

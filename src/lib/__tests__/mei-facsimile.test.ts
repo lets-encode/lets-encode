@@ -15,6 +15,7 @@ import {
   type FacsimilePage,
   type FacsimileModel,
   type ScoreDefModel,
+  type StaffGroupModel,
   replaceScoreDef,
 } from "../mei-facsimile.ts";
 
@@ -439,6 +440,49 @@ test("the score definition round-trips through both builders", () => {
   assert.ok(facsimile.includes(">Violoncello &amp; Basso</label>"));
 });
 
+test("transposed staves round-trip with their own key signatures", () => {
+  const scoreDef: ScoreDefModel = {
+    ...THREE_STAVES,
+    keysig: "2f",
+    staves: [
+      // Clarinet in B♭: written a major 2nd up, so no sharps or flats.
+      {
+        clefShape: "G",
+        clefLine: 2,
+        ...PLAIN,
+        label: "Clarinetto in B",
+        transDiat: -1,
+        transSemi: -2,
+      },
+      // Horn in F written without a key signature.
+      {
+        clefShape: "G",
+        clefLine: 2,
+        ...PLAIN,
+        label: "Corno in F",
+        transDiat: -4,
+        transSemi: -7,
+        keysig: "0",
+      },
+      // Timpani without a key signature, not transposing.
+      { clefShape: "F", clefLine: 4, ...PLAIN, label: "Timpani", keysig: "0" },
+      { clefShape: "F", clefLine: 4, ...PLAIN, label: "Basso" },
+    ],
+  };
+  const mei = buildBlankScoreMei(HEAD, 0, scoreDef);
+  assert.match(
+    mei,
+    /<staffDef[^>]* n="1"[^>]* keysig="0" trans\.diat="-1" trans\.semi="-2"/,
+  );
+  assert.match(
+    mei,
+    /<staffDef[^>]* n="2"[^>]* keysig="0" trans\.diat="-4" trans\.semi="-7"/,
+  );
+  assert.match(mei, /<staffDef[^>]* n="3"[^>]* keysig="0" meter/);
+  assert.doesNotMatch(mei, /<staffDef[^>]* n="4"[^>]* (keysig|trans)/);
+  assert.deepEqual(parseScoreDef(mei), scoreDef);
+});
+
 test("keysig 0 means no accidentals and emits no attribute", () => {
   const mei = buildFacsimileMei({
     ...model(),
@@ -495,7 +539,16 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
       { clefShape: "F", clefLine: 4, ...PLAIN, label: "" },
       { clefShape: "G", clefLine: 2, ...PLAIN, label: "Violino" },
     ],
-    groups: [{ start: 1, end: 2, symbol: "brace", label: "Piano & Co." }],
+    groups: [
+      {
+        start: 1,
+        end: 2,
+        symbol: "brace",
+        label: "Piano & Co.",
+        barThru: true,
+        oneInstrument: true,
+      },
+    ],
   };
   const mei = buildFacsimileMei({ ...model(), scoreDef: piano });
   // The group label sits directly inside the staffGrp, escaped.
@@ -503,6 +556,8 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
     mei,
     /<staffGrp[^>]*symbol="brace"[^>]*>\n\s*<label[^>]*>Piano &amp; Co\.<\/label>/,
   );
+  // One instrument: an <instrDef> follows the label.
+  assert.match(mei, /Co\.<\/label>\n\s*<instrDef[^>]*\/>/);
   // The braced pair sits in its own staffGrp with barlines through; the
   // third staff stays outside it.
   assert.match(
@@ -510,15 +565,66 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
     /<staffGrp xml:id="staffGrp-2" symbol="brace" bar\.thru="true">[\s\S]*?n="2"[\s\S]*?<\/staffGrp>\n\s*<staffDef[^>]*n="3"/,
   );
   assert.deepEqual(parseScoreDef(mei), piano);
-  // A bracket groups without running the barlines through.
+  // A bracket without barlines through writes no bar.thru.
   const bracketed = {
     ...piano,
-    groups: [{ start: 2, end: 3, symbol: "bracket", label: "" }],
+    groups: [
+      {
+        start: 2,
+        end: 3,
+        symbol: "bracket",
+        label: "",
+        barThru: false,
+        oneInstrument: false,
+      },
+    ],
   };
   const bracketMei = buildFacsimileMei({ ...model(), scoreDef: bracketed });
   assert.ok(bracketMei.includes('symbol="bracket"'));
   assert.ok(!bracketMei.includes("bar.thru"));
+  assert.ok(!bracketMei.includes("instrDef"));
   assert.deepEqual(parseScoreDef(bracketMei), bracketed);
+});
+
+test("staff groups nest two levels deep and round-trip in document order", () => {
+  const staff = { clefShape: "G", clefLine: 2, ...PLAIN, label: "" };
+  const group = (
+    start: number,
+    end: number,
+    symbol: string,
+    label = "",
+  ): StaffGroupModel => ({
+    start,
+    end,
+    symbol,
+    label,
+    barThru: true,
+    oneInstrument: false,
+  });
+  const orchestra: ScoreDefModel = {
+    ...DEFAULT_SCORE_DEF,
+    staves: Array.from({ length: 7 }, () => ({ ...staff })),
+    // Woodwinds holding a flute pair, a single staff, then strings holding
+    // the violins.
+    groups: [
+      group(1, 3, "bracket", "Legni"),
+      group(1, 2, "brace", "Flauti"),
+      group(5, 7, "bracket"),
+      group(5, 6, "brace"),
+    ],
+  };
+  const mei = buildFacsimileMei({ ...model(), scoreDef: orchestra });
+  // The flute brace opens inside the woodwind bracket, after its label.
+  assert.match(
+    mei,
+    /symbol="bracket" bar\.thru="true">\n\s*<label[^>]*>Legni<\/label>\n\s*<staffGrp[^>]*symbol="brace"/,
+  );
+  // Staff 4 stands outside every group, between the two brackets.
+  assert.match(
+    mei,
+    /<\/staffGrp>\n\s*<staffDef[^>]*n="4"[^>]*\/>\n\s*<staffGrp[^>]*symbol="bracket"/,
+  );
+  assert.deepEqual(parseScoreDef(mei), orchestra);
 });
 
 test("percussion, tablature and octave-displaced staves round-trip", () => {

@@ -3,11 +3,14 @@
   with the side panel beside it — the ?task= task when one is selected, else
   the campaign. Comment anchors on this piece turn the score to their page
   and highlight their measures; a comment posted while a measure is selected
-  carries that measure. The view is addressed by the campaign page's ?score=
+  carries that measure. The panel shows the selected measure and the
+  comments as two tabs. The view is addressed by the campaign page's ?score=
   parameter; the back link returns to the campaign.
 -->
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
+  import { auth } from "$lib/auth.svelte.ts";
+  import Icon from "./Icon.svelte";
   import type { CommentAnchorInput, Result } from "$lib/commands.ts";
   import {
     commentAnchor,
@@ -60,6 +63,7 @@
     cardZone?: number;
     /** The selected task's box. */
     taskBox?: Snippet;
+    /** A row at the side panel's top. */
     banner?: Snippet;
     comments: CommentRow[];
     logins: Record<string, string>;
@@ -93,6 +97,11 @@
         ? null
         : { label, page: preview?.pageOfMeasure(label) ?? 0 };
   }
+  // The side panel's tab; selecting a measure shows it.
+  let panelTab = $state<"selection" | "comments">("comments");
+  $effect(() => {
+    if (selected) untrack(() => (panelTab = "selection"));
+  });
   const task = $derived(card?.task ?? "");
   // A campaign comment names this piece with its anchor; a task comment
   // carries the anchor only when the task is on this piece.
@@ -129,6 +138,37 @@
   }
 </script>
 
+<!-- The selected measure, in the side panel's Selection tab. -->
+{#snippet measureSelection()}
+  {#if selected}
+    <div class="selpanel">
+      <div class="selhead">
+        <span class="selname">Measure {selected.label}</span>
+        <span class="selwhere">page {selected.page + 1}</span>
+        <button
+          type="button"
+          class="btn btn-icon"
+          onclick={() => preview?.clearSelection()}
+          aria-label="Clear the measure selection"
+          title="Clear the measure selection"><Icon name="close" /></button
+        >
+      </div>
+      {#if auth.user && selectionAnchor()}
+        <div class="selactions">
+          <button
+            type="button"
+            class="btn"
+            onclick={() => (panelTab = "comments")}
+            ><Icon name="comment" /> Comment on measure {selected.label}</button
+          >
+        </div>
+      {/if}
+    </div>
+  {:else}
+    <p class="selnone">Select a measure on the score to comment on it.</p>
+  {/if}
+{/snippet}
+
 <div class="scoreview">
   <div class="shead">
     <span class="sname" title={pieceLabel(piece)}
@@ -160,9 +200,13 @@
       bind:panel
       inScore
       emptyLine="Select a task on the board to show it here."
-      composerHint={selectionAnchor() ? "Comment on the selected measure…" : ""}
-      banner={card ? banner : undefined}
+      composerHint={selectionAnchor() && selected
+        ? `Comment on measure ${selected.label}…`
+        : ""}
+      {banner}
       taskBox={card ? taskBox : undefined}
+      selection={measureSelection}
+      bind:tab={panelTab}
       ondeselect={card ? ondeselect : undefined}
       onanchor={showAnchor}
       oncomment={(kind, body, parent_id) =>

@@ -15,6 +15,7 @@ import { commands, invoke, commentInput } from "./commands.ts";
 import type {
   CampaignTables,
   CommandContext,
+  CommentAnchorInput,
   DraftInput,
   FacsimileTaskData,
   FailComment,
@@ -219,7 +220,7 @@ export class PreTaskSession {
   /**
    * Save the editor's state as a draft once editing pauses. The first state
    * after a load is the loaded one and is not saved; an unchanged state is
-   * not saved again.
+   * not saved again, and a return to it drops a waiting save.
    */
   draft(input: Omit<DraftInput, "task_id">) {
     const key = JSON.stringify(input);
@@ -227,7 +228,10 @@ export class PreTaskSession {
       this.#draftKey = key;
       return;
     }
-    if (key === this.#draftKey) return;
+    if (key === this.#draftKey) {
+      this.#cancelDraft();
+      return;
+    }
     this.#draftInput = { task_id: this.#taskId(), ...input };
     if (this.#draftTimer) clearTimeout(this.#draftTimer);
     this.#draftTimer = setTimeout(() => void this.flushDraft(), 5000);
@@ -424,6 +428,7 @@ export class PreTaskSession {
     kind: string,
     body: string,
     parent_id: string,
+    at?: CommentAnchorInput,
   ) {
     const f = forge();
     if (!f) return null;
@@ -431,7 +436,7 @@ export class PreTaskSession {
       () =>
         invoke(
           commands.submitComment,
-          commentInput(task_id, kind, body, parent_id),
+          commentInput(task_id, kind, body, parent_id, at),
           this.ctx(f),
         ),
       this.#afterComment,

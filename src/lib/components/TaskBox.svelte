@@ -51,6 +51,7 @@
     primary = true,
     inView = false,
     tools,
+    headAction,
     prefill,
     measures = true,
     onclaim,
@@ -84,6 +85,9 @@
     inView?: boolean;
     /** The view's own controls, below the status row. */
     tools?: Snippet;
+    /** A control at the heading's right end (the side panel's comments
+        button). */
+    headAction?: Snippet;
     /** The anchor a fresh fail form opens with; defaults to the task's page. */
     prefill?: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
@@ -160,8 +164,8 @@
           : "",
   );
 
-  // What the task asks of the volunteer, in one line: the panel is where a
-  // touch screen reads it.
+  // What the task asks of the volunteer, and for the score setup how its
+  // view is used: the panel is where a touch screen reads it.
   const help = $derived.by(() => {
     if (card.column === "done") return "";
     if (card.column === "validation")
@@ -173,7 +177,7 @@
             ? "Compare the encoding with the scan and approve it or request changes."
             : "Compare the encoding with the scan in the review view and approve it or request changes.";
     if (card.locator === "score-setup")
-      return "Set the score's staves, clefs, key signature and time signature from the source.";
+      return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
     if (card.locator === "omr-layout")
       return "Check the staff and measure boxes on each page and correct the wrong ones.";
     if (card.locator === "measure-zones")
@@ -189,11 +193,7 @@
   const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
 </script>
 
-<div
-  class="taskcard"
-  class:volunteer={!canPush}
-  style={zone ? `--zone: var(--zone-${zone})` : ""}
->
+<div class="taskcard" style={zone ? `--zone: var(--zone-${zone})` : ""}>
   <div class="tsphead">
     <TaskHeading
       description={card.description}
@@ -201,6 +201,7 @@
       piece={pieceName}
       task={canPush ? card.task : ""}
     />
+    {@render headAction?.()}
   </div>
   <TaskRunState task={card.task} bar />
   {#if editorError}
@@ -404,10 +405,19 @@
     overflow-x: hidden;
     box-shadow: var(--shadow-sm);
   }
+  /* The heading's width is a container (taskhead), so a control at its
+     right end can drop its label where the heading is narrow. */
   .tsphead {
+    container: taskhead / inline-size;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
     background: color-mix(in srgb, var(--zone) 10%, var(--card));
     border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
     padding: 9px 12px;
+  }
+  .tsphead > :global(.taskheading) {
+    flex: 1;
   }
   .statusrow {
     display: flex;
@@ -506,10 +516,17 @@
   .tspfoot .btn {
     padding-block: 4px;
   }
-  /* A volunteer's task actions are their main action: 44px, as on the
-     volunteer view's next-task card. */
-  .volunteer .tspfoot .btn {
-    min-height: 44px;
+  /* On a touch screen the 32px buttons take a 44px press through an
+     invisible ::after. */
+  @media (pointer: coarse) {
+    .tspfoot .btn {
+      position: relative;
+    }
+    .tspfoot .btn::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+    }
   }
 
   /* ---------------------------------------------------------------- pills */

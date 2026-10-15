@@ -897,22 +897,6 @@
     if (result?.ok) manage = false;
   }
 
-  // The setup wizard opens a campaign it has just created with ?created; the
-  // confirmation stays until dismissed, and the parameter leaves the address so
-  // a reload does not repeat it.
-  let created = $state(page.url.searchParams.has("created"));
-  $effect(() => {
-    if (!page.url.searchParams.has("created")) return;
-    const query = new URLSearchParams(page.url.searchParams);
-    query.delete("created");
-    const rest = query.toString();
-    goto(`/${campaign}${rest ? `?${rest}` : ""}`, {
-      replaceState: true,
-      noScroll: true,
-      keepFocus: true,
-    });
-  });
-
   // Deep links, read once after the first load: ?task= opens that task's
   // detail. On the owner's board the side panel reopens the task chosen last
   // time, if any; the score view shows a task only from ?task=.
@@ -1067,8 +1051,13 @@
   />
 {/if}
 
+<!-- The last command's result: in the task box of a selected task, else at
+     the top of the side panel; above the plan editor, which has no panel. -->
 {#snippet resultBanner()}
   <RunnerBanner {runner} bar {isPrivate} />
+{/snippet}
+{#snippet resultNote()}
+  <RunnerBanner {runner} bar {isPrivate} collapsible />
 {/snippet}
 
 {#snippet slotDot(key: string, who = "")}
@@ -1092,6 +1081,7 @@
     {viewer}
     {canPush}
     {runner}
+    tools={resultNote}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
@@ -1116,7 +1106,6 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
-      banner={resultBanner}
       ondeselect={closeTask}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
@@ -1136,6 +1125,7 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
+      banner={resultNote}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
         postComment("", kind, body, parent_id)}
@@ -1244,17 +1234,6 @@
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else}
-    {#if created}
-      <div class="banner bar ok" role="status">
-        <span>
-          The campaign is created. Its address is
-          <a href={`/${campaign}`}>{page.url.host}/{campaign}</a>.
-        </span>
-        <button type="button" class="dismiss" onclick={() => (created = false)}
-          >Dismiss</button
-        >
-      </div>
-    {/if}
     {#if !auth.user}
       <div class="banner bar warn">
         <span>
@@ -1267,7 +1246,7 @@
         </span>
       </div>
     {/if}
-    {#if !detailCard}
+    {#if manage && canPush && !scoreView}
       {@render resultBanner()}
     {/if}
 
@@ -1354,7 +1333,7 @@
                 (pieceIndexByTask.get(detailCard.task) ?? 0) ===
                   scoreView.index}
               cardZone={detailCard ? zoneOf(detailCard.task) : 0}
-              banner={resultBanner}
+              banner={detailCard ? undefined : resultNote}
               {comments}
               {logins}
               {viewer}
