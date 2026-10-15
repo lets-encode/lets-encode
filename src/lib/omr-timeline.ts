@@ -9,6 +9,7 @@
 // the pages before it, so a page draft continues where the piece stands. Pure
 // functions, no DOM.
 
+import { staffKeysig } from "./mei-facsimile.ts";
 import type { MeasureBox, ParsedFacsimile } from "./mei-facsimile.ts";
 import { pageSystems } from "./omr-layout.ts";
 import {
@@ -150,9 +151,9 @@ export const placementsOf = (staves: PageStaves): number[][] =>
   staves.assigned.map((system) => system.map((n) => n - 1));
 
 /**
- * The clef per score staff, the key and the meter in force at the start of
- * `page` (1-based): the score definition's, carried through the pages before
- * it as the stitching reads them.
+ * The clef and key per score staff, the score's key and the meter in force
+ * at the start of `page` (1-based): the score definition's, carried through
+ * the pages before it as the stitching reads them.
  */
 export function pageStart(
   parsed: Pick<ParsedFacsimile, "scoreDef">,
@@ -163,6 +164,9 @@ export function pageStart(
   let state: { clefs: string[] } & PageSignatures = {
     clefs: parsed.scoreDef.staves.map(staffClefToken),
     fifths: fifthsFor(keysig),
+    keys: parsed.scoreDef.staves.map((staff) =>
+      fifthsFor(staffKeysig(keysig, staff)),
+    ),
     time: {
       beats: meterCount,
       beatType: meterUnit,

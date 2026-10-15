@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   correctedLayoutJson,
+  grandStaffSpans,
   layoutBoxes,
   layoutRecord,
   pageSystems,
@@ -270,4 +271,18 @@ test("withCorrectedLayout refuses a file that does not match the score, or a mis
   );
   const empty = [page(0)];
   assert.equal(withCorrectedLayout(empty, null), empty);
+});
+
+test("grandStaffSpans joins the staves whose middles a grand-staff box holds", () => {
+  const staff = (uly: number) => ({ ulx: 100, uly, lrx: 900, lry: uly + 60 });
+  const system = [staff(100), staff(200), staff(300), staff(400)];
+  assert.deepEqual(
+    grandStaffSpans(system, [{ ulx: 90, uly: 280, lrx: 910, lry: 480 }]),
+    [{ start: 3, end: 4 }],
+  );
+  // A box holding one staff, or none, joins nothing.
+  assert.deepEqual(
+    grandStaffSpans(system, [{ ulx: 90, uly: 90, lrx: 910, lry: 170 }]),
+    [],
+  );
 });

@@ -51,6 +51,7 @@
     primary = true,
     inView = false,
     tools,
+    headAction,
     prefill,
     measures = true,
     onclaim,
@@ -84,6 +85,9 @@
     inView?: boolean;
     /** The view's own controls, below the status row. */
     tools?: Snippet;
+    /** A control at the heading's right end (the side panel's comments
+        button). */
+    headAction?: Snippet;
     /** The anchor a fresh fail form opens with; defaults to the task's page. */
     prefill?: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
@@ -197,6 +201,7 @@
       piece={pieceName}
       task={canPush ? card.task : ""}
     />
+    {@render headAction?.()}
   </div>
   <TaskRunState task={card.task} bar />
   {#if editorError}
@@ -400,10 +405,19 @@
     overflow-x: hidden;
     box-shadow: var(--shadow-sm);
   }
+  /* The heading's width is a container (taskhead), so a control at its
+     right end can drop its label where the heading is narrow. */
   .tsphead {
+    container: taskhead / inline-size;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
     background: color-mix(in srgb, var(--zone) 10%, var(--card));
     border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
     padding: 9px 12px;
+  }
+  .tsphead > :global(.taskheading) {
+    flex: 1;
   }
   .statusrow {
     display: flex;

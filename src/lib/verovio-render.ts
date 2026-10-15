@@ -90,6 +90,8 @@ export function loadScore(
       pageWidth,
       pageHeight,
       adjustPageHeight: true,
+      adjustPageWidth: false,
+      header: "auto",
       justifyVertically: false,
       scale: SCALE,
       breaks,
@@ -108,6 +110,8 @@ export function loadScore(
     pageWidth,
     pageHeight,
     adjustPageHeight: false,
+    adjustPageWidth: false,
+    header: "auto",
     justifyVertically: encodedBreaks,
     scale: SCALE,
     breaks,
@@ -117,13 +121,16 @@ export function loadScore(
 
 /**
  * Load a snippet for a single trimmed render, such as a score setup's blank
- * first system: the page is cut to the content's height.
+ * first system: the page is cut to the content's height and width, without
+ * the title.
  */
 export function loadSnippet(tk: VerovioToolkit, mei: string): boolean {
   tk.setOptions({
     pageWidth: PAGE_WIDTH,
     pageHeight: Math.round(PAGE_WIDTH * A4_ASPECT),
     adjustPageHeight: true,
+    adjustPageWidth: true,
+    header: "none",
     justifyVertically: false,
     scale: SCALE,
     breaks: "auto",

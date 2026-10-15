@@ -14,6 +14,7 @@
     campaign,
     card,
     tools,
+    headAction,
     prefill,
     measures = true,
   }: {
@@ -22,6 +23,8 @@
     card: BoardCard;
     /** The editor's own controls, below the status row. */
     tools?: Snippet;
+    /** A control at the heading's right end (TaskBox). */
+    headAction?: Snippet;
     /** The anchor a fresh fail form opens with. */
     prefill: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
@@ -42,6 +45,7 @@
   runner={session.runner}
   inView
   {tools}
+  {headAction}
   {prefill}
   {measures}
   onclaim={(_, sub) => session.claimValidation(sub)}

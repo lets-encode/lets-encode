@@ -39,6 +39,7 @@
     compose,
     footer,
     bar,
+    open = $bindable(false),
     onanchor,
     oncomment,
     onresolve,
@@ -58,8 +59,9 @@
     /** Composer placeholder override (e.g. when a measure is selected). */
     composerHint?: string;
     banner?: Snippet;
-    /** The task's record and controls, pinned above the comments. */
-    taskBox: Snippet;
+    /** The task's record and controls, pinned above the comments; given the
+        panel's Comments button for its heading (SidePanel). */
+    taskBox: Snippet<[Snippet | undefined]>;
     /** The view's task tools, below the task box. */
     tools?: Snippet;
     /** The selected item's controls, as a tab beside the comments. */
@@ -74,6 +76,8 @@
     footer?: Snippet;
     /** Docked as a sheet: a row at the sheet's top (SidePanel). */
     bar?: Snippet;
+    /** Docked: whether the panel is opened (SidePanel). */
+    open?: boolean;
     /** Show a comment's measure range in the view's own viewer. */
     onanchor: (comment: CommentRow) => void;
     oncomment: (
@@ -124,6 +128,7 @@
   {compose}
   {footer}
   {bar}
+  bind:open
   sheet={!!(tools || selection || footer)}
   {onanchor}
   oncomment={(kind, body, parent_id) =>

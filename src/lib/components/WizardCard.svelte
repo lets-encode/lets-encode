@@ -53,6 +53,7 @@
   import { releaseClaim } from "$lib/campaign-resolve.ts";
   import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
+  import { markHidden } from "$lib/scroll-edges.ts";
   import {
     WIZARD_STEPS,
     draftSnapshot,
@@ -349,37 +350,6 @@
   const tabOrder = $derived<("form" | "material")[]>(
     panes?.materialFirst ? ["material", "form"] : ["form", "material"],
   );
-  // Marks a scrolling body's wrapper with data-more-above / data-more-below
-  // while content lies above or below what is in view, which shows a fade at
-  // that edge. Read again on scroll and whenever the body or anything in it
-  // changes size.
-  function markHidden(body: HTMLElement) {
-    const update = () => {
-      const wrap = body.parentElement;
-      wrap?.toggleAttribute("data-more-above", body.scrollTop > 1);
-      wrap?.toggleAttribute(
-        "data-more-below",
-        body.scrollHeight - body.scrollTop - body.clientHeight > 1,
-      );
-    };
-    const sizes = new ResizeObserver(update);
-    const watch = () => {
-      sizes.disconnect();
-      sizes.observe(body);
-      for (const child of body.children) sizes.observe(child);
-      update();
-    };
-    const content = new MutationObserver(watch);
-    content.observe(body, { childList: true });
-    body.addEventListener("scroll", update, { passive: true });
-    watch();
-    return () => {
-      sizes.disconnect();
-      content.disconnect();
-      body.removeEventListener("scroll", update);
-    };
-  }
-
   function onTabKey(e: KeyboardEvent) {
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
@@ -605,7 +575,7 @@
       </div>
 
       <div
-        class="grip"
+        class="pane-grip"
         role="separator"
         aria-label={mode === "stacked"
           ? "Resize the material pane"
@@ -1421,38 +1391,17 @@
     flex: 0 0 50%;
     margin: 0;
   }
-  /* The divider between the material pane and the work card: a grab bar with
-     a centred handle. */
-  .grip {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    cursor: ew-resize;
-    touch-action: none;
-  }
-  .grip::before {
-    content: "";
-    width: 3px;
-    height: 2.5rem;
-    border-radius: 999px;
-    background: var(--line);
-  }
-  .stacked .grip {
+  /* The divider between the material pane and the work card (.pane-grip in
+     ui.css); stacked, it lies across. */
+  .stacked .pane-grip {
     width: auto;
     height: 22px;
     cursor: ns-resize;
   }
-  .stacked .grip::before {
+  .stacked .pane-grip::before {
     width: 2.8rem;
     height: 4px;
     background: var(--line-strong);
-  }
-  @media (hover: hover) {
-    .grip:hover::before {
-      background: var(--accent);
-    }
   }
   .work {
     flex: none;

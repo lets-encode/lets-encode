@@ -1051,8 +1051,13 @@
   />
 {/if}
 
+<!-- The last command's result: in the task box of a selected task, else at
+     the top of the side panel; above the plan editor, which has no panel. -->
 {#snippet resultBanner()}
   <RunnerBanner {runner} bar {isPrivate} />
+{/snippet}
+{#snippet resultNote()}
+  <RunnerBanner {runner} bar {isPrivate} collapsible />
 {/snippet}
 
 {#snippet slotDot(key: string, who = "")}
@@ -1076,6 +1081,7 @@
     {viewer}
     {canPush}
     {runner}
+    tools={resultNote}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
@@ -1100,7 +1106,6 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
-      banner={resultBanner}
       ondeselect={closeTask}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
@@ -1120,6 +1125,7 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
+      banner={resultNote}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
         postComment("", kind, body, parent_id)}
@@ -1240,7 +1246,7 @@
         </span>
       </div>
     {/if}
-    {#if !detailCard}
+    {#if manage && canPush && !scoreView}
       {@render resultBanner()}
     {/if}
 
@@ -1327,7 +1333,7 @@
                 (pieceIndexByTask.get(detailCard.task) ?? 0) ===
                   scoreView.index}
               cardZone={detailCard ? zoneOf(detailCard.task) : 0}
-              banner={resultBanner}
+              banner={detailCard ? undefined : resultNote}
               {comments}
               {logins}
               {viewer}

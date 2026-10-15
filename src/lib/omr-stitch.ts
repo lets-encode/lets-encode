@@ -46,7 +46,10 @@ export interface Meter {
 
 /** Key (fifths, negative for flats) and meter in force at the page start. */
 export interface PageSignatures {
+  /** The score's key: that of the staves that do not transpose. */
   fifths: number;
+  /** Per part, the key it is written in (a transposing staff's differs); absent, every part has `fifths`. */
+  keys?: number[];
   time: Meter | null;
 }
 
@@ -56,6 +59,8 @@ export interface PageOpening {
   clefs: (string | null)[];
   /** The new key, or null when the key in force stays. */
   fifths: number | null;
+  /** With a new key, the key each part is written in from there. */
+  keys?: number[];
   /** The new meter, or null when the meter in force stays. */
   time: Meter | null;
 }
@@ -68,7 +73,7 @@ export interface StitchedPage {
   parts: number;
   opening: PageOpening;
   /** The clef per part, key and meter in force at the end of the page: the next page's start. */
-  end: { clefs: string[] } & PageSignatures;
+  end: { clefs: string[]; keys: number[] } & PageSignatures;
 }
 
 const DEFAULT_LINE: Record<string, number> = { G: 2, F: 4, C: 3 };
@@ -105,6 +110,13 @@ export function clefTokenOf(clef: string): string | null {
 
 const keyXml = (fifths: number): string =>
   `<key><fifths>${fifths}</fifths></key>`;
+
+/** A difference in fifths as the nearest of its enharmonic equivalents: -5 to 6. */
+const wrapFifths = (d: number): number => ((((d + 5) % 12) + 12) % 12) - 5;
+
+/** A key in fifths within seven sharps or flats, by its enharmonic equivalent. */
+const inKeyRange = (f: number): number =>
+  f > 7 ? f - 12 : f < -7 ? f + 12 : f;
 
 const timeXml = (time: Meter): string =>
   `<time${time.symbol ? ` symbol="${time.symbol}"` : ""}><beats>${time.beats}</beats><beat-type>${time.beatType}</beat-type></time>`;
@@ -226,6 +238,10 @@ export function stitchPage(
   const measuresPerSystem: number[] = [];
   const clefs = [...partClefs];
   let fifths = start.fifths;
+  const keys = Array.from(
+    { length: parts },
+    (_, k) => start.keys?.[k] ?? start.fifths,
+  );
   let time = start.time;
   const opening: PageOpening = {
     clefs: Array.from({ length: parts }, () => null),
@@ -246,21 +262,31 @@ export function stitchPage(
     const opens: boolean = !opened && count > 0;
     opened ||= opens;
 
-    // Key and meter change only on a majority of the transcribed staves, none reading another.
+    // Key and meter change only on a majority of the transcribed staves, none
+    // reading another. A key change moves every part's key by the same number
+    // of fifths (a transposing staff keeps its distance from the others);
+    // enharmonic spellings, twelve fifths apart, count as the same.
     const transcribed = byPart.filter((xml) => xml !== null).length;
-    const firsts = staffMeasures
-      .map((m) => (m[0] ? openingAttributes(m[0]) : null))
-      .filter((a): a is string => a !== null);
-    const keys = firsts
-      .map((a) => element(a, "key"))
-      .filter((k): k is string => !!k)
-      .map(fifthsOf);
-    const newFifths =
-      keys.length * 2 > transcribed &&
-      keys.every((k) => k !== null && k === keys[0]) &&
-      keys[0] !== fifths
-        ? keys[0]
+    const openings = staffMeasures.map((m) =>
+      m[0] ? openingAttributes(m[0]) : null,
+    );
+    const firsts = openings.filter((a): a is string => a !== null);
+    const shifts = openings.flatMap((a, k) => {
+      const read = a ? fifthsOf(element(a, "key") ?? "") : null;
+      return read === null ? [] : [{ k, read, by: wrapFifths(read - keys[k]) }];
+    });
+    const shift =
+      shifts.length * 2 > transcribed &&
+      shifts.every((x) => x.by === shifts[0].by) &&
+      shifts[0].by !== 0
+        ? shifts[0].by
         : null;
+    if (shift !== null) {
+      for (let k = 0; k < parts; k++)
+        keys[k] =
+          shifts.find((x) => x.k === k)?.read ?? inKeyRange(keys[k] + shift);
+    }
+    const newFifths = shift === null ? null : inKeyRange(fifths + shift);
     const times = firsts
       .map((a) => element(a, "time"))
       .filter((t): t is string => !!t)
@@ -275,14 +301,12 @@ export function stitchPage(
     if (newTime) time = newTime;
     if (opens) {
       opening.fifths = newFifths;
+      if (newFifths !== null) opening.keys = [...keys];
       opening.time = newTime;
     }
     const signatures: AttributeEdits = opens
-      ? { key: keyXml(fifths), time: time ? timeXml(time) : null }
-      : {
-          key: newFifths !== null ? keyXml(fifths) : null,
-          time: newTime ? timeXml(newTime) : null,
-        };
+      ? { time: time ? timeXml(time) : null }
+      : { time: newTime ? timeXml(newTime) : null };
 
     for (let k = 0; k < parts; k++) {
       const measures = [...(staffMeasures[k] ?? [])];
@@ -305,10 +329,11 @@ export function stitchPage(
         clefs[k] = clefTokenOf(c) ?? clefs[k];
       }
       while (measures.length < count) measures.push("<measure/>");
+      const key = opens || newFifths !== null ? keyXml(keys[k]) : null;
       if (measures.length)
         measures[0] = editAttributes(
           measures[0],
-          { ...signatures, clef },
+          { ...signatures, key, clef },
           opens,
         );
       // The system break sits on the first measure of the first part.
@@ -354,6 +379,6 @@ export function stitchPage(
     measuresPerSystem,
     parts,
     opening,
-    end: { clefs, fifths, time },
+    end: { clefs, fifths, keys, time },
   };
 }

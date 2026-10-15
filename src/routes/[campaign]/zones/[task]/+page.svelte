@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
-  import { tick, untrack } from "svelte";
+  import { tick, untrack, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
@@ -1764,7 +1764,6 @@
           </div>
         {/if}
       </div>
-      <RunnerBanner {runner} bar />
       <TaskRunState task={taskId} bar />
 
       <div
@@ -2523,12 +2522,19 @@
       </div>
     {/snippet}
 
-    {#snippet taskBox()}
+    <!-- The last command's result, in the task box. -->
+    {#snippet resultNote()}
+      <RunnerBanner {runner} bar collapsible />
+    {/snippet}
+
+    {#snippet taskBox(headAction: Snippet | undefined)}
       {#if session.card}
         <PreTaskBox
           {session}
           {campaign}
           card={session.card}
+          tools={resultNote}
+          {headAction}
           prefill={() => ({
             page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
             m1: selectedLabel,

@@ -3,7 +3,9 @@
   its pages: "Saving draft…" while a draft saves, "Draft saved" for SAVED_MS
   after, and a failed save until the next save. Placed right after the pages
   in their column: the anchor takes no height, and the bubble floats above
-  the pages' bottom edge without moving anything.
+  the pages' bottom edge without moving anything. Where the side panel docks
+  below the pages (DOCKED_QUERY in side-panels.ts) the bubble sits centred
+  just above the panel's top edge, clear of its grip.
 -->
 <script lang="ts">
   import { fade } from "svelte/transition";
@@ -63,5 +65,12 @@
     max-width: min(420px, calc(100% - 32px));
     line-height: 1.35;
     text-align: center;
+  }
+  @media (orientation: portrait) and (max-width: 860px) {
+    .bubble {
+      bottom: auto;
+      top: 0;
+      transform: translate(-50%, calc(-100% - 8px));
+    }
   }
 </style>

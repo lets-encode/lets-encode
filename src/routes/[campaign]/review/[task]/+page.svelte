@@ -8,7 +8,7 @@
   new comment. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
@@ -346,8 +346,9 @@
   />
 {/if}
 
+<!-- The last command's result, in the task box. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar />
+  <RunnerBanner {runner} bar collapsible />
 {/snippet}
 
 <div class="review sidehost">
@@ -390,7 +391,7 @@
   {:else if card.pre}
     <!-- Replaced by the pre-task's own editor (the redirect above). -->
   {:else}
-    {#snippet taskBox()}
+    {#snippet taskBox(headAction: Snippet | undefined)}
       <TaskBox
         {card}
         pieceName={card.piece}
@@ -403,6 +404,8 @@
         {runner}
         inView
         {prefill}
+        tools={resultBanner}
+        {headAction}
         onclaim={claim}
         onabandon={abandon}
         onvalidate={validate}
@@ -484,7 +487,6 @@
       bind:panel={sidePanel}
       review={card.column === "validation"}
       done={card.column === "done"}
-      banner={resultBanner}
       {taskBox}
       selection={measureSelection}
       selectionLabel="Selection"

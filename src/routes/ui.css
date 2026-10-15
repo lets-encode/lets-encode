@@ -405,6 +405,31 @@ button.chip {
   text-decoration: underline;
 }
 
+/* ---- Pane divider --------------------------------------------------------
+   The grab bar between two panes side by side, with a centred handle;
+   dragging it moves the boundary. */
+.pane-grip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.pane-grip::before {
+  content: "";
+  width: 3px;
+  height: 2.5rem;
+  border-radius: 999px;
+  background: var(--line);
+}
+@media (hover: hover) {
+  .pane-grip:hover::before {
+    background: var(--accent);
+  }
+}
+
 /* ---- Viewer toolbar controls --------------------------------------------
    The paging and zoom cluster every page-viewer toolbar shares: .btn-icon
    .pgbtn arrows around a .pglabel at the toolbar's right end, a .vline

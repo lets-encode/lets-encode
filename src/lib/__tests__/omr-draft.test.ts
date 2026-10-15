@@ -241,6 +241,21 @@ test("the page opening puts its clefs first in the page's first layers and its k
   assert.equal((result.mei.match(/<scoreDef>/g) ?? []).length, 1);
 });
 
+test("a key change at the page opening restates the key of a staff written in another", () => {
+  const result = insertPageDraft(
+    skeleton([1]),
+    "surface-1",
+    converted(1),
+    [1],
+    allPrinted(1),
+    { clefs: [], fifths: 4, keys: [4, 1], time: null },
+  );
+  assert.match(
+    result.mei,
+    /<scoreDef><keySig sig="4s"\/><staffGrp><staffDef n="2"><keySig sig="1s"\/><\/staffDef><\/staffGrp><\/scoreDef><measure xml:id="measure-1"/,
+  );
+});
+
 test("a key or meter change verovio writes before a measure goes before the skeleton measure it fills", () => {
   const converted =
     '<mei><score><scoreDef><keySig sig="0"/></scoreDef><section>' +

@@ -43,7 +43,8 @@
     | "trash"
     | "draw-box"
     | "comment"
-    | "more";
+    | "more"
+    | "grip";
   let {
     name,
     size = 14,
@@ -94,6 +95,7 @@
     "draw-box": "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
     comment: "M5 5h14v10h-9l-4 4v-4H5z",
     more: "M5 12h.01M12 12h.01M19 12h.01",
+    grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
   };
 </script>
 

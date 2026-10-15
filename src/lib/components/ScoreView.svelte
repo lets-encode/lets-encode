@@ -63,6 +63,7 @@
     cardZone?: number;
     /** The selected task's box. */
     taskBox?: Snippet;
+    /** A row at the side panel's top. */
     banner?: Snippet;
     comments: CommentRow[];
     logins: Record<string, string>;
@@ -202,7 +203,7 @@
       composerHint={selectionAnchor() && selected
         ? `Comment on measure ${selected.label}…`
         : ""}
-      banner={card ? banner : undefined}
+      {banner}
       taskBox={card ? taskBox : undefined}
       selection={measureSelection}
       bind:tab={panelTab}

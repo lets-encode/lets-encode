@@ -75,18 +75,31 @@ export function meiClef(token: string): string {
   return `<clef shape="${m[1]}" line="${m[2]}"${dis}/>`;
 }
 
-/** A `<scoreDef>` for the key and meter the page's first system changes, or '' when it changes neither. */
+/**
+ * A `<scoreDef>` for the key and meter the page's first system changes, or ''
+ * when it changes neither. A staff written in another key than the score's
+ * (a transposing instrument) gets its own in a `<staffDef>`.
+ */
 function openingScoreDef(opening: PageOpening): string {
-  const key =
-    opening.fifths !== null
-      ? `<keySig sig="${keysigFor(opening.fifths)}"/>`
-      : "";
+  const fifths = opening.fifths;
+  const own =
+    fifths === null
+      ? []
+      : (opening.keys ?? []).flatMap((k, i) =>
+          k === fifths
+            ? []
+            : [
+                `<staffDef n="${i + 1}"><keySig sig="${keysigFor(k)}"/></staffDef>`,
+              ],
+        );
+  const key = fifths !== null ? `<keySig sig="${keysigFor(fifths)}"/>` : "";
+  const staves = own.length ? `<staffGrp>${own.join("")}</staffGrp>` : "";
   const time = opening.time
     ? opening.time.symbol
       ? `<meterSig sym="${opening.time.symbol}"/>`
       : `<meterSig count="${opening.time.beats}" unit="${opening.time.beatType}"/>`
     : "";
-  return key || time ? `<scoreDef>${key}${time}</scoreDef>` : "";
+  return key || time ? `<scoreDef>${key}${time}${staves}</scoreDef>` : "";
 }
 
 /** Staff content with `clef` as the first element of its first layer. */
