@@ -164,8 +164,8 @@
           : "",
   );
 
-  // What the task asks of the volunteer, in one line: the panel is where a
-  // touch screen reads it.
+  // What the task asks of the volunteer, and for the score setup how its
+  // view is used: the panel is where a touch screen reads it.
   const help = $derived.by(() => {
     if (card.column === "done") return "";
     if (card.column === "validation")
@@ -177,7 +177,7 @@
             ? "Compare the encoding with the scan and approve it or request changes."
             : "Compare the encoding with the scan in the review view and approve it or request changes.";
     if (card.locator === "score-setup")
-      return "Set the score's staves, clefs, key signature and time signature from the source.";
+      return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
     if (card.locator === "omr-layout")
       return "Check the staff and measure boxes on each page and correct the wrong ones.";
     if (card.locator === "measure-zones")

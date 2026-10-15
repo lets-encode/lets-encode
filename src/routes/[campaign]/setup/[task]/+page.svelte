@@ -183,6 +183,8 @@
       lines: 6,
     },
   ] as const;
+  // The clefs most staves open with, listed first in the clef menu.
+  const COMMON_CLEFS = ["G2", "F4", "C3"];
   // The option behind a staff's stored values: the one with its shape,
   // displacement and notation type, and for a pitched clef its line too.
   // An unlisted combination (an OMR reading, an imported file) has none.
@@ -1640,6 +1642,7 @@
                 {#each staves as staff, i (i)}
                   <li
                     class="staffrow"
+                    class:transposing={!unpitched(staff) && transposes(staff)}
                     class:pointed={pointedStaff === i}
                     class:dragged={dragging === i && picked === null}
                     class:picked={picked === i}
@@ -1705,6 +1708,7 @@
                               },
                               ...CLEF_OPTIONS,
                             ]}
+                        top={COMMON_CLEFS}
                         value={clefOption(staff)?.value ?? ""}
                         onchange={(v) => setClef(staff, v)}
                         label={`Staff ${i + 1}: clef`}
@@ -2589,6 +2593,10 @@
   }
   .staffrow > .staffline + .staffline {
     gap: 4px;
+  }
+  /* A transposing instrument's staff, in a tint of its own. */
+  .staffrow.transposing {
+    background: var(--pre-wash);
   }
   .staffrow.pointed {
     background: var(--accent-tint-strong);

@@ -4,7 +4,8 @@
   below it, or above it where the window has no room below. Keyboard: the
   arrow keys, Home and End move through the list, Enter or Space chooses,
   Escape and Tab close it. A press outside, a scroll or a resize closes it.
-  A disabled option is shown but cannot be chosen.
+  A disabled option is shown but cannot be chosen. The options named in
+  `top` are listed first as well, above a divider before the full list.
 -->
 <script lang="ts">
   import Icon from "./Icon.svelte";
@@ -23,6 +24,7 @@
     label,
     title,
     class: className = "",
+    top = [],
   }: {
     options: readonly Option[];
     value: string;
@@ -31,10 +33,19 @@
     label: string;
     title?: string;
     class?: string;
+    /** Values of the most used options, listed again at the top. */
+    top?: readonly string[];
   } = $props();
 
   const id = $props.id();
   const chosen = $derived(options.find((o) => o.value === value));
+  // The list as shown: the top options, then every option.
+  const lead = $derived(
+    top
+      .map((v) => options.find((o) => o.value === v))
+      .filter((o): o is Option => !!o),
+  );
+  const shown = $derived([...lead, ...options]);
   let open = $state(false);
   let active = $state(0);
   let button = $state<HTMLButtonElement | null>(null);
@@ -56,7 +67,7 @@
     };
     active = Math.max(
       0,
-      options.findIndex((o) => o.value === value),
+      shown.findIndex((o) => o.value === value),
     );
     open = true;
     await Promise.resolve();
@@ -70,13 +81,13 @@
     if (refocus) button?.focus();
   }
   function choose(i: number) {
-    const option = options[i];
+    const option = shown[i];
     if (option?.disabled) return;
     close();
     if (option && option.value !== value) onchange(option.value);
   }
   function move(to: number) {
-    active = Math.min(options.length - 1, Math.max(0, to));
+    active = Math.min(shown.length - 1, Math.max(0, to));
     list
       ?.querySelector<HTMLElement>(`#${id}-${active}`)
       ?.scrollIntoView({ block: "nearest" });
@@ -92,7 +103,7 @@
       ArrowDown: () => move(active + 1),
       ArrowUp: () => move(active - 1),
       Home: () => move(0),
-      End: () => move(options.length - 1),
+      End: () => move(shown.length - 1),
       Enter: () => choose(active),
       " ": () => choose(active),
       Escape: () => close(),
@@ -157,7 +168,10 @@
     style:max-height="{LIST_MAX}px"
     onkeydown={listKey}
   >
-    {#each options as option, i (option.value)}
+    {#each shown as option, i (i)}
+      {#if i === lead.length && i > 0}
+        <li class="gsep" role="presentation"></li>
+      {/if}
       <!-- The keyboard acts on the listbox (listKey), not on each option. -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <li
@@ -239,6 +253,14 @@
     border-radius: 6px;
     white-space: nowrap;
     cursor: pointer;
+  }
+  .glist > li.gsep {
+    min-height: 0;
+    height: 1px;
+    margin: 4px 6px;
+    padding: 0;
+    background: var(--line);
+    cursor: default;
   }
   .glist > li.active {
     background: var(--accent-tint-strong);

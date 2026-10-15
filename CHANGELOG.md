@@ -13,6 +13,9 @@ parentheses.
 - The score setup scales the source's first system so its staves line up with the preview's.
 - On phones the closed task sheet can be dragged lower to give the work area more room.
 - On phones a dragged task sheet moves over the work area and shows the task box only once opened.
+- The score setup task description explains the source view, the divider and marking groups.
+- Score setup staves of transposing instruments have a tint of their own.
+- The score setup clef menu lists Treble, Bass and Alto first, above the full list.
 - The score setup shows the brace, bracket and numeric time signature symbols beside their names.
 
 ## 2026-10-14
