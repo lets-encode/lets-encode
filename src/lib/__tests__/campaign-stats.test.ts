@@ -159,6 +159,21 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
   assert.equal(byGroup.awaiting.task, "T0004");
   assert.equal(byGroup.awaiting.passes, 1);
   assert.deepEqual(byGroup.awaiting.dots, ["pass", "open"]);
+  assert.equal(byGroup.awaiting.myReviews, 0);
+  assert.equal(byGroup.awaiting.otherReviews, 0);
+  assert.equal(byGroup.awaiting.needsAnother, true);
+  // Someone else's review claim on it → another person's review in progress.
+  const underReview = {
+    ...stats,
+    locks: parseLockCsv(
+      LOCK_HEADER + "T0004,S0001,9,2026-08-01T10:00:00Z,validation\n",
+    ),
+  };
+  const awaiting = myTasksIn(underReview, "7").find(
+    (t) => t.group === "awaiting" && t.task === "T0004",
+  );
+  assert.equal(awaiting?.myReviews, 0);
+  assert.equal(awaiting?.otherReviews, 1);
   assert.equal(myTasksIn(stats, "").length, 0);
   // A held validation claim → validating, with the lock's expiry.
   const reviewing = {

@@ -25,7 +25,7 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn, reviewWaitLabel } from "$lib/campaign-board.ts";
   import {
     handle,
     isPreTask,
@@ -324,7 +324,7 @@
   const claimMeta = (t: MyTask) =>
     `claimed ${ago(t.claimedAt)}${claimExpiry(t) ? ` · ${claimExpiry(t)}` : ""}`;
   const reviewMeta = (t: MyTask) =>
-    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${t.passes} of ${t.threshold} reviews`;
+    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
 
   // Wide screens show the viewer's work in a side column; narrower ones fold
   // it behind a one-line summary bar.

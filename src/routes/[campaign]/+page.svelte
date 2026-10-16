@@ -57,6 +57,7 @@
     elapsed,
     expiresIn,
     initialOf,
+    reviewWaitLabel,
   } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
@@ -1772,10 +1773,22 @@
                               {/if}
                               {#if card.column === "validation"}
                                 <div class="card-type">
-                                  {card.passes} of {card.threshold} review{card.threshold ===
-                                  1
-                                    ? ""
-                                    : "s"}
+                                  {reviewWaitLabel(
+                                    card.passes,
+                                    card.threshold,
+                                    card.slots.filter(
+                                      (s) =>
+                                        s.key === "review" &&
+                                        viewer !== "" &&
+                                        s.user === viewer,
+                                    ).length,
+                                    card.slots.filter(
+                                      (s) =>
+                                        s.key === "review" &&
+                                        !(viewer !== "" && s.user === viewer),
+                                    ).length,
+                                    card.slots.some((s) => s.needsAnother),
+                                  )}
                                   <span class="card-dots">
                                     {#each card.slots as slot (slot.label)}
                                       {@render slotDot(slot.key, slot.who)}

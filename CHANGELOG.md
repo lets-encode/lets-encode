@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-16
 
+- Tasks in review show whose reviews are in progress and whether you may take the next one.
 - The campaign list and campaign page update in place when other people's changes land.
 - On phones the measure correction keeps its steps in view while a box is selected.
 - The measure correction keeps only the boxes inside the piece's regions, from new detections and from saved scores and drafts.

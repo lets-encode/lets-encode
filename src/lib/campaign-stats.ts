@@ -436,6 +436,12 @@ export interface MyTask {
   /** Awaiting group: validation progress on the task's subtasks. */
   passes: number;
   threshold: number;
+  /** Awaiting group: the task's reviews claimed by the viewer and by others. */
+  myReviews: number;
+  otherReviews: number;
+  /** Awaiting group: the reviews have to come from someone other than the
+      viewer, the task's encoder. */
+  needsAnother: boolean;
   /** Slot dots for the awaiting group. */
   dots: Array<"pass" | "open">;
   /** When the encoding was submitted (awaiting/done groups). */
@@ -495,6 +501,9 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
     const cells = subRows.flatMap((r) =>
       stats.validationColumns.map((c) => r[c] ?? ""),
     );
+    const reviewLocks = stats.locks.filter(
+      (l) => l.kind === "validation" && l.task_id === task,
+    );
     const dots = cells.map((cell) =>
       isFinalValidation(cell) ? ("pass" as const) : ("open" as const),
     );
@@ -510,6 +519,9 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       expiresAt: "",
       passes: dots.filter((d) => d === "pass").length,
       threshold: taskThreshold(stats.passThreshold, subRows.length),
+      myReviews: reviewLocks.filter((l) => l.user_id === viewer).length,
+      otherReviews: reviewLocks.filter((l) => l.user_id !== viewer).length,
+      needsAnother: !stats.allowSelfValidation,
       dots,
       submittedAt: findRow(stats.rows, task, "")?.encoded_at ?? "",
       logins: stats.logins,
