@@ -25,7 +25,7 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn, reviewWaitLabel } from "$lib/campaign-board.ts";
   import {
     handle,
     isPreTask,
@@ -53,6 +53,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { startAutoRefresh } from "$lib/auto-refresh.ts";
 
   const PER_PAGE = 12;
 
@@ -77,15 +78,15 @@
 
   // Stats arrive one campaign at a time; each resolves into the grid as it
   // lands rather than waiting for the slowest repository.
+  const placeRow = (s: CampaignStats) =>
+    (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]);
+
   async function loadAll() {
     try {
       const listing = await loadAllCampaignStats(
         readForge(),
         provider.repoTopic,
-        {
-          onEach: (s) =>
-            (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
-        },
+        { onEach: placeRow },
       );
       listFailed = listing.failed;
       listFailure = listing.failure;
@@ -199,6 +200,31 @@
     }
   }
 
+  // A campaign whose default branch has moved since its row was read is read
+  // again. The topic search, which finds new campaigns, runs again only when
+  // the tab becomes visible. Logged out, every request counts against the
+  // shared per-address limit, so polling waits for the tab to become visible.
+  $effect(() => {
+    if (!listLoaded) return;
+    return startAutoRefresh({
+      interval: () => (auth.user ? 10_000 : null),
+      held: () => listLoading || runner.busy,
+      poll: async (resumed) => {
+        const f = readForge();
+        if (resumed)
+          await loadAllCampaignStats(f, provider.repoTopic, {
+            onEach: placeRow,
+          });
+        await Promise.all(
+          stats.map(async (s) => {
+            const { sha } = await f.getRepoHead(s.owner, s.repo);
+            if (sha !== s.headSha) await refreshStats(s);
+          }),
+        );
+      },
+    });
+  });
+
   async function run(
     t: MyTask,
     command: (c: CommandContext) => Promise<Result>,
@@ -298,7 +324,7 @@
   const claimMeta = (t: MyTask) =>
     `claimed ${ago(t.claimedAt)}${claimExpiry(t) ? ` · ${claimExpiry(t)}` : ""}`;
   const reviewMeta = (t: MyTask) =>
-    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${t.passes} of ${t.threshold} reviews`;
+    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
 
   // Wide screens show the viewer's work in a side column; narrower ones fold
   // it behind a one-line summary bar.

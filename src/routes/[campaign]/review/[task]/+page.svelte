@@ -55,6 +55,7 @@
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import StepGlyph from "$lib/components/StepGlyph.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -351,7 +352,7 @@
   <RunnerBanner {runner} bar collapsible />
 {/snippet}
 
-<div class="review sidehost">
+<div class="review sidehost" data-stage="review">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else if place.error}
@@ -451,26 +452,50 @@
         {@const p = preview?.pageOfMeasure(selectedMeasure) ?? -1}
         <div class="selpanel">
           <div class="selhead">
-            <span class="selname">Measure {selectedMeasure}</span>
-            {#if p >= 0}<span class="selwhere">page {p + 1}</span>{/if}
-            <button
-              type="button"
-              class="btn btn-icon"
-              onclick={() => preview?.clearSelection()}
-              aria-label="Clear the measure selection"
-              title="Clear the measure selection"><Icon name="close" /></button
+            <span class="selname"
+              ><StepGlyph
+                kind="measure"
+                tone="var(--ink-measure)"
+                size={20}
+              />Measure {selectedMeasure}</span
             >
+            {#if p >= 0}<span class="selwhere">page {p + 1}</span>{/if}
+            <span class="selnav">
+              <button
+                type="button"
+                class="btn btn-icon"
+                onclick={() => preview?.stepMeasure(-1)}
+                disabled={!preview?.canStepMeasure(-1)}
+                aria-label="Previous measure"
+                title="Previous measure"><Icon name="chevron-left" /></button
+              >
+              <button
+                type="button"
+                class="btn btn-icon"
+                onclick={() => preview?.stepMeasure(1)}
+                disabled={!preview?.canStepMeasure(1)}
+                aria-label="Next measure"
+                title="Next measure"><Icon name="chevron-right" /></button
+              >
+            </span>
           </div>
-          {#if auth.user}
-            <div class="selactions">
+          <div class="selactions">
+            {#if auth.user}
               <button
                 type="button"
                 class="btn"
                 onclick={() => (panelTab = "comments")}
-                ><Icon name="comment" /> Comment on measure {selectedMeasure}</button
+                ><Icon name="comment" />Comment on measure {selectedMeasure}</button
               >
-            </div>
-          {/if}
+            {/if}
+            <button
+              type="button"
+              class="btn"
+              onclick={() => preview?.clearSelection()}
+              title="Clear the measure selection"
+              ><Icon name="close" />Deselect</button
+            >
+          </div>
         </div>
       {:else}
         <p class="selnone">
@@ -505,17 +530,6 @@
 <style>
   .muted {
     color: var(--ink-faint);
-  }
-  .linkish {
-    font: inherit;
-    font-size: inherit;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-    text-decoration: underline;
   }
   .msg {
     margin: 24px auto;

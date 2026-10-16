@@ -127,10 +127,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px 12px;
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 10px;
   }
   .replying {
     font-size: 11.5px;
@@ -176,9 +172,9 @@
     min-width: 0;
     font-size: 12.5px;
     font-family: inherit;
-    padding: 8px 12px;
+    padding: 8px 14px;
     border: 1px solid var(--line-input);
-    border-radius: 8px;
+    border-radius: 999px;
     background: var(--card);
     color: var(--ink);
   }

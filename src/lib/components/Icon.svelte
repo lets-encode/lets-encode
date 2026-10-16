@@ -41,10 +41,20 @@
     | "help"
     | "minus"
     | "trash"
+    | "copy"
+    | "select-several"
     | "draw-box"
     | "comment"
     | "more"
-    | "grip";
+    | "grip"
+    | "eye-off"
+    | "page-one"
+    | "page-two"
+    | "repeat-start"
+    | "repeat-end"
+    | "repeat-both"
+    | "segno"
+    | "coda";
   let {
     name,
     size = 14,
@@ -92,10 +102,23 @@
     redo: "M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
     help: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM9.2 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
     trash: "M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10.5 10.5v5M13.5 10.5v5",
+    copy: "M9 9h11v11H9zM15 5V4H4v11h1",
+    "select-several": "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17.5l2 2 4-4",
     "draw-box": "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
     comment: "M5 5h14v10h-9l-4 4v-4H5z",
     more: "M5 12h.01M12 12h.01M19 12h.01",
     grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+    "page-one": "M7 3h10v18H7z",
+    "repeat-start": "M4 4h3v16H4zM11 4v16M15.5 9h.01M15.5 15h.01",
+    "repeat-end": "M17 4h3v16h-3zM13 4v16M8.5 9h.01M8.5 15h.01",
+    "repeat-both":
+      "M3 9h.01M3 15h.01M7.5 4v16M10.5 4h3v16h-3zM16.5 4v16M21 9h.01M21 15h.01",
+    segno:
+      "M16 7c-1.5-2.5-8-2.5-8 1s8 4.5 8 8-6.5 3.5-8 1M6 18 18 6M7 11h.01M17 13h.01",
+    coda: "M12 5a4.5 7 0 1 0 0 14 4.5 7 0 1 0 0-14zM12 2v20M3 12h18",
+    "page-two": "M2.5 5H12v14H2.5zM12 5h9.5v14H12z",
+    "eye-off":
+      "M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2",
   };
 </script>
 

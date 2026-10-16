@@ -64,6 +64,9 @@ export interface NodeSlot {
   running: boolean;
   /** The slot is open and the encoding is in — it can be claimed for review. */
   claimable: boolean;
+  /** The slot is open and the viewer may not review it: they encoded the
+      task or already recorded a verdict on it. */
+  needsAnother: boolean;
   /** The stored user id behind the slot (verdict author or lock holder); '' when open. */
   user: string;
   /** The verdict's or lock's timestamp; '' when open. */
@@ -307,6 +310,7 @@ interface SlotState {
   running: boolean;
   user: string;
   ts: string;
+  needsAnother?: boolean;
 }
 
 // The slot's state from its validate_status cell: a final verdict renders
@@ -370,6 +374,7 @@ function slotState(
     running: false,
     user: "",
     ts: "",
+    needsAnother,
   };
 }
 
@@ -422,6 +427,7 @@ export function buildGraph(
             passesOf(d, row) +
               validationLocks(d, row.task_id, row.subtask_id).length <
               d.passThreshold,
+          needsAnother: s.needsAnother ?? false,
           user: s.user,
           ts: s.ts,
         };

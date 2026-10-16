@@ -179,7 +179,7 @@
     if (card.locator === "score-setup")
       return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
     if (card.locator === "omr-layout")
-      return "Check the staff and measure boxes on each page and correct the wrong ones.";
+      return "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.";
     if (card.locator === "measure-zones")
       return "Check the measure boxes on each page and correct the wrong ones.";
     if (card.omr)
@@ -189,11 +189,26 @@
       : "Encode the music of the piece in the mei-friend editor.";
   });
 
+  // The stage whose colour the box and its side panel take (ui.css).
+  const stage = $derived(
+    card.column === "validation"
+      ? "review"
+      : card.column === "done"
+        ? "done"
+        : card.pre
+          ? "pre"
+          : "encode",
+  );
+
   // The task's page, prefilling a fail's anchor.
   const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
 </script>
 
-<div class="taskcard" style={zone ? `--zone: var(--zone-${zone})` : ""}>
+<div
+  class="taskcard"
+  data-stage={stage}
+  style={zone ? `--zone: var(--zone-${zone})` : ""}
+>
   <div class="tsphead">
     <TaskHeading
       description={card.description}
@@ -398,12 +413,14 @@
 </div>
 
 <style>
+  /* The box is the top of its side panel's sheet (SidePanel): the heading
+     and status in the stage's wash, the submission, reviews and actions on
+     slate below, each section under a hairline. Buttons sit on paper. */
   .taskcard {
-    background: var(--card);
-    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
-    border-radius: 12px;
     overflow-x: hidden;
-    box-shadow: var(--shadow-sm);
+    --btn-bg: var(--card);
+    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   /* The heading's width is a container (taskhead), so a control at its
      right end can drop its label where the heading is narrow. */
@@ -412,9 +429,8 @@
     display: flex;
     align-items: flex-start;
     gap: 8px;
-    background: color-mix(in srgb, var(--zone) 10%, var(--card));
-    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
-    padding: 9px 12px;
+    background: var(--st-wash);
+    padding: 10px 16px 4px;
   }
   .tsphead > :global(.taskheading) {
     flex: 1;
@@ -424,7 +440,8 @@
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-    padding: 10px 12px;
+    padding: 6px 16px 14px;
+    background: var(--st-wash);
   }
   .help {
     flex-basis: 100%;
@@ -434,21 +451,23 @@
     color: var(--ink-soft);
   }
   .section {
-    padding: 10px 12px;
-    border-top: 1px solid var(--hairline, var(--line));
+    padding: 12px 16px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
   .more {
-    border-top: 1px solid var(--hairline, var(--line));
+    background: var(--band);
+    border-top: 1px solid var(--line);
   }
   .more summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 32px;
-    padding: 0 12px;
+    min-height: 36px;
+    padding: 0 16px;
     font-size: 12px;
     font-weight: 600;
     color: var(--ink-soft);
@@ -500,8 +519,9 @@
     color: var(--ink);
   }
   .tspfoot {
-    padding: 10px 12px;
-    border-top: 1px solid var(--hairline, var(--line));
+    padding: 12px 16px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
@@ -530,33 +550,24 @@
   }
 
   /* ---------------------------------------------------------------- pills */
+  /* The status on paper over the wash, in the stage's colour once the task
+     is under way. */
   .pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     font-weight: 600;
-    font-size: 11px;
+    font-size: 11.5px;
     line-height: 1;
-    padding: 4px 10px;
+    padding: 5px 10px;
     border-radius: 999px;
     white-space: nowrap;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    color: var(--ink-faint);
+    background: var(--card);
+    color: var(--ink-soft);
   }
-  .pill.c-encoding {
-    background: var(--info-bg);
-    border-color: var(--info-line);
-    color: var(--info);
-  }
-  .pill.c-validation {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-    color: var(--warn);
-  }
+  .pill.c-encoding,
+  .pill.c-validation,
   .pill.c-done {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
+    color: var(--st);
   }
 </style>

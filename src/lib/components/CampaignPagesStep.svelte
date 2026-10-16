@@ -419,11 +419,7 @@
     >
       <ol
         class="material-grid"
-        class:fit-page={fit === "page"}
-        style="--per-row: {perRow}; width: {zoom}%; --page-row: {Math.max(
-          0,
-          bodyH - 30,
-        )}px"
+        style="--per-row: {perRow}; width: {zoom}%"
         {@attach liftToReorder}
       >
         {#each wizard.candidates as page, i (page.id)}

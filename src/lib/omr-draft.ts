@@ -167,10 +167,19 @@ function measureStaves(
   return staves.join("\n") + (controlEvents ? `\n${controlEvents}` : "");
 }
 
-/** A skeleton measure with `content` in place of its inner content, keeping its start tag. */
+/**
+ * A skeleton measure with `content` in place of its inner content, keeping
+ * its start tag (repeat barlines) and the navigation signs the measure
+ * correction wrote (<repeatMark>, a To Coda <dir>).
+ */
 function withContent(measure: string, content: string): string {
   const open = /^<measure\b[^>]*?>/.exec(measure)![0].replace(/\/>$/, ">");
-  return `${open}\n${content}\n               </measure>`;
+  const signs = (
+    measure.match(
+      /<repeatMark\b[^>]*\/>|<repeatMark\b[^>]*>[^<]*<\/repeatMark>|<dir\b[^>]*>[^<]*<\/dir>/g,
+    ) ?? []
+  ).map((sign) => `                  ${sign}`);
+  return `${open}\n${[content, ...signs].join("\n")}\n               </measure>`;
 }
 
 /**

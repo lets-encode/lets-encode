@@ -7,6 +7,7 @@ import {
   doneLabel,
   buildThreads,
   expiresIn,
+  reviewWaitLabel,
 } from "../campaign-board.ts";
 import {
   parseCommentCsv,
@@ -27,6 +28,7 @@ const slot = (over: Partial<NodeSlot>): NodeSlot => ({
   who: "",
   running: false,
   claimable: false,
+  needsAnother: false,
   user: "",
   ts: "",
   ...over,
@@ -212,6 +214,24 @@ test("doneLabel gives the review count, or done, and when the task finished", ()
   assert.equal(
     doneLabel({ doneLine: "2 of 2 reviews", finishedAt: "" }, now),
     "2 of 2 reviews",
+  );
+});
+
+test("reviewWaitLabel names the viewer's reviews, other people's and the unclaimed ones", () => {
+  assert.equal(reviewWaitLabel(0, 1, 0, 0), "waits for 1 more review");
+  assert.equal(reviewWaitLabel(0, 1, 1, 0), "your review in progress");
+  assert.equal(
+    reviewWaitLabel(0, 1, 0, 1),
+    "1 review in progress by someone else",
+  );
+  assert.equal(
+    reviewWaitLabel(0, 4, 1, 2),
+    "your review in progress · 2 reviews in progress by others · waits for 1 more review",
+  );
+  assert.equal(reviewWaitLabel(1, 3, 0, 2), "2 reviews in progress by others");
+  assert.equal(
+    reviewWaitLabel(0, 1, 0, 0, true),
+    "waits for 1 more review from someone else",
   );
 });
 

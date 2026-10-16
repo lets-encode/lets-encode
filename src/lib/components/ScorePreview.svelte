@@ -399,6 +399,22 @@
     tick().then(() => showPage(page));
   }
 
+  // The measures in reading order: the facsimile's zone labels, page by page.
+  const measureOrder = $derived(
+    (preview?.facs ?? []).flatMap((pg) => pg.zones.map((z) => z.label)),
+  );
+  /** Whether a measure comes before (-1) or after (1) the selected one. */
+  export function canStepMeasure(dir: 1 | -1): boolean {
+    if (selected === null) return false;
+    const i = measureOrder.indexOf(selected);
+    return i >= 0 && measureOrder[i + dir] !== undefined;
+  }
+  /** Select the measure before (-1) or after (1) the selected one. */
+  export function stepMeasure(dir: 1 | -1) {
+    if (!canStepMeasure(dir)) return;
+    selectMeasure(measureOrder[measureOrder.indexOf(selected!) + dir]);
+  }
+
   /** Show or hide the measure zones on the facsimile. */
   /** Clear the measure selection. */
   export function clearSelection() {
@@ -517,7 +533,7 @@
 </script>
 
 <div class="preview" bind:clientWidth={pvW}>
-  <div class="ptoolbar">
+  <div class="ptoolbar vtoolbar">
     {#if preview?.facs?.length}
       <!-- Joined toolbar buttons, as the measure correction's Scroll / Draw
            pair. Where the toolbar is too narrow for the labels, the buttons
@@ -564,28 +580,27 @@
         type="button"
         class:on={pvView === "single"}
         aria-pressed={pvView === "single"}
-        onclick={() => pvSetView("single")}>1 page</button
+        onclick={() => pvSetView("single")}
+        ><Icon name="page-one" />1 page</button
       >
       <button
         type="button"
         class:on={pvView === "double"}
         aria-pressed={pvView === "double"}
-        onclick={() => pvSetView("double")}>2 pages</button
+        onclick={() => pvSetView("double")}
+        ><Icon name="page-two" />2 pages</button
       >
     </div>
     {#if pvView === "double"}
-      <label
-        class="pcheck"
+      <button
+        type="button"
+        class="chip-switch pcheck"
+        class:on={pvFirstOnRight}
+        aria-pressed={pvFirstOnRight}
+        onclick={() => pvSetFirstOnRight(!pvFirstOnRight)}
         title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+        >Page 1 right</button
       >
-        <input
-          type="checkbox"
-          checked={pvFirstOnRight}
-          onchange={(e) =>
-            pvSetFirstOnRight((e.target as HTMLInputElement).checked)}
-        />
-        Page 1 right
-      </label>
     {/if}
     {#if facsVisible}
       <button
@@ -607,7 +622,7 @@
         >m. {selected} <Icon name="close" size={11} /></button
       >
     {/if}
-    <span class="mspacer"></span>
+    <span class="vline zoomline"></span>
     <!-- The zoom controls wrap onto a second line together. -->
     <span class="zoomgrp">
       <input
@@ -645,9 +660,9 @@
         ><FitIcon kind="page" /></button
       >
     </span>
+    <span class="mspacer"></span>
     <!-- Last in the toolbar, next to the side panel on the right. -->
     <div class="pgnav">
-      <span class="vline"></span>
       <button
         type="button"
         class="btn btn-icon pgbtn"
@@ -860,20 +875,11 @@
 
   /* -------------------------------------------------------------- toolbar */
   /* Controls that do not fit on one line wrap onto a second. */
+  /* The shared viewer toolbar (.vtoolbar, ui.css), wrapping its groups. */
   .ptoolbar {
-    min-height: 44px;
-    flex: none;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: var(--shadow-sm);
     margin-bottom: 10px;
-    display: flex;
     flex-wrap: wrap;
-    align-items: center;
-    padding: 4px 16px;
-    box-sizing: border-box;
-    gap: 6px 10px;
+    overflow-x: visible;
   }
   .paneseg {
     flex: none;
@@ -881,7 +887,7 @@
   .zoomgrp {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
   .paneseg .ico {
     display: none;
@@ -903,55 +909,43 @@
       white-space: nowrap;
     }
   }
-  .pcheck {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: var(--ink-soft);
-    white-space: nowrap;
+  /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size in
+     the same order: the pane switch, fit width and the paging, each 32px
+     with a 44px press area. The page-count switch, "Page 1 right", the zone
+     switch, the measure chip, the zoom slider and fit page are hidden; zoom
+     is a pinch or Ctrl/Cmd + scroll. On a touch screen the toolbar moves
+     below the pages, within thumb reach. */
+  @media (pointer: coarse) {
+    @container (max-width: 559px) {
+      .ptoolbar {
+        order: 2;
+        margin: 8px 0 0;
+      }
+    }
   }
-  /* Narrow (PV_NARROW, a phone): the toolbar moves below the pages, within
-     thumb reach, as one row at touch size: the pane switch, the page
-     navigation and fit width, each 32px with a 44px press area. The
-     page-count switch, "Page 1 right", the zone switch, the measure chip,
-     the zoom slider and fit page are hidden; zoom is a pinch or Ctrl/Cmd +
-     scroll. */
   @container (max-width: 559px) {
     .ptoolbar {
-      order: 2;
-      min-height: 44px;
-      margin: 8px 0 0;
-      gap: 6px;
-      padding: 0 6px;
+      gap: 4px;
+      padding: 4px 6px;
       flex-wrap: nowrap;
     }
     .viewseg,
     .pcheck,
     .zonesw,
     .tchip,
-    .mspacer,
+    .zoomline,
     .zoomgrp > .zoomslider,
     .zoomgrp > .zval,
-    .zoomgrp > .fitbtn + .fitbtn,
-    .pgnav > .vline {
+    .zoomgrp > .fitbtn + .fitbtn {
       display: none;
     }
     .zoomgrp {
-      order: 2;
       flex: none;
     }
-    .pgnav {
-      flex: 1;
-      min-width: 0;
-      justify-content: space-between;
-    }
     .pglabel {
-      flex: 1;
       min-width: 0 !important;
       overflow: hidden;
       text-overflow: ellipsis;
-      text-align: center;
     }
     .ptoolbar .pgbtn,
     .ptoolbar .fitbtn,
@@ -998,8 +992,8 @@
     min-height: 0;
   }
   .pane-cap {
-    font-size: 10.5px;
-    color: var(--ink-faint);
+    font-size: 11.5px;
+    color: var(--ink-soft);
     text-align: center;
     flex: none;
     padding-bottom: 2px;
@@ -1062,18 +1056,18 @@
     width: 100%;
     height: auto;
     display: block;
-    border: 1px solid var(--line);
-    border-radius: 8px;
+    border: 1px solid var(--line-input);
     background: var(--facsimile-paper);
+    box-shadow: var(--shadow-paper);
   }
   /* The rendered pages are paper: they stay light in both themes. */
   .pv-sheet :global(svg) {
     width: 100%;
     height: auto;
     display: block;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: #fdfdfe;
+    border: 1px solid var(--line-input);
+    background: var(--facsimile-paper);
+    box-shadow: var(--shadow-paper);
   }
   .pv-page figcaption.blank {
     visibility: hidden;

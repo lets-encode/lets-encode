@@ -38,6 +38,7 @@ import {
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
+  configPieceRegions,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
@@ -50,6 +51,7 @@ import type {
   HistoryRow,
   CommentRow,
   PieceRef,
+  PageRegion,
 } from "./campaign-tables.ts";
 import { appendEnvelopeToPrBody, envelopeColumns } from "./command-envelope.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
@@ -74,7 +76,10 @@ import {
   splicePage,
   splicePageSpan,
 } from "./mei-page-splice.ts";
-import { resolveFacsimileImageUrls } from "./facsimile-images.ts";
+import {
+  resolveFacsimileImageUrls,
+  resolveRepoRelativeTarget,
+} from "./facsimile-images.ts";
 import { WorkflowRunWatch } from "./run-watch.ts";
 import { checkMei } from "./mei-check.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
@@ -1813,6 +1818,9 @@ export interface FacsimileTaskData {
   locator: string;
   /** The piece's preparation from config.yaml: 'measure-detection' or 'omr'. */
   preparation: string;
+  /** Per page (same order as model.pages), the piece's regions on it from
+      config.yaml, in image pixels; empty where the config gives none. */
+  regions: PageRegion[][];
   /** Whether the score holds any notation (notes, rests, chords). */
   hasNotation: boolean;
   status: string;
@@ -1894,6 +1902,13 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       fragment: task.fragment,
       locator: task.locator,
       preparation,
+      regions: configPieceRegions(
+        configYaml,
+        task.fragment,
+        model.pages.map((page) =>
+          resolveRepoRelativeTarget(task.fragment, page.image),
+        ),
+      ),
       hasNotation: hasNotation(mei),
       status: taskState?.status ?? "",
       holdsLock,

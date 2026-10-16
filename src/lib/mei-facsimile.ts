@@ -60,6 +60,93 @@ export interface ZoneModel {
    * <mdiv>; its flag is ignored.
    */
   mdiv: boolean;
+  /**
+   * Whether the measure is a pickup (an incomplete measure that is not
+   * counted), emitted as @metcon="false" on its <measure> at stage C.
+   * Absent means false.
+   */
+  pickup?: boolean;
+  /** A repeat barline at the measure's start (@left="rptstart"). Absent means false. */
+  rptStart?: boolean;
+  /** A repeat barline at the measure's end (@right="rptend"). Absent means false. */
+  rptEnd?: boolean;
+  /**
+   * A double repeat barline at the measure's end (@right="rptboth"): the end
+   * of one repeat and the start of the next. Takes the place of rptEnd.
+   * Absent means false.
+   */
+  rptBoth?: boolean;
+  /**
+   * The ending (volta) the measure belongs to: "1", "2", "3". Consecutive
+   * measures of one section with the same ending form one <ending>. Absent
+   * means none.
+   */
+  ending?: string;
+  /** The navigation signs the measure carries (MEASURE_SIGNS order). */
+  signs?: MeasureSign[];
+}
+
+/**
+ * A navigation sign on a measure: segno, coda, D.C., D.S. and Fine are a
+ * <repeatMark> with that @func; To Coda is a <dir>.
+ */
+export type MeasureSign =
+  | "segno"
+  | "coda"
+  | "daCapo"
+  | "dalSegno"
+  | "fine"
+  | "toCoda";
+/** The signs in the order they are written. */
+export const MEASURE_SIGNS: MeasureSign[] = [
+  "segno",
+  "coda",
+  "daCapo",
+  "dalSegno",
+  "fine",
+  "toCoda",
+];
+/** The text a sign carries; segno and coda are symbols only. */
+export const SIGN_TEXT: Record<MeasureSign, string> = {
+  segno: "",
+  coda: "",
+  daCapo: "D.C.",
+  dalSegno: "D.S.",
+  fine: "Fine",
+  toCoda: "To Coda",
+};
+/** Segno and coda stand at the measure's start, the others at its end. */
+const SIGN_AT_START = new Set<MeasureSign>(["segno", "coda"]);
+
+/** The beats of a measure in `scoreDef`'s meter. */
+function meterBeats(scoreDef: ScoreDefModel): number {
+  if (scoreDef.meterSym === "common") return 4;
+  if (scoreDef.meterSym === "cut") return 2;
+  return Math.max(1, Number(scoreDef.meterCount) || 4);
+}
+
+/**
+ * A measure's signs as control events on its first staff, above it: @tstamp
+ * 0 is the left barline, the meter's beats + 1 the right barline.
+ */
+function signsXml(
+  signs: MeasureSign[] | undefined,
+  measureNo: number,
+  beats: number,
+): string {
+  return MEASURE_SIGNS.filter((sign) => signs?.includes(sign))
+    .map((sign, k) => {
+      const at = SIGN_AT_START.has(sign) ? 0 : beats + 1;
+      const id = `${sign === "toCoda" ? "dir" : "repeatMark"}-${measureNo}-${k + 1}`;
+      const where = `staff="1" tstamp="${at}" place="above"`;
+      const text = SIGN_TEXT[sign];
+      if (sign === "toCoda")
+        return `                  <dir xml:id="${id}" ${where}>${text}</dir>\n`;
+      return text
+        ? `                  <repeatMark xml:id="${id}" func="${sign}" ${where}>${text}</repeatMark>\n`
+        : `                  <repeatMark xml:id="${id}" func="${sign}" ${where}/>\n`;
+    })
+    .join("");
 }
 
 /** One page of the facsimile model. */
@@ -241,6 +328,37 @@ export function sortReadingOrder(boxes: MeasureBox[]): MeasureBox[] {
 export function nextLabel(prevLabel: string | undefined): string {
   const n = parseInt(prevLabel ?? "", 10);
   return String((Number.isNaN(n) ? 0 : n) + 1);
+}
+
+/**
+ * The labels of a score's measures in reading order. A section start counts
+ * from 1, or is 0 when it is a pickup. A pickup inside a section completes
+ * the measure before it: the two are numbered as halves (12a, 12b), the
+ * first only while its label is automatic. Other measures count on from the
+ * previous label (nextLabel). A measure with an `override` takes that label.
+ */
+export function measureLabels(
+  measures: {
+    override: string | null;
+    pickup: boolean;
+    sectionStart: boolean;
+  }[],
+): string[] {
+  const labels: string[] = [];
+  measures.forEach((m, i) => {
+    const prev = labels[i - 1];
+    let auto: string;
+    if (m.sectionStart || i === 0) auto = m.pickup ? "0" : "1";
+    else if (m.pickup) {
+      const base = parseInt(prev, 10) || 0;
+      const before = measures[i - 1];
+      if (before.override === null && !before.pickup)
+        labels[i - 1] = `${base}a`;
+      auto = `${base}b`;
+    } else auto = nextLabel(prev);
+    labels.push(m.override ?? auto);
+  });
+  return labels;
 }
 
 /**
@@ -450,6 +568,15 @@ export function buildFacsimileMei(
   // System breaks are numbered in document order; a page break's @n records its
   // page number (the surface ordinal), per the MEI guidelines for <pb>.
   let sbNo = 0;
+  const beats = meterBeats(scoreDef);
+  // The ending the measures being written belong to, and the endings so far.
+  let openEnding: string | null = null;
+  let endingNo = 0;
+  const closeEnding = () => {
+    if (openEnding === null) return;
+    mdivParts[mdivParts.length - 1].push(`               </ending>`);
+    openEnding = null;
+  };
 
   model.pages.forEach((page, pi) => {
     const p = pi + 1;
@@ -469,6 +596,10 @@ export function buildFacsimileMei(
           `lrx="${Math.round(m.lrx)}" lry="${Math.round(m.lry)}"/>`,
       );
       if (!withMeasures) return;
+      // An ending closes before another ending, a measure of none, or a new
+      // movement; a break at the boundary stands outside both endings.
+      const ending = zone.ending || null;
+      if (ending !== openEnding || (zone.mdiv && measureNo > 1)) closeEnding();
       // A flagged measure opens the next movement (the first one is implicit).
       if (zone.mdiv && measureNo > 1) mdivParts.push([]);
       const parts = mdivParts[mdivParts.length - 1];
@@ -485,9 +616,16 @@ export function buildFacsimileMei(
           `               <sb xml:id="sb-${p}-${zi + 1}" n="${++sbNo}"/>`,
         );
       }
+      if (ending !== null && openEnding === null) {
+        parts.push(
+          `               <ending xml:id="ending-${++endingNo}" n="${xmlEscape(ending)}" label="${xmlEscape(ending)}.">`,
+        );
+        openEnding = ending;
+      }
       parts.push(
-        `               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}" facs="#${zoneId}">\n` +
+        `               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}"${zone.pickup ? ' metcon="false"' : ""}${zone.rptStart ? ' left="rptstart"' : ""}${zone.rptBoth ? ' right="rptboth"' : zone.rptEnd ? ' right="rptend"' : ""} facs="#${zoneId}">\n` +
           body +
+          signsXml(zone.signs, measureNo, beats) +
           `               </measure>`,
       );
     });
@@ -500,6 +638,7 @@ export function buildFacsimileMei(
       );
     }
 
+    if (pi === model.pages.length - 1) closeEnding();
     surfaces.push(
       `         <surface xml:id="${surfaceId}" n="${p}" ulx="0" uly="0" ` +
         `lrx="${page.width}" lry="${page.height}">\n` +
@@ -743,21 +882,48 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   const headXml = /[ \t]*<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(text)?.[0];
   if (!headXml) throw new Error("Not a facsimile score: no <meiHead> found.");
 
-  // Which zones the body marks as system/page starts and as movement starts
-  // (stage C), keyed by zone id via each measure's facs link. A second or
-  // later <mdiv> flags its first measure; the first <mdiv> is implicit.
+  // Which zones the body marks as system/page starts and as movement starts,
+  // and which measures it marks as pickups (stage C), keyed by zone id via
+  // each measure's facs link. A second or later <mdiv> flags its first
+  // measure; the first <mdiv> is implicit.
   const body = /<body\b[^>]*>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? "";
   const pbZones = new Set<string>();
   const sbZones = new Set<string>();
   const mdivZones = new Set<string>();
+  const pickupZones = new Set<string>();
+  const rptStartZones = new Set<string>();
+  const rptEndZones = new Set<string>();
+  const rptBothZones = new Set<string>();
+  const endingOf = new Map<string, string>();
+  const signsOf = new Map<string, MeasureSign[]>();
+  // The ending being read, and the measure the control events after it belong to.
+  let ending: string | null = null;
+  let lastZone: string | null = null;
   let hasMeasures = false;
   let hasBreaks = false;
   let pendingPb = false;
   let pendingSb = false;
   let pendingMdiv = false;
   let seenMdiv = false;
-  for (const token of body.match(/<(mdiv|pb|sb|measure)\b[^>]*>/g) ?? []) {
-    if (token.startsWith("<mdiv")) {
+  for (const token of body.match(
+    /<(mdiv|pb|sb|measure|ending)\b[^>]*>|<\/ending>|<repeatMark\b[^>]*>|<dir\b[^>]*>[^<]*<\/dir>/g,
+  ) ?? []) {
+    if (token.startsWith("<ending")) {
+      ending = attr(token, "n") ?? null;
+    } else if (token === "</ending>") {
+      ending = null;
+    } else if (token.startsWith("<repeatMark") || token.startsWith("<dir")) {
+      const sign: MeasureSign | undefined = token.startsWith("<dir")
+        ? token.replace(/<[^>]*>/g, "").trim() === SIGN_TEXT.toCoda
+          ? "toCoda"
+          : undefined
+        : MEASURE_SIGNS.find((s) => s === attr(token, "func"));
+      if (sign && lastZone) {
+        const list = signsOf.get(lastZone) ?? [];
+        if (!list.includes(sign)) list.push(sign);
+        signsOf.set(lastZone, list);
+      }
+    } else if (token.startsWith("<mdiv")) {
       if (seenMdiv) pendingMdiv = true;
       seenMdiv = true;
     } else if (token.startsWith("<pb")) {
@@ -772,6 +938,15 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         if (pendingPb) pbZones.add(facs.slice(1));
         if (pendingSb) sbZones.add(facs.slice(1));
         if (pendingMdiv) mdivZones.add(facs.slice(1));
+        if (attr(token, "metcon") === "false") pickupZones.add(facs.slice(1));
+        if (attr(token, "left") === "rptstart")
+          rptStartZones.add(facs.slice(1));
+        if (attr(token, "right") === "rptend") rptEndZones.add(facs.slice(1));
+        if (attr(token, "right") === "rptboth") rptBothZones.add(facs.slice(1));
+        if (ending !== null) endingOf.set(facs.slice(1), ending);
+        lastZone = facs.slice(1);
+      } else {
+        lastZone = null;
       }
       pendingPb = false;
       pendingSb = false;
@@ -809,6 +984,16 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         pb: pbZones.has(id),
         sb: sbZones.has(id),
         mdiv: mdivZones.has(id),
+        pickup: pickupZones.has(id),
+        ...(rptStartZones.has(id) ? { rptStart: true } : {}),
+        ...(rptEndZones.has(id) ? { rptEnd: true } : {}),
+        ...(rptBothZones.has(id) ? { rptBoth: true } : {}),
+        ...(endingOf.has(id) ? { ending: endingOf.get(id) } : {}),
+        ...(signsOf.has(id)
+          ? {
+              signs: MEASURE_SIGNS.filter((s) => signsOf.get(id)!.includes(s)),
+            }
+          : {}),
       });
       boxesOnly.push(box);
     }

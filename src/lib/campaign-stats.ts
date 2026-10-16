@@ -94,6 +94,8 @@ export interface CampaignStats {
   history: HistoryRow[];
   comments: CommentRow[];
   passThreshold: number;
+  /** The default branch's head commit the tables were read at; '' when it could not be read. */
+  headSha: string;
 }
 
 /** Tasks claimable right now (unclaimed, unblocked encoding_required). */
@@ -321,6 +323,12 @@ async function fetchStats(
 ): Promise<CampaignStats> {
   const owner = summary.owner ?? summary.full_name.split("/")[0];
   const repo = summary.name;
+  // The head is read before the tables: a commit that lands during the read
+  // moves the branch past `headSha`, and the next poll reads again.
+  const headSha = await f.getRepoHead(owner, repo).then(
+    (h) => h.sha,
+    () => "",
+  );
   const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
     await Promise.all([
       f.getRepoFile(owner, repo, TASK_PATH),
@@ -401,6 +409,7 @@ async function fetchStats(
     history,
     comments,
     passThreshold,
+    headSha,
   };
   return stats;
 }
@@ -427,6 +436,12 @@ export interface MyTask {
   /** Awaiting group: validation progress on the task's subtasks. */
   passes: number;
   threshold: number;
+  /** Awaiting group: the task's reviews claimed by the viewer and by others. */
+  myReviews: number;
+  otherReviews: number;
+  /** Awaiting group: the reviews have to come from someone other than the
+      viewer, the task's encoder. */
+  needsAnother: boolean;
   /** Slot dots for the awaiting group. */
   dots: Array<"pass" | "open">;
   /** When the encoding was submitted (awaiting/done groups). */
@@ -486,6 +501,9 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
     const cells = subRows.flatMap((r) =>
       stats.validationColumns.map((c) => r[c] ?? ""),
     );
+    const reviewLocks = stats.locks.filter(
+      (l) => l.kind === "validation" && l.task_id === task,
+    );
     const dots = cells.map((cell) =>
       isFinalValidation(cell) ? ("pass" as const) : ("open" as const),
     );
@@ -501,6 +519,9 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       expiresAt: "",
       passes: dots.filter((d) => d === "pass").length,
       threshold: taskThreshold(stats.passThreshold, subRows.length),
+      myReviews: reviewLocks.filter((l) => l.user_id === viewer).length,
+      otherReviews: reviewLocks.filter((l) => l.user_id !== viewer).length,
+      needsAnother: !stats.allowSelfValidation,
       dots,
       submittedAt: findRow(stats.rows, task, "")?.encoded_at ?? "",
       logins: stats.logins,

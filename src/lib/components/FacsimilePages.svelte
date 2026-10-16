@@ -96,14 +96,7 @@
         onpinchend: () => (fit = nearFit(zoom, fitPage)),
       })}
     >
-      <div
-        class="material-grid"
-        class:fit-page={fit === "page"}
-        style="--per-row: {perRow}; width: {zoom}%; --page-row: {Math.max(
-          0,
-          bodyH - 30,
-        )}px"
-      >
+      <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each urls as url, i (url)}
           <figure>
             <figcaption class="page-label">Page {i + 1} · Facsimile</figcaption>
@@ -135,8 +128,7 @@
     box-sizing: border-box;
     /* Scanned pages keep their own light ground in either theme. */
     background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--line-input);
+    box-shadow: var(--shadow-paper);
   }
 </style>

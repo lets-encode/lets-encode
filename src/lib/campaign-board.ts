@@ -254,6 +254,34 @@ export function doneLabel(
   return `${card.doneLine || "done"}${when}`;
 }
 
+/** A card in review's line: the viewer's claimed reviews, other people's,
+    and the reviews still unclaimed, which may have to come from someone
+    other than the viewer ("your review in progress · waits for 1 more
+    review"). */
+export function reviewWaitLabel(
+  passes: number,
+  threshold: number,
+  mine: number,
+  others: number,
+  needsAnother = false,
+): string {
+  const waiting = threshold - passes - mine - others;
+  const plural = (n: number) => `review${n === 1 ? "" : "s"}`;
+  return [
+    mine > 0
+      ? `your ${mine === 1 ? "review" : `${mine} reviews`} in progress`
+      : "",
+    others > 0
+      ? `${others} ${plural(others)} in progress by ${others === 1 ? "someone else" : "others"}`
+      : "",
+    waiting > 0
+      ? `waits for ${waiting} more ${plural(waiting)}${needsAnother ? " from someone else" : ""}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /**
  * The one-line status pill of a card: the current stage (the task's heading
  * names its kind), the worker on a claimed task, and numeric pass progress

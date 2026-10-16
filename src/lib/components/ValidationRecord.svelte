@@ -268,7 +268,7 @@
     flex-wrap: wrap;
     gap: 10px;
     padding: 10px 0;
-    border-bottom: 1px solid var(--hairline);
+    border-bottom: 1px solid var(--line);
   }
   .rslot {
     font-size: 12.5px;

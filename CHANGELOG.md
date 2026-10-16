@@ -3,8 +3,30 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-16
+
+- On a touch screen a double tap on a box in draw mode switches back to scroll mode.
+- The region editors select several boxes by Shift+click, Shift+drag or Select several, and move, copy and delete them together.
+- The measure correction marks repeats, endings and navigation signs, and shows a system start as a bracket.
+- The score workspaces share one panel, their stage's colour, soft round buttons and one toolbar order at every size.
+- A new campaign's repository can be created in one of your GitHub organisations.
+- Tasks in review show whose reviews are in progress and whether you may take the next one.
+- The measure correction shows the selected box's controls in the same aligned rows on every screen, with New on phones too.
+- The measure correction keeps its instructions in the task text and shows only counts in the detection result.
+- The wizard's page views keep the same small gap between rows of pages at fit page.
+- The campaign list and campaign page update in place when other people's changes land.
+- On phones the measure correction keeps its steps in view while a box is selected.
+- The measure correction keeps only the boxes inside the piece's regions, from new detections and from saved scores and drafts.
+- The measure correction shows only the piece's part of a page, with a button to show the whole page.
+
 ## 2026-10-15
 
+- Measures can be marked as pickups, numbered 0 at a section start and as halves such as 12a and 12b elsewhere.
+- Measure numbers restart at 1 in each section.
+- The measure correction can hide its boxes to show the page underneath.
+- Measure numbers shrink in narrow or low measure boxes.
+- On phones the measure correction's Scroll and Draw buttons sit over the pages.
+- On phones a double tap on the page outside a box returns the measure correction to scroll mode.
 - The draft note sits centred just above the docked side panel.
 - On phones the task sheet fades at an edge with more to scroll.
 - The score viewer's pane switch uses the toolbar's joined buttons, and on phones its page label shows the numbers only.
