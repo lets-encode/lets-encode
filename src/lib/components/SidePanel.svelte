@@ -16,7 +16,7 @@
   action in a footer pinned to the panel's bottom; a Comments button at the
   task box heading's right end switches between the two. Docked as a sheet
   it shows only the view's bar, the tools (while something is selected, its
-  controls) and the footer until opened, up to SHEET_PEEK_MAX_CSS; without a
+  controls below them) and the footer until opened, up to SHEET_PEEK_MAX_CSS; without a
   footer the task box stays in view instead. Dragging a closed sheet down
   lowers it, its content scrolling; dragging a lowered sheet up raises it,
   and dragging it up from its full closed height opens it.
@@ -126,7 +126,7 @@
     /** The selection tab's name. */
     selectionLabel?: string;
     /** Something is selected: a closed sheet shows the selection's
-        controls in place of the tools. */
+        controls below the tools. */
     selectionActive?: boolean;
     /** What the panel shows when it has a selection. */
     tab?: "selection" | "comments";
@@ -484,10 +484,11 @@
     {:else if emptyLine && listShown}
       <p class="empty">{emptyLine}</p>
     {/if}
+    {#if tools}
+      <div class="sptools">{@render tools()}</div>
+    {/if}
     {#if peek && selection && selectionActive}
       <div class="spsel">{@render selection()}</div>
-    {:else if tools}
-      <div class="sptools">{@render tools()}</div>
     {/if}
     {#if selection && listShown && tab === "selection"}
       <div

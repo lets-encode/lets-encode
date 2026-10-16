@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   arrowShift,
+  centreInRegions,
   drawnBox,
   drawStarted,
   movedBox,
   nudgedEdges,
   pagePoint,
+  regionsView,
   resizedBox,
 } from "../box-geometry.ts";
 
@@ -86,4 +88,24 @@ test("arrowShift maps the arrow keys and ignores others", () => {
   assert.deepEqual(arrowShift("ArrowLeft", 2), { dx: -2, dy: 0 });
   assert.deepEqual(arrowShift("ArrowDown", 10), { dx: 0, dy: 10 });
   assert.equal(arrowShift("Enter", 2), null);
+});
+
+test("centreInRegions keeps a box whose centre lies in a region, or all with none", () => {
+  const region = { ulx: 0, uly: 0, lrx: 250, lry: 160 };
+  assert.equal(centreInRegions(box, [region]), true);
+  assert.equal(centreInRegions(box, [{ ...region, lrx: 150 }]), false);
+  assert.equal(centreInRegions(box, []), true);
+});
+
+test("regionsView widens the regions' bounds by the margin and keeps them on the page", () => {
+  assert.deepEqual(
+    regionsView([box, { ulx: 500, uly: 20, lrx: 990, lry: 150 }], page, 0.02),
+    { ulx: 80, uly: 0, lrx: 1000, lry: 220 },
+  );
+  assert.deepEqual(regionsView([], page, 0.02), {
+    ulx: 0,
+    uly: 0,
+    lrx: 1000,
+    lry: 800,
+  });
 });

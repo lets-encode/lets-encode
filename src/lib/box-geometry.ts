@@ -128,6 +128,37 @@ export function nudgedEdges(
   };
 }
 
+/** Whether the box's centre lies in one of `regions`; true when there are none. */
+export function centreInRegions(box: Box, regions: Box[]): boolean {
+  if (!regions.length) return true;
+  const cx = (box.ulx + box.lrx) / 2;
+  const cy = (box.uly + box.lry) / 2;
+  return regions.some(
+    (r) => cx >= r.ulx && cx <= r.lrx && cy >= r.uly && cy <= r.lry,
+  );
+}
+
+/**
+ * The part of a page to show for `regions`: their bounding box widened by
+ * `margin` of the page's width on every side and kept on the page. The whole
+ * page when there are no regions.
+ */
+export function regionsView(
+  regions: Box[],
+  page: PageSize,
+  margin: number,
+): Box {
+  if (!regions.length)
+    return { ulx: 0, uly: 0, lrx: page.width, lry: page.height };
+  const m = page.width * margin;
+  return {
+    ulx: Math.max(0, Math.min(...regions.map((r) => r.ulx)) - m),
+    uly: Math.max(0, Math.min(...regions.map((r) => r.uly)) - m),
+    lrx: Math.min(page.width, Math.max(...regions.map((r) => r.lrx)) + m),
+    lry: Math.min(page.height, Math.max(...regions.map((r) => r.lry)) + m),
+  };
+}
+
 /** An arrow key's shift as (dx, dy), `step` pixels long; null for any other key. */
 export function arrowShift(
   key: string,

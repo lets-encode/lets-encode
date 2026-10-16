@@ -13,7 +13,7 @@
     FacsimileTaskData,
     Result,
   } from "$lib/commands.ts";
-  import { readingOrderRows, nextLabel } from "$lib/mei-facsimile.ts";
+  import { readingOrderRows, measureLabels } from "$lib/mei-facsimile.ts";
   import { taskDescription } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { DOCKED_QUERY, readSidePanel } from "$lib/side-panels.ts";
@@ -56,11 +56,13 @@
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
   import {
     arrowShift,
+    centreInRegions,
     drawnBox,
     drawStarted,
     movedBox,
     nudgedEdges,
     pagePoint,
+    regionsView,
     resizedBox,
   } from "$lib/box-geometry.ts";
 
@@ -70,10 +72,10 @@
   const taskId = $derived(page.params.task!);
 
   // Editor-side zone: the box, the label override (null = automatic), the
-  // computed label, and the break flags. The page break is derived from
-  // position (each page's first measure), not stored per-zone. `sb` follows
-  // the reading-order rows (a row's first box starts a system) unless
-  // `sbOverride` holds a value set by hand.
+  // computed label, the break flags and the pickup flag. The page break is
+  // derived from position (each page's first measure), not stored per-zone.
+  // `sb` follows the reading-order rows (a row's first box starts a system)
+  // unless `sbOverride` holds a value set by hand.
   type EditZone = {
     box: MeasureBox;
     override: string | null;
@@ -81,6 +83,7 @@
     sb: boolean;
     sbOverride: boolean | null;
     mdiv: boolean;
+    pickup: boolean;
   };
   // A staff or grand-staff box of an OMR-prepared piece: geometry only.
   type EditStaff = { box: MeasureBox };
@@ -95,6 +98,8 @@
     zones: EditZone[];
     staves: EditStaff[];
     grandstaves: EditStaff[];
+    // The piece's regions on the page; empty when it covers the whole page.
+    regions: MeasureBox[];
   };
   // The box layers. A measure-correction task edits measures with their
   // numbers and breaks; a layout task (OMR) edits the staff boxes first, then
@@ -110,37 +115,54 @@
         anchor = { page: 0, frac: 0 };
         rawLayouts = {};
         seen = { staves: [], grandstaves: [], measures: [] };
-        pages = d.model.pages.map((pg, i) => ({
-          image: pg.image,
-          width: pg.width,
-          height: pg.height,
-          url: d.imageUrls[i],
-          failed: !d.imageUrls[i],
-          zones: pg.zones.map((z) => ({
-            box: { ...z.box },
-            override: null,
-            label: z.label,
-            sb: z.sb,
-            sbOverride: null,
-            mdiv: z.mdiv,
-          })),
-          staves: (pg.staves ?? []).map((box) => ({ box: { ...box } })),
-          grandstaves: (pg.grandstaves ?? []).map((box) => ({
-            box: { ...box },
-          })),
-        }));
+        // Boxes outside the piece's regions on a page are dropped.
+        let droppedMeasures = false;
+        pages = d.model.pages.map((pg, i) => {
+          const regions = d.regions[i] ?? [];
+          const inPiece = (box: MeasureBox) => centreInRegions(box, regions);
+          const zones = pg.zones.filter((z) => inPiece(z.box));
+          if (zones.length < pg.zones.length) droppedMeasures = true;
+          return {
+            image: pg.image,
+            width: pg.width,
+            height: pg.height,
+            url: d.imageUrls[i],
+            failed: !d.imageUrls[i],
+            zones: zones.map((z) => ({
+              box: { ...z.box },
+              override: null,
+              label: z.label,
+              sb: z.sb,
+              sbOverride: null,
+              mdiv: z.mdiv,
+              pickup: z.pickup ?? false,
+            })),
+            staves: (pg.staves ?? [])
+              .filter(inPiece)
+              .map((box) => ({ box: { ...box } })),
+            grandstaves: (pg.grandstaves ?? [])
+              .filter(inPiece)
+              .map((box) => ({ box: { ...box } })),
+            regions,
+          };
+        });
         // A score of one or two pages is shown whole: one page, or both side
         // by side. Longer scores keep the two-up view with page 1 as a recto.
         if (pages.length <= 2)
           ({ view, firstOnRight } = defaultSpreadView(pages.length));
         // A label that differs from what automatic numbering would produce is
-        // an override (e.g. 10a/10b) — keep it through renumbering.
-        let prev: string | undefined;
-        for (const pg of pages) {
-          for (const zone of pg.zones) {
-            if (zone.label !== nextLabel(prev)) zone.override = zone.label;
-            prev = zone.label;
-          }
+        // an override (e.g. 10a/10b) — keep it through renumbering. The
+        // measure after each one is included, since a pickup changes the
+        // label of the measure before it. With measures dropped, the labels
+        // left are numbered automatically.
+        if (droppedMeasures) renumber();
+        else {
+          const measures = numbering();
+          measures.forEach((m, i) => {
+            const auto = measureLabels(measures.slice(0, i + 2))[i];
+            if (m.zone.label !== auto) m.override = m.zone.label;
+          });
+          for (const m of measures) m.zone.override = m.override;
         }
         // Likewise a system beginning that differs from what the rows give.
         pages.forEach((pg, p) => {
@@ -259,13 +281,31 @@
   let deskW = $state(0);
   let deskH = $state(0);
 
+  // Where the piece covers only part of a page, the page shows that part:
+  // its regions widened by REGION_MARGIN of the page width, unless the whole
+  // page is asked for.
+  const REGION_MARGIN = 0.02;
+  let wholePage = $state(false);
+  const partOf = (pg: EditPage): MeasureBox =>
+    regionsView(pg.regions, pg, REGION_MARGIN);
+  const isWhole = (v: MeasureBox, pg: EditPage) =>
+    v.ulx <= 0 && v.uly <= 0 && v.lrx >= pg.width && v.lry >= pg.height;
+  const hasPartPages = $derived(pages.some((pg) => !isWhole(partOf(pg), pg)));
+  const shownArea = (pg: EditPage): MeasureBox =>
+    wholePage ? { ulx: 0, uly: 0, lrx: pg.width, lry: pg.height } : partOf(pg);
+
   // The zoom at which a whole page fits in the desk: bounded by the height
   // (using the tallest page), capped at 1 (the width fit). 76 covers the
   // desk padding, the page heading above each sheet and the sheet's bottom
-  // margin.
+  // margin. A page cropped to the piece fits its shown part.
   function fitZoom(): number {
     if (!pages.length || !deskW || !deskH) return 1;
-    const aspect = Math.max(...pages.map((p) => p.height / p.width));
+    const aspect = Math.max(
+      ...pages.map((pg) => {
+        const v = shownArea(pg);
+        return (v.lry - v.uly) / (v.lrx - v.ulx);
+      }),
+    );
     const pagesW = deskW - 48;
     const colW = shownView === "double" ? (pagesW - 4) / 2 : pagesW;
     const usableH = deskH - 76;
@@ -456,15 +496,23 @@
     selected = null;
   }
 
-  // Recompute every label from reading order + overrides ("10a" continues as 11).
+  // Every measure in reading order with what its label is computed from.
+  const numbering = () =>
+    pages.flatMap((pg, p) =>
+      pg.zones.map((zone, z) => ({
+        zone,
+        override: zone.override,
+        pickup: zone.pickup,
+        sectionStart: startsMovement(p, z),
+      })),
+    );
+
+  // Recompute every label from reading order, sections, pickups and
+  // overrides ("10a" continues as 11).
   function renumber() {
-    let prev: string | undefined;
-    for (const pg of pages) {
-      for (const zone of pg.zones) {
-        zone.label = zone.override ?? nextLabel(prev);
-        prev = zone.label;
-      }
-    }
+    const measures = numbering();
+    const labels = measureLabels(measures);
+    measures.forEach((m, i) => (m.zone.label = labels[i]));
   }
 
   // The first box of every reading-order row of a page but its first row,
@@ -579,6 +627,14 @@
     clearTimeout(drawHintTimer);
   });
   let lastTap: { p: number; z: number; t: number } | null = null;
+  // The last tap in draw mode on the page outside a box, in page pixels.
+  let lastPageTap: { p: number; x: number; y: number; t: number } | null = null;
+  const DOUBLE_TAP_PX = 24;
+  function leaveDrawMode() {
+    drawMode = false;
+    corner = null;
+    selected = null;
+  }
   function tapSelect(p: number, z: number) {
     // The tap that put down a picked-up corner selects nothing.
     if (justPlaced) {
@@ -666,6 +722,7 @@
         pb: i === 0,
         sb: z.sb,
         mdiv: z.mdiv,
+        pickup: z.pickup,
       })),
       ...(omr
         ? {
@@ -794,7 +851,15 @@
           );
         }
         rawLayouts[p] = layout;
-        const boxes = layoutBoxes(layout, pg);
+        // The model reads the whole page; the piece keeps the boxes in its
+        // regions.
+        const all = layoutBoxes(layout, pg);
+        const inPiece = (box: MeasureBox) => centreInRegions(box, pg.regions);
+        const boxes = {
+          measures: all.measures.filter(inPiece),
+          staves: all.staves.filter(inPiece),
+          grandstaves: all.grandstaves.filter(inPiece),
+        };
         pages[p].zones = boxes.measures.map((box) => ({
           box,
           override: null,
@@ -802,6 +867,7 @@
           sb: false,
           sbOverride: null,
           mdiv: false,
+          pickup: false,
         }));
         pages[p].staves = boxes.staves.map((box) => ({ box }));
         pages[p].grandstaves = boxes.grandstaves.map((box) => ({ box }));
@@ -943,9 +1009,17 @@
     zone.sb = next;
     commit();
   }
+  // Each section counts its measures from 1.
   function toggleSection(p: number, z: number) {
     if (!canEdit || sectionLocked(p, z)) return;
     pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
+    renumber();
+    commit();
+  }
+  function togglePickup(p: number, z: number) {
+    if (!canEdit) return;
+    pages[p].zones[z].pickup = !pages[p].zones[z].pickup;
+    renumber();
     commit();
   }
 
@@ -969,6 +1043,27 @@
   const labelFont = (p: number, pageW: number) => {
     const target = LABEL_PX * damp;
     return canvasW[p] ? (target * pageW) / canvasW[p] : target;
+  };
+  // A measure's label is smaller in a narrow or low box: with its inset it
+  // takes at most LABEL_FIT_W of the box's width and LABEL_FIT_H of its
+  // height, and no less than LABEL_MIN of the full size. The factors are the
+  // label's inset, background and double-bar proportions in the markup.
+  const LABEL_FIT_W = 0.75;
+  const LABEL_FIT_H = 0.35;
+  const LABEL_MIN = 0.5;
+  const zoneLabelFont = (
+    p: number,
+    pageW: number,
+    box: MeasureBox,
+    chars: number,
+    bar: boolean,
+  ) => {
+    const full = labelFont(p, pageW);
+    const byW =
+      ((box.lrx - box.ulx) * LABEL_FIT_W) /
+      (0.6 + chars * 0.62 + 0.9 + (bar ? 0.7 : 0));
+    const byH = ((box.lry - box.uly) * LABEL_FIT_H) / (0.6 + 1.55);
+    return Math.max(full * LABEL_MIN, Math.min(full, byW, byH));
   };
 
   type Drag = {
@@ -1133,14 +1228,14 @@
     // A touch on a box selects it on the tap (tapSelect), also in draw mode.
     if (coarse && (e.target as Element).closest(".zone, .staff")) return;
     const deselected = selected !== null;
-    // On a touch screen outside draw mode the finger scrolls; a tap on the
-    // page deselects (backgroundTapEnd).
-    if (coarse && !drawMode) {
+    // On a touch screen outside draw mode, or with the boxes hidden, the
+    // finger scrolls; a tap on the page deselects (backgroundTapEnd).
+    if (coarse && (!drawMode || !showBoxes)) {
       bgTap = { x: e.clientX, y: e.clientY };
       return;
     }
     selected = null;
-    if (!canEdit) return;
+    if (!canEdit || !showBoxes) return;
     const { x, y } = svgXY(e, p);
     const box = { ulx: x, uly: y, lrx: x, lry: y };
     drag = {
@@ -1170,6 +1265,7 @@
         sb: false,
         sbOverride: null,
         mdiv: false,
+        pickup: false,
       });
     const z = items(p, layer).length - 1;
     selected = { p, z };
@@ -1309,8 +1405,24 @@
       selected = { p, z: copyOf };
       return;
     }
-    // A draw that never crossed the threshold was a plain click.
+    // A draw that never crossed the threshold was a plain click. On a touch
+    // screen a second tap on the page within DOUBLE_TAP_MS and
+    // DOUBLE_TAP_PX of the first ends draw mode.
     if (!started) {
+      if (kind === "draw" && coarse) {
+        const t = performance.now();
+        const k = (canvasW[p] || pages[p].width) / pages[p].width;
+        if (
+          lastPageTap?.p === p &&
+          t - lastPageTap.t < DOUBLE_TAP_MS &&
+          Math.hypot(sx - lastPageTap.x, sy - lastPageTap.y) * k < DOUBLE_TAP_PX
+        ) {
+          lastPageTap = null;
+          leaveDrawMode();
+          return;
+        }
+        lastPageTap = { p, x: sx, y: sy, t };
+      }
       if (kind === "draw" && !deselected) cornerClick(p, layer, sx, sy);
       return;
     }
@@ -1368,13 +1480,18 @@
           ? movedBox(b, b.lrx - b.ulx, 0, pg)
           : movedBox(b, 0, (b.lry - b.uly) * 1.5, pg);
     } else {
-      const w = pg.width * (tool === "measures" ? 0.1 : 0.8);
-      const h = pg.height * (tool === "measures" ? 0.15 : 0.03);
+      // Centred in the page's shown part, no taller than it.
+      const v = shownArea(pg);
+      const w = (v.lrx - v.ulx) * (tool === "measures" ? 0.1 : 0.8);
+      const h = Math.min(
+        v.lry - v.uly,
+        pg.height * (tool === "measures" ? 0.15 : 0.03),
+      );
       box = {
-        ulx: (pg.width - w) / 2,
-        uly: (pg.height - h) / 2,
-        lrx: (pg.width + w) / 2,
-        lry: (pg.height + h) / 2,
+        ulx: (v.ulx + v.lrx - w) / 2,
+        uly: (v.uly + v.lry - h) / 2,
+        lrx: (v.ulx + v.lrx + w) / 2,
+        lry: (v.uly + v.lry + h) / 2,
       };
     }
     const hadFocus = !!document.activeElement?.closest(".zone, .staff");
@@ -1490,6 +1607,15 @@
   }
 
   let showOverlaps = $state(true);
+  // Hidden, the layer's boxes are not drawn, cannot be selected and no new
+  // box is drawn; a finger on the page scrolls it.
+  let showBoxes = $state(true);
+  function toggleBoxes() {
+    showBoxes = !showBoxes;
+    selected = null;
+    corner = null;
+    armed = null;
+  }
 
   // Intersections of every pair of boxes on the layer the current tool edits.
   function overlaps(pg: EditPage): MeasureBox[] {
@@ -1533,12 +1659,13 @@
   const startsMovement = (p: number, z: number) =>
     sectionLocked(p, z) || (pages[p].zones[z].mdiv && (p > 0 || z > 0));
 
-  // Hover tooltip naming a measure's breaks, if it has any. On the page a
-  // section start shows as a double bar in the label and a system start as
-  // the blue left edge.
+  // Hover tooltip naming a measure's breaks and pickup flag, if it has any.
+  // On the page a section start shows as a double bar in the label and a
+  // system start as the blue left edge.
   const zoneTitle = (p: number, z: number) =>
     [
       startsMovement(p, z) ? "Starts a section" : "",
+      pages[p].zones[z].pickup ? "Pickup" : "",
       pbAt(z)
         ? "First measure on the page: starts a system"
         : pages[p].zones[z].sb
@@ -1578,7 +1705,7 @@
     ...(canEdit && coarse
       ? [
           [
-            `In draw mode (the square) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. In scroll mode (the hand) a finger drag scrolls the pages, and a double tap on a box selects it and switches to draw mode. Pinch to zoom.`,
+            `In draw mode (the square) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. In scroll mode (the hand) a finger drag scrolls the pages, and a double tap on a box selects it and switches to draw mode; a double tap on the page outside a box switches back to scroll mode. Pinch to zoom.`,
           ],
           [
             "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
@@ -1793,6 +1920,11 @@
                 ></div>{/if}
               {#each sp.pages as p (p)}
                 {@const pg = pages[p]}
+                <!-- Cropped to the piece's part of the page, the frame shows
+                     that part of the full-size canvas, shifted by its
+                     offset; percentage margins are of the frame's width. -->
+                {@const v = shownArea(pg)}
+                {@const vw = v.lrx - v.ulx}
                 <div class="page">
                   <p class="page-label pagehead">Page {p + 1} · Facsimile</p>
                   {#if pg.failed}
@@ -1801,164 +1933,192 @@
                       zones are shown without their reference image.
                     </div>
                   {/if}
-                  <div class="canvas" bind:clientWidth={canvasW[p]}>
-                    <svg
-                      bind:this={svgEls[p]}
-                      viewBox={`0 0 ${pg.width} ${pg.height}`}
-                      class:staves={tool === "staves"}
-                      class:grandstaves={tool === "grandstaves"}
-                      class:pan={coarse && !drawMode}
-                      role="application"
-                      aria-label={`Page ${p + 1}, ${tool === "staves" ? "staff boxes" : tool === "grandstaves" ? "grand staves" : "measures"}`}
-                      onpointerdowncapture={(e) => placeArmed(e, p)}
-                      onpointerdown={(e) => backgroundPointerDown(e, p)}
-                      onpointerup={backgroundTapEnd}
+                  <div
+                    class="frame"
+                    class:cropped={!isWhole(v, pg)}
+                    style:aspect-ratio={isWhole(v, pg)
+                      ? undefined
+                      : `${vw} / ${v.lry - v.uly}`}
+                  >
+                    <div
+                      class="canvas"
+                      bind:clientWidth={canvasW[p]}
+                      style:width={isWhole(v, pg)
+                        ? undefined
+                        : `${(pg.width / vw) * 100}%`}
+                      style:margin-left={isWhole(v, pg)
+                        ? undefined
+                        : `${(-v.ulx / vw) * 100}%`}
+                      style:margin-top={isWhole(v, pg)
+                        ? undefined
+                        : `${(-v.uly / vw) * 100}%`}
                     >
-                      <!-- Pages far from the view keep their size but draw nothing. -->
-                      {#if nearPages.includes(p)}
-                        {#if pg.url}
-                          <image
-                            href={pg.url}
-                            width={pg.width}
-                            height={pg.height}
-                            onerror={() => (pages[p].failed = true)}
-                          />
-                        {/if}
-                        {#each tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
-                          <rect
-                            class="staff"
-                            class:grand={tool === "grandstaves"}
-                            class:selected={selected?.p === p &&
-                              selected?.z === s}
-                            vector-effect="non-scaling-stroke"
-                            role="button"
-                            tabindex={tabStop(p, s)}
-                            data-box={s}
-                            aria-current={selected?.p === p && selected?.z === s
-                              ? "true"
-                              : undefined}
-                            aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}, page ${p + 1}${canEdit ? ": select, drag or resize" : ""}`}
-                            x={staff.box.ulx}
-                            y={staff.box.uly}
-                            width={staff.box.lrx - staff.box.ulx}
-                            height={staff.box.lry - staff.box.uly}
-                            onpointerdown={(e) =>
-                              startZoneDrag(e, p, s, "move")}
-                            onclick={() => tapSelect(p, s)}
-                            onkeydown={(e) => zoneKeydown(e, p, s)}
-                          />
-                        {/each}
-                        {#each tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
-                          <rect
-                            class="zone"
-                            class:selected={selected?.p === p &&
-                              selected?.z === z}
-                            class:mdivstart={startsMovement(p, z)}
-                            vector-effect="non-scaling-stroke"
-                            role="button"
-                            tabindex={tabStop(p, z)}
-                            data-box={z}
-                            aria-current={selected?.p === p && selected?.z === z
-                              ? "true"
-                              : undefined}
-                            aria-label={`Measure ${zone.override ?? zone.label}, page ${p + 1}${sbActive(p, z) ? ", starts a system" : ""}${startsMovement(p, z) ? ", starts a section" : ""}${canEdit ? ": select, drag, or edit its number and breaks" : ""}`}
-                            x={zone.box.ulx}
-                            y={zone.box.uly}
-                            width={zone.box.lrx - zone.box.ulx}
-                            height={zone.box.lry - zone.box.uly}
-                            onpointerdown={(e) =>
-                              startZoneDrag(e, p, z, "move")}
-                            onclick={() => tapSelect(p, z)}
-                            onkeydown={(e) => zoneKeydown(e, p, z)}
-                          >
-                            {#if zoneTitle(p, z)}
-                              <title>{zoneTitle(p, z)}</title>
-                            {/if}
-                          </rect>
-                          {#if sbActive(p, z)}
-                            <line
-                              class="sysstart"
+                      <svg
+                        bind:this={svgEls[p]}
+                        viewBox={`0 0 ${pg.width} ${pg.height}`}
+                        class:staves={tool === "staves"}
+                        class:grandstaves={tool === "grandstaves"}
+                        class:pan={coarse && (!drawMode || !showBoxes)}
+                        role="application"
+                        aria-label={`Page ${p + 1}, ${tool === "staves" ? "staff boxes" : tool === "grandstaves" ? "grand staves" : "measures"}`}
+                        onpointerdowncapture={(e) => placeArmed(e, p)}
+                        onpointerdown={(e) => backgroundPointerDown(e, p)}
+                        onpointerup={backgroundTapEnd}
+                      >
+                        <!-- Pages far from the view keep their size but draw nothing. -->
+                        {#if nearPages.includes(p)}
+                          {#if pg.url}
+                            <image
+                              href={pg.url}
+                              width={pg.width}
+                              height={pg.height}
+                              onerror={() => (pages[p].failed = true)}
+                            />
+                          {/if}
+                          {#each showBoxes && tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
+                            <rect
+                              class="staff"
+                              class:grand={tool === "grandstaves"}
+                              class:selected={selected?.p === p &&
+                                selected?.z === s}
                               vector-effect="non-scaling-stroke"
-                              x1={zone.box.ulx}
-                              y1={zone.box.uly}
-                              x2={zone.box.ulx}
-                              y2={zone.box.lry}
+                              role="button"
+                              tabindex={tabStop(p, s)}
+                              data-box={s}
+                              aria-current={selected?.p === p &&
+                              selected?.z === s
+                                ? "true"
+                                : undefined}
+                              aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}, page ${p + 1}${canEdit ? ": select, drag or resize" : ""}`}
+                              x={staff.box.ulx}
+                              y={staff.box.uly}
+                              width={staff.box.lrx - staff.box.ulx}
+                              height={staff.box.lry - staff.box.uly}
+                              onpointerdown={(e) =>
+                                startZoneDrag(e, p, s, "move")}
+                              onclick={() => tapSelect(p, s)}
+                              onkeydown={(e) => zoneKeydown(e, p, s)}
                             />
-                          {/if}
-                          {@const lbl = zone.label}
-                          {@const fs = labelFont(p, pg.width)}
-                          {@const inset = fs * 0.6}
-                          <!-- A section start puts a double bar before the number. -->
-                          {@const bar = startsMovement(p, z) ? fs * 0.7 : 0}
-                          {@const lblW =
-                            lbl.length * fs * 0.62 + fs * 0.9 + bar}
-                          {@const on = selected?.p === p && selected?.z === z}
-                          <!-- The label repeats the box's name for the eye. -->
-                          <rect
-                            aria-hidden="true"
-                            class="labelbg"
-                            class:on
-                            x={zone.box.ulx + inset}
-                            y={zone.box.uly + inset}
-                            width={lblW}
-                            height={fs * 1.55}
-                            rx={fs * 0.28}
-                          />
-                          {#if bar}
-                            {@const bx = zone.box.ulx + inset + fs * 0.45}
-                            {@const by = zone.box.uly + inset + fs * 0.3}
+                          {/each}
+                          {#each showBoxes && tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
+                            <rect
+                              class="zone"
+                              class:selected={selected?.p === p &&
+                                selected?.z === z}
+                              class:mdivstart={startsMovement(p, z)}
+                              vector-effect="non-scaling-stroke"
+                              role="button"
+                              tabindex={tabStop(p, z)}
+                              data-box={z}
+                              aria-current={selected?.p === p &&
+                              selected?.z === z
+                                ? "true"
+                                : undefined}
+                              aria-label={`Measure ${zone.override ?? zone.label}, page ${p + 1}${sbActive(p, z) ? ", starts a system" : ""}${startsMovement(p, z) ? ", starts a section" : ""}${zone.pickup ? ", pickup" : ""}${canEdit ? ": select, drag, or edit its number and breaks" : ""}`}
+                              x={zone.box.ulx}
+                              y={zone.box.uly}
+                              width={zone.box.lrx - zone.box.ulx}
+                              height={zone.box.lry - zone.box.uly}
+                              onpointerdown={(e) =>
+                                startZoneDrag(e, p, z, "move")}
+                              onclick={() => tapSelect(p, z)}
+                              onkeydown={(e) => zoneKeydown(e, p, z)}
+                            >
+                              {#if zoneTitle(p, z)}
+                                <title>{zoneTitle(p, z)}</title>
+                              {/if}
+                            </rect>
+                            {#if sbActive(p, z)}
+                              <line
+                                class="sysstart"
+                                vector-effect="non-scaling-stroke"
+                                x1={zone.box.ulx}
+                                y1={zone.box.uly}
+                                x2={zone.box.ulx}
+                                y2={zone.box.lry}
+                              />
+                            {/if}
+                            {@const lbl = zone.label}
+                            {@const fs = zoneLabelFont(
+                              p,
+                              pg.width,
+                              zone.box,
+                              lbl.length,
+                              startsMovement(p, z),
+                            )}
+                            {@const inset = fs * 0.6}
+                            <!-- A section start puts a double bar before the number. -->
+                            {@const bar = startsMovement(p, z) ? fs * 0.7 : 0}
+                            {@const lblW =
+                              lbl.length * fs * 0.62 + fs * 0.9 + bar}
+                            {@const on = selected?.p === p && selected?.z === z}
+                            <!-- The label repeats the box's name for the eye. -->
                             <rect
                               aria-hidden="true"
-                              class="dbar"
+                              class="labelbg"
                               class:on
-                              x={bx}
-                              y={by}
-                              width={fs * 0.1}
-                              height={fs * 0.95}
+                              x={zone.box.ulx + inset}
+                              y={zone.box.uly + inset}
+                              width={lblW}
+                              height={fs * 1.55}
+                              rx={fs * 0.28}
                             />
-                            <rect
+                            {#if bar}
+                              {@const bx = zone.box.ulx + inset + fs * 0.45}
+                              {@const by = zone.box.uly + inset + fs * 0.3}
+                              <rect
+                                aria-hidden="true"
+                                class="dbar"
+                                class:on
+                                x={bx}
+                                y={by}
+                                width={fs * 0.1}
+                                height={fs * 0.95}
+                              />
+                              <rect
+                                aria-hidden="true"
+                                class="dbar"
+                                class:on
+                                x={bx + fs * 0.24}
+                                y={by}
+                                width={fs * 0.22}
+                                height={fs * 0.95}
+                              />
+                            {/if}
+                            <text
                               aria-hidden="true"
-                              class="dbar"
+                              class="zonelabel"
                               class:on
-                              x={bx + fs * 0.24}
-                              y={by}
-                              width={fs * 0.22}
-                              height={fs * 0.95}
+                              x={zone.box.ulx + inset + bar + (lblW - bar) / 2}
+                              y={zone.box.uly + inset + fs * 1.12}
+                              text-anchor="middle"
+                              font-size={fs}>{lbl}</text
+                            >
+                          {/each}
+                          {#each showBoxes && showOverlaps ? overlaps(pg) : [] as o, i (i)}
+                            <rect
+                              class="overlap"
+                              x={o.ulx}
+                              y={o.uly}
+                              width={o.lrx - o.ulx}
+                              height={o.lry - o.uly}
+                            />
+                          {/each}
+                          {#if corner?.p === p && corner.layer === tool}
+                            {@const r = labelFont(p, pg.width) * 0.9}
+                            <path
+                              class="corner"
+                              vector-effect="non-scaling-stroke"
+                              d={`M${corner.x - r} ${corner.y}H${corner.x + r}M${corner.x} ${corner.y - r}V${corner.y + r}`}
                             />
                           {/if}
-                          <text
-                            aria-hidden="true"
-                            class="zonelabel"
-                            class:on
-                            x={zone.box.ulx + inset + bar + (lblW - bar) / 2}
-                            y={zone.box.uly + inset + fs * 1.12}
-                            text-anchor="middle"
-                            font-size={fs}>{lbl}</text
-                          >
-                        {/each}
-                        {#each showOverlaps ? overlaps(pg) : [] as o, i (i)}
-                          <rect
-                            class="overlap"
-                            x={o.ulx}
-                            y={o.uly}
-                            width={o.lrx - o.ulx}
-                            height={o.lry - o.uly}
-                          />
-                        {/each}
-                        {#if corner?.p === p && corner.layer === tool}
-                          {@const r = labelFont(p, pg.width) * 0.9}
-                          <path
-                            class="corner"
-                            vector-effect="non-scaling-stroke"
-                            d={`M${corner.x - r} ${corner.y}H${corner.x + r}M${corner.x} ${corner.y - r}V${corner.y + r}`}
-                          />
                         {/if}
-                      {/if}
-                    </svg>
+                      </svg>
 
-                    {#if canEdit && selectedItem?.p === p}
-                      {@render handles(p, selectedItem.z)}
-                    {/if}
+                      {#if canEdit && showBoxes && selectedItem?.p === p}
+                        {@render handles(p, selectedItem.z)}
+                      {/if}
+                    </div>
                   </div>
                 </div>
               {/each}
@@ -1967,6 +2127,18 @@
           {/each}
         </div>
       </div>
+      <!-- On a touch screen what a finger does and the box visibility float
+           over the pages' bottom right corner, on an anchor that takes no
+           height (as DraftBubble's). -->
+      {#if coarse}
+        <div class="deskctl">
+          <div class="deskctl-group">
+            {#if canEdit}{@render modePair()}{/if}
+            {@render boxesButton()}
+            {@render wholePageButton()}
+          </div>
+        </div>
+      {/if}
       <DraftBubble {session} />
     </div>
 
@@ -2062,6 +2234,7 @@
         >
       </span>
       <span class="vline"></span>
+      {#if !coarse}{@render boxesButton()}{@render wholePageButton()}{/if}
       {#if canEdit}
         <button
           type="button"
@@ -2205,8 +2378,7 @@
     {/snippet}
 
     <!-- The task tools in the side panel: the layout steps (an OMR-prepared
-         piece) or the counts, draw mode on a touch screen, and the overlap
-         colouring. -->
+         piece) or the counts, and the overlap colouring. -->
     {#snippet tools()}
       <div class="wtools">
         {#if omr}
@@ -2237,11 +2409,9 @@
             section{movementCount === 1 ? "" : "s"}</span
           >
         {/if}
-        <div class="toolrow">
-          <!-- In a sheet the selected box's row carries Scroll / Draw. -->
-          {#if canEdit && coarse && !(docked && selectedItem && panelTab === "selection")}{@render modePair()}{/if}
-          {#if !inSheet}{@render overlapSwitch()}{/if}
-        </div>
+        {#if !inSheet}
+          <div class="toolrow">{@render overlapSwitch()}</div>
+        {/if}
       </div>
     {/snippet}
 
@@ -2256,11 +2426,7 @@
           aria-pressed={!drawMode}
           aria-label="Scroll"
           title="A finger drag scrolls the pages"
-          onclick={() => {
-            drawMode = false;
-            corner = null;
-            selected = null;
-          }}
+          onclick={leaveDrawMode}
           ><Icon name="hand" size={16} /><span class="mode-label">Scroll</span
           ></button
         >
@@ -2277,6 +2443,34 @@
           ></button
         >
       </span>
+    {/snippet}
+
+    {#snippet boxesButton()}
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        class:on={!showBoxes}
+        aria-pressed={!showBoxes}
+        aria-label="Hide the boxes"
+        title="Hide the boxes to see the page underneath"
+        onclick={toggleBoxes}><Icon name="eye-off" size={16} /></button
+      >
+    {/snippet}
+
+    <!-- Shown where the piece covers only part of a page. -->
+    {#snippet wholePageButton()}
+      {#if hasPartPages}
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={wholePage}
+          aria-pressed={wholePage}
+          aria-label="Show the whole page"
+          title="Show the whole page, not only the part this piece covers"
+          onclick={() => (wholePage = !wholePage)}
+          ><Icon name="facsimile" size={16} /></button
+        >
+      {/if}
     {/snippet}
 
     {#snippet overlapSwitch()}
@@ -2367,9 +2561,7 @@
                 title={`Delete the ${boxName}`}><Icon name="trash" /></button
               >
             {/if}
-            {#if docked && canEdit && coarse}
-              {@render modePair()}
-            {:else if coarse}
+            {#if coarse && !(docked && canEdit)}
               <button
                 type="button"
                 class="btn btn-icon"
@@ -2380,12 +2572,13 @@
             {/if}
           </div>
           {#if tool === "measures"}
-            <!-- The number field, then the two switches above each other. -->
+            <!-- The number field, then the switches above each other. -->
             <!-- Read-only, the switches give way to the breaks that apply. -->
             {#if !canEdit}
               {@const flags = [
                 sbActive(p, z) ? "Starts a system" : "",
                 startsMovement(p, z) ? "Starts a section" : "",
+                pages[p].zones[z].pickup ? "Pickup" : "",
               ].filter(Boolean)}
               {#if flags.length}
                 <p class="selflagtext">{flags.join(" · ")}</p>
@@ -2421,6 +2614,15 @@
                       ? "The first measure always starts the first section"
                       : "This measure starts a new movement or section"}
                     ><span class="sw"></span>Starts a section</button
+                  >
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={pages[p].zones[z].pickup}
+                    aria-pressed={pages[p].zones[z].pickup}
+                    onclick={() => togglePickup(p, z)}
+                    title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
+                    ><span class="sw"></span>Pickup</button
                   >
                 </div>
               </div>
@@ -2741,6 +2943,39 @@
     font: 600 12px var(--font);
     line-height: 1;
   }
+  .deskctl {
+    flex: none;
+    position: relative;
+    height: 0;
+    z-index: 6;
+  }
+  .deskctl-group {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    display: flex;
+    gap: 8px;
+  }
+  .deskctl-group > * {
+    border-radius: 8px;
+    box-shadow: var(--shadow-sm);
+  }
+  /* The buttons stay 32px to the eye but take a 44px press. */
+  .deskctl-group .tbtn {
+    position: relative;
+    box-sizing: border-box;
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+  }
+  .deskctl-group .tbtn::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+  .deskctl-group .tbtn-pair > .tbtn::after {
+    inset: -6px 0;
+  }
   .stepcount {
     color: var(--ink-faint);
     font-weight: 400;
@@ -2859,8 +3094,8 @@
       display: none;
     }
   }
-  /* The number field beside the two switches, which stand above each
-     other at one width. */
+  /* The number field beside the switches, which stand above each other at
+     one width. */
   .selmeasure {
     display: flex;
     flex-wrap: wrap;
@@ -2908,8 +3143,8 @@
   }
   /* In a docked sheet the controls are 32px and take a 44px press through an
      invisible ::after. The name takes the room the page note had. A measure
-     takes two rows: the name, number and comment button over the stepping,
-     delete and Scroll / Draw buttons, with the switches to the right. */
+     takes two rows: the name, number and comment button over the stepping
+     and delete buttons, with the switches to the right. */
   @media (orientation: portrait) and (max-width: 860px) {
     .selhead {
       gap: 4px;
@@ -2928,9 +3163,6 @@
     }
     .selbreak {
       flex-basis: 100%;
-    }
-    .tworows .selhead .tbtn-pair {
-      margin-left: auto;
     }
     .tworows .selflags {
       gap: 8px;
@@ -3375,6 +3607,19 @@
      svg's, so percentage-placed controls line up with the boxes. */
   .canvas {
     position: relative;
+  }
+  /* A page cropped to the piece's part: the frame clips the canvas and
+     carries the sheet's outline and shadow. */
+  .frame.cropped {
+    overflow: hidden;
+    background: var(--facsimile-paper);
+    box-shadow:
+      0 0 0 1px var(--line-input),
+      0 10px 30px rgba(31, 36, 51, 0.16);
+  }
+  .frame.cropped svg {
+    border: 0;
+    box-shadow: none;
   }
   /* Each page renders as a sheet floating on the desk. */
   svg {

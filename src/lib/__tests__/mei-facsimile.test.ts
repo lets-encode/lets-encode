@@ -11,6 +11,7 @@ import {
   relinkFacsimileImages,
   sortReadingOrder,
   nextLabel,
+  measureLabels,
   DEFAULT_SCORE_DEF,
   type FacsimilePage,
   type FacsimileModel,
@@ -81,6 +82,41 @@ test("volta labels: alphanumeric labels are emitted and nextLabel advances their
   assert.equal(nextLabel("1a"), "2");
   const mei = buildFacsimileMei(m, { withBreaks: true });
   assert.ok(mei.includes('n="1a" facs="#zone-1-2"'));
+});
+
+test("measureLabels: sections count from 1, pickups are 0 at a section start and halves inside one", () => {
+  const m = (
+    pickup = false,
+    sectionStart = false,
+    override: string | null = null,
+  ) => ({
+    override,
+    pickup,
+    sectionStart,
+  });
+  assert.deepEqual(
+    measureLabels([m(true, true), m(), m(), m(true), m(), m(false, true), m()]),
+    ["0", "1", "2a", "2b", "3", "1", "2"],
+  );
+  // A hand-set label before a pickup keeps its label.
+  assert.deepEqual(measureLabels([m(), m(false, false, "7"), m(true), m()]), [
+    "1",
+    "7",
+    "7b",
+    "8",
+  ]);
+});
+
+test("a pickup is emitted as metcon=false and parsed back", () => {
+  const m = model();
+  m.pages[0].zones[0].pickup = true;
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.ok(mei.includes('metcon="false" facs="#zone-1-1"'));
+  assert.ok(!mei.includes('metcon="false" facs="#zone-1-2"'));
+  assert.deepEqual(
+    parseFacsimileMei(mei).pages[0].zones.map((z) => z.pickup),
+    [true, false],
+  );
 });
 
 test("parseFacsimileMei rejects input without an MEI header", () => {

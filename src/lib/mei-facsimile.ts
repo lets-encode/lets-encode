@@ -60,6 +60,12 @@ export interface ZoneModel {
    * <mdiv>; its flag is ignored.
    */
   mdiv: boolean;
+  /**
+   * Whether the measure is a pickup (an incomplete measure that is not
+   * counted), emitted as @metcon="false" on its <measure> at stage C.
+   * Absent means false.
+   */
+  pickup?: boolean;
 }
 
 /** One page of the facsimile model. */
@@ -241,6 +247,37 @@ export function sortReadingOrder(boxes: MeasureBox[]): MeasureBox[] {
 export function nextLabel(prevLabel: string | undefined): string {
   const n = parseInt(prevLabel ?? "", 10);
   return String((Number.isNaN(n) ? 0 : n) + 1);
+}
+
+/**
+ * The labels of a score's measures in reading order. A section start counts
+ * from 1, or is 0 when it is a pickup. A pickup inside a section completes
+ * the measure before it: the two are numbered as halves (12a, 12b), the
+ * first only while its label is automatic. Other measures count on from the
+ * previous label (nextLabel). A measure with an `override` takes that label.
+ */
+export function measureLabels(
+  measures: {
+    override: string | null;
+    pickup: boolean;
+    sectionStart: boolean;
+  }[],
+): string[] {
+  const labels: string[] = [];
+  measures.forEach((m, i) => {
+    const prev = labels[i - 1];
+    let auto: string;
+    if (m.sectionStart || i === 0) auto = m.pickup ? "0" : "1";
+    else if (m.pickup) {
+      const base = parseInt(prev, 10) || 0;
+      const before = measures[i - 1];
+      if (before.override === null && !before.pickup)
+        labels[i - 1] = `${base}a`;
+      auto = `${base}b`;
+    } else auto = nextLabel(prev);
+    labels.push(m.override ?? auto);
+  });
+  return labels;
 }
 
 /**
@@ -486,7 +523,7 @@ export function buildFacsimileMei(
         );
       }
       parts.push(
-        `               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}" facs="#${zoneId}">\n` +
+        `               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}"${zone.pickup ? ' metcon="false"' : ""} facs="#${zoneId}">\n` +
           body +
           `               </measure>`,
       );
@@ -743,13 +780,15 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   const headXml = /[ \t]*<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(text)?.[0];
   if (!headXml) throw new Error("Not a facsimile score: no <meiHead> found.");
 
-  // Which zones the body marks as system/page starts and as movement starts
-  // (stage C), keyed by zone id via each measure's facs link. A second or
-  // later <mdiv> flags its first measure; the first <mdiv> is implicit.
+  // Which zones the body marks as system/page starts and as movement starts,
+  // and which measures it marks as pickups (stage C), keyed by zone id via
+  // each measure's facs link. A second or later <mdiv> flags its first
+  // measure; the first <mdiv> is implicit.
   const body = /<body\b[^>]*>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? "";
   const pbZones = new Set<string>();
   const sbZones = new Set<string>();
   const mdivZones = new Set<string>();
+  const pickupZones = new Set<string>();
   let hasMeasures = false;
   let hasBreaks = false;
   let pendingPb = false;
@@ -772,6 +811,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         if (pendingPb) pbZones.add(facs.slice(1));
         if (pendingSb) sbZones.add(facs.slice(1));
         if (pendingMdiv) mdivZones.add(facs.slice(1));
+        if (attr(token, "metcon") === "false") pickupZones.add(facs.slice(1));
       }
       pendingPb = false;
       pendingSb = false;
@@ -809,6 +849,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         pb: pbZones.has(id),
         sb: sbZones.has(id),
         mdiv: mdivZones.has(id),
+        pickup: pickupZones.has(id),
       });
       boxesOnly.push(box);
     }

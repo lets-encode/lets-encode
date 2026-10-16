@@ -3,8 +3,20 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-16
+
+- On phones the measure correction keeps its steps in view while a box is selected.
+- The measure correction keeps only the boxes inside the piece's regions, from new detections and from saved scores and drafts.
+- The measure correction shows only the piece's part of a page, with a button to show the whole page.
+
 ## 2026-10-15
 
+- Measures can be marked as pickups, numbered 0 at a section start and as halves such as 12a and 12b elsewhere.
+- Measure numbers restart at 1 in each section.
+- The measure correction can hide its boxes to show the page underneath.
+- Measure numbers shrink in narrow or low measure boxes.
+- On phones the measure correction's Scroll and Draw buttons sit over the pages.
+- On phones a double tap on the page outside a box returns the measure correction to scroll mode.
 - The draft note sits centred just above the docked side panel.
 - On phones the task sheet fades at an edge with more to scroll.
 - The score viewer's pane switch uses the toolbar's joined buttons, and on phones its page label shows the numbers only.
