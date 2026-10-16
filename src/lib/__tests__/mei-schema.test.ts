@@ -68,6 +68,25 @@ test("a piece score validates when nothing about the source is known", async () 
   await checkBothStages(head, "empty piece head");
 });
 
+test("repeats, endings and signs validate, an ending also across a page break", async () => {
+  const model = {
+    ...initialFacsimileModel(PAGES),
+    headXml: buildSourceHead(source()),
+  };
+  const [a, b, c] = model.pages[0].zones;
+  Object.assign(a, { rptStart: true, rptBoth: true, signs: ["segno"] });
+  Object.assign(b, { ending: "1", rptEnd: true });
+  Object.assign(c, { ending: "2", signs: ["fine", "toCoda"] });
+  Object.assign(model.pages[1].zones[0], {
+    ending: "2",
+    signs: ["coda", "daCapo", "dalSegno"],
+  });
+  const check = await validateMei(
+    buildFacsimileMei(model, { withBreaks: true }),
+  );
+  assert.ok(check.ok, `repeats and endings: ${check.error}`);
+});
+
 test("a score carrying the source header validates", async () => {
   await checkBothStages(buildSourceHead(source()), "source head");
   await checkBothStages(

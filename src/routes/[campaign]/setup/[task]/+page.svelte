@@ -8,6 +8,7 @@
 <script lang="ts">
   import { commentAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import StepGlyph from "$lib/components/StepGlyph.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import MusicGlyph, {
     type MusicGlyphName,
@@ -1350,7 +1351,7 @@
   />
 {/if}
 
-<div class="corrector sidehost">
+<div class="corrector sidehost" data-stage="pre">
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -1415,7 +1416,7 @@
             style:flex-basis={`${split[setupStep] * 100}%`}
             aria-label="Source"
           >
-            <span class="sb-label"
+            <span class="page-label"
               >{anchorPage === null
                 ? "Source · first measure"
                 : `Source · page ${shownPage + 1}`}</span
@@ -1461,7 +1462,7 @@
           ></div>
         {/if}
         <section class="previewbox" aria-label="Preview of the setup">
-          <span class="sb-label">Preview of the setup</span>
+          <span class="page-label">Preview of the setup</span>
           {#if !meterValid}
             <p class="muted">
               Enter a whole number of beats to see the preview.
@@ -2108,20 +2109,26 @@
          of the form in a docked sheet, where the tools give way to the form. -->
     {#snippet steps()}
       <div
-        class="steplist"
+        class="steps"
         role="group"
         aria-label="Steps"
         title="The two steps of the score setup."
       >
-        {#each [{ step: 1, long: "Staves", count: `${staves.length}` }, { step: 2, long: "Groups", count: `${groups.length}` }] as st (st.step)}
+        {#each [{ step: 1, glyph: "staves", tone: "var(--ink-staff)", long: "Staves", count: `${staves.length}` }, { step: 2, glyph: "groups", tone: "var(--ink-grand)", long: "Groups", count: `${groups.length}` }] as st (st.step)}
           <button
             type="button"
+            class="step"
             class:on={setupStep === st.step}
             aria-pressed={setupStep === st.step}
             onclick={() => goStep(st.step as 1 | 2)}
             aria-label={`${st.step} · ${st.long}, ${st.count}`}
-            ><span class="steplong">{st.step} · {st.long}</span><span
-              class="stepcount">{st.count}</span
+            ><span class="stepno">{st.step}</span><StepGlyph
+              kind={st.glyph as "staves" | "groups"}
+              tone={st.tone}
+            /><span class="steplong">{st.long}</span><span class="stepshort"
+              >{st.long}</span
+            ><span class="stepn">{st.count}</span><span class="stepcount"
+              >{st.count}</span
             ></button
           >
         {/each}
@@ -2159,15 +2166,15 @@
     <!-- The task's action at the panel's bottom. -->
     {#snippet footer()}
       <div class="wfoot">
+        <span class="abcount wsum">
+          {staves.length} stave{staves.length === 1 ? "" : "s"}
+          · {meterType === "numeric"
+            ? `${meterCount}/${meterUnit}`
+            : meterType === "common"
+              ? "common time"
+              : "cut time"}
+        </span>
         <span class="wstatus">
-          <span class="abcount">
-            {staves.length} stave{staves.length === 1 ? "" : "s"}
-            · {meterType === "numeric"
-              ? `${meterCount}/${meterUnit}`
-              : meterType === "common"
-                ? "common time"
-                : "cut time"}
-          </span>
           <PreTaskStatus {session} />
         </span>
         {#if setupStep === 1}
@@ -2182,7 +2189,7 @@
         {:else}
           <button
             type="button"
-            class="btn btn-primary"
+            class="btn btn-primary btn-pre"
             onclick={() => submit()}
             disabled={busy ||
               !canEdit ||
@@ -2250,20 +2257,6 @@
   .muted {
     color: var(--ink-faint);
     font-size: 0.9rem;
-  }
-  .linkish {
-    font: inherit;
-    font-weight: 600;
-    color: var(--link);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .linkish:hover {
-      text-decoration: underline;
-    }
   }
 
   /* The whole tool: the form and its preview on the desk, with the comments
@@ -2334,86 +2327,6 @@
   /* Banner styles are shared app-wide in ui.css. */
 
   /* ------------------------------------------------------------------- form */
-  /* The setup's steps: a list with counts beside the content, two equal
-     cells in a docked sheet (DOCKED_QUERY in side-panels.ts), as in the
-     measure correction. */
-  .steplist {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .steplist > button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    padding: 0 12px;
-    font: 400 13px var(--font);
-    color: var(--ink);
-    text-align: left;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    cursor: pointer;
-  }
-  .steplist > button.on {
-    font-weight: 600;
-    background: var(--accent-tint-strong);
-    border: 1.5px solid var(--accent);
-  }
-  .steplong {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .stepcount {
-    color: var(--ink-faint);
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .steplist > button.on .stepcount {
-    color: var(--ink-soft);
-  }
-  @media (orientation: portrait) and (max-width: 860px) {
-    .steplist {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 2px;
-      padding: 2px;
-      background: var(--card);
-      box-shadow: inset 0 0 0 1px var(--line);
-      border-radius: 999px;
-    }
-    .steplist > button {
-      position: relative;
-      justify-content: center;
-      min-height: 28px;
-      padding: 0 6px;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--ink-soft);
-      background: transparent;
-      border: 0;
-      border-radius: 999px;
-    }
-    .steplist > button::after {
-      content: "";
-      position: absolute;
-      inset: -8px 0;
-    }
-    .steplist > button.on {
-      color: var(--ink);
-      background: var(--accent-tint-strong);
-      border: 0;
-    }
-    .steplong {
-      flex: none;
-    }
-  }
-
   /* The form in the side panel: the step's sections. */
   .setup {
     display: flex;
@@ -2437,17 +2350,22 @@
     position: absolute;
     inset: -6px;
   }
+  /* The step's sections share the panel's paper, a hairline between them
+     running to its edges. */
   .setup fieldset {
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--card);
-    padding: 12px 14px 14px;
+    border: 0;
+    padding: 0;
     margin: 0;
     min-width: 0;
   }
+  .setup fieldset + fieldset {
+    margin-inline: -16px;
+    padding: 14px 16px 0;
+    border-top: 1px solid var(--line);
+  }
   .grouphead {
     margin: 0 0 10px;
-    font-size: 12px;
+    font-size: 13.5px;
     font-weight: 600;
   }
   /* The marking in the preview: what to do next, then its buttons. */
@@ -2567,19 +2485,21 @@
     padding: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
   }
-  /* A staff, as a tinted block: its number beside the instrument with the
-     row's buttons, the clef, transposition and key below it, and the pitch
-     fields of an unlisted transposition below that. */
+  /* A staff, as a row under a hairline: its number beside the instrument
+     with the row's buttons, the clef, transposition and key below it, and
+     the pitch fields of an unlisted transposition below that. */
   .staffrow {
     display: grid;
     grid-template-columns: 14px minmax(0, 1fr);
     column-gap: 6px;
     row-gap: 6px;
-    padding: 8px 2px 8px 6px;
+    padding: 10px 2px 10px 6px;
     border-radius: 8px;
-    background: var(--bg-tint);
+  }
+  .staffrow + .staffrow {
+    border-top: 1px solid var(--line);
+    border-radius: 0;
   }
   .staffrow > .staffno {
     grid-column: 1;
@@ -2707,7 +2627,7 @@
     font: inherit;
     font-size: 13px;
     box-sizing: border-box;
-    height: 30px;
+    height: 32px;
     padding: 4px 8px;
     border: 1px solid var(--line-input);
     border-radius: 8px;
@@ -2896,9 +2816,9 @@
     flex: 0 1 auto;
     min-height: 0;
     display: flex;
-    background: #fff;
-    border: 1px solid var(--line);
-    border-radius: 10px;
+    background: var(--facsimile-paper);
+    border: 1px solid var(--line-input);
+    box-shadow: var(--shadow-paper);
     padding: 8px 8px 8px 28px;
     overflow: hidden;
   }
@@ -2952,6 +2872,10 @@
     flex-wrap: wrap;
     gap: 8px;
   }
+  /* The setup's summary is a line of its own above the buttons. */
+  .wsum {
+    flex-basis: 100%;
+  }
   .wstatus {
     flex: 1;
     display: flex;
@@ -2969,13 +2893,6 @@
       position: absolute;
       inset: -6px;
     }
-  }
-  .sb-label {
-    font-size: 10.5px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
   }
   .abcount {
     font-size: 12.5px;

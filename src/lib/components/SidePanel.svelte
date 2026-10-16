@@ -442,6 +442,7 @@
     bind:this={aside}
     class="sp"
     class:peek
+    class:hastask={!!taskBox}
     style={zone ? `--zone: var(--zone-${zone})` : ""}
     aria-label={task ? "Task" : "Campaign"}
     style:--spfoot-h={`${footer ? footHeight : 0}px`}
@@ -460,7 +461,11 @@
         >
         <span class="sep" aria-hidden="true">/</span>
       {/if}
-      <h2 class="sptitle">{task ? "Task" : "Campaign"}</h2>
+      <!-- In a task's own view the task box's heading names it; the title
+           stays for assistive technology. -->
+      <h2 class="sptitle" class:vh={!!taskBox && !ondeselect}>
+        {task ? "Task" : "Campaign"}
+      </h2>
       {#if docked && (hasMore || auth.user)}
         <button
           type="button"
@@ -610,7 +615,7 @@
       max-height 200ms cubic-bezier(0.22, 1, 0.36, 1);
     border-top: 1px solid var(--line-strong);
     box-shadow: 0 -2px 8px var(--shade);
-    background: var(--bg-inset);
+    background: var(--card);
   }
   .spwrap.docked.dragging {
     position: relative;
@@ -622,39 +627,59 @@
       transition: none;
     }
   }
+  /* One raised sheet. Its sections are told apart by tone, with a hairline
+     between them: the task's heading in the stage's wash, the view's bar
+     and tools on paper, the selected item's controls, the comments and the
+     footer on slate, the selected item's section closed by a hairline below
+     as well. Buttons on the tinted sections sit on paper (--btn-bg). */
   .sp {
     flex: 1;
     min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    background: var(--bg-inset);
-    box-shadow: var(--shadow-inset);
-    border-radius: 12px;
-    padding: 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-sm);
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    --btn-soft-bg: var(--card);
-    --btn-soft-line: var(--line);
-    --seg-bg: var(--card);
-    --seg-line: inset 0 0 0 1px var(--line);
-    --seg-on-bg: var(--accent-tint-strong);
   }
   .docked .sp {
+    border: 0;
     border-radius: 0;
     box-shadow: none;
-    padding: 4px 12px 16px;
+  }
+  .sp > :global(*) {
+    flex: none;
   }
   .sp :global(.banner) {
     margin: 0;
   }
+  .sphead,
+  .spsel,
+  .clist,
+  .composerwrap,
+  .empty,
+  .spfoot {
+    --btn-bg: var(--card);
+    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
+  }
   .sphead {
-    flex: none;
     display: flex;
     align-items: center;
     gap: 8px;
     min-width: 0;
+    padding: 10px 16px 0;
+  }
+  .hastask .sphead {
+    background: var(--st-wash);
+  }
+  /* Without a task the campaign's comments fill the sheet, on slate. */
+  .sp:not(.hastask) {
+    background: var(--band);
   }
   .deselect {
     flex: none;
@@ -682,9 +707,14 @@
     flex: none;
     position: sticky;
     bottom: var(--spfoot-h, 0px);
-    background: var(--bg-inset);
-    box-shadow: 0 16px 0 var(--bg-inset);
-    padding-top: 6px;
+    background: var(--band);
+    padding: 6px 16px 12px;
+  }
+  /* Right below the task box or the selection the composer starts its own
+     section; below the comments it continues theirs. */
+  .sp > :not(.clist):not(.composerwrap) + .composerwrap {
+    border-top: 1px solid var(--line);
+    padding-top: 12px;
   }
   .composerwrap.hidden,
   .sphead.hidden,
@@ -694,7 +724,9 @@
   /* A score workspace's tools and selection controls keep their height;
      the footer stays at the panel's bottom, the composer above it. */
   .sptools {
-    flex: none;
+    padding: 12px 16px;
+    background: var(--card);
+    border-top: 1px solid var(--line);
   }
   /* The Comments button, 32px with a 44px press through an invisible
      ::after; its word gives way to the icon below 320px of task heading
@@ -730,36 +762,40 @@
      too short the panel scrolls as a whole, and a new selection scrolls
      them into view above the footer. */
   .spsel {
-    flex: none;
+    padding: 14px 16px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 1px 0 var(--line);
     scroll-margin-bottom: calc(var(--spfoot-h, 0px) + 12px);
   }
+  /* The footer closes the sheet; a short list leaves room above it. */
   .spfoot {
-    flex: none;
     margin-top: auto;
     position: sticky;
     bottom: 0;
     z-index: 1;
-    padding-top: 10px;
+    padding: 12px 16px;
     border-top: 1px solid var(--line);
-    background: var(--bg-inset);
-    box-shadow: 0 16px 0 var(--bg-inset);
-  }
-  /* A closed sheet: the footer follows the tools with no rule between. */
-  .peek .spfoot {
-    padding-top: 0;
-    border-top: 0;
+    background: var(--band);
   }
   /* The view's bar measures its own width (container queries). */
   .spbar {
-    flex: none;
     container-type: inline-size;
+    padding: 6px 12px 8px;
+    background: var(--card);
+  }
+  /* A sheet's first section takes the top padding the grip leaves. */
+  .sheet .sp > .spbar:first-of-type {
+    padding-top: 2px;
   }
   /* A sheet's rounded top edge; its footer clears the home indicator. */
   .spwrap.sheet {
     border-radius: 14px 14px 0 0;
   }
+  .sheet .spfoot {
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
   .sheet .sp {
-    padding-bottom: max(16px, env(safe-area-inset-bottom));
     /* A field focused near either edge scrolls clear of the fades. */
     scroll-padding-top: 26px;
     scroll-padding-bottom: calc(var(--spfoot-h, 0px) + 26px);
@@ -776,19 +812,17 @@
   }
   .spedge.top {
     top: 0;
-    margin-bottom: -8px;
   }
   .spedge.bottom {
     bottom: 0;
-    margin-top: -8px;
   }
   .spedge::after,
   .sheet .composerwrap::before,
   .sheet .spfoot::before {
     content: "";
     position: absolute;
-    left: -12px;
-    right: -12px;
+    left: 0;
+    right: 0;
     height: 26px;
     pointer-events: none;
     opacity: 0;
@@ -796,21 +830,21 @@
   }
   /* The top fade covers the panel's top padding too. */
   .spedge.top::after {
-    top: -4px;
-    background: linear-gradient(var(--bg-inset), transparent);
+    top: 0;
+    background: linear-gradient(var(--card), transparent);
   }
   .sheet .composerwrap::before,
   .sheet .spfoot::before {
     bottom: 100%;
-    background: linear-gradient(transparent, var(--bg-inset));
+    background: linear-gradient(transparent, var(--band));
   }
   /* Without a footer the bottom fade runs down over the panel's bottom
      padding. */
   .spedge.bottom::after {
     top: -26px;
     height: auto;
-    bottom: calc(-1 * max(16px, env(safe-area-inset-bottom)));
-    background: linear-gradient(transparent, var(--bg-inset) 26px);
+    bottom: calc(-1 * env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, var(--band) 26px);
   }
   .spwrap:global([data-more-above]) .spedge.top::after,
   .spwrap:global([data-more-below]) .spedge.bottom::after,
@@ -824,7 +858,7 @@
   }
   /* Docked or in a short window the list is no scroll area of its own: the
      panel scrolls as one, the comments right below the task box. */
-  .cramped .clist {
+  .cramped .sp > .clist {
     flex: none;
     min-height: 0;
     overflow-y: visible;
@@ -833,11 +867,12 @@
     padding: 4px 12px;
   }
   .empty {
-    flex: none;
     margin: 0;
     font-size: 12.5px;
     color: var(--ink-soft);
-    padding: 2px 2px;
+    padding: 12px 16px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
   }
   .showinline {
     margin-left: auto;
@@ -880,7 +915,7 @@
       animation-duration: 2s;
     }
   }
-  .clist {
+  .sp > .clist {
     flex: 0 1 auto;
     /* Room for the list heading and a line below it. */
     min-height: 50px;
@@ -889,6 +924,9 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+    padding: 12px 16px 6px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
   }
   .sechead {
     font-size: 12px;
@@ -920,7 +958,6 @@
     padding: 3px 7px;
     color: var(--ink-soft);
     background: var(--card);
-    border: 1px solid var(--line);
   }
   .sechead .chip-switch {
     margin-left: auto;

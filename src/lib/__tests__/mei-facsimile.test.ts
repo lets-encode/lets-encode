@@ -119,6 +119,80 @@ test("a pickup is emitted as metcon=false and parsed back", () => {
   );
 });
 
+test("repeats, endings and signs are emitted and parsed back; rebuilding reproduces the file", () => {
+  const m = model();
+  const [a, b] = m.pages[0].zones;
+  Object.assign(a, { rptStart: true, ending: "1", signs: ["fine", "segno"] });
+  Object.assign(b, { ending: "1", rptEnd: true, signs: ["toCoda"] });
+  Object.assign(m.pages[1].zones[0], { ending: "2", signs: ["coda"] });
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.ok(mei.includes('left="rptstart" facs="#zone-1-1"'));
+  assert.ok(mei.includes('right="rptend" facs="#zone-1-2"'));
+  // Signs keep MEASURE_SIGNS order: segno at the left barline, Fine at the right.
+  assert.ok(
+    /func="segno" staff="1" tstamp="0"[\s\S]*func="fine" staff="1" tstamp="5"/.test(
+      mei,
+    ),
+  );
+  assert.ok(mei.includes('tstamp="5" place="above">To Coda</dir>'));
+  // One ending per run; the page break between the runs stands outside both.
+  assert.equal((mei.match(/<ending\b/g) ?? []).length, 2);
+  assert.ok(
+    /<\/ending>\s*<pb[^>]*facs="#surface-2"[^>]*>\s*<ending[^>]*n="2"/.test(
+      mei,
+    ),
+  );
+
+  const parsed = parseFacsimileMei(mei);
+  const zones = parsed.pages.flatMap((pg) => pg.zones);
+  assert.deepEqual(
+    zones.map((z) => [
+      z.rptStart ?? false,
+      z.rptEnd ?? false,
+      z.ending ?? "",
+      z.signs ?? [],
+    ]),
+    [
+      [true, false, "1", ["segno", "fine"]],
+      [false, true, "1", ["toCoda"]],
+      [false, false, "2", ["coda"]],
+    ],
+  );
+  const rebuilt = buildFacsimileMei(
+    { headXml: parsed.headXml, pages: parsed.pages } satisfies FacsimileModel,
+    { withBreaks: true },
+  );
+  assert.equal(rebuilt, mei);
+});
+
+test("a double repeat is written as right=rptboth on its measure and parsed back", () => {
+  const m = model();
+  Object.assign(m.pages[0].zones[0], { rptBoth: true });
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.ok(mei.includes('right="rptboth" facs="#zone-1-1"'));
+  assert.ok(!mei.includes('right="rptend"'));
+  const zones = parseFacsimileMei(mei).pages[0].zones;
+  assert.equal(zones[0].rptBoth, true);
+  assert.equal(zones[0].rptEnd, undefined);
+  assert.equal(zones[1].rptBoth, undefined);
+});
+
+test("an ending closes at a new section and before a measure without one", () => {
+  const m = model();
+  Object.assign(m.pages[0].zones[0], { ending: "1" });
+  Object.assign(m.pages[0].zones[1], { ending: "1", mdiv: true });
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.equal((mei.match(/<ending\b/g) ?? []).length, 2);
+  assert.equal((mei.match(/<\/ending>/g) ?? []).length, 2);
+  // Each <mdiv> holds its own ending.
+  for (const mdiv of mei.match(/<mdiv\b[\s\S]*?<\/mdiv>/g) ?? []) {
+    assert.equal(
+      (mdiv.match(/<ending\b/g) ?? []).length,
+      (mdiv.match(/<\/ending>/g) ?? []).length,
+    );
+  }
+});
+
 test("parseFacsimileMei rejects input without an MEI header", () => {
   assert.throws(() => parseFacsimileMei("<mei><music/></mei>"), /no <meiHead>/);
 });

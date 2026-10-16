@@ -128,8 +128,7 @@
     box-sizing: border-box;
     /* Scanned pages keep their own light ground in either theme. */
     background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--line-input);
+    box-shadow: var(--shadow-paper);
   }
 </style>

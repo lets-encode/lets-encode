@@ -2,10 +2,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   arrowShift,
+  boundingBox,
+  boxesTouch,
   centreInRegions,
+  copyPlace,
   drawnBox,
   drawStarted,
   movedBox,
+  movedBoxes,
   nudgedEdges,
   pagePoint,
   regionsView,
@@ -108,4 +112,41 @@ test("regionsView widens the regions' bounds by the margin and keeps them on the
     lrx: 1000,
     lry: 800,
   });
+});
+
+test("movedBoxes shifts boxes together, all kept whole on the page", () => {
+  const other = { ulx: 400, uly: 150, lrx: 500, lry: 250 };
+  assert.deepEqual(movedBoxes([box, other], 0, 100, page), [
+    { ...box, uly: 200, lry: 300 },
+    { ...other, uly: 250, lry: 350 },
+  ]);
+  assert.deepEqual(movedBoxes([box, other], 600, 0, page), [
+    { ...box, ulx: 600, lrx: 800 },
+    { ...other, ulx: 900, lrx: 1000 },
+  ]);
+});
+
+test("boundingBox spans all boxes", () => {
+  assert.deepEqual(
+    boundingBox([box, { ulx: 400, uly: 50, lrx: 500, lry: 150 }]),
+    { ulx: 100, uly: 50, lrx: 500, lry: 200 },
+  );
+});
+
+test("boxesTouch needs shared area, or a line through the box", () => {
+  assert.equal(
+    boxesTouch({ ulx: 250, uly: 150, lrx: 350, lry: 250 }, box),
+    true,
+  );
+  assert.equal(
+    boxesTouch({ ulx: 300, uly: 100, lrx: 400, lry: 200 }, box),
+    false,
+  );
+  assert.equal(boxesTouch({ ulx: 0, uly: 150, lrx: 150, lry: 150 }, box), true);
+});
+
+test("copyPlace puts copies below, or to the right where there is more room", () => {
+  assert.deepEqual(copyPlace([box], page), [{ ...box, uly: 200, lry: 300 }]);
+  const tall = { ulx: 100, uly: 0, lrx: 300, lry: 780 };
+  assert.deepEqual(copyPlace([tall], page), [{ ...tall, ulx: 300, lrx: 500 }]);
 });

@@ -13,7 +13,13 @@
     FacsimileTaskData,
     Result,
   } from "$lib/commands.ts";
-  import { readingOrderRows, measureLabels } from "$lib/mei-facsimile.ts";
+  import {
+    readingOrderRows,
+    measureLabels,
+    MEASURE_SIGNS,
+    SIGN_TEXT,
+    type MeasureSign,
+  } from "$lib/mei-facsimile.ts";
   import { taskDescription } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { DOCKED_QUERY, readSidePanel } from "$lib/side-panels.ts";
@@ -40,6 +46,7 @@
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
+  import StepGlyph from "$lib/components/StepGlyph.svelte";
   import { createOmrClient } from "$lib/omr-client.ts";
   import {
     layoutBoxes,
@@ -56,10 +63,13 @@
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
   import {
     arrowShift,
+    boxesTouch,
     centreInRegions,
+    copyPlace,
     drawnBox,
     drawStarted,
     movedBox,
+    movedBoxes,
     nudgedEdges,
     pagePoint,
     regionsView,
@@ -84,6 +94,12 @@
     sbOverride: boolean | null;
     mdiv: boolean;
     pickup: boolean;
+    // Repeat barlines, the ending and the navigation signs (ZoneModel).
+    rptStart?: boolean;
+    rptEnd?: boolean;
+    rptBoth?: boolean;
+    ending?: string;
+    signs?: MeasureSign[];
   };
   // A staff or grand-staff box of an OMR-prepared piece: geometry only.
   type EditStaff = { box: MeasureBox };
@@ -136,6 +152,11 @@
               sbOverride: null,
               mdiv: z.mdiv,
               pickup: z.pickup ?? false,
+              rptStart: z.rptStart,
+              rptEnd: z.rptEnd,
+              rptBoth: z.rptBoth,
+              ending: z.ending,
+              signs: z.signs ? [...z.signs] : undefined,
             })),
             staves: (pg.staves ?? [])
               .filter(inPiece)
@@ -232,6 +253,55 @@
         : undefined;
     return zone ? String(zone.override ?? zone.label) : "";
   });
+  // Several boxes of one page and the active layer selected together (by
+  // Shift+click, Shift+drag or Select several), `selected` among them. Held
+  // as the items, since a re-sort changes their indices; empty while one box
+  // or none is selected.
+  let group = $state.raw<{ box: MeasureBox }[]>([]);
+  // Select several, on a touch screen: a tap on a box adds it to the
+  // selection or takes it out.
+  let pickMode = $state(false);
+  // Selecting a box outside the group ends the group.
+  $effect(() => {
+    const s = selected;
+    untrack(() => {
+      if (!s || !group.includes(items(s.p)[s.z])) group = [];
+    });
+  });
+  // The group's indices on the selected box's page; empty without a group.
+  const groupZs = $derived.by(() => {
+    if (!selected || group.length < 2) return [];
+    const list = items(selected.p);
+    const zs = group.map((i) => list.indexOf(i)).filter((z) => z >= 0);
+    return zs.length > 1 ? zs : [];
+  });
+  const inSelection = (p: number, z: number) =>
+    selected?.p === p && (selected.z === z || groupZs.includes(z));
+  // The selected boxes as items: the group, or the one box.
+  const selectionItems = (): { box: MeasureBox }[] => {
+    if (!selected) return [];
+    const list = items(selected.p);
+    return groupZs.length
+      ? groupZs.map((z) => list[z])
+      : [list[selected.z]].filter(Boolean);
+  };
+  // Select the boxes `list` of page `p`. The selected box stays the one the
+  // panel and the keys start from where it is in the list.
+  function selectItems(p: number, list: { box: MeasureBox }[]) {
+    const now = selected?.p === p ? items(p)[selected.z] : undefined;
+    const primary = now && list.includes(now) ? now : list[list.length - 1];
+    group = list.length > 1 ? list : [];
+    selected = primary ? { p, z: items(p).indexOf(primary) } : null;
+  }
+  // Add a box to the selection, or take it out.
+  function toggleInSelection(p: number, z: number) {
+    const item = items(p)[z];
+    const now = selected?.p === p ? selectionItems() : [];
+    selectItems(
+      p,
+      now.includes(item) ? now.filter((i) => i !== item) : [...now, item],
+    );
+  }
 
   // On a touch screen a finger drag on the page scrolls it: a tap selects a
   // box, the selected box and its handles drag, and new boxes are drawn only
@@ -616,7 +686,8 @@
   // With the hand (Scroll) chosen an editor's tap selects nothing, as in the
   // wizard's pieces step, and marks the Draw button for DRAW_HINT_MS; a
   // second tap on the same box within DOUBLE_TAP_MS chooses Draw and
-  // selects the box.
+  // selects the box. In Draw the same double tap on a box chooses the hand
+  // again (doubleTapOn).
   const DRAW_HINT_MS = 1600;
   const DOUBLE_TAP_MS = 350;
   let drawHint = $state(false);
@@ -634,6 +705,7 @@
     drawMode = false;
     corner = null;
     selected = null;
+    lastTap = null;
   }
   function tapSelect(p: number, z: number) {
     // The tap that put down a picked-up corner selects nothing.
@@ -642,6 +714,16 @@
       return;
     }
     if (!coarse) return;
+    // A press that started a drag was handled when it ended (pointerUp).
+    if (boxPressed) {
+      boxPressed = false;
+      return;
+    }
+    // In Select several a tap adds the box to the selection or takes it out.
+    if (pickMode) {
+      toggleInSelection(p, z);
+      return;
+    }
     if (canEdit && !drawMode) {
       const t = performance.now();
       const double =
@@ -661,6 +743,16 @@
     }
     selected = { p, z };
     corner = null;
+    if (canEdit) doubleTapOn(p, z);
+  }
+  // In draw mode, a tap on a box within DOUBLE_TAP_MS of a tap on the same
+  // box: the double tap that ends draw mode. Any other tap is recorded.
+  function doubleTapOn(p: number, z: number): boolean {
+    const t = performance.now();
+    const double =
+      lastTap?.p === p && lastTap.z === z && t - lastTap.t < DOUBLE_TAP_MS;
+    lastTap = double ? null : { p, z, t };
+    return double;
   }
   /** Select the box before (-1) or after (1) the selected one in reading
       order, across pages; `reveal` scrolls it into view. Keyboard focus on
@@ -679,6 +771,7 @@
     const focused = (document.activeElement as Element | null)?.closest(
       ".zone, .staff",
     );
+    group = [];
     selected = { p, z };
     if (reveal) revealBox(p, z);
     if (focused) focusBox(p, z);
@@ -723,6 +816,11 @@
         sb: z.sb,
         mdiv: z.mdiv,
         pickup: z.pickup,
+        rptStart: z.rptStart || undefined,
+        rptEnd: z.rptEnd || undefined,
+        rptBoth: z.rptBoth || undefined,
+        ending: z.ending || undefined,
+        signs: z.signs?.length ? [...z.signs] : undefined,
       })),
       ...(omr
         ? {
@@ -1023,6 +1121,65 @@
     commit();
   }
 
+  // Repeat barlines at the measure's start or end, the ending it belongs to
+  // ('' for none) and its navigation signs.
+  function toggleRepeat(p: number, z: number, side: "start" | "end" | "both") {
+    if (!canEdit) return;
+    const zone = pages[p].zones[z];
+    // The measure's end carries a repeat end or a double repeat, not both.
+    if (side === "start") zone.rptStart = !zone.rptStart;
+    else if (side === "end") {
+      zone.rptEnd = !zone.rptEnd;
+      if (zone.rptEnd) zone.rptBoth = false;
+    } else {
+      zone.rptBoth = !zone.rptBoth;
+      if (zone.rptBoth) zone.rptEnd = false;
+    }
+    commit();
+  }
+  function setEnding(p: number, z: number, ending: string) {
+    if (!canEdit) return;
+    pages[p].zones[z].ending = ending || undefined;
+    commit();
+  }
+  function toggleSign(p: number, z: number, sign: MeasureSign) {
+    if (!canEdit) return;
+    const zone = pages[p].zones[z];
+    const on = zone.signs?.includes(sign);
+    zone.signs = MEASURE_SIGNS.filter((s) =>
+      s === sign ? !on : zone.signs?.includes(s),
+    );
+    commit();
+  }
+  const SIGN_NAME: Record<MeasureSign, string> = {
+    segno: "Segno",
+    coda: "Coda",
+    daCapo: SIGN_TEXT.daCapo,
+    dalSegno: SIGN_TEXT.dalSegno,
+    fine: SIGN_TEXT.fine,
+    toCoda: SIGN_TEXT.toCoda,
+  };
+  const SIGN_TITLE: Record<MeasureSign, string> = {
+    segno: "The segno sign at the start of this measure",
+    coda: "The coda sign at the start of this measure",
+    daCapo: "Da capo at the end of this measure: back to the beginning",
+    dalSegno: "Dal segno at the end of this measure: back to the segno",
+    fine: "Fine at the end of this measure: the end of the piece after a repeat",
+    toCoda: "To Coda at the end of this measure: on to the coda",
+  };
+  // The repeats, ending and signs of a measure, for its title and the
+  // read-only panel.
+  const markNames = (p: number, z: number) => {
+    const zone = pages[p].zones[z];
+    return [
+      zone.rptStart ? "Repeat start" : "",
+      zone.rptEnd ? "Repeat end" : "",
+      zone.rptBoth ? "Double repeat" : "",
+      zone.ending ? `Ending ${zone.ending}` : "",
+      ...(zone.signs ?? []).map((s) => SIGN_NAME[s]),
+    ].filter(Boolean);
+  };
+
   function setLabel(p: number, z: number, value: string) {
     pages[p].zones[z].override = value.trim() === "" ? null : value.trim();
     renumber();
@@ -1086,8 +1243,28 @@
     deselected: boolean;
     // A Cmd/Ctrl move drags a copy: the index of the box it copies.
     copyOf: number | null;
+    // A move of a group: each box and where it started.
+    members: { item: { box: MeasureBox }; orig: MeasureBox }[] | null;
+    // A Cmd/Ctrl move of a group: the boxes it copies.
+    copied: { box: MeasureBox }[] | null;
   };
   let drag: Drag | null = null;
+  // The press on a box started a drag, which handled it when it ended; the
+  // tap after it does nothing more (tapSelect).
+  let boxPressed = false;
+  // A Shift+drag's rectangle, in page pixels: every box it touches joins the
+  // boxes selected when it began (base). A Shift+click without a drag adds
+  // the box it was on (hit) or takes it out.
+  let marquee = $state.raw<{
+    p: number;
+    sx: number;
+    sy: number;
+    x: number;
+    y: number;
+    moved: boolean;
+    base: { box: MeasureBox }[];
+    hit: number | null;
+  } | null>(null);
   // A drag has moved and not yet ended (the draft effect waits for it).
   let dragging = $state(false);
   // The first corner of a box drawn by two clicks instead of a drag, in page
@@ -1154,9 +1331,23 @@
     kind: "move" | "resize",
     edges = "",
   ) {
+    boxPressed = false;
     // On a touch screen an unselected box lets the finger scroll the page;
     // a tap selects it (tapSelect).
-    if (coarse && !(selected?.p === p && selected.z === z)) return;
+    if (coarse && !inSelection(p, z)) return;
+    // With Shift a click adds the box to the selection or takes it out, and
+    // a drag selects with a rectangle; in Select several a click adds a box.
+    if (
+      kind === "move" &&
+      canEdit &&
+      (e.shiftKey || (pickMode && !inSelection(p, z)))
+    ) {
+      e.stopPropagation();
+      corner = null;
+      if (e.shiftKey) startMarquee(e, p, z);
+      else toggleInSelection(p, z);
+      return;
+    }
     if (kind === "move") selected = { p, z };
     corner = null;
     // The page behind the box must not take the press as a deselect.
@@ -1166,11 +1357,31 @@
     const copy = kind === "move" && (mac ? e.metaKey : e.ctrlKey);
     const orig = { ...items(p)[z].box };
     const { x, y } = svgXY(e, p);
+    // A box of a group moves the whole group, or with Cmd/Ctrl a copy of it.
+    const together =
+      kind === "move" && groupZs.includes(z)
+        ? groupZs.map((m) => items(p)[m])
+        : null;
+    let at = z;
+    let members: Drag["members"] = null;
+    if (together) {
+      const pressed = items(p)[z];
+      const moving = copy
+        ? together.map(({ box }) => items(p)[addBox(p, tool, { ...box })])
+        : together;
+      members = moving.map((item, i) => ({
+        item,
+        orig: { ...together[i].box },
+      }));
+      at = items(p).indexOf(moving[together.indexOf(pressed)]);
+      group = moving;
+      selected = { p, z: at };
+    } else if (copy) at = addBox(p, tool, { ...orig });
     drag = {
       kind,
       layer: tool,
       p,
-      z: copy ? addBox(p, tool, { ...orig }) : z,
+      z: at,
       sx: x,
       sy: y,
       orig,
@@ -1179,15 +1390,54 @@
       started: true,
       deselected: false,
       copyOf: copy ? z : null,
+      members,
+      copied: copy && together ? together : null,
     };
+    boxPressed = true;
     if (kind === "resize") loupeAt(e, drag, x, y);
+  }
+
+  // A Shift press on page p, on box `hit` or the background (null).
+  function startMarquee(e: PointerEvent, p: number, hit: number | null) {
+    const { x, y } = svgXY(e, p);
+    marquee = {
+      p,
+      sx: x,
+      sy: y,
+      x,
+      y,
+      moved: false,
+      base: selected?.p === p ? selectionItems() : [],
+      hit,
+    };
+  }
+  function marqueeTo(e: PointerEvent) {
+    const m = marquee!;
+    const { x, y } = svgXY(e, m.p);
+    const pg = pages[m.p];
+    if (
+      !m.moved &&
+      !drawStarted(x - m.sx, y - m.sy, pg, canvasW[m.p] || pg.width)
+    )
+      return;
+    marquee = { ...m, x, y, moved: true };
+    const area = drawnBox(m.sx, m.sy, x, y, 0);
+    const hits = items(m.p).filter(
+      (i) => boxesTouch(area, i.box) && !m.base.includes(i),
+    );
+    selectItems(m.p, [...m.base, ...hits]);
   }
 
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       e.stopPropagation();
-      selected = { p, z };
+      // With Shift the key adds the box to the selection or takes it out.
+      if (e.shiftKey && canEdit) toggleInSelection(p, z);
+      else {
+        group = [];
+        selected = { p, z };
+      }
       focusBox(p, z);
       return;
     }
@@ -1202,9 +1452,16 @@
   // Move a box by an arrow key's step.
   function nudge(e: KeyboardEvent, p: number, z: number) {
     e.preventDefault();
-    const box = items(p)[z].box;
     const { dx, dy } = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE)!;
-    Object.assign(box, movedBox(box, dx, dy, pages[p]));
+    // A box of a group moves the whole group.
+    const zs = groupZs.includes(z) ? groupZs : [z];
+    const moved = movedBoxes(
+      zs.map((m) => items(p)[m].box),
+      dx,
+      dy,
+      pages[p],
+    );
+    zs.forEach((m, i) => Object.assign(items(p)[m].box, moved[i]));
     commitGeometry(p, z);
   }
 
@@ -1234,6 +1491,12 @@
       bgTap = { x: e.clientX, y: e.clientY };
       return;
     }
+    // A Shift+drag selects the boxes it touches, adding them to the
+    // selection.
+    if (e.shiftKey && canEdit && showBoxes) {
+      startMarquee(e, p, null);
+      return;
+    }
     selected = null;
     if (!canEdit || !showBoxes) return;
     const { x, y } = svgXY(e, p);
@@ -1251,6 +1514,8 @@
       started: false,
       deselected,
       copyOf: null,
+      members: null,
+      copied: null,
     };
   }
 
@@ -1329,6 +1594,7 @@
   };
 
   function pointerMove(e: PointerEvent) {
+    if (marquee) marqueeTo(e);
     if (!drag) return;
     const { x, y } = svgXY(e, drag.p);
     const dx = x - drag.sx;
@@ -1342,6 +1608,16 @@
     }
     if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
     if (!dragging) dragging = true;
+    if (drag.members) {
+      const moved = movedBoxes(
+        drag.members.map((m) => m.orig),
+        dx,
+        dy,
+        pg,
+      );
+      drag.members.forEach((m, i) => Object.assign(m.item.box, moved[i]));
+      return;
+    }
     const box = items(drag.p, drag.layer)[drag.z].box;
     Object.assign(
       box,
@@ -1359,11 +1635,17 @@
   function cancelDrag() {
     loupe = null;
     dragging = false;
+    if (marquee) {
+      selectItems(marquee.p, marquee.base);
+      marquee = null;
+    }
     if (!drag) return;
-    const { kind, layer, p, z, started, orig, copyOf } = drag;
+    const { kind, layer, p, z, started, orig, copyOf, members, copied } = drag;
     drag = null;
     if (!started) return;
-    if (copyOf !== null) {
+    if (members && copied) dropCopies(p, layer, members, copied, copyOf!);
+    else if (members) members.forEach((m) => Object.assign(m.item.box, m.orig));
+    else if (copyOf !== null) {
       items(p, layer).splice(z, 1);
       selected = { p, z: copyOf };
     } else if (kind === "draw") {
@@ -1375,6 +1657,11 @@
   function pointerUp() {
     loupe = null;
     dragging = false;
+    if (marquee) {
+      const m = marquee;
+      marquee = null;
+      if (!m.moved && m.hit !== null) toggleInSelection(m.p, m.hit);
+    }
     if (!drag) return;
     const {
       kind,
@@ -1388,6 +1675,8 @@
       sy,
       copyOf,
       edges,
+      members,
+      copied,
     } = drag;
     drag = null;
     // A corner or edge pressed and released without moving is picked up
@@ -1397,6 +1686,20 @@
         armed?.p === p && armed.z === z && armed.edges === edges
           ? null
           : { p, z, edges };
+      return;
+    }
+    // A press on a box that never moved: in Select several it takes the box
+    // out of the selection, in draw mode on a touch screen the second tap of
+    // a double tap ends draw mode, and on a group it selects that box alone;
+    // a Cmd/Ctrl click of a group leaves no copies behind.
+    if (kind === "move" && !moved && copyOf === null) {
+      if (pickMode) toggleInSelection(p, z);
+      else if (coarse && drawMode && doubleTapOn(p, z)) leaveDrawMode();
+      else if (members) selectItems(p, [items(p)[z]]);
+      return;
+    }
+    if (members && copied && !moved) {
+      dropCopies(p, layer, members, copied, copyOf!);
       return;
     }
     // A Cmd/Ctrl click that never moved leaves no copy behind.
@@ -1499,15 +1802,43 @@
     if (hadFocus && selected) focusBox(selected.p, selected.z);
   }
 
-  function deleteSelected() {
-    if (!selected) return;
-    deleteZone(selected.p, selected.z);
+  // Undo a Cmd/Ctrl move of a group: its copies go, and the boxes it copied
+  // are selected again, `copyOf` the one pressed.
+  function dropCopies(
+    p: number,
+    layer: Layer,
+    members: NonNullable<Drag["members"]>,
+    copied: { box: MeasureBox }[],
+    copyOf: number,
+  ) {
+    const list = items(p, layer);
+    for (const { item } of members) list.splice(list.indexOf(item), 1);
+    group = copied;
+    selected = { p, z: copyOf };
   }
 
-  // Remove a box of the active layer.
-  function deleteZone(p: number, z: number) {
+  // Copies of the selected group beside it (copyPlace), selected in its
+  // place, to move where they belong.
+  function duplicateSelection() {
+    if (!canEdit || !selected || !groupZs.length) return;
+    const p = selected.p;
+    const origs = groupZs.map((z) => ({ ...items(p)[z].box }));
+    const copies = copyPlace(origs, pages[p]).map(
+      (box) => items(p)[addBox(p, tool, box)],
+    );
+    group = copies;
+    commitGeometry(p, items(p).indexOf(copies[copies.length - 1]));
+  }
+
+  function deleteSelected() {
+    if (!selected) return;
+    deleteZones(selected.p, groupZs.length ? groupZs : [selected.z]);
+  }
+
+  // Remove boxes of the active layer.
+  function deleteZones(p: number, zs: number[]) {
     if (!canEdit) return;
-    items(p).splice(z, 1);
+    [...zs].sort((a, b) => b - a).forEach((z) => items(p).splice(z, 1));
     if (tool === "measures") resort(p);
     else resortStaves(p, tool);
     selected = null;
@@ -1660,8 +1991,10 @@
     sectionLocked(p, z) || (pages[p].zones[z].mdiv && (p > 0 || z > 0));
 
   // Hover tooltip naming a measure's breaks and pickup flag, if it has any.
-  // On the page a section start shows as a double bar in the label and a
-  // system start as the blue left edge.
+  // On the page a system start shows as a blue bracket in the label, a
+  // section start as a double bar there, repeats as their signs in the
+  // label or a label at the top right, an ending as a bracket over its
+  // measures and the signs as tags at the bottom right.
   const zoneTitle = (p: number, z: number) =>
     [
       startsMovement(p, z) ? "Starts a section" : "",
@@ -1671,9 +2004,47 @@
         : pages[p].zones[z].sb
           ? "Starts a system"
           : "",
+      ...markNames(p, z),
     ]
       .filter(Boolean)
       .join(" · ");
+
+  // A page's endings as runs of consecutive measures with the same ending in
+  // one system: their extent, number, and whether the bracket closes at the
+  // end (it stays open on an ending no other ending follows).
+  function endingRuns(p: number) {
+    const zones = pages[p].zones;
+    const runs: {
+      ulx: number;
+      uly: number;
+      lrx: number;
+      n: string;
+      closed: boolean;
+    }[] = [];
+    zones.forEach((zone, z) => {
+      if (!zone.ending) return;
+      const prev = runs[runs.length - 1];
+      const joins =
+        prev && z > 0 && zones[z - 1].ending === zone.ending && !sbActive(p, z);
+      if (joins) {
+        prev.lrx = zone.box.lrx;
+        prev.uly = Math.min(prev.uly, zone.box.uly);
+      } else
+        runs.push({
+          ulx: zone.box.ulx,
+          uly: zone.box.uly,
+          lrx: zone.box.lrx,
+          n: zone.ending,
+          closed: true,
+        });
+      // Another ending after this one closes it; the same ending going on in
+      // the next system leaves it open there.
+      const next = zones[z + 1] ?? pages[p + 1]?.zones[0];
+      runs[runs.length - 1].closed =
+        !!next?.ending && next.ending !== zone.ending;
+    });
+    return runs;
+  }
 
   // The selected box's name in the side panel and in its handles' labels.
   const itemName = (p: number, z: number) =>
@@ -1691,6 +2062,21 @@
         ? "grand staff"
         : "measure",
   );
+  const boxNames = $derived(
+    tool === "staves"
+      ? "staves"
+      : tool === "grandstaves"
+        ? "grand staves"
+        : "measures",
+  );
+  // The active layer's glyph in the side panel's heading.
+  const toolGlyph = $derived(
+    tool === "staves"
+      ? { kind: "staff" as const, tone: "var(--ink-staff)" }
+      : tool === "grandstaves"
+        ? { kind: "grand" as const, tone: "var(--ink-grand)" }
+        : { kind: "measure" as const, tone: "var(--ink-measure)" },
+  );
 
   // The editing hints and outline legend, shown by the toolbar's help icon.
   // Shortcut names as the viewer's keyboard labels them.
@@ -1705,10 +2091,13 @@
     ...(canEdit && coarse
       ? [
           [
-            `In draw mode (the square) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. In scroll mode (the hand) a finger drag scrolls the pages, and a double tap on a box selects it and switches to draw mode; a double tap on the page outside a box switches back to scroll mode. Pinch to zoom.`,
+            `In draw mode (the square) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. In scroll mode (the hand) a finger drag scrolls the pages, and a double tap on a box selects it and switches to draw mode; in draw mode a double tap on a box or on the page outside a box switches back to scroll mode. Pinch to zoom.`,
           ],
           [
             "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
+          ],
+          [
+            `To select several boxes, choose Select several (the squares with a tick) and tap them; tap a selected box to take it out. Drag one of them to move them all; Duplicate copies them below or beside them.`,
           ],
         ]
       : canEdit
@@ -1718,6 +2107,9 @@
             ],
             [
               `Arrow keys move the selected box (${SHIFT}arrow moves 5 times as far). Esc removes the cross, then deselects the box.`,
+            ],
+            [
+              `${SHIFT}click a box to add it to the selection or take it out, or ${SHIFT}drag on the page to select every box the rectangle touches. Drag one of the selected boxes to move them all, ${MOD}drag to copy them all.`,
             ],
           ]
         : []),
@@ -1741,18 +2133,25 @@
       ": measure · ",
       { text: "thick purple", tone: "movement" },
       ": section start · ",
-      { text: "blue left edge", tone: "system" },
+      { text: "blue bracket before the number", tone: "system" },
       ": system start",
     ],
     [
       "Measure labels: the measure number, after a double bar where the measure starts a section.",
+    ],
+    [
+      "A repeat start shows in the measure's label, a repeat end or double repeat in a label at the box's top right, an ending as a bracket with its number over its measures, and segno, coda, D.C., D.S., Fine and To Coda as tags at the box's bottom right.",
     ],
   ]);
   let helpOpen = $state(false);
   // The View options behind the toolbar's ⋯ button: the page-count switch
   // below MEDIUM_TOOL, and on a phone sheet (inSheet) the overlap colouring
   // and the help.
-  const viewMenu = $derived(inSheet || (medium && !narrow));
+  // Below VIEW_COMPACT pixels of tool column the boxes and whole-page
+  // buttons move from the toolbar into the ⋯ menu.
+  const VIEW_COMPACT = 720;
+  const viewCompact = $derived(toolW > 0 && toolW < VIEW_COMPACT);
+  const viewMenu = $derived(inSheet || medium);
   let viewOpen = $state(false);
   // A press outside the View options closes them.
   function closeViewOutside(e: PointerEvent) {
@@ -1782,7 +2181,7 @@
   />
 {/if}
 
-<div class="corrector sidehost">
+<div class="corrector sidehost" data-stage="pre">
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -1842,7 +2241,7 @@
         style={`--desk-h:${deskH}px`}
       >
         {#if !inSheet}
-          <div class="ctoolbar">{@render toolbarItems()}</div>
+          <div class="ctoolbar vtoolbar">{@render toolbarItems()}</div>
         {/if}
         {#if helpOpen}
           <div
@@ -1876,6 +2275,27 @@
             aria-label={inSheet ? "View options and help" : "View options"}
           >
             {#if !narrow}{@render viewOptions()}{/if}
+            {#if viewCompact && !coarse}
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={!showBoxes}
+                aria-pressed={!showBoxes}
+                title="Hide the boxes to see the page underneath"
+                onclick={toggleBoxes}>Hide the boxes</button
+              >
+              {#if hasPartPages}
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={wholePage}
+                  aria-pressed={wholePage}
+                  title="Show the whole page, not only the part this piece covers"
+                  onclick={() => (wholePage = !wholePage)}
+                  >Show the whole page</button
+                >
+              {/if}
+            {/if}
             {#if inSheet}
               {@render overlapSwitch()}
               <button
@@ -1979,8 +2399,7 @@
                             <rect
                               class="staff"
                               class:grand={tool === "grandstaves"}
-                              class:selected={selected?.p === p &&
-                                selected?.z === s}
+                              class:selected={inSelection(p, s)}
                               vector-effect="non-scaling-stroke"
                               role="button"
                               tabindex={tabStop(p, s)}
@@ -2003,8 +2422,7 @@
                           {#each showBoxes && tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
                             <rect
                               class="zone"
-                              class:selected={selected?.p === p &&
-                                selected?.z === z}
+                              class:selected={inSelection(p, z)}
                               class:mdivstart={startsMovement(p, z)}
                               vector-effect="non-scaling-stroke"
                               role="button"
@@ -2014,7 +2432,14 @@
                               selected?.z === z
                                 ? "true"
                                 : undefined}
-                              aria-label={`Measure ${zone.override ?? zone.label}, page ${p + 1}${sbActive(p, z) ? ", starts a system" : ""}${startsMovement(p, z) ? ", starts a section" : ""}${zone.pickup ? ", pickup" : ""}${canEdit ? ": select, drag, or edit its number and breaks" : ""}`}
+                              aria-label={`Measure ${zone.override ?? zone.label}, page ${p + 1}${sbActive(p, z) ? ", starts a system" : ""}${startsMovement(p, z) ? ", starts a section" : ""}${zone.pickup ? ", pickup" : ""}${markNames(
+                                p,
+                                z,
+                              )
+                                .map((m) => `, ${m.toLowerCase()}`)
+                                .join(
+                                  "",
+                                )}${canEdit ? ": select, drag, or edit its number, breaks and repeats" : ""}`}
                               x={zone.box.ulx}
                               y={zone.box.uly}
                               width={zone.box.lrx - zone.box.ulx}
@@ -2028,16 +2453,6 @@
                                 <title>{zoneTitle(p, z)}</title>
                               {/if}
                             </rect>
-                            {#if sbActive(p, z)}
-                              <line
-                                class="sysstart"
-                                vector-effect="non-scaling-stroke"
-                                x1={zone.box.ulx}
-                                y1={zone.box.uly}
-                                x2={zone.box.ulx}
-                                y2={zone.box.lry}
-                              />
-                            {/if}
                             {@const lbl = zone.label}
                             {@const fs = zoneLabelFont(
                               p,
@@ -2047,11 +2462,16 @@
                               startsMovement(p, z),
                             )}
                             {@const inset = fs * 0.6}
-                            <!-- A section start puts a double bar before the number. -->
+                            <!-- Before the number: a system start's bracket, a
+                                 section start's double bar, a repeat start's
+                                 sign. -->
+                            {@const sy = sbActive(p, z) ? fs * 0.6 : 0}
                             {@const bar = startsMovement(p, z) ? fs * 0.7 : 0}
+                            {@const rs = zone.rptStart ? fs * 1.15 : 0}
+                            {@const pre = sy + bar + rs}
                             {@const lblW =
-                              lbl.length * fs * 0.62 + fs * 0.9 + bar}
-                            {@const on = selected?.p === p && selected?.z === z}
+                              lbl.length * fs * 0.62 + fs * 0.9 + pre}
+                            {@const on = inSelection(p, z)}
                             <!-- The label repeats the box's name for the eye. -->
                             <rect
                               aria-hidden="true"
@@ -2063,8 +2483,20 @@
                               height={fs * 1.55}
                               rx={fs * 0.28}
                             />
+                            {#if sy}
+                              {@const sx = zone.box.ulx + inset + fs * 0.45}
+                              {@const sy0 = zone.box.uly + inset + fs * 0.3}
+                              <path
+                                aria-hidden="true"
+                                class="sysmark"
+                                class:on
+                                vector-effect="non-scaling-stroke"
+                                d={`M${sx + fs * 0.3} ${sy0}h${-fs * 0.3}v${fs * 0.95}h${fs * 0.3}`}
+                              />
+                            {/if}
                             {#if bar}
-                              {@const bx = zone.box.ulx + inset + fs * 0.45}
+                              {@const bx =
+                                zone.box.ulx + inset + sy + fs * 0.45}
                               {@const by = zone.box.uly + inset + fs * 0.3}
                               <rect
                                 aria-hidden="true"
@@ -2089,12 +2521,120 @@
                               aria-hidden="true"
                               class="zonelabel"
                               class:on
-                              x={zone.box.ulx + inset + bar + (lblW - bar) / 2}
+                              x={zone.box.ulx + inset + pre + (lblW - pre) / 2}
                               y={zone.box.uly + inset + fs * 1.12}
                               text-anchor="middle"
                               font-size={fs}>{lbl}</text
                             >
+                            {@const b = zone.box}
+                            <!-- Repeat signs as icons on the label's paper: a
+                                 start in the number's label, an end or a double
+                                 repeat in a label at the box's top right, at
+                                 the barline it stands on. -->
+                            {#if rs}
+                              <g
+                                aria-hidden="true"
+                                class="repicon"
+                                class:on
+                                transform={`translate(${b.ulx + inset + sy + bar + fs * 0.4} ${b.uly + inset + fs * 0.27}) scale(${fs / 24})`}
+                              >
+                                <Icon name="repeat-start" size={24} />
+                              </g>
+                            {/if}
+                            {#if zone.rptEnd || zone.rptBoth}
+                              {@const rw = fs * 1.7}
+                              {@const rx = b.lrx - inset - rw}
+                              <rect
+                                aria-hidden="true"
+                                class="labelbg"
+                                class:on
+                                x={rx}
+                                y={b.uly + inset}
+                                width={rw}
+                                height={fs * 1.55}
+                                rx={fs * 0.28}
+                              />
+                              <g
+                                aria-hidden="true"
+                                class="repicon"
+                                class:on
+                                transform={`translate(${rx + rw / 2 - fs * 0.5} ${b.uly + inset + fs * 0.27}) scale(${fs / 24})`}
+                              >
+                                <Icon
+                                  name={zone.rptBoth
+                                    ? "repeat-both"
+                                    : "repeat-end"}
+                                  size={24}
+                                />
+                              </g>
+                            {/if}
+                            <!-- The signs, as tags along the box's bottom
+                                 edge from the right: a symbol or its text. -->
+                            {#if zone.signs?.length}
+                              {@const tagH = fs * 1.55}
+                              {@const tagY = b.lry - inset - tagH}
+                              {#each zone.signs
+                                .map( (sign) => ({ sign, w: SIGN_TEXT[sign] ? SIGN_TEXT[sign].length * fs * 0.58 + fs * 0.9 : tagH * 1.2 }), )
+                                .map( (t, i, all) => ({ ...t, x: b.lrx - inset - all
+                                        .slice(i)
+                                        .reduce((sum, u) => sum + u.w + fs * 0.25, 0) + fs * 0.25 }), ) as t (t.sign)}
+                                <g aria-hidden="true" class="signtag">
+                                  <rect
+                                    x={t.x}
+                                    y={tagY}
+                                    width={t.w}
+                                    height={tagH}
+                                    rx={tagH / 2}
+                                  />
+                                  {#if SIGN_TEXT[t.sign]}
+                                    <text
+                                      x={t.x + t.w / 2}
+                                      y={tagY + tagH * 0.7}
+                                      text-anchor="middle"
+                                      font-size={fs * 0.9}
+                                      >{SIGN_TEXT[t.sign]}</text
+                                    >
+                                  {:else}
+                                    <g
+                                      transform={`translate(${t.x + t.w / 2 - fs * 0.6} ${tagY + tagH / 2 - fs * 0.6}) scale(${(fs * 1.2) / 24})`}
+                                    >
+                                      <Icon
+                                        name={t.sign as "segno" | "coda"}
+                                        size={24}
+                                      />
+                                    </g>
+                                  {/if}
+                                </g>
+                              {/each}
+                            {/if}
                           {/each}
+                          <!-- Endings: a bracket over each run of measures of
+                               one ending in a system, with its number; closed
+                               at the end unless it is the run's last ending. -->
+                          {#if showBoxes && tool === "measures"}
+                            {#each endingRuns(p) as run, i (i)}
+                              {@const fs = labelFont(p, pg.width)}
+                              {@const y = run.uly - fs * 0.6}
+                              <g aria-hidden="true" class="volta">
+                                <path
+                                  vector-effect="non-scaling-stroke"
+                                  d={`M${run.ulx + fs * 0.2} ${run.uly}V${y}H${run.lrx - fs * 0.2}${run.closed ? `V${run.uly}` : ""}`}
+                                />
+                                <rect
+                                  x={run.ulx + fs * 0.45}
+                                  y={y - fs * 0.75}
+                                  width={fs * (run.n.length * 0.62 + 1.3)}
+                                  height={fs * 1.5}
+                                  rx={fs * 0.28}
+                                />
+                                <text
+                                  x={run.ulx + fs * 0.75}
+                                  y={y + fs * 0.4}
+                                  font-size={fs}>{run.n}.</text
+                                >
+                              </g>
+                            {/each}
+                          {/if}
                           {#each showBoxes && showOverlaps ? overlaps(pg) : [] as o, i (i)}
                             <rect
                               class="overlap"
@@ -2112,10 +2652,27 @@
                               d={`M${corner.x - r} ${corner.y}H${corner.x + r}M${corner.x} ${corner.y - r}V${corner.y + r}`}
                             />
                           {/if}
+                          {#if marquee?.p === p && marquee.moved}
+                            {@const m = drawnBox(
+                              marquee.sx,
+                              marquee.sy,
+                              marquee.x,
+                              marquee.y,
+                              0,
+                            )}
+                            <rect
+                              class="marquee"
+                              vector-effect="non-scaling-stroke"
+                              x={m.ulx}
+                              y={m.uly}
+                              width={m.lrx - m.ulx}
+                              height={m.lry - m.uly}
+                            />
+                          {/if}
                         {/if}
                       </svg>
 
-                      {#if canEdit && showBoxes && selectedItem?.p === p}
+                      {#if canEdit && showBoxes && selectedItem?.p === p && !groupZs.length}
                         {@render handles(p, selectedItem.z)}
                       {/if}
                     </div>
@@ -2133,7 +2690,7 @@
       {#if coarse}
         <div class="deskctl">
           <div class="deskctl-group">
-            {#if canEdit}{@render modePair()}{/if}
+            {#if canEdit}{@render modePair()}{@render pickButton()}{/if}
             {@render boxesButton()}
             {@render wholePageButton()}
           </div>
@@ -2152,29 +2709,69 @@
           type="button"
           class:on={view === "single"}
           aria-pressed={view === "single"}
-          onclick={() => (view = "single")}>1 page</button
+          onclick={() => (view = "single")}
+          ><Icon name="page-one" />1 page</button
         >
         <button
           type="button"
           class:on={view === "double"}
           aria-pressed={view === "double"}
-          onclick={() => (view = "double")}>2 pages</button
+          onclick={() => (view = "double")}
+          ><Icon name="page-two" />2 pages</button
         >
       </div>
       {#if view === "double"}
-        <label
-          class="checkline"
+        <button
+          type="button"
+          class="chip-switch"
+          class:on={firstOnRight}
+          aria-pressed={firstOnRight}
+          onclick={() => (firstOnRight = !firstOnRight)}
           title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+          >Page 1 right</button
         >
-          <input type="checkbox" bind:checked={firstOnRight} /> Page 1 right
-        </label>
       {/if}
     {/snippet}
 
+    <!-- One order at every width: undo and redo, the view options, the zoom;
+         at the right end the paging, the help and the ⋯ menu. Where the
+         toolbar narrows, groups move into the ⋯ menu; none changes place. -->
     {#snippet toolbarItems()}
+      {#if canEdit}
+        <button
+          type="button"
+          class="btn btn-icon"
+          onclick={() => undo()}
+          disabled={!canUndo}
+          aria-label="Undo"
+          title="Undo the last change (Ctrl/Cmd+Z)"><Icon name="undo" /></button
+        >
+        <button
+          type="button"
+          class="btn btn-icon"
+          onclick={() => redo()}
+          disabled={!canRedo}
+          aria-label="Redo"
+          title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
+        >
+      {/if}
+      {#if canEdit}<span class="vline"></span>{/if}
       {#if !medium}{@render viewOptions()}{/if}
-      <span class="tspacer"></span>
+      {#if !coarse && !viewCompact}{@render boxesButton()}{@render wholePageButton()}{/if}
+      {#if !medium || !(coarse || viewCompact)}<span class="vline viewline"
+        ></span>{/if}
       <span class="zoomset">
+        <button
+          type="button"
+          class="tbtn tbtn-icon zoomstep"
+          onclick={() => {
+            setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
+            fit = null;
+          }}
+          disabled={zoomPos <= 0}
+          aria-label="Zoom out"
+          title="Zoom out"><Icon name="zoom-out" /></button
+        >
         <input
           class="zoomslider"
           type="range"
@@ -2190,17 +2787,6 @@
           }}
         />
         <span class="zval">{Math.round(zoom * 100)}%</span>
-        <button
-          type="button"
-          class="tbtn tbtn-icon zoomstep"
-          onclick={() => {
-            setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
-            fit = null;
-          }}
-          disabled={zoomPos <= 0}
-          aria-label="Zoom out"
-          title="Zoom out"><Icon name="zoom-out" /></button
-        >
         <button
           type="button"
           class="tbtn tbtn-icon zoomstep zoomin"
@@ -2233,53 +2819,7 @@
           ><FitIcon kind="page" /></button
         >
       </span>
-      <span class="vline"></span>
-      {#if !coarse}{@render boxesButton()}{@render wholePageButton()}{/if}
-      {#if canEdit}
-        <button
-          type="button"
-          class="btn btn-icon"
-          onclick={() => undo()}
-          disabled={!canUndo}
-          aria-label="Undo"
-          title="Undo the last change (Ctrl/Cmd+Z)"><Icon name="undo" /></button
-        >
-        <button
-          type="button"
-          class="btn btn-icon"
-          onclick={() => redo()}
-          disabled={!canRedo}
-          aria-label="Redo"
-          title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
-        >
-      {/if}
-      <button
-        type="button"
-        class="btn btn-icon helpbtn"
-        class:hidden={inSheet}
-        class:on={helpOpen}
-        aria-label="Editor help"
-        aria-expanded={helpOpen}
-        aria-controls="zone-help"
-        onclick={() => {
-          helpOpen = !helpOpen;
-          viewOpen = false;
-        }}><Icon name="help" size={18} /></button
-      >
-      {#if viewMenu}
-        <button
-          type="button"
-          class="btn btn-icon viewbtn"
-          class:on={viewOpen}
-          aria-label={inSheet ? "View options and help" : "View options"}
-          aria-expanded={viewOpen}
-          aria-controls="zone-view"
-          onclick={() => {
-            viewOpen = !viewOpen;
-            helpOpen = false;
-          }}><Icon name="more" size={18} /></button
-        >
-      {/if}
+      <span class="tspacer"></span>
       <span class="vh" role="status"
         >{armed
           ? `The ${HANDLES.find((h) => h.edges === armed?.edges)?.side} is picked up. ${coarse ? "Tap" : "Click"} where it should go.`
@@ -2291,7 +2831,6 @@
       >
       <!-- Last in the toolbar, next to the side panel on the right. -->
       <div class="pgnav">
-        <span class="vline"></span>
         <button
           type="button"
           class="btn btn-icon pgbtn"
@@ -2315,11 +2854,39 @@
           aria-label="Next page"
           title="Next page"><Icon name="chevron-right" /></button
         >
+        <span class="vline helpline" class:hidden={inSheet && !viewMenu}></span>
+        <button
+          type="button"
+          class="btn btn-icon helpbtn"
+          class:hidden={inSheet}
+          class:on={helpOpen}
+          aria-label="Editor help"
+          aria-expanded={helpOpen}
+          aria-controls="zone-help"
+          onclick={() => {
+            helpOpen = !helpOpen;
+            viewOpen = false;
+          }}><Icon name="help" size={18} /></button
+        >
+        {#if viewMenu}
+          <button
+            type="button"
+            class="btn btn-icon viewbtn"
+            class:on={viewOpen}
+            aria-label={inSheet ? "View options and help" : "View options"}
+            aria-expanded={viewOpen}
+            aria-controls="zone-view"
+            onclick={() => {
+              viewOpen = !viewOpen;
+              helpOpen = false;
+            }}><Icon name="more" size={18} /></button
+          >
+        {/if}
       </div>
     {/snippet}
 
     {#snippet sheetBar()}
-      <div class="ctoolbar insheet">{@render toolbarItems()}</div>
+      <div class="ctoolbar vtoolbar insheet">{@render toolbarItems()}</div>
     {/snippet}
     <!-- The selected box's body and its resize handles, over the page in
          screen pixels: a body that drags the box, round corner dots, and
@@ -2383,23 +2950,27 @@
       <div class="wtools">
         {#if omr}
           <div
-            class="steplist"
+            class="steps"
             role="group"
             aria-label="Steps"
             title="The three steps of the measure correction. Each step shows only its own boxes."
           >
-            {#each [{ step: 1, swatch: "staff", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, swatch: "grand", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, swatch: "measure", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }] as s (s.step)}
+            {#each [{ step: 1, glyph: "staff", tone: "var(--ink-staff)", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, glyph: "grand", tone: "var(--ink-grand)", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, glyph: "measure", tone: "var(--ink-measure)", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }] as s (s.step)}
               <button
                 type="button"
+                class="step"
                 class:on={layoutStep === s.step}
                 aria-pressed={layoutStep === s.step}
                 onclick={() => setLayoutStep(s.step as 1 | 2 | 3)}
                 aria-label={`${s.step} · ${s.long}, ${s.count}`}
-                ><span class="swatch {s.swatch}" aria-hidden="true"></span><span
-                  class="steplong">{s.step} · {s.long}</span
-                ><span class="stepshort">{s.short}</span><span class="stepn"
-                  >{s.n}</span
-                ><span class="stepcount">{s.count}</span></button
+                ><span class="stepno">{s.step}</span><StepGlyph
+                  kind={s.glyph as "staff" | "grand" | "measure"}
+                  tone={s.tone}
+                /><span class="steplong">{s.long}</span><span class="stepshort"
+                  >{s.short}</span
+                ><span class="stepn">{s.n}</span><span class="stepcount"
+                  >{s.count}</span
+                ></button
               >
             {/each}
           </div>
@@ -2489,6 +3060,7 @@
     {#snippet numberInput(p: number, z: number)}
       {@const zone = pages[p].zones[z]}
       <input
+        class="selnum"
         value={zone.override ?? zone.label}
         oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
         onchange={() => commit()}
@@ -2496,34 +3068,87 @@
       />
     {/snippet}
 
-    <!-- The selected box's controls in three rows: its name (for a measure
-         with the number field), previous and next box with the page, and
-         new, delete and comment. An editable measure's switches stand in a
-         second column, one beside each row. -->
+    <!-- The selected box's controls: the box as the heading (for a measure
+         with its number field), where it is and previous and next; for a
+         measure, below its actions, its breaks, repeats and signs. -->
+    <!-- Select several, on a touch screen: a tap on a box adds it to the
+         selection or takes it out. With a mouse Shift+click and Shift+drag
+         do this. -->
+    {#snippet pickButton()}
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        class:on={pickMode}
+        aria-pressed={pickMode}
+        aria-label="Select several"
+        title="A tap on a box adds it to the selection or takes it out"
+        onclick={() => (pickMode = !pickMode)}
+        ><Icon name="select-several" size={16} /></button
+      >
+    {/snippet}
+
     {#snippet selection()}
-      {#if selectedItem}
+      {#if selectedItem && groupZs.length}
+        <div class="selpanel">
+          <div class="selhead">
+            <span class="selname">
+              <StepGlyph
+                kind={toolGlyph.kind}
+                tone={toolGlyph.tone}
+                size={20}
+              />
+              {groupZs.length}
+              {boxNames}
+            </span>
+            <span class="selwhere">page {selectedItem.p + 1}</span>
+          </div>
+          <div class="selactions">
+            <button
+              type="button"
+              class="btn"
+              onclick={duplicateSelection}
+              title={`Copy the ${groupZs.length} ${boxNames} below or beside them (${MOD}drag one of them copies them to where you drop it)`}
+              ><Icon name="copy" />Duplicate</button
+            >
+            <button
+              type="button"
+              class="btn btn-danger"
+              onclick={deleteSelected}
+              aria-label={`Delete the ${groupZs.length} ${boxNames}`}
+              title={`Delete the ${groupZs.length} ${boxNames}`}
+              ><Icon name="trash" />Delete</button
+            >
+            {#if coarse && !(docked && canEdit)}
+              <button
+                type="button"
+                class="btn"
+                onclick={() => (selected = null)}
+                title={`Deselect the ${boxNames}`}
+                ><Icon name="close" />Deselect</button
+              >
+            {/if}
+          </div>
+        </div>
+      {:else if selectedItem}
         {@const { p, z } = selectedItem}
-        {@const switches = tool === "measures" && canEdit}
-        <div class="selpanel" class:selgrid={switches}>
-          <div class="selmain">
-            <div class="selhead">
-              <span
-                class="swatch {tool === 'staves'
-                  ? 'staff'
-                  : tool === 'grandstaves'
-                    ? 'grand'
-                    : 'measure'}"
-                aria-hidden="true"
-              ></span>
-              {#if switches}
-                <label class="selname selnum"
+        <div class="selpanel">
+          <div class="selhead">
+            <span class="selname">
+              <StepGlyph
+                kind={toolGlyph.kind}
+                tone={toolGlyph.tone}
+                size={20}
+              />
+              {#if tool === "measures" && canEdit}
+                <label class="selnumlabel"
                   >Measure {@render numberInput(p, z)}</label
                 >
               {:else}
-                <span class="selname">{itemName(p, z)}</span>
+                {itemName(p, z)}
               {/if}
-            </div>
-            <div class="selnav">
+            </span>
+            <span class="selwhere">page {p + 1}</span>
+            <span class="selnav">
               <button
                 type="button"
                 class="btn btn-icon"
@@ -2542,102 +3167,167 @@
                 title={`Next ${boxName} (D)`}
                 ><Icon name="chevron-right" /></button
               >
-              <span class="selwhere">page {p + 1}</span>
-            </div>
-            {#if canEdit || (selectedLabel && auth.user) || coarse}
-              <div class="selactions">
-                {#if canEdit}
-                  <button
-                    type="button"
-                    class="btn btn-icon"
-                    onclick={newBox}
-                    aria-label={`New ${boxName} beside this one`}
-                    title={`New ${boxName} beside this one (N)`}
-                    ><Icon name="plus" /></button
-                  >
-                  <button
-                    type="button"
-                    class="btn btn-icon btn-danger"
-                    onclick={() => deleteZone(p, z)}
-                    aria-label={`Delete the ${boxName}`}
-                    title={`Delete the ${boxName}`}
-                    ><Icon name="trash" /></button
-                  >
-                {/if}
-                {#if selectedLabel && auth.user}
-                  <button
-                    type="button"
-                    class="btn btn-icon"
-                    onclick={() => compose++}
-                    aria-label={`Comment on measure ${selectedLabel}`}
-                    title={`Comment on measure ${selectedLabel}`}
-                    ><Icon name="comment" /></button
-                  >
-                {/if}
-                {#if coarse && !(docked && canEdit)}
-                  <button
-                    type="button"
-                    class="btn btn-icon"
-                    onclick={() => (selected = null)}
-                    aria-label={`Deselect the ${boxName}`}
-                    title={`Deselect the ${boxName}`}
-                    ><Icon name="close" /></button
-                  >
-                {/if}
-              </div>
-            {/if}
+            </span>
           </div>
-          {#if switches}
-            <div class="selflags">
-              <button
-                type="button"
-                class="chip-switch"
-                class:on={sbActive(p, z)}
-                aria-pressed={sbActive(p, z)}
-                onclick={() => toggleSb(p, z)}
-                disabled={pbAt(z)}
-                title={pbAt(z)
-                  ? "The first measure on a page always starts a system"
-                  : "This measure starts a new system (line) of the score"}
-                ><span class="sw"></span>Starts a system</button
-              >
-              <button
-                type="button"
-                class="chip-switch"
-                class:on={startsMovement(p, z)}
-                aria-pressed={startsMovement(p, z)}
-                onclick={() => toggleSection(p, z)}
-                disabled={sectionLocked(p, z)}
-                title={sectionLocked(p, z)
-                  ? "The first measure always starts the first section"
-                  : "This measure starts a new movement or section"}
-                ><span class="sw"></span>Starts a section</button
-              >
-              <button
-                type="button"
-                class="chip-switch"
-                class:on={pages[p].zones[z].pickup}
-                aria-pressed={pages[p].zones[z].pickup}
-                onclick={() => togglePickup(p, z)}
-                title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
-                ><span class="sw"></span>Pickup</button
-              >
+          {#if canEdit || (selectedLabel && auth.user) || coarse}
+            <div class="selactions">
+              {#if canEdit}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={newBox}
+                  title={`New ${boxName} beside this one (N)`}
+                  ><Icon name="plus" />New {boxName}</button
+                >
+                <button
+                  type="button"
+                  class="btn btn-danger"
+                  onclick={() => deleteZones(p, [z])}
+                  aria-label={`Delete the ${boxName}`}
+                  title={`Delete the ${boxName}`}
+                  ><Icon name="trash" />Delete</button
+                >
+              {/if}
+              {#if selectedLabel && auth.user}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => compose++}
+                  aria-label={`Comment on measure ${selectedLabel}`}
+                  title={`Comment on measure ${selectedLabel}`}
+                  ><Icon name="comment" />Comment</button
+                >
+              {/if}
+              {#if coarse && !(docked && canEdit)}
+                <button
+                  type="button"
+                  class="btn"
+                  onclick={() => (selected = null)}
+                  title={`Deselect the ${boxName}`}
+                  ><Icon name="close" />Deselect</button
+                >
+              {/if}
             </div>
-          {:else if tool === "measures"}
-            <!-- Read-only, the switches give way to the breaks that apply. -->
-            {@const flags = [
-              sbActive(p, z) ? "Starts a system" : "",
-              startsMovement(p, z) ? "Starts a section" : "",
-              pages[p].zones[z].pickup ? "Pickup" : "",
-            ].filter(Boolean)}
-            {#if flags.length}
-              <p class="selflagtext">{flags.join(" · ")}</p>
+          {/if}
+          {#if tool === "measures"}
+            {#if canEdit}
+              <p class="selgroup">Breaks</p>
+              <div class="selflags" role="group" aria-label="Breaks">
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={sbActive(p, z)}
+                  aria-pressed={sbActive(p, z)}
+                  onclick={() => toggleSb(p, z)}
+                  disabled={pbAt(z)}
+                  title={pbAt(z)
+                    ? "The first measure on a page always starts a system"
+                    : "This measure starts a new system (line) of the score"}
+                  >Starts a system</button
+                >
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={startsMovement(p, z)}
+                  aria-pressed={startsMovement(p, z)}
+                  onclick={() => toggleSection(p, z)}
+                  disabled={sectionLocked(p, z)}
+                  title={sectionLocked(p, z)
+                    ? "The first measure always starts the first section"
+                    : "This measure starts a new movement or section"}
+                  >Starts a section</button
+                >
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={pages[p].zones[z].pickup}
+                  aria-pressed={pages[p].zones[z].pickup}
+                  onclick={() => togglePickup(p, z)}
+                  title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
+                  >Pickup</button
+                >
+              </div>
+              <p class="selgroup">Repeats</p>
+              <div class="selflags" role="group" aria-label="Repeats">
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={!!pages[p].zones[z].rptStart}
+                  aria-pressed={!!pages[p].zones[z].rptStart}
+                  onclick={() => toggleRepeat(p, z, "start")}
+                  title="A repeat barline at the start of this measure"
+                  ><Icon name="repeat-start" />Repeat start</button
+                >
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={!!pages[p].zones[z].rptEnd}
+                  aria-pressed={!!pages[p].zones[z].rptEnd}
+                  onclick={() => toggleRepeat(p, z, "end")}
+                  title="A repeat barline at the end of this measure"
+                  ><Icon name="repeat-end" />Repeat end</button
+                >
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={!!pages[p].zones[z].rptBoth}
+                  aria-pressed={!!pages[p].zones[z].rptBoth}
+                  onclick={() => toggleRepeat(p, z, "both")}
+                  title="A double repeat barline at the end of this measure: the end of one repeat and the start of the next"
+                  ><Icon name="repeat-both" />Double repeat</button
+                >
+                <div
+                  class="seg"
+                  role="group"
+                  aria-label="Ending"
+                  title="The ending (volta) this measure belongs to; neighbouring measures with the same ending share one bracket"
+                >
+                  {#each ["", "1", "2", "3"] as n (n)}
+                    <button
+                      type="button"
+                      class:on={(pages[p].zones[z].ending ?? "") === n}
+                      aria-pressed={(pages[p].zones[z].ending ?? "") === n}
+                      onclick={() => setEnding(p, z, n)}
+                      >{n ? `${n}.` : "No ending"}</button
+                    >
+                  {/each}
+                </div>
+              </div>
+              <p class="selgroup">Signs</p>
+              <div class="selflags" role="group" aria-label="Signs">
+                {#each MEASURE_SIGNS as sign (sign)}
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={!!pages[p].zones[z].signs?.includes(sign)}
+                    aria-pressed={!!pages[p].zones[z].signs?.includes(sign)}
+                    onclick={() => toggleSign(p, z, sign)}
+                    title={SIGN_TITLE[sign]}
+                    >{#if sign === "segno" || sign === "coda"}<Icon
+                        name={sign}
+                      />{/if}{SIGN_NAME[sign]}</button
+                  >
+                {/each}
+              </div>
+            {:else}
+              <!-- Read-only, the toggles give way to the breaks that apply. -->
+              {@const flags = [
+                sbActive(p, z) ? "Starts a system" : "",
+                startsMovement(p, z) ? "Starts a section" : "",
+                pages[p].zones[z].pickup ? "Pickup" : "",
+                ...markNames(p, z),
+              ].filter(Boolean)}
+              {#if flags.length}
+                <p class="selflagtext">{flags.join(" · ")}</p>
+              {/if}
             {/if}
           {/if}
         </div>
       {:else}
         <p class="selnone">
-          {#if coarse && canEdit && !drawMode}
+          {#if coarse && canEdit && pickMode}
+            Tap boxes to select them.
+          {:else if coarse && canEdit && !drawMode}
             Tap a box twice, or choose Draw, to edit it.
           {:else}
             {coarse ? "Tap" : "Click"} a box on the page to {canEdit
@@ -2678,7 +3368,7 @@
         {:else}
           <button
             type="button"
-            class="btn btn-primary"
+            class="btn btn-primary btn-pre"
             onclick={() => submit()}
             disabled={busy || !canEdit || submitBlock !== null}
             title={submitBlock ??
@@ -2799,20 +3489,6 @@
     color: var(--ink-soft);
     font-size: 0.9rem;
   }
-  .linkish {
-    font: inherit;
-    font-weight: 600;
-    color: var(--link);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .linkish:hover {
-      text-decoration: underline;
-    }
-  }
 
   /* The whole tool: the desk the page sheets float on (the only scrolling
      region), with the side panel — carrying the task box — beside it.
@@ -2849,44 +3525,6 @@
     flex-wrap: wrap;
     gap: 6px;
   }
-  /* The layout steps: a list with counts beside the content, three equal
-     cells in a docked sheet (DOCKED_QUERY in side-panels.ts). */
-  .steplist {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .steplist > button {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    padding: 0 12px;
-    font: 400 13px var(--font);
-    color: var(--ink);
-    text-align: left;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    cursor: pointer;
-  }
-  .steplist > button.on {
-    font-weight: 600;
-    background: var(--accent-tint-strong);
-    border: 1.5px solid var(--accent);
-  }
-  /* A step's name and count each keep to one line. */
-  .steplong {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .stepshort,
-  .stepn {
-    display: none;
-  }
   /* The Draw button after a tap on a box while Scroll is chosen: its fill
      blinks twice in the accent tint; its border stays, so it does not merge
      with the chosen Scroll button's. */
@@ -2918,6 +3556,8 @@
     z-index: 6;
   }
   .deskctl-group {
+    --btn-bg: var(--card);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
     position: absolute;
     right: 12px;
     bottom: 12px;
@@ -2925,7 +3565,7 @@
     gap: 8px;
   }
   .deskctl-group > * {
-    border-radius: 8px;
+    border-radius: 999px;
     box-shadow: var(--shadow-sm);
   }
   /* The buttons stay 32px to the eye but take a 44px press. */
@@ -2944,67 +3584,7 @@
   .deskctl-group .tbtn-pair > .tbtn::after {
     inset: -6px 0;
   }
-  .stepcount {
-    color: var(--ink-faint);
-    font-weight: 400;
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .steplist > button.on .stepcount {
-    color: var(--ink-soft);
-  }
   @media (orientation: portrait) and (max-width: 860px) {
-    .steplist {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 2px;
-      padding: 2px;
-      background: var(--card);
-      box-shadow: inset 0 0 0 1px var(--line);
-      border-radius: 999px;
-    }
-    .steplist > button {
-      position: relative;
-      justify-content: center;
-      min-height: 28px;
-      padding: 0 6px;
-      font-size: 12px;
-      font-weight: 600;
-      color: var(--ink-soft);
-      background: transparent;
-      border: 0;
-      border-radius: 999px;
-    }
-    .steplist > button::after {
-      content: "";
-      position: absolute;
-      inset: -8px 0;
-    }
-    .steplist > button.on {
-      color: var(--ink);
-      background: var(--accent-tint-strong);
-      border: 0;
-    }
-    .steplong,
-    .stepcount {
-      display: none;
-    }
-    /* On a phone the cells keep the name and count and drop the swatch. */
-    @media (max-width: 420px) {
-      .steplist .swatch {
-        display: none;
-      }
-    }
-    /* In a sheet a step shows its short name and its box count. */
-    .stepshort,
-    .stepn {
-      display: inline;
-    }
-    .stepn {
-      font-weight: 400;
-      color: var(--ink-soft);
-      font-variant-numeric: tabular-nums;
-    }
     /* The steps and the Scroll / Draw pair share one row; the pair shows
        its icons only. */
     .wtools {
@@ -3013,7 +3593,7 @@
       align-items: center;
       gap: 6px;
     }
-    .steplist {
+    .steps {
       flex: 1 1 200px;
     }
     .toolrow {
@@ -3044,76 +3624,11 @@
       inset: -6px 0;
     }
   }
-  /* The selection card's rows are 32px apart by 8px. An editable measure's
-     switches stand in a column beside the rows, one beside each, and wrap
-     below them where the card is too narrow for both. */
-  .selmain,
-  .selflags {
+  /* "Measure" and the number field read as the heading's one name. */
+  .selnumlabel {
     display: flex;
-    flex-direction: column;
+    align-items: center;
     gap: 8px;
-  }
-  .selgrid {
-    flex-direction: row;
-    flex-wrap: wrap;
-    align-items: flex-start;
-    gap: 8px 16px;
-  }
-  .selnav,
-  .selactions {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .selnav .selwhere {
-    margin-left: 4px;
-  }
-  .selflagtext {
-    margin: 0;
-    font-size: 12.5px;
-    color: var(--ink-soft);
-  }
-  .selflags {
-    align-items: stretch;
-  }
-  .selflags .chip-switch {
-    min-height: 32px;
-  }
-  .selnum {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .selnum input {
-    width: 64px;
-    min-height: 32px;
-    padding: 4px 8px;
-    box-sizing: border-box;
-    font:
-      400 14px ui-monospace,
-      monospace;
-    color: var(--ink);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-  }
-  .selflags .chip-switch:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  /* In a docked sheet the buttons and switches take a 44px press through an
-     invisible ::after. */
-  @media (orientation: portrait) and (max-width: 860px) {
-    .selnav .btn-icon,
-    .selflags .chip-switch {
-      position: relative;
-    }
-    .selnav .btn-icon::after,
-    .selflags .chip-switch::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
   }
   /* Give back and the step's button at the two ends of one row; the draft
      state shows over the pages (DraftBubble). */
@@ -3148,27 +3663,6 @@
     }
   }
 
-  .checkline {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 24px;
-    font-size: 12px;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    cursor: pointer;
-  }
-  .checkline input {
-    width: 16px;
-    height: 16px;
-    margin: 0;
-    cursor: pointer;
-  }
-  /* The toolbar's help icon; its title carries the hints and colour legend. */
-  .helpbtn.on {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
   /* The toolbar and the editor help below it. */
   .tbar {
     flex: none;
@@ -3195,8 +3689,8 @@
     color: var(--ink-soft);
     background: var(--card);
     border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: var(--shadow-sm);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
   }
   .helppanel ul {
     flex: 1;
@@ -3204,26 +3698,14 @@
     padding-left: 18px;
   }
   /* The layers' hues, as "r, g, b" for rgba(): on the paper they stay the
-     same in both themes; the --ink-* colours, for text and swatches beside
-     the paper, lighten in the dark theme. */
+     same in both themes. The --ink-* colours for text and glyphs beside the
+     paper are theme tokens (theme.css). */
   .corrector {
     --layer-staff: 128, 34, 64;
     --layer-grand: 38, 100, 60;
     --layer-measure: 14, 129, 149;
     --layer-movement: 139, 95, 191;
     --layer-system: 36, 82, 178;
-    --ink-staff: rgb(var(--layer-staff));
-    --ink-grand: rgb(var(--layer-grand));
-    --ink-measure: rgb(var(--layer-measure));
-    --ink-movement: rgb(var(--layer-movement));
-    --ink-system: rgb(var(--layer-system));
-  }
-  :global([data-theme="dark"]) .corrector {
-    --ink-staff: rgb(222, 120, 152);
-    --ink-grand: rgb(110, 196, 138);
-    --ink-measure: rgb(72, 196, 214);
-    --ink-movement: rgb(190, 156, 232);
-    --ink-system: rgb(128, 164, 240);
   }
   /* Colour words in the help, in the colours they name. */
   .helppanel b {
@@ -3268,42 +3750,23 @@
     box-sizing: border-box;
     container-type: inline-size;
   }
-  .ctoolbar {
-    flex: none;
-    min-height: 44px;
-    box-sizing: border-box;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 0 14px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: var(--card);
-    box-shadow: var(--shadow-sm);
-    overflow-x: auto;
-  }
-  /* The zoom and fit buttons match the 32px icon buttons beside them. */
-  .ctoolbar :global(.tbtn) {
-    min-height: 32px;
-  }
-  /* The zoom controls. */
+  /* The toolbar takes the shared viewer toolbar's look (.vtoolbar, ui.css). */
+  /* The zoom: the slider with its readout and the two fits; where the
+     slider gives way, zoom out and in either side of the readout. */
   .zoomset {
     flex: 0 1 auto;
     min-width: 0;
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
-  /* Zoom out and in by one step, in place of the slider where it is hidden. */
   .zoomstep {
     display: none;
   }
   /* A medium tool column (MEDIUM_TOOL: a tablet, or a laptop beside the
-     side panel) keeps one row: the page-count switch moves into the ⋯ menu,
-     the zoom slider gives way to zoom out and in around the readout, and the
-     page navigation and the ⋯ button keep the right end. */
+     side panel): the page-count switch moves into the ⋯ menu and the zoom
+     slider gives way to zoom out and in. */
   @container (max-width: 959px) {
-    .tspacer,
     .zoomset > .zoomslider {
       display: none;
     }
@@ -3311,26 +3774,7 @@
       display: inline-flex;
     }
     .zval {
-      order: 1;
       min-width: 4ch;
-      text-align: center;
-    }
-    .zoomin {
-      order: 2;
-    }
-    .fitwidth,
-    .fitpage {
-      order: 3;
-    }
-    .pgnav {
-      margin-left: auto;
-    }
-    .pgnav > .vline {
-      display: none;
-    }
-    /* The ⋯ button ends the row, above its menu. */
-    .viewbtn {
-      order: 1;
     }
   }
   /* On a touch screen the toolbar buttons are 32px and take a 44px press
@@ -3349,62 +3793,29 @@
       inset: -6px -3px;
     }
   }
-  /* Narrow tool column (NARROW_TOOL, a phone): the toolbar moves below the
-     pages, within thumb reach, as one row at touch size: undo and redo, the
-     page navigation, fit width and help or the ⋯ menu; with a mouse also
-     zoom out and in around the readout, on a touch screen a pinch zooms.
-     Fit page is hidden. The help and the ⋯ menu open above the toolbar,
-     over the pages, so the desk keeps its height. */
+  /* Narrow tool column (NARROW_TOOL, a phone): the toolbar is one row at
+     touch size in the same order: undo and redo, fit width (with a mouse
+     also zoom out and in around the readout; on a touch screen a pinch
+     zooms), the paging, and help or the ⋯ menu. Fit page is hidden. */
   @container (max-width: 559px) {
-    .tbar {
-      order: 2;
-      padding: 6px 0 max(6px, env(safe-area-inset-bottom));
-    }
     .ctoolbar {
-      gap: 6px;
-      padding: 0 6px;
-      flex-wrap: nowrap;
+      gap: 4px;
+      padding: 4px 6px;
     }
-    .ctoolbar > .vline,
+    .ctoolbar .vline,
     .zoomset > .zoomslider,
-    .zoomset > .fitpage,
-    .pgnav > .vline {
+    .zoomset > .fitpage {
       display: none;
     }
     .zoomset {
-      order: 2;
       flex: none;
       gap: 2px;
     }
-    .helpbtn {
-      order: 3;
-    }
-    .viewbtn {
-      order: 4;
-    }
-    .pgnav {
-      order: 1;
-      flex: 1;
-      min-width: 0;
-      justify-content: space-between;
-    }
     /* The label gives up its reserved width so the row fits a phone. */
     .pglabel {
-      flex: 1;
       min-width: 0 !important;
       overflow: hidden;
       text-overflow: ellipsis;
-      text-align: center;
-    }
-    .tbar .helppanel {
-      top: auto;
-      bottom: 100%;
-      margin: 0 0 8px;
-    }
-    .tbar .viewmenu {
-      top: auto;
-      bottom: 100%;
-      margin: 0 0 8px;
     }
     /* 32px buttons that take a 44px press through an invisible ::after. */
     .ctoolbar :global(.btn),
@@ -3420,9 +3831,21 @@
       inset: -6px -3px;
     }
   }
-  /* On a narrow touch screen a pinch zooms: no zoom buttons or readout. */
+  /* On a narrow touch screen the toolbar moves below the pages, within
+     thumb reach; the help and the ⋯ menu open above it, over the pages, so
+     the desk keeps its height. A pinch zooms: no zoom buttons or readout. */
   @media (pointer: coarse) {
     @container (max-width: 559px) {
+      .tbar {
+        order: 2;
+        padding: 6px 0 max(6px, env(safe-area-inset-bottom));
+      }
+      .tbar .helppanel,
+      .tbar .viewmenu {
+        top: auto;
+        bottom: 100%;
+        margin: 0 0 8px;
+      }
       .zoomset > .zval,
       .zoomset > .zoomstep {
         display: none;
@@ -3443,22 +3866,22 @@
     z-index: 5;
     margin: 8px 0 0;
     padding: 10px 12px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: var(--shadow-sm);
-  }
-  .viewmenu {
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    box-shadow: var(--shadow-md);
   }
-  .viewbtn.on {
-    color: var(--accent);
-    border-color: var(--accent);
+  .viewbtn.on,
+  .helpbtn.on {
+    color: var(--st);
+    background: var(--st-tint);
   }
-  .helpbtn.hidden {
+  .helpbtn.hidden,
+  .helpline.hidden {
     display: none;
   }
   /* Its padding holds the buttons' 44px press areas inside the scrolling
@@ -3468,6 +3891,7 @@
     padding: 6px 3px;
     margin: -6px -3px;
     border: 0;
+    border-radius: 0;
     background: transparent;
     box-shadow: none;
   }
@@ -3535,7 +3959,7 @@
     background: var(--facsimile-paper);
     box-shadow:
       0 0 0 1px var(--line-input),
-      0 10px 30px rgba(31, 36, 51, 0.16);
+      var(--shadow-paper);
   }
   .frame.cropped svg {
     border: 0;
@@ -3552,7 +3976,7 @@
     height: auto;
     background: var(--facsimile-paper);
     border: 1px solid var(--line-input);
-    box-shadow: 0 10px 30px rgba(31, 36, 51, 0.16);
+    box-shadow: var(--shadow-paper);
     touch-action: none;
     user-select: none;
   }
@@ -3582,11 +4006,59 @@
     fill: rgba(var(--layer-movement), 0.42);
     stroke: rgb(var(--layer-movement));
   }
-  /* A system beginning: a blue bar on the measure's left edge. */
-  .sysstart {
+  /* A system start: a blue bracket in the measure's label, before the
+     number; white on a selected box's label. */
+  .sysmark {
+    fill: none;
     stroke: rgb(var(--layer-system));
-    stroke-width: calc(3px * var(--stroke-scale, 1));
+    stroke-width: 2px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
     pointer-events: none;
+  }
+  .sysmark.on {
+    stroke: #fff;
+  }
+  /* A repeat sign on its label: the label's ink, white on a selected box. */
+  .repicon {
+    color: #1a1a1a;
+    pointer-events: none;
+  }
+  .repicon.on {
+    color: #fff;
+  }
+  /* A sign's tag: paper with the measure's colour as its edge. */
+  .signtag {
+    pointer-events: none;
+    color: #1a1a1a;
+  }
+  .signtag rect {
+    fill: rgba(255, 255, 255, 0.94);
+    stroke: rgba(var(--layer-measure), 0.85);
+    stroke-width: 1px;
+    vector-effect: non-scaling-stroke;
+  }
+  .signtag text {
+    font-family: var(--font);
+    font-weight: 600;
+    fill: #1a1a1a;
+  }
+  /* An ending's bracket over its measures, its number on paper. */
+  .volta {
+    pointer-events: none;
+  }
+  .volta path {
+    fill: none;
+    stroke: rgb(var(--layer-measure));
+    stroke-width: calc(2.5px * var(--stroke-scale, 1));
+  }
+  .volta rect {
+    fill: rgba(255, 255, 255, 0.92);
+  }
+  .volta text {
+    font-family: var(--font);
+    font-weight: 600;
+    fill: #1a1a1a;
   }
   /* Wine red for staff boxes, dark green for grand staves, teal for measures:
      hues outside the region palette, darker than the red and green that mean
@@ -3622,6 +4094,22 @@
     stroke: rgba(var(--layer-measure), 0.95);
     stroke-width: calc(2px * var(--stroke-scale, 1));
     pointer-events: none;
+  }
+  /* A Shift+drag's selection rectangle. */
+  .marquee {
+    fill: rgba(var(--layer-measure), 0.08);
+    stroke: rgba(var(--layer-measure), 0.95);
+    stroke-width: 1.5px;
+    stroke-dasharray: 5 4;
+    pointer-events: none;
+  }
+  .staves .marquee {
+    fill: rgba(var(--layer-staff), 0.08);
+    stroke: rgba(var(--layer-staff), 0.95);
+  }
+  .grandstaves .marquee {
+    fill: rgba(var(--layer-grand), 0.08);
+    stroke: rgba(var(--layer-grand), 0.95);
   }
   .staves .corner {
     stroke: rgba(var(--layer-staff), 0.95);

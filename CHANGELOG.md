@@ -5,6 +5,11 @@ parentheses.
 
 ## 2026-10-16
 
+- On a touch screen a double tap on a box in draw mode switches back to scroll mode.
+- The region editors select several boxes by Shift+click, Shift+drag or Select several, and move, copy and delete them together.
+- The measure correction marks repeats, endings and navigation signs, and shows a system start as a bracket.
+- The score workspaces share one panel, their stage's colour, soft round buttons and one toolbar order at every size.
+- A new campaign's repository can be created in one of your GitHub organisations.
 - Tasks in review show whose reviews are in progress and whether you may take the next one.
 - The measure correction shows the selected box's controls in the same aligned rows on every screen, with New on phones too.
 - The measure correction keeps its instructions in the task text and shows only counts in the detection result.
