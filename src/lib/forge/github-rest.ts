@@ -477,6 +477,26 @@ export async function getAuthenticatedUser(
   return { user, scopes };
 }
 
+/** An organisation the authenticated user belongs to (fields this app reads). */
+export interface OrgSummary {
+  login: string;
+  avatar_url: string;
+}
+
+/**
+ * The organisations the authenticated user is a member of. An OAuth token needs
+ * the read:org scope for this; without it GitHub answers 403.
+ */
+export async function listUserOrgs(token: string): Promise<OrgSummary[]> {
+  const { ok, data } = await ghGet<OrgSummary[] & ErrorResponse>(
+    `${apiRoot(token)}/user/orgs?per_page=100`,
+    token,
+    { cache: false },
+  );
+  if (!ok) throw new Error(data?.message || "Failed to list organisations");
+  return data.map(({ login, avatar_url }) => ({ login, avatar_url }));
+}
+
 // Value cache for the id→login and id→repo resolvers, on top of ghGet's ETag
 // conditional caching (a 304 is free of the rate limit, but still a round trip).
 // This memo skips the network entirely for a repeat lookup within TTL_MS. Logins

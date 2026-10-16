@@ -68,6 +68,21 @@ class BrokerTest(unittest.TestCase):
         self.assertTrue(params["code_challenge"][0])
         self.assertTrue(params["state"][0])
 
+    def test_login_with_orgs_adds_read_org(self):
+        response = self.client.get("/login?return_to=/new&orgs=1")
+        params = parse_qs(urlsplit(response.headers["Location"]).query)
+
+        self.assertEqual(
+            params["scope"], ["public_repo notifications read:org"]
+        )
+
+    def test_app_access_redirects_to_the_apps_github_settings(self):
+        response = self.client.get("/app-access")
+        self.assertEqual(
+            response.headers["Location"],
+            "https://github.com/settings/connections/applications/test-client",
+        )
+
     def test_proxy_requires_authentication_and_rejects_other_hosts(self):
         self.assertEqual(
             self.client.get("/proxy/api.github.com/user").status_code, 401
@@ -483,6 +498,23 @@ class BrokerTest(unittest.TestCase):
         self.assertNotEqual(before, after)
         with self.client.session_transaction() as current:
             self.assertEqual(current["githubToken"], "fresh-token")
+
+    def test_authorize_revokes_the_token_it_replaces(self):
+        self.authenticate()
+        self.client.get("/login?return_to=/new&orgs=1")
+
+        token = {"access_token": "wider-token"}
+        user = SimpleNamespace(ok=True, json=lambda: {"login": "alice"})
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                with patch.object(broker, "revoke_github_token") as revoke:
+                    self.client.get("/authorize")
+
+        revoke.assert_called_once_with("server-side-token")
+        with self.client.session_transaction() as current:
+            self.assertEqual(current["githubToken"], "wider-token")
 
     def test_logout_revokes_then_clears_the_session(self):
         self.authenticate()

@@ -6,6 +6,7 @@
 import type {
   FileChange,
   GitHubUser,
+  OrgSummary,
   RepoData,
   RepoSummary,
   RepoRef,
@@ -16,6 +17,7 @@ import type {
 export type {
   FileChange,
   GitHubUser,
+  OrgSummary,
   RepoData,
   RepoSummary,
   RepoRef,
@@ -58,6 +60,8 @@ export interface ForgeClient {
   getUserLogin(id: number): Promise<string | null>;
   /** Resolve a numeric repo id to its current owner/name, or null. Memoised. */
   getRepoById(id: number): Promise<RepoRef | null>;
+  /** The organisations the user belongs to; needs the read:org scope. */
+  listUserOrgs(): Promise<OrgSummary[]>;
   /** Repos tagged with `topic` that the user can see. */
   searchReposByTopic(topic: string): Promise<RepoSummary[]>;
   /** Create a repo from a template into `owner`'s account. */

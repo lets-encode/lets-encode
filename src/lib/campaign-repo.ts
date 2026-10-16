@@ -10,6 +10,7 @@ import { provider } from "./forge/config.ts";
 import {
   wizard,
   draftSnapshot,
+  repoOwnerLogin,
   saveDraft,
   type WizardRepo,
 } from "./wizard.svelte.ts";
@@ -20,6 +21,29 @@ import { CONFIG_PATH } from "./campaign-tables.ts";
 const TEMPLATE_MARKER = ".github/workflows/caller.yml";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * GitHub did not create the repository in the organisation chosen as its
+ * owner. `restricted` is set when the organisation does not allow the app,
+ * which one of its owners can change.
+ */
+export class OwnerRefusedError extends Error {
+  constructor(
+    readonly owner: string,
+    readonly restricted: boolean,
+    detail: string,
+  ) {
+    super(
+      restricted
+        ? `${owner} does not allow Let's Encode! to create repositories. An owner of ${owner} has to approve Let's Encode! for the organisation; you can request this on GitHub. Nothing has been created.`
+        : `GitHub did not create the repository in ${owner} (${detail}). Nothing has been created.`,
+    );
+  }
+}
+
+// GitHub's answer to a token of an OAuth app the organisation has not approved.
+const isAppRestriction = (message: string): boolean =>
+  /OAuth App access restrictions/i.test(message);
 
 // A fetch that never reached the server (connection drop, DNS, CORS block)
 // surfaces as a TypeError with a browser-worded message, not an API error.
@@ -34,6 +58,7 @@ async function createOrAdoptRepo(
   owner: string,
   name: string,
   description: string,
+  isOrg: boolean,
 ): Promise<RepoData> {
   const create = () =>
     f.createRepoFromTemplate({
@@ -86,6 +111,12 @@ async function createOrAdoptRepo(
     await sleep(1500);
     return create();
   }
+  if (isOrg)
+    throw new OwnerRefusedError(
+      owner,
+      isAppRestriction(error.message),
+      error.message,
+    );
   throw error;
 }
 
@@ -120,7 +151,14 @@ export async function ensureCampaignRepo(
       .join(" — ")
       .slice(0, 350);
     log({ step: "Creating the repository" });
-    const created = await createOrAdoptRepo(f, userLogin, claim.name, about);
+    const owner = repoOwnerLogin(userLogin);
+    const created = await createOrAdoptRepo(
+      f,
+      owner,
+      claim.name,
+      about,
+      owner !== userLogin,
+    );
     repo = {
       owner: created.owner.login,
       name: created.name,

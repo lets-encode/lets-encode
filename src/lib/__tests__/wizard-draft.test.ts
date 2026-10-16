@@ -37,6 +37,7 @@ beforeEach(() => {
 
 const entries = (over: Partial<DraftEntries> = {}): DraftEntries => ({
   step: "source",
+  repoOwner: "",
   title: "Symphony No. 9",
   description: "",
   license: "CC0-1.0",
@@ -87,6 +88,7 @@ test("rejects records that are unreadable, of another version, or incomplete", (
     // where the wizard stores strings.
     ["unknown step", withEntries({ step: "no-such-step" })],
     ["numeric title", withEntries({ title: 7 })],
+    ["no repository owner", withEntries({ repoOwner: undefined })],
     ["null license", withEntries({ license: null })],
   ];
   for (const [label, text] of cases) {

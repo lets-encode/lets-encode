@@ -51,7 +51,9 @@ Register, then **Generate a new client secret**. Both the **Client ID** and the
 Login requests the `public_repo` scope (plus `notifications` for muting campaign
 repos) — enough to create and administer public campaign repos and forks (e.g. to
 give their Actions a read/write token), without access to the user's private
-repositories. Private campaigns would need the broader `repo` scope.
+repositories. Private campaigns would need the broader `repo` scope. A user who
+creates a campaign in one of their organisations is asked once more, in a window
+of its own, for `read:org`, which lists their organisation memberships.
 
 ## 3. Configure the SPA
 

@@ -22,10 +22,12 @@
   import {
     wizard,
     nextStep,
+    repoOwnerLogin,
     MAX_DESCRIPTION_LENGTH,
   } from "$lib/wizard.svelte.ts";
   import type { RepoSummary } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
+  import OwnerSelect from "./OwnerSelect.svelte";
 
   // Finished campaigns, to catch a name already used by one of them. Setups still
   // in progress are not among them; the registry's reservations cover those.
@@ -52,7 +54,7 @@
 
   // Live availability check: against the campaign repos already fetched (public
   // ones of every user, plus the user's own private matches), and against the
-  // user's own account for any other repo of the same name. Debounced; a
+  // chosen owner's account for any other repo of the same name. Debounced; a
   // sequence number discards results of superseded checks.
   let handleCheck = $state<
     | { state: "idle" }
@@ -70,6 +72,7 @@
   $effect(() => {
     const h = wizard.handle.trim();
     const user = auth.user;
+    const owner = user ? repoOwnerLogin(user.login) : "";
     const token = auth.token ?? undefined;
     const repos = campaignRepos;
     const seq = ++handleCheckSeq;
@@ -109,7 +112,7 @@
         // as "unknown" rather than falsely "available".
         const [slug, exists] = await Promise.all([
           lookupSlug(h).catch(() => null),
-          repoExists(user.login, h, token),
+          repoExists(owner, h, token),
         ]);
         if (seq !== handleCheckSeq) return;
         if (slug && slug.status !== "free") {
@@ -122,7 +125,7 @@
             handleCheck = { state: "taken", by: "an existing campaign" };
           }
         } else if (exists) {
-          handleCheck = { state: "taken", by: `${user.login}/${h}` };
+          handleCheck = { state: "taken", by: `${owner}/${h}` };
         } else if (!slug) {
           handleCheck = { state: "unknown" };
         } else {
@@ -159,6 +162,7 @@
     return "";
   });
 
+  let ownerWaiting = $state(false);
   let claiming = $state(false);
   let claimError = $state<string | null>(null);
   let releaseNote = $state<string | null>(null);
@@ -231,18 +235,38 @@
     intro="The name identifies the campaign to volunteers and becomes its address."
     status="choosing the name"
   >
-    <label class="field">
-      Campaign name
-      <input
-        class="input"
-        bind:value={
-          () => wizard.handle, (v) => (wizard.handle = v.toLowerCase())
-        }
-        placeholder="symphony-9-choral"
-        readonly={wizard.claim !== null}
-        required
-      />
+    <!-- The owner and the name read as one repository path: owner / name. -->
+    <div class="field">
+      <div class="owner-row">
+        <div class="owner-col">
+          <span id="owner-label">Owner</span>
+          <OwnerSelect
+            bind:waiting={ownerWaiting}
+            labelId="owner-label"
+            disabled={nameFixed}
+            title={nameFixed
+              ? `The repository ${wizard.repo?.full_name} exists, so its owner can no longer be changed.`
+              : "The GitHub account the campaign's repository is created in"}
+          />
+        </div>
+        <span class="owner-slash" aria-hidden="true">/</span>
+        <label class="name-col">
+          Campaign name
+          <input
+            class="input"
+            bind:value={
+              () => wizard.handle, (v) => (wizard.handle = v.toLowerCase())
+            }
+            placeholder="symphony-9-choral"
+            readonly={wizard.claim !== null}
+            required
+          />
+        </label>
+      </div>
       <span class="hint">Used in the URL and as the Git repository name.</span>
+      {#if ownerWaiting}
+        <span class="hint" role="status">Continue in the GitHub window.</span>
+      {/if}
       {#if handleCheck.state === "checking"}
         <span class="hint">Checking availability…</span>
       {:else if handleCheck.state === "held"}
@@ -298,7 +322,7 @@
       {#if releaseNote}
         <span class="hint" role="status">{releaseNote}</span>
       {/if}
-    </label>
+    </div>
 
     <label class="field">
       Title
@@ -373,6 +397,32 @@
     }
     .field:first-child {
       margin-top: 18px;
+    }
+  }
+  .owner-row {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr);
+    align-items: end;
+    column-gap: 8px;
+  }
+  .owner-col,
+  .name-col {
+    display: block;
+    min-width: 0;
+  }
+  .owner-slash {
+    padding-bottom: 9px;
+    font-size: 18px;
+    font-weight: 400;
+    color: var(--ink-faint);
+  }
+  @media (max-width: 599px) {
+    .owner-row {
+      grid-template-columns: minmax(0, 1fr);
+      row-gap: 14px;
+    }
+    .owner-slash {
+      display: none;
     }
   }
   /* Sits under the field's hints rather than beside the input. */

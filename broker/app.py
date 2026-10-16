@@ -218,6 +218,14 @@ def broker_body_too_large(_error):
     return response
 
 
+# public_repo (not the broader repo): fork/create-from-template/commit/PR on
+# public repositories, no access to the user's private repos.
+# notifications: mute the campaign repo for volunteers (see muteOnce).
+LOGIN_SCOPE = "public_repo notifications"
+# Requested only by /login?orgs=1, when a campaign is to be created in one of
+# the user's organisations: read:org lists their organisation memberships.
+ORGS_SCOPE = LOGIN_SCOPE + " read:org"
+
 oauth = OAuth(app)
 github = oauth.register(
     name="github",
@@ -227,10 +235,7 @@ github = oauth.register(
     authorize_url="https://github.com/login/oauth/authorize",
     api_base_url="https://api.github.com/",
     client_kwargs={
-        # public_repo (not the broader repo): fork/create-from-template/commit/PR
-        # on public repositories, no access to the user's private repos.
-        # notifications: mute the campaign repo for volunteers (see muteOnce).
-        "scope": "public_repo notifications",
+        "scope": LOGIN_SCOPE,
         "code_challenge_method": "S256",
     },
 )
@@ -355,7 +360,8 @@ def login():
     # Remember where the SPA wants the user back, then hand off to GitHub.
     # authlib generates and session-stores the OAuth `state` parameter.
     session["return_to"] = safe_return_path(request.args.get("return_to"))
-    return github.authorize_redirect(oauth_callback_url())
+    scope = ORGS_SCOPE if request.args.get("orgs") == "1" else LOGIN_SCOPE
+    return github.authorize_redirect(oauth_callback_url(), scope=scope)
 
 
 @app.route("/authorize")
@@ -374,10 +380,27 @@ def authorize():
         )
     # Replace the pre-login session ID after authentication so an ID fixed by
     # an attacker cannot become an authenticated session.
+    previous = session.get("githubToken")
     app.session_interface.regenerate(session)
     session["githubToken"] = token["access_token"]
     session["userLogin"] = resp.json().get("login", "")
+    # A login from an active session (one asking for more scopes) replaces its
+    # token; the replaced one would otherwise stay valid.
+    if previous and previous != token["access_token"]:
+        revoke_github_token(previous)
     return redirect(return_to)
+
+
+@app.route("/app-access")
+def app_access():
+    # GitHub's page for this OAuth app in the user's settings, where each of
+    # their organisations shows whether it allows the app, with a request
+    # button for those that do not.
+    return redirect(
+        "https://github.com/settings/connections/applications/{}".format(
+            getenv("GITHUB_CLIENT_ID")
+        )
+    )
 
 
 def revoke_github_token(token):

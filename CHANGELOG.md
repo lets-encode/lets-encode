@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-16
 
+- A new campaign's repository can be created in one of your GitHub organisations.
 - Tasks in review show whose reviews are in progress and whether you may take the next one.
 - The measure correction shows the selected box's controls in the same aligned rows on every screen, with New on phones too.
 - The measure correction keeps its instructions in the task text and shows only counts in the detection result.

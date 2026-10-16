@@ -131,6 +131,62 @@ export function login(
   );
 }
 
+/** Whether the session's token may list the user's organisations. */
+export function hasOrgsScope(): boolean {
+  return auth.scope
+    .split(",")
+    .map((s) => s.trim())
+    .includes("read:org");
+}
+
+/** The page the organisation grant window returns to; see grantOrgsScope. */
+export const ORGS_GRANT_RETURN = "/new?orgs=done";
+/** The channel that page reports on. */
+export const ORGS_GRANT_CHANNEL = "lets-encode:orgs-grant";
+
+/**
+ * Ask GitHub for the read:org scope on top of the login's scopes, in a window
+ * of its own so the page that asks keeps its state. The window returns to
+ * ORGS_GRANT_RETURN, which reports on ORGS_GRANT_CHANNEL and closes itself;
+ * the session's scopes are then read again. Resolves with whether the session
+ * holds read:org once the window has reported or been closed, and with null
+ * when the browser did not open the window. A call while the window is open
+ * brings it to the front and resolves with the first call.
+ */
+export function grantOrgsScope(): Promise<boolean | null> {
+  if (orgsGrant) {
+    orgsGrant.popup.focus();
+    return orgsGrant.result;
+  }
+  const url = `${provider.brokerUrl}/login?orgs=1&return_to=${encodeURIComponent(ORGS_GRANT_RETURN)}`;
+  const popup = window.open(url, "lets-encode-orgs-grant", "popup");
+  if (!popup) return Promise.resolve(null);
+  const result = new Promise<boolean>((resolve) => {
+    const channel = new BroadcastChannel(ORGS_GRANT_CHANNEL);
+    let finished = false;
+    const done = async () => {
+      if (finished) return;
+      finished = true;
+      clearInterval(watch);
+      channel.close();
+      orgsGrant = null;
+      const resolved = await createForge(SESSION)
+        .getAuthenticatedUser()
+        .catch(() => null);
+      if (resolved) auth.scope = resolved.scopes;
+      resolve(hasOrgsScope());
+    };
+    channel.onmessage = done;
+    const watch = setInterval(() => {
+      if (popup.closed) void done();
+    }, 500);
+  });
+  orgsGrant = { popup, result };
+  return result;
+}
+
+let orgsGrant: { popup: Window; result: Promise<boolean> } | null = null;
+
 /** Log out: clear local state and end the broker session (which revokes the token). */
 export async function logout(): Promise<void> {
   console.log("[auth] logging out");

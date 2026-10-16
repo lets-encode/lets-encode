@@ -13,7 +13,7 @@
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { wizard, previousStep } from "$lib/wizard.svelte.ts";
+  import { wizard, previousStep, repoOwnerLogin } from "$lib/wizard.svelte.ts";
   import { auth } from "$lib/auth.svelte.ts";
   import {
     CampaignFinisher,
@@ -21,6 +21,7 @@
   } from "$lib/campaign-finish.svelte.ts";
   import type { Preparation } from "$lib/campaign-init.ts";
   import WizardCard from "./WizardCard.svelte";
+  import OwnerRefusedActions from "./OwnerRefusedActions.svelte";
   import FacsimilePages from "./FacsimilePages.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
 
@@ -96,8 +97,13 @@
   {#snippet pinned()}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
+      {#if finisher.ownerRefused}
+        <OwnerRefusedActions refused={finisher.ownerRefused} />
+      {/if}
     {:else if !finisher.busy && auth.user}
-      <p class="finish-note">{finishSummary(auth.user.login)}</p>
+      <p class="finish-note">
+        {finishSummary(repoOwnerLogin(auth.user.login))}
+      </p>
     {/if}
     <ProgressSteps log={finisher.log} />
   {/snippet}

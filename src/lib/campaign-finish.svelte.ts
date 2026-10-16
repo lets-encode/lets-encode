@@ -12,7 +12,7 @@ import { auth, forge } from "./auth.svelte.ts";
 import { provider, automation, measureDetectorUrl } from "./forge/config.ts";
 import { registerCampaign } from "./campaign-resolve.ts";
 import { blobToBase64, imageSize } from "./prepare-images.ts";
-import { ensureCampaignRepo } from "./campaign-repo.ts";
+import { ensureCampaignRepo, OwnerRefusedError } from "./campaign-repo.ts";
 import { licenseById } from "./licenses.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import { startDetection, type DetectionSession } from "./measure-detection.ts";
@@ -76,6 +76,8 @@ const TEMPLATE_ONLY_PATHS = ["CHANGELOG.md", "config.example.yaml"];
 export class CampaignFinisher {
   busy = $state(false);
   error = $state<string | null>(null);
+  /** Set when the chosen organisation refused the repository. */
+  ownerRefused = $state<OwnerRefusedError | null>(null);
   readonly log = new ProgressLog();
   // Detection is the slow, failure-prone half of finishing. Its result is
   // kept so a retry after a commit failure does not re-run the detector.
@@ -138,6 +140,7 @@ export class CampaignFinisher {
   /** Measure, create, build, commit, register and list the campaign; then open it. */
   async run(): Promise<void> {
     this.error = null;
+    this.ownerRefused = null;
     const user = auth.user;
     const f = forge();
     const claim = wizard.claim;
@@ -416,6 +419,7 @@ export class CampaignFinisher {
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
       this.error = `Could not finish the campaign: ${(err as Error).message}`;
+      if (err instanceof OwnerRefusedError) this.ownerRefused = err;
       this.busy = false;
       this.log.fail();
     }

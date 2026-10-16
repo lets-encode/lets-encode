@@ -928,6 +928,52 @@ textarea.input {
   color: var(--ink-soft);
 }
 
+/* ---- Popups --------------------------------------------------------------
+   A small card over the page, anchored to the control that opened it: a
+   heading per group and full-width rows to choose from. */
+.popup {
+  position: fixed;
+  z-index: 30;
+  box-sizing: border-box;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 8px;
+}
+.popup-head {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  padding: 6px 8px 4px;
+}
+.popup-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 10px;
+  border: none;
+  background: none;
+  border-radius: 8px;
+  font: 13px var(--font);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+.popup-row-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (hover: hover) {
+  .popup-row:hover:not(:disabled) {
+    background: var(--accent-tint);
+  }
+}
+
 /* ---- Command overlays -----------------------------------------------
    The modal card a command's progress or outcome shows on, over a dimmed
    page. */

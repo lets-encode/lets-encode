@@ -6,7 +6,8 @@
   is reserved in the slug registry, so no campaign can shadow this route.
 -->
 <script lang="ts">
-  import { auth, login } from "$lib/auth.svelte.ts";
+  import { page } from "$app/state";
+  import { auth, login, ORGS_GRANT_CHANNEL } from "$lib/auth.svelte.ts";
   import { draftSnapshot, saveDraft, wizard } from "$lib/wizard.svelte.ts";
   import CampaignNameStep from "$lib/components/CampaignNameStep.svelte";
   import CampaignLicenseStep from "$lib/components/CampaignLicenseStep.svelte";
@@ -16,6 +17,17 @@
   import CampaignPiecesStep from "$lib/components/CampaignPiecesStep.svelte";
   import CampaignPreparationStep from "$lib/components/CampaignPreparationStep.svelte";
   import WizardCard from "$lib/components/WizardCard.svelte";
+
+  // The window that asks GitHub for the organisation list returns here (see
+  // grantOrgsScope): it reports to the setup that opened it and closes.
+  const grantReturn = page.url.searchParams.get("orgs") === "done";
+  $effect(() => {
+    if (!grantReturn) return;
+    const channel = new BroadcastChannel(ORGS_GRANT_CHANNEL);
+    channel.postMessage("done");
+    channel.close();
+    window.close();
+  });
 
   // Mirror the wizard's entries into the browser as they change, so a setup
   // interrupted here can be continued from the landing's draft list. The draft
@@ -44,14 +56,18 @@
   Every step renders the full workbench shell itself; this route only decides
   which step is on screen.
 -->
-{#if auth.status === "loading"}
+{#if grantReturn}
+  <p class="note checking">
+    GitHub has answered. Close this window to return to the campaign setup.
+  </p>
+{:else if auth.status === "loading"}
   <p class="note checking">Checking your session…</p>
 {:else if !auth.user}
   <WizardCard step="name" heading="Start a new encoding campaign">
     <p class="note login-note">
       {#if auth.expired}Your GitHub login has expired.{/if}
       Log in with GitHub to create a campaign. Its score, configuration and progress
-      live in a repository on your account.
+      live in a repository on your account or in one of your organisations.
     </p>
     {#snippet footer()}
       <button type="button" class="btn btn-primary" onclick={() => login()}>

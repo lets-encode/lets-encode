@@ -31,6 +31,8 @@ const KEY_PREFIX = "lets-encode:setup:";
 export interface DraftEntries {
   /** The step the setup was left on. */
   step: WizardStepId;
+  /** The organisation the repository is created in; empty for the user's own account. */
+  repoOwner: string;
   title: string;
   description: string;
   license: string;
@@ -101,6 +103,7 @@ export function parseDraft(text: string | null): WizardDraft | null {
   const entries = draft.entries;
   if (!entries || typeof entries !== "object") return null;
   if (!STEP_IDS.includes(entries.step)) return null;
+  if (typeof entries.repoOwner !== "string") return null;
   if (typeof entries.title !== "string") return null;
   if (typeof entries.description !== "string") return null;
   if (typeof entries.license !== "string") return null;

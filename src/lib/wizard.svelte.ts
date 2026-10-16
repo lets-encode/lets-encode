@@ -88,6 +88,11 @@ export const wizard = $state<{
   handle: string;
   /** The held name, from the name step until the campaign is registered. */
   claim: WizardClaim | null;
+  /**
+   * The organisation the repository is created in, by login; empty for the
+   * signed-in user's own account.
+   */
+  repoOwner: string;
   /** Human-readable label for the campaign. */
   title: string;
   /** Short statement of what the campaign sets out to encode. Optional. */
@@ -137,6 +142,7 @@ export const wizard = $state<{
   step: "name",
   handle: "",
   claim: null,
+  repoOwner: "",
   title: "",
   description: "",
   license: DEFAULT_LICENSE,
@@ -152,6 +158,10 @@ export const wizard = $state<{
   pieces: [],
   preparation: "measure-detection",
 });
+
+/** The login the campaign repository is created under. */
+export const repoOwnerLogin = (userLogin: string): string =>
+  wizard.repoOwner || userLogin;
 
 export const stepIndex = (id: WizardStepId) =>
   WIZARD_STEPS.findIndex((s) => s.id === id);
@@ -212,6 +222,7 @@ export function resetWizard(): void {
   wizard.step = "name";
   wizard.handle = "";
   wizard.claim = null;
+  wizard.repoOwner = "";
   wizard.title = "";
   wizard.description = "";
   wizard.license = DEFAULT_LICENSE;
@@ -273,6 +284,7 @@ export function draftSnapshot(): DraftSnapshot {
     repo: wizard.repo ? { ...wizard.repo } : null,
     entries: {
       step: wizard.step,
+      repoOwner: wizard.repoOwner,
       title: wizard.title,
       description: wizard.description,
       license: wizard.license,
@@ -332,6 +344,7 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   if (!entries) return;
   wizard.handle = draft.handle;
   wizard.claim = draft.claim ?? null;
+  wizard.repoOwner = entries.repoOwner;
   wizard.title = entries.title;
   wizard.description = entries.description;
   wizard.license = entries.license;

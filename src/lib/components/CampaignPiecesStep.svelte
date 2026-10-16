@@ -27,6 +27,7 @@
     nextStep,
     piecesSummary,
     previousStep,
+    repoOwnerLogin,
   } from "$lib/wizard.svelte.ts";
   import { auth } from "$lib/auth.svelte.ts";
   import {
@@ -34,6 +35,7 @@
     finishSummary,
   } from "$lib/campaign-finish.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
+  import OwnerRefusedActions from "./OwnerRefusedActions.svelte";
   import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
@@ -501,8 +503,13 @@
   {#snippet pinned()}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
+      {#if finisher.ownerRefused}
+        <OwnerRefusedActions refused={finisher.ownerRefused} />
+      {/if}
     {:else if last && !finisher.busy && auth.user}
-      <p class="finish-note">{finishSummary(auth.user.login)}</p>
+      <p class="finish-note">
+        {finishSummary(repoOwnerLogin(auth.user.login))}
+      </p>
     {/if}
     <ProgressSteps log={finisher.log} />
   {/snippet}

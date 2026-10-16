@@ -60,6 +60,7 @@
     draftStatus,
     isSkipped,
     piecesSummary,
+    repoOwnerLogin,
     resetWizard,
     resumeDraft,
     saveDraft,
@@ -374,7 +375,9 @@
         {#if wizard.handle.trim()}
           {wizard.handle}
           {#if auth.user}
-            <span class="rail-slug">{auth.user.login}/{wizard.handle}</span>
+            <span class="rail-slug"
+              >{repoOwnerLogin(auth.user.login)}/{wizard.handle}</span
+            >
           {/if}
         {:else}
           <span class="rail-unnamed">Unnamed campaign</span>
@@ -480,7 +483,9 @@
         {#if wizard.handle.trim()}
           <span class="tname">{wizard.handle}</span>
           {#if auth.user}
-            <span class="tslug">{auth.user.login}/{wizard.handle}</span>
+            <span class="tslug"
+              >{repoOwnerLogin(auth.user.login)}/{wizard.handle}</span
+            >
           {/if}
         {:else}
           <span class="tname rail-unnamed">Unnamed campaign</span>
@@ -609,11 +614,11 @@
         {#each otherDrafts as draft (draft.handle)}
           <button
             type="button"
-            class="resume"
+            class="popup-row"
             onclick={() => resumeOther(draft.handle)}
             disabled={resuming !== null}
           >
-            <span class="resume-text">
+            <span class="popup-row-text">
               {resuming === draft.handle
                 ? "Working…"
                 : `Resume setup of “${draft.entries?.title?.trim() || draft.handle}”`}
@@ -966,16 +971,6 @@
   }
 
   /* ---- Popups ------------------------------------------------------------ */
-  .popup {
-    position: fixed;
-    z-index: 30;
-    box-sizing: border-box;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
-    padding: 8px;
-  }
   .discard-popup {
     display: flex;
     flex-direction: column;
@@ -998,38 +993,6 @@
   .info-popup :global(ul) {
     margin: 8px 0 0;
     padding: 0;
-  }
-  .popup-head {
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
-    padding: 6px 8px 4px;
-  }
-  .resume {
-    display: flex;
-    align-items: center;
-    width: 100%;
-    min-height: 44px;
-    padding: 0 10px;
-    border: none;
-    background: none;
-    border-radius: 8px;
-    font: 13px var(--font);
-    color: var(--ink);
-    text-align: left;
-    cursor: pointer;
-  }
-  .resume-text {
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  @media (hover: hover) {
-    .resume:hover:not(:disabled) {
-      background: var(--accent-tint);
-    }
   }
   .popup .msg-error {
     margin: 6px 4px 2px;

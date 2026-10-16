@@ -10,9 +10,13 @@ requests the `public_repo` and `notifications` scopes used by repository
 mutations and notification muting.
 
 - `GET /login?return_to=/path` — starts the OAuth flow (redirects to GitHub).
+  With `orgs=1` it also requests `read:org`, which lists the user's
+  organisations; a token it replaces in an active session is revoked.
 - `GET /authorize` — GitHub's callback: exchanges the code, stores the token in
   the session, redirects back to the SPA (`?auth_error=…` on failure).
 - `POST /logout` — revokes the token at GitHub and clears the session.
+- `GET /app-access` — redirects to the OAuth app's page in the user's GitHub
+  settings, where organisation access is requested.
 - `/proxy/<url>` — relays the SPA's GitHub API calls (`api.github.com` only),
   attaching the session's token server-side. Login-gated and rate-limited.
 - `GET /iiif?url=…` — relays IIIF manifests and canvas images for the
