@@ -179,7 +179,7 @@
     if (card.locator === "score-setup")
       return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
     if (card.locator === "omr-layout")
-      return "Check the staff and measure boxes on each page and correct the wrong ones.";
+      return "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.";
     if (card.locator === "measure-zones")
       return "Check the measure boxes on each page and correct the wrong ones.";
     if (card.omr)

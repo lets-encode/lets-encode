@@ -683,14 +683,7 @@
       onpinchstart: holdGesture,
     })}
   >
-    <div
-      class="material-grid"
-      class:fit-page={fit === "page"}
-      style="--per-row: {perRow}; width: {zoom}%; --page-row: {Math.max(
-        0,
-        bodyH - 30,
-      )}px"
-    >
+    <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
       {#each pages as page, i (page.url)}
         {@const scale = (svgWidths[i] || 400) / page.width}
         {@const rx = 6 / scale}

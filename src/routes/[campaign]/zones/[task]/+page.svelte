@@ -885,7 +885,7 @@
       resetHistory();
       return {
         ok: true,
-        message: `Layout detected: ${staves} staves, ${grandstaves} grand staves and ${measures} measures on ${pages.length} page(s). Correct the staff boxes, then the grand staves, then the measures, then submit.`,
+        message: `Layout detected: ${staves} staves, ${grandstaves} grand staves and ${measures} measures on ${pages.length} page(s).`,
       };
     } catch (e) {
       return { error: `Layout detection failed: ${(e as Error).message}` };
@@ -2496,175 +2496,143 @@
       />
     {/snippet}
 
-    <!-- The selected box's controls: its name, previous and next box, and
-         for a measure its number and breaks. Docked as a sheet they take two
-         rows: the number field joins the name, delete and comment are icons. -->
+    <!-- The selected box's controls in three rows: its name (for a measure
+         with the number field), previous and next box with the page, and
+         new, delete and comment. An editable measure's switches stand in a
+         second column, one beside each row. -->
     {#snippet selection()}
       {#if selectedItem}
         {@const { p, z } = selectedItem}
-        {@const twoRows = docked && tool === "measures"}
-        <div class="selpanel" class:tworows={twoRows}>
-          <div class="selhead">
-            <span
-              class="swatch {tool === 'staves'
-                ? 'staff'
-                : tool === 'grandstaves'
-                  ? 'grand'
-                  : 'measure'}"
-              aria-hidden="true"
-            ></span>
-            {#if docked && tool === "measures" && canEdit}
-              <label class="selname selnum"
-                >Measure {@render numberInput(p, z)}</label
-              >
-            {:else}
-              <span class="selname">{itemName(p, z)}</span>
-            {/if}
-            {#if !docked}<span class="selwhere">page {p + 1}</span>{/if}
-            {#if twoRows}
-              {#if selectedLabel && auth.user}
-                <button
-                  type="button"
-                  class="btn btn-icon"
-                  onclick={() => compose++}
-                  aria-label={`Comment on measure ${selectedLabel}`}
-                  title={`Comment on measure ${selectedLabel}`}
-                  ><Icon name="comment" /></button
+        {@const switches = tool === "measures" && canEdit}
+        <div class="selpanel" class:selgrid={switches}>
+          <div class="selmain">
+            <div class="selhead">
+              <span
+                class="swatch {tool === 'staves'
+                  ? 'staff'
+                  : tool === 'grandstaves'
+                    ? 'grand'
+                    : 'measure'}"
+                aria-hidden="true"
+              ></span>
+              {#if switches}
+                <label class="selname selnum"
+                  >Measure {@render numberInput(p, z)}</label
                 >
+              {:else}
+                <span class="selname">{itemName(p, z)}</span>
               {/if}
-              <span class="selbreak"></span>
-            {/if}
-            <button
-              type="button"
-              class="btn btn-icon"
-              onclick={() => stepSelection(-1)}
-              disabled={!hasPrev}
-              aria-label={`Previous ${boxName}`}
-              title={`Previous ${boxName} (A)`}
-              ><Icon name="chevron-left" /></button
-            >
-            <button
-              type="button"
-              class="btn btn-icon"
-              onclick={() => stepSelection(1)}
-              disabled={!hasNext}
-              aria-label={`Next ${boxName}`}
-              title={`Next ${boxName} (D)`}
-              ><Icon name="chevron-right" /></button
-            >
-            {#if docked && canEdit}
-              <button
-                type="button"
-                class="btn btn-icon btn-danger"
-                onclick={() => deleteZone(p, z)}
-                aria-label={`Delete the ${boxName}`}
-                title={`Delete the ${boxName}`}><Icon name="trash" /></button
-              >
-            {/if}
-            {#if coarse && !(docked && canEdit)}
+            </div>
+            <div class="selnav">
               <button
                 type="button"
                 class="btn btn-icon"
-                onclick={() => (selected = null)}
-                aria-label={`Deselect the ${boxName}`}
-                title={`Deselect the ${boxName}`}><Icon name="close" /></button
+                onclick={() => stepSelection(-1)}
+                disabled={!hasPrev}
+                aria-label={`Previous ${boxName}`}
+                title={`Previous ${boxName} (A)`}
+                ><Icon name="chevron-left" /></button
               >
-            {/if}
-          </div>
-          {#if tool === "measures"}
-            <!-- The number field, then the switches above each other. -->
-            <!-- Read-only, the switches give way to the breaks that apply. -->
-            {#if !canEdit}
-              {@const flags = [
-                sbActive(p, z) ? "Starts a system" : "",
-                startsMovement(p, z) ? "Starts a section" : "",
-                pages[p].zones[z].pickup ? "Pickup" : "",
-              ].filter(Boolean)}
-              {#if flags.length}
-                <p class="selflagtext">{flags.join(" · ")}</p>
-              {/if}
-            {:else}
-              <div class="selmeasure">
-                {#if !docked}
-                  <label class="selfield"
-                    >Number {@render numberInput(p, z)}</label
+              <button
+                type="button"
+                class="btn btn-icon"
+                onclick={() => stepSelection(1)}
+                disabled={!hasNext}
+                aria-label={`Next ${boxName}`}
+                title={`Next ${boxName} (D)`}
+                ><Icon name="chevron-right" /></button
+              >
+              <span class="selwhere">page {p + 1}</span>
+            </div>
+            {#if canEdit || (selectedLabel && auth.user) || coarse}
+              <div class="selactions">
+                {#if canEdit}
+                  <button
+                    type="button"
+                    class="btn btn-icon"
+                    onclick={newBox}
+                    aria-label={`New ${boxName} beside this one`}
+                    title={`New ${boxName} beside this one (N)`}
+                    ><Icon name="plus" /></button
+                  >
+                  <button
+                    type="button"
+                    class="btn btn-icon btn-danger"
+                    onclick={() => deleteZone(p, z)}
+                    aria-label={`Delete the ${boxName}`}
+                    title={`Delete the ${boxName}`}
+                    ><Icon name="trash" /></button
                   >
                 {/if}
-                <div class="selflags">
+                {#if selectedLabel && auth.user}
                   <button
                     type="button"
-                    class="chip-switch"
-                    class:on={sbActive(p, z)}
-                    aria-pressed={sbActive(p, z)}
-                    onclick={() => toggleSb(p, z)}
-                    disabled={pbAt(z)}
-                    title={pbAt(z)
-                      ? "The first measure on a page always starts a system"
-                      : "This measure starts a new system (line) of the score"}
-                    ><span class="sw"></span>Starts a system</button
+                    class="btn btn-icon"
+                    onclick={() => compose++}
+                    aria-label={`Comment on measure ${selectedLabel}`}
+                    title={`Comment on measure ${selectedLabel}`}
+                    ><Icon name="comment" /></button
                   >
+                {/if}
+                {#if coarse && !(docked && canEdit)}
                   <button
                     type="button"
-                    class="chip-switch"
-                    class:on={startsMovement(p, z)}
-                    aria-pressed={startsMovement(p, z)}
-                    onclick={() => toggleSection(p, z)}
-                    disabled={sectionLocked(p, z)}
-                    title={sectionLocked(p, z)
-                      ? "The first measure always starts the first section"
-                      : "This measure starts a new movement or section"}
-                    ><span class="sw"></span>Starts a section</button
+                    class="btn btn-icon"
+                    onclick={() => (selected = null)}
+                    aria-label={`Deselect the ${boxName}`}
+                    title={`Deselect the ${boxName}`}
+                    ><Icon name="close" /></button
                   >
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={pages[p].zones[z].pickup}
-                    aria-pressed={pages[p].zones[z].pickup}
-                    onclick={() => togglePickup(p, z)}
-                    title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
-                    ><span class="sw"></span>Pickup</button
-                  >
-                </div>
+                {/if}
               </div>
             {/if}
-          {/if}
-          {#if !docked}
-            <div class="selactions">
-              {#if canEdit}
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={newBox}
-                  aria-label={`New ${boxName} beside this one`}
-                  title={`New ${boxName} beside this one (N)`}
-                  ><Icon name="plus" /><span class="actlabel"
-                    >New {boxName}</span
-                  ></button
-                >
-                <button
-                  type="button"
-                  class="btn btn-danger"
-                  onclick={() => deleteZone(p, z)}
-                  aria-label={`Delete the ${boxName}`}
-                  title={`Delete the ${boxName}`}
-                  ><Icon name="trash" /><span class="actlabel"
-                    >Delete {boxName}</span
-                  ></button
-                >
-              {/if}
-              {#if selectedLabel && auth.user}
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={() => compose++}
-                  aria-label={`Comment on measure ${selectedLabel}`}
-                  title={`Comment on measure ${selectedLabel}`}
-                  ><Icon name="comment" /><span class="actlabel"
-                    >Comment on measure {selectedLabel}</span
-                  ></button
-                >
-              {/if}
+          </div>
+          {#if switches}
+            <div class="selflags">
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={sbActive(p, z)}
+                aria-pressed={sbActive(p, z)}
+                onclick={() => toggleSb(p, z)}
+                disabled={pbAt(z)}
+                title={pbAt(z)
+                  ? "The first measure on a page always starts a system"
+                  : "This measure starts a new system (line) of the score"}
+                ><span class="sw"></span>Starts a system</button
+              >
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={startsMovement(p, z)}
+                aria-pressed={startsMovement(p, z)}
+                onclick={() => toggleSection(p, z)}
+                disabled={sectionLocked(p, z)}
+                title={sectionLocked(p, z)
+                  ? "The first measure always starts the first section"
+                  : "This measure starts a new movement or section"}
+                ><span class="sw"></span>Starts a section</button
+              >
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={pages[p].zones[z].pickup}
+                aria-pressed={pages[p].zones[z].pickup}
+                onclick={() => togglePickup(p, z)}
+                title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
+                ><span class="sw"></span>Pickup</button
+              >
             </div>
+          {:else if tool === "measures"}
+            <!-- Read-only, the switches give way to the breaks that apply. -->
+            {@const flags = [
+              sbActive(p, z) ? "Starts a system" : "",
+              startsMovement(p, z) ? "Starts a section" : "",
+              pages[p].zones[z].pickup ? "Pickup" : "",
+            ].filter(Boolean)}
+            {#if flags.length}
+              <p class="selflagtext">{flags.join(" · ")}</p>
+            {/if}
           {/if}
         </div>
       {:else}
@@ -3076,31 +3044,29 @@
       inset: -6px 0;
     }
   }
-  .selfield {
+  /* The selection card's rows are 32px apart by 8px. An editable measure's
+     switches stand in a column beside the rows, one beside each, and wrap
+     below them where the card is too narrow for both. */
+  .selmain,
+  .selflags {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    width: 120px;
-    font-size: 12.5px;
-    font-weight: 600;
+    gap: 8px;
   }
-  /* The selection card measures its width: where New, Delete and Comment
-     do not fit side by side with their labels, they show their icons only. */
-  .selpanel {
-    container: selpanel / inline-size;
-  }
-  @container selpanel (max-width: 479px) {
-    .actlabel {
-      display: none;
-    }
-  }
-  /* The number field beside the switches, which stand above each other at
-     one width. */
-  .selmeasure {
-    display: flex;
+  .selgrid {
+    flex-direction: row;
     flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px 16px;
+  }
+  .selnav,
+  .selactions {
+    display: flex;
     align-items: center;
-    gap: 8px 12px;
+    gap: 6px;
+  }
+  .selnav .selwhere {
+    margin-left: 4px;
   }
   .selflagtext {
     margin: 0;
@@ -3108,87 +3074,41 @@
     color: var(--ink-soft);
   }
   .selflags {
-    display: flex;
-    flex-direction: column;
     align-items: stretch;
-    gap: 6px;
   }
-  /* Docked as a sheet the number field follows "Measure" in the name. */
+  .selflags .chip-switch {
+    min-height: 32px;
+  }
   .selnum {
     display: flex;
     align-items: center;
     gap: 6px;
   }
-  .selfield input,
   .selnum input {
+    width: 64px;
+    min-height: 32px;
+    padding: 4px 8px;
+    box-sizing: border-box;
     font:
       400 14px ui-monospace,
       monospace;
-    padding: 6px 10px;
-    min-height: 34px;
-    box-sizing: border-box;
     color: var(--ink);
     background: var(--card);
     border: 1px solid var(--line-input);
     border-radius: 8px;
   }
-  .selnum input {
-    width: 64px;
-    min-height: 32px;
-    padding: 4px 8px;
-  }
   .selflags .chip-switch:disabled {
     opacity: 0.5;
     cursor: default;
   }
-  /* In a docked sheet the controls are 32px and take a 44px press through an
-     invisible ::after. The name takes the room the page note had. A measure
-     takes two rows: the name, number and comment button over the stepping
-     and delete buttons, with the switches to the right. */
+  /* In a docked sheet the buttons and switches take a 44px press through an
+     invisible ::after. */
   @media (orientation: portrait) and (max-width: 860px) {
-    .selhead {
-      gap: 4px;
-    }
-    .selpanel.tworows {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      align-items: center;
-      column-gap: 10px;
-    }
-    /* The break is a line of its own, so two 4px gaps make the 8px between
-       the rows, matching the switches'. */
-    .tworows .selhead {
-      flex-wrap: wrap;
-      row-gap: 4px;
-    }
-    .selbreak {
-      flex-basis: 100%;
-    }
-    .tworows .selflags {
-      gap: 8px;
-    }
-    .selhead .selname {
-      flex: 1;
-    }
-    .selhead .swatch {
-      flex: none;
-    }
-    .selfield {
-      flex-direction: row;
-      align-items: center;
-      gap: 8px;
-      width: auto;
-    }
-    .selfield input {
-      width: 72px;
-    }
-    .selflags .chip-switch,
-    .selfield input {
-      min-height: 32px;
-    }
+    .selnav .btn-icon,
     .selflags .chip-switch {
       position: relative;
     }
+    .selnav .btn-icon::after,
     .selflags .chip-switch::after {
       content: "";
       position: absolute;

@@ -6,6 +6,9 @@ parentheses.
 ## 2026-10-16
 
 - Tasks in review show whose reviews are in progress and whether you may take the next one.
+- The measure correction shows the selected box's controls in the same aligned rows on every screen, with New on phones too.
+- The measure correction keeps its instructions in the task text and shows only counts in the detection result.
+- The wizard's page views keep the same small gap between rows of pages at fit page.
 - The campaign list and campaign page update in place when other people's changes land.
 - On phones the measure correction keeps its steps in view while a box is selected.
 - The measure correction keeps only the boxes inside the piece's regions, from new detections and from saved scores and drafts.

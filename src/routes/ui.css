@@ -792,12 +792,6 @@ textarea.input {
   gap: 14px;
   padding: 16px;
 }
-/* Fit page: each row of pages is the pane's height less the grid's padding
-   and gap (--page-row, set by the pane), so the page in view is whole and
-   the next row starts below the pane's edge. */
-.material-grid.fit-page {
-  grid-auto-rows: var(--page-row);
-}
 .material-grid .page-caption {
   text-align: center;
   font:
