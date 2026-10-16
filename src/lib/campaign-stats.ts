@@ -94,6 +94,8 @@ export interface CampaignStats {
   history: HistoryRow[];
   comments: CommentRow[];
   passThreshold: number;
+  /** The default branch's head commit the tables were read at; '' when it could not be read. */
+  headSha: string;
 }
 
 /** Tasks claimable right now (unclaimed, unblocked encoding_required). */
@@ -321,6 +323,12 @@ async function fetchStats(
 ): Promise<CampaignStats> {
   const owner = summary.owner ?? summary.full_name.split("/")[0];
   const repo = summary.name;
+  // The head is read before the tables: a commit that lands during the read
+  // moves the branch past `headSha`, and the next poll reads again.
+  const headSha = await f.getRepoHead(owner, repo).then(
+    (h) => h.sha,
+    () => "",
+  );
   const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
     await Promise.all([
       f.getRepoFile(owner, repo, TASK_PATH),
@@ -401,6 +409,7 @@ async function fetchStats(
     history,
     comments,
     passThreshold,
+    headSha,
   };
   return stats;
 }

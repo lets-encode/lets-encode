@@ -61,7 +61,11 @@
   // The first piece's preview, for its first page's first system; "No
   // preview" while the page has no measures. Loaded when the row mounts; the
   // show-more paging keeps unmounted rows from loading.
+  // The effect reads these strings rather than `stats`, so a row whose stats
+  // were read again keeps its preview while the piece and repo are the same.
   const piecePath = $derived(stats.taskDefs.find((t) => t.fragment)?.fragment);
+  const repoOwner = $derived(stats.owner);
+  const repoName = $derived(stats.repo);
   let preview = $state<PiecePreview | null>(null);
   // Raised by "Try again" to load a failed preview anew.
   let attempt = $state(0);
@@ -69,11 +73,9 @@
     const path = piecePath;
     void attempt;
     if (!path) return;
-    piecePreview(readForge(), stats.owner, stats.repo, path, false).then(
-      (p) => {
-        preview = p;
-      },
-    );
+    piecePreview(readForge(), repoOwner, repoName, path, false).then((p) => {
+      preview = p;
+    });
   });
 
   // A small image of the first page's first system, cut in the browser and

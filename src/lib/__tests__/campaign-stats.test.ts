@@ -94,6 +94,7 @@ const stats: CampaignStats = {
   history: [],
   comments,
   passThreshold: 2,
+  headSha: "",
 };
 
 test("readyCount: locked and blocked tasks are not claimable", () => {
@@ -263,6 +264,7 @@ const fakeForge = (
     searchReposByTopic: async () => repos,
     getRepoFile,
     getUserLogin: async () => null,
+    getRepoHead: async () => ({ sha: "h" }),
   }) as unknown as ForgeClient;
 
 const rateLimit = () =>

@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-16
 
+- The campaign list and campaign page update in place when other people's changes land.
 - On phones the measure correction keeps its steps in view while a box is selected.
 - The measure correction keeps only the boxes inside the piece's regions, from new detections and from saved scores and drafts.
 - The measure correction shows only the piece's part of a page, with a button to show the whole page.

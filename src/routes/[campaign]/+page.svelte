@@ -75,6 +75,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { startAutoRefresh } from "$lib/auto-refresh.ts";
   import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
@@ -536,29 +537,47 @@
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
 
+  // A table read again replaces the shown one only when its content differs,
+  // so an unchanged table keeps its identity and nothing derived from it
+  // recomputes.
+  const changed = <T,>(shown: T, read: T): T =>
+    JSON.stringify(shown) === JSON.stringify(read) ? shown : read;
+
+  // The default branch's head commit the shown tables were read at; null when
+  // it could not be read.
+  let headSha: string | null = null;
+
   // Read the tracking tables (and privacy/config) for the console. Only the
   // first read shows the loading state; refreshes update the tables in place.
-  async function load() {
+  // A background poll's failed read keeps the shown tables and throws.
+  async function load(background = false) {
     const f = readForge();
     // Tables for a name the page has since navigated away from are dropped.
     const name = campaign;
     readAs = auth.user?.login ?? null;
     if (!loaded) loading = true;
-    loadError = null;
+    if (!background) loadError = null;
     try {
+      // The head is read before the tables: a commit that lands during the
+      // read moves the branch past `headSha`, and the next poll reads again.
+      const sha = await f.getRepoHead(owner, repo).then(
+        (h) => h.sha,
+        () => null,
+      );
       const tables = await invoke(commands.readTables, {}, ctx(f));
       if (name !== campaign) return;
+      headSha = sha;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
       canPush = tables.canPush;
-      taskDefs = tables.taskDefs;
-      rows = tables.rows;
-      validationColumns = tables.validationColumns;
-      tableLocks = tables.locks;
-      history = tables.history;
-      comments = tables.comments;
-      pieces = tables.pieces;
-      logins = tables.logins;
+      taskDefs = changed(taskDefs, tables.taskDefs);
+      rows = changed(rows, tables.rows);
+      validationColumns = changed(validationColumns, tables.validationColumns);
+      tableLocks = changed(tableLocks, tables.locks);
+      history = changed(history, tables.history);
+      comments = changed(comments, tables.comments);
+      pieces = changed(pieces, tables.pieces);
+      logins = changed(logins, tables.logins);
       title = tables.title;
       recordCampaignTitle(name, tables.title);
       description = tables.description;
@@ -580,11 +599,27 @@
       }
       loaded = true;
     } catch (e) {
+      if (background) throw e;
       if (name === campaign) loadError = campaignLoadFailure(e);
     } finally {
       if (name === campaign) loading = false;
     }
   }
+
+  // Other people's claims, submissions, verdicts and comments: the tables are
+  // read again whenever the default branch has moved since the last read.
+  // Logged out, every request counts against the shared per-address limit.
+  $effect(() => {
+    if (!owner || !repo) return;
+    return startAutoRefresh({
+      interval: () => (auth.user ? 10_000 : 300_000),
+      held: () => !loaded || loading || runner.busy || manage,
+      poll: async () => {
+        const { sha } = await readForge().getRepoHead(owner, repo);
+        if (sha !== headSha) await load(true);
+      },
+    });
+  });
 
   // A same-route navigation to another campaign starts over: the resolved
   // repo and the loaded tables belong to the previous name.
