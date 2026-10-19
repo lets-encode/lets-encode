@@ -8,6 +8,10 @@ export interface SidePanelState {
 const WIDTH_KEY = "lets-encode:side-panel-width";
 
 export const PANEL_MIN = 280;
+/** The narrowest panel whose review footer keeps Give back task, Request
+    changes and Approve on one line: 352px of buttons plus 54px of the
+    panel's margin, border and footer padding. */
+export const PANEL_MIN_REVIEW = 410;
 /** The width beside the panel kept for the content: the campaign board's
     narrowest stacked-lanes width (420px; narrower, it shows one lane at a
     time with lane tabs) plus its row's 40px padding and 14px gap. */

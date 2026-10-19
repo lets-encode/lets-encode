@@ -204,10 +204,11 @@
     text-overflow: ellipsis;
   }
   .cbody {
-    font-size: 12px;
+    font-size: 12.5px;
     color: var(--ink);
     line-height: 1.45;
     overflow-wrap: anywhere;
+    white-space: pre-wrap;
   }
   /* The anchor and the actions are 24px tall to tap, 32px on a touch
      screen; the row's negative margin keeps the extra height out of the

@@ -25,7 +25,11 @@
     FacsimileTaskData,
   } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { DOCKED_QUERY, readSidePanel } from "$lib/side-panels.ts";
+  import {
+    DOCKED_QUERY,
+    PANEL_MIN_REVIEW,
+    readSidePanel,
+  } from "$lib/side-panels.ts";
   import { MediaQuery, SvelteSet } from "svelte/reactivity";
   import {
     buildBlankScoreMei,
@@ -2406,6 +2410,9 @@
         {viewer}
         {runner}
         bind:panel={sidePanel}
+        minWidth={session.reviewSub !== undefined
+          ? PANEL_MIN_REVIEW
+          : undefined}
         {taskBox}
         tools={canEdit ? tools : undefined}
         selection={setupForm}

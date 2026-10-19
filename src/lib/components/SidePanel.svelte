@@ -289,7 +289,9 @@
   let aside = $state<HTMLElement>();
   async function focusField() {
     await tick();
-    aside?.querySelector<HTMLInputElement>(".composerwrap input")?.focus();
+    aside
+      ?.querySelector<HTMLTextAreaElement>(".composerwrap textarea")
+      ?.focus();
   }
   function openField() {
     open = true;

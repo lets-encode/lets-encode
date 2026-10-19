@@ -48,7 +48,7 @@
   import { buildBoard, buildRecord } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { readSidePanel } from "$lib/side-panels.ts";
+  import { PANEL_MIN_REVIEW, readSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
@@ -530,6 +530,7 @@
       {viewer}
       {runner}
       bind:panel={sidePanel}
+      minWidth={reviewSub !== undefined ? PANEL_MIN_REVIEW : undefined}
       review={card.column === "validation"}
       done={card.column === "done"}
       {taskBox}

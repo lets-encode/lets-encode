@@ -1,8 +1,11 @@
 <!--
   The discussion composer: a comment on the task, or a reply to the
-  bound comment (set by the host's Reply buttons). With oncancel it has a
-  Cancel button that clears the draft. Renders nothing for a logged-out
-  viewer.
+  bound comment (set by the host's Reply buttons). Cancel clears the draft
+  and the reply target, then calls oncancel; without oncancel it is
+  disabled while there is nothing to clear. Renders nothing for a
+  logged-out viewer. The field grows with its text up to a maximum height; with a
+  mouse Enter sends and Shift+Enter starts a new line, on a touch screen
+  Enter starts a new line.
 -->
 <script lang="ts">
   import type { Result } from "$lib/commands.ts";
@@ -71,6 +74,42 @@
   }
 
   const commentLogin = (c: CommentRow) => handle(logins, c.author_id);
+
+  let field = $state<HTMLTextAreaElement>();
+  // Fits the field's height to its text; CSS caps it with max-height. A
+  // hidden field has no layout to measure and keeps its CSS height.
+  function fit() {
+    if (!field) return;
+    if (!field.offsetWidth) {
+      field.style.height = "";
+      return;
+    }
+    field.style.height = "auto";
+    field.style.height = `${field.scrollHeight + field.offsetHeight - field.clientHeight}px`;
+  }
+  $effect(() => {
+    void text;
+    fit();
+  });
+  // A change of width (shown, or the panel resized) rewraps the text.
+  $effect(() => {
+    if (!field) return;
+    let width = -1;
+    const observer = new ResizeObserver(() => {
+      if (field!.offsetWidth === width) return;
+      width = field!.offsetWidth;
+      fit();
+    });
+    observer.observe(field);
+    return () => observer.disconnect();
+  });
+
+  function keydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" || e.shiftKey || e.isComposing) return;
+    if (matchMedia("(pointer: coarse)").matches) return;
+    e.preventDefault();
+    if (text.trim() && !runner.busy) postComment();
+  }
 </script>
 
 {#if auth.user}
@@ -89,18 +128,21 @@
         Processing comment…
       </div>
     {/if}
-    <div class="composer-row">
-      <input
-        bind:value={text}
-        {placeholder}
-        aria-label="Comment text"
-        onkeydown={(e) => {
-          if (e.key === "Enter" && text.trim() && !runner.busy) postComment();
-        }}
-      />
-      {#if oncancel}
-        <button type="button" class="btn" onclick={cancel}>Cancel</button>
-      {/if}
+    <textarea
+      bind:this={field}
+      bind:value={text}
+      {placeholder}
+      rows="1"
+      aria-label="Comment text"
+      onkeydown={keydown}
+    ></textarea>
+    <div class="composer-actions">
+      <button
+        type="button"
+        class="btn"
+        onclick={cancel}
+        disabled={!oncancel && !text && !replyTo}>Cancel</button
+      >
       <button
         type="button"
         class="btn btn-soft"
@@ -162,20 +204,29 @@
       animation-duration: 2s;
     }
   }
-  .composer-row {
+  .composer-actions {
     display: flex;
-    align-items: center;
+    justify-content: flex-end;
     gap: 8px;
   }
-  .composer-row input {
-    flex: 1;
-    min-width: 0;
-    font-size: 12.5px;
+  textarea {
+    box-sizing: border-box;
+    max-height: calc(8lh + 18px);
+    resize: none;
+    font-size: 14px;
     font-family: inherit;
+    line-height: 1.4;
     padding: 8px 14px;
     border: 1px solid var(--line-input);
-    border-radius: 999px;
+    border-radius: 17px;
     background: var(--card);
     color: var(--ink);
+  }
+  /* On a touch screen the field starts at two lines. */
+  @media (pointer: coarse) {
+    textarea {
+      min-height: calc(2lh + 22px);
+      padding: 10px 14px;
+    }
   }
 </style>
