@@ -547,17 +547,10 @@ button.chip {
 /* ---- Touch screens ------------------------------------------------------
    Buttons are 32px tall on every screen. On a coarse pointer the segmented
    controls grow from 24px to 32px, their neighbours being too close for a
-   finger, and text fields use 16px text: iOS Safari zooms the page into a
-   focused field set smaller. */
+   finger. */
 @media (pointer: coarse) {
   .seg > button {
     min-height: 32px;
-  }
-  /* The zone editor's measure label keeps its toolbar size. */
-  input:not([type="checkbox"], [type="radio"], [type="range"], .znum),
-  textarea,
-  select {
-    font-size: max(16px, 1em) !important;
   }
   /* A long press on an element with a title shows it (TouchTooltip.svelte)
      instead of selecting text or opening the browser's callout. */

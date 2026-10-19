@@ -22,7 +22,11 @@
   } from "$lib/mei-facsimile.ts";
   import { taskDescription } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { DOCKED_QUERY, readSidePanel } from "$lib/side-panels.ts";
+  import {
+    DOCKED_QUERY,
+    PANEL_MIN_REVIEW,
+    readSidePanel,
+  } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
   import {
     buildSpreads,
@@ -229,9 +233,11 @@
   const STEP_LAYERS: Layer[] = ["staves", "grandstaves", "measures"];
   // The layer the pointer edits; in a layout task the others are not drawn.
   const tool = $derived<Layer>(omr ? STEP_LAYERS[layoutStep - 1] : "measures");
+  // Each step starts at the top of the first page.
   function setLayoutStep(step: 1 | 2 | 3) {
     layoutStep = step;
     leaveDrawMode();
+    showPage(0);
   }
   // A page's boxes in a layer, for the geometry code shared by all.
   const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
@@ -3466,7 +3472,9 @@
         {viewer}
         {runner}
         bind:panel={sidePanel}
-        minWidth={PANEL_MIN_TOOLS}
+        minWidth={session.reviewSub !== undefined
+          ? PANEL_MIN_REVIEW
+          : PANEL_MIN_TOOLS}
         {taskBox}
         {tools}
         {selection}

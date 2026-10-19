@@ -218,8 +218,13 @@
     flex-basis: 100%;
   }
   /* In the footer: Give back task at the start, Request changes and then
-     Approve at the end, as the editor's footer ends with its step's button;
-     a narrow panel puts the pair on a line of its own. */
+     Approve at the end, as the editor's footer ends with its step's button.
+     A footer narrower than the three at full size (PANEL_MIN_REVIEW), as
+     on a phone, keeps them on one line with less padding, then smaller
+     text. */
+  .infoot {
+    container: ractions / inline-size;
+  }
   .infoot .rverdict {
     display: flex;
     flex-basis: auto;
@@ -232,6 +237,20 @@
     order: -1;
     flex-basis: 100%;
     margin: 0;
+  }
+  @container ractions (max-width: 351px) {
+    .infoot .rverdict {
+      gap: 6px;
+    }
+    .infoot :global(.btn) {
+      padding-inline: 10px;
+    }
+  }
+  @container ractions (max-width: 322px) {
+    .infoot :global(.btn) {
+      padding-inline: 6px;
+      font-size: 11.5px;
+    }
   }
   /* The open fail form keeps its trigger tinted, still an outline. */
   .failbtn.on {

@@ -5,6 +5,11 @@ parentheses.
 
 ## 2026-10-19
 
+- On iOS the page no longer zooms into a focused text field, and touch screens keep each field's text size.
+- Posted comments use 12.5px text instead of 12px.
+- The comment field has 14px text, grows with it, takes new lines with Shift+Enter, and has its buttons below it.
+- In review Give back task, Request changes and Approve stay on one line, on phones with smaller buttons.
+- Switching steps in the measure correction scrolls back to the top of the first page.
 - On phones the measure correction's step switch, selection heading and actions take less height.
 - On tablets and phones the measure correction's selection panel takes fewer rows.
 - Switching steps in the measure correction turns Draw off, and the hint shows the Draw icon.
