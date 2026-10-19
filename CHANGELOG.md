@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-19
+
+- The score setup frames the whole first measure, keeps it in view when resized, and has zoom buttons on the source.
+- The score setup's summary draws each brace and bracket beside the staves it joins.
+- The button for releasing a claim reads "Give back task" in every editor and review.
+
 ## 2026-10-16
 
 - On a touch screen a double tap on a box in draw mode switches back to scroll mode.

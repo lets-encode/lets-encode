@@ -85,7 +85,9 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
-  import FacsimileFrame from "$lib/components/FacsimileFrame.svelte";
+  import FacsimileFrame, {
+    fitRoom,
+  } from "$lib/components/FacsimileFrame.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
@@ -342,10 +344,13 @@
   let sidePanel = $state(readSidePanel());
   // The source side of the work area: the first measure's page, framed on
   // the measure and the names in front of its system, the measure outlined.
-  // The first measure is the first zone of the first page with zones. The
-  // frame runs from the system's first staff to its last where the layout
-  // has staff boxes (an OMR-prepared piece), else over the measure's zone. A
-  // comment anchor shows its page whole until the fit button returns.
+  // The first measure is the first zone of the first page with zones. Its
+  // staves (`anchor`) run from the system's first staff to its last where
+  // the layout has staff boxes (an OMR-prepared piece), else over the
+  // measure's zone. The frame takes in the page from its left edge to the
+  // measure's end and the staves with room above and below: 0.6 of a staff
+  // box's height, or a tenth of the zone's. A comment anchor shows its page
+  // whole until the fit button returns.
   const firstMeasure = $derived.by(() => {
     const i = data?.model.pages.findIndex((p) => p.zones.length > 0) ?? -1;
     if (!data || i < 0) return null;
@@ -353,15 +358,23 @@
     const box = pg.zones[0].box;
     const system = pg.staves?.length ? pageSystems(pg).systems[0] : undefined;
     const staffBoxes = system?.length ? system : null;
+    const anchor = staffBoxes
+      ? { uly: staffBoxes[0].uly, lry: staffBoxes[staffBoxes.length - 1].lry }
+      : { uly: box.uly, lry: box.lry };
+    const pad = staffBoxes
+      ? (0.6 * staffBoxes.reduce((sum, b) => sum + b.lry - b.uly, 0)) /
+        staffBoxes.length
+      : 0.1 * (box.lry - box.uly);
     return {
       page: i,
       box,
       staves: staffBoxes,
+      anchor,
       frame: {
         ulx: 0,
-        uly: staffBoxes ? staffBoxes[0].uly : box.uly,
-        lrx: box.lrx,
-        lry: staffBoxes ? staffBoxes[staffBoxes.length - 1].lry : box.lry,
+        uly: Math.max(0, anchor.uly - pad),
+        lrx: Math.min(pg.width, box.lrx + pad / 2),
+        lry: Math.min(pg.height, anchor.lry + pad),
       },
     };
   });
@@ -380,22 +393,15 @@
   // staves line up with the preview's. With as many staves on both sides
   // the first and last staves meet; otherwise the staff spacing is matched,
   // from the first staff down.
-  let previewStaves = $state<{
+  type StaffSpan = {
     top: number;
     lastTop: number;
     bottom: number;
     count: number;
-  } | null>(null);
-  // The source box ends where the preview's sheet ends, so the two boxes
-  // match and the view does not reach far past the page.
-  let facsEl = $state<HTMLElement>();
-  let facsHeight = $state<number | null>(null);
-  function measurePreviewStaves() {
-    if (sheetEl && facsEl)
-      facsHeight =
-        sheetEl.getBoundingClientRect().bottom -
-        facsEl.getBoundingClientRect().top;
-    const lines = staffEls().map((g) => {
+  };
+  // Each rendered staff's lines, in viewport coordinates.
+  const staffLines = () =>
+    staffEls().map((g) => {
       let top = Infinity;
       let bottom = -Infinity;
       for (const line of g.children) {
@@ -406,33 +412,134 @@
       }
       return { top, bottom };
     });
+  function previewLines(): StaffSpan | null {
+    const lines = staffLines();
     const first = lines[0];
     const last = lines[lines.length - 1];
-    previewStaves =
-      first && last && last.bottom > first.top
-        ? {
-            top: first.top,
-            lastTop: last.top,
-            bottom: last.bottom,
-            count: lines.length,
-          }
-        : null;
+    return first && last && last.bottom > first.top
+      ? {
+          top: first.top,
+          lastTop: last.top,
+          bottom: last.bottom,
+          count: lines.length,
+        }
+      : null;
   }
-  const align = $derived.by(() => {
-    const p = previewStaves;
-    const fm = firstMeasure;
-    if (!p || !fm || anchorPage !== null) return null;
+  let previewStaves = $state<StaffSpan | null>(null);
+  const measurePreviewStaves = () => (previewStaves = previewLines());
+  /** The source's staves as image heights and the preview heights they
+      meet, `top` being the preview's first staff. */
+  function staffMatch(p: StaffSpan, fm: NonNullable<typeof firstMeasure>) {
     const boxes = fm.staves;
     if (!boxes || boxes.length === p.count || boxes.length < 2 || p.count < 2)
-      return { top: p.top, bottom: p.bottom };
+      return { ...fm.anchor, top: p.top, bottom: p.bottom };
     const scale =
       (p.lastTop - p.top) /
       (p.count - 1) /
       ((boxes[boxes.length - 1].uly - boxes[0].uly) / (boxes.length - 1));
     return {
+      ...fm.anchor,
       top: p.top,
-      bottom: p.top + (fm.frame.lry - fm.frame.uly) * scale,
+      bottom: p.top + (fm.anchor.lry - fm.anchor.uly) * scale,
     };
+  }
+  const align = $derived(
+    previewStaves && firstMeasure && anchorPage === null
+      ? staffMatch(previewStaves, firstMeasure)
+      : null,
+  );
+
+  // The preview's size. The rendering is measured once per render, its
+  // staves as fractions of its width; it is then drawn at the largest width
+  // at which a staff is at most STAFF_MAX high, the rendering fits the
+  // sheet, and, at the scale that lines the source up, the source's frame
+  // and the preview's staves together fit the source's view: the frame's
+  // part above the first staff, then the longer of the frame's part below
+  // it and the preview's staves with a staff's height of room below the
+  // last. That height is centred in the view, which
+  // places the first staff on both sides.
+  // While groups are marked, each staff keeps at least MARK_PITCH of height
+  // up to the sheet's width, the sheet scrolling.
+  const STAFF_MAX = 44;
+  const MARK_PITCH = 32;
+  let rendering = $state<
+    (StaffSpan & { aspect: number; staffHeight: number }) | null
+  >(null);
+  $effect(() => {
+    void previewSvg;
+    void tick().then(() => {
+      const svg = sheetEl?.querySelector("svg");
+      const box = svg?.getBoundingClientRect();
+      const vb = svg?.viewBox.baseVal;
+      const p = previewLines();
+      if (!box?.width || !box.height || !vb?.width || !vb.height || !p) return;
+      // The drawing is fitted into the element's box and centred in it, so
+      // where the box is cut to the sheet's height it is narrower than the
+      // box.
+      const scale = Math.min(box.width / vb.width, box.height / vb.height);
+      const w = vb.width * scale;
+      const top = box.top + (box.height - vb.height * scale) / 2;
+      rendering = {
+        top: (p.top - top) / w,
+        lastTop: (p.lastTop - top) / w,
+        bottom: (p.bottom - top) / w,
+        count: p.count,
+        aspect: vb.height / vb.width,
+        staffHeight: Math.max(...staffLines().map((l) => l.bottom - l.top)) / w,
+      };
+    });
+  });
+  // The facsimile box and the sheet inside its border, in CSS pixels. The
+  // sheet's content lies inside its padding (.sheet), 9px below the top of
+  // the facsimile box with the border.
+  let facsW = $state(0);
+  let facsH = $state(0);
+  let sheetW = $state(0);
+  let sheetH = $state(0);
+  const SHEET_PAD = { top: 9, x: 36, y: 16 };
+  const previewSize = $derived.by(() => {
+    const r = rendering;
+    const cw = sheetW - SHEET_PAD.x;
+    const ch = sheetH - SHEET_PAD.y;
+    if (!r || cw <= 0 || ch <= 0) return null;
+    let width = Math.min(cw, STAFF_MAX / Math.max(r.staffHeight, 1e-6));
+    const fm = firstMeasure;
+    const facs =
+      fm && anchorPage === null && data?.imageUrls[fm.page] && facsW && facsH;
+    const m = facs ? staffMatch(r, fm) : null;
+    const room = fitRoom(facsW, facsH);
+    // Per unit of the preview's width: the source's scale, and the heights
+    // above and below the first staff.
+    let kw = 0;
+    let above = 0;
+    let below = 0;
+    if (m && fm) {
+      kw = (m.bottom - m.top) / (m.lry - m.uly);
+      above = (fm.anchor.uly - fm.frame.uly) * kw;
+      below = Math.max(
+        (fm.frame.lry - fm.anchor.uly) * kw,
+        r.bottom - r.top + r.staffHeight,
+      );
+      width = Math.min(
+        width,
+        room.width / ((fm.frame.lrx - fm.frame.ulx) * kw),
+        room.height / (above + below),
+      );
+    } else width = Math.min(width, ch / r.aspect);
+    if (markable && r.count > 1)
+      width = Math.min(
+        cw,
+        Math.max(width, (MARK_PITCH * (r.count - 1)) / (r.lastTop - r.top)),
+      );
+    let offset = 0;
+    if (kw) {
+      const staffTop =
+        room.top +
+        Math.max(0, (room.height - (above + below) * width) / 2) +
+        above * width;
+      offset = Math.max(0, staffTop - SHEET_PAD.top - r.top * width);
+    }
+    return { width: Math.floor(width), offset: Math.round(offset) };
   });
 
   // Dragging the divider, or its arrow keys, moves the boundary between the
@@ -829,6 +936,11 @@
     openGroup && groups.includes(openGroup) ? openGroup : null,
   );
   const ordered = $derived(sortGroups(groups));
+  // The summary's columns for the groups beside the staves: one per level
+  // of nesting.
+  const groupColumns = $derived(
+    groups.reduce((n, g) => Math.max(n, groupDepth(groups, g) + 1), 0),
+  );
   const marked = $derived(
     markFrom === null
       ? null
@@ -1204,7 +1316,7 @@
   }
   $effect(() => {
     void previewSvg;
-    void minSheetHeight;
+    void previewSize;
     const el = sheetEl;
     if (!el) return;
     const place = () => {
@@ -1273,42 +1385,6 @@
     else markTo = i;
   }
 
-  // While groups are marked, each staff keeps at least 32px of the
-  // preview's height and the preview scrolls when the system needs more —
-  // up to the rendering's height at the preview's full width.
-  let minSheetHeight = $state(0);
-  let resized = $state(0);
-  $effect(() => {
-    void previewSvg;
-    void split[setupStep];
-    void resized;
-    const el = sheetEl;
-    if (!markable || !el) {
-      minSheetHeight = 0;
-      return;
-    }
-    void tick().then(() => {
-      const svg = el.querySelector("svg");
-      const box = svg?.viewBox.baseVal;
-      const gs = staffEls();
-      if (!svg || !box?.height || gs.length < 2) return;
-      const size = svg.getBoundingClientRect();
-      if (!size.width || !size.height) return;
-      const scale = Math.min(size.width / box.width, size.height / box.height);
-      const pitch =
-        (gs[gs.length - 1].getBoundingClientRect().top -
-          gs[0].getBoundingClientRect().top) /
-        (gs.length - 1) /
-        scale;
-      if (pitch > 0)
-        minSheetHeight = Math.round(
-          Math.min(
-            (box.height * 32) / pitch,
-            (box.height * size.width) / box.width,
-          ),
-        );
-    });
-  });
   const pointAt = (i: number) => ({
     onmouseenter: () => (hoveredStaff = i),
     onmouseleave: () => (hoveredStaff = null),
@@ -1332,7 +1408,6 @@
 </script>
 
 <svelte:window
-  onresize={() => resized++}
   onkeydown={(e) => {
     if (e.key === "Escape" && markFrom !== null) clearMark();
   }}
@@ -1423,8 +1498,8 @@
             >
             <div
               class="facsbox"
-              bind:this={facsEl}
-              style:max-height={facsHeight ? `${facsHeight}px` : null}
+              bind:clientWidth={facsW}
+              bind:clientHeight={facsH}
             >
               <FacsimileFrame
                 url={data.imageUrls[shownPage]}
@@ -1478,8 +1553,12 @@
             <div
               class="sheet"
               class:marking={markable}
-              style:--min-h={minSheetHeight ? `${minSheetHeight}px` : null}
+              class:sized={!!previewSize}
+              style:--w={previewSize ? `${previewSize.width}px` : null}
+              style:--offset={previewSize ? `${previewSize.offset}px` : null}
               bind:this={sheetEl}
+              bind:clientWidth={sheetW}
+              bind:clientHeight={sheetH}
               onpointerdown={sheetDown}
               onpointermove={sheetMove}
               onclick={sheetClick}
@@ -1528,53 +1607,83 @@
               {/if}
             </dd>
           </dl>
-          <ol class="sumstaves">
-            {#each staves as staff, i (i)}
-              <li
-                class:pointed={pointedStaff === i}
-                onmouseenter={() => (hoveredStaff = i)}
-                onmouseleave={() => (hoveredStaff = null)}
-              >
-                <span class="staffno">{i + 1}</span>
-                <span class="sumbody">
-                  <span class="sumname" class:unnamed={!staff.label}
-                    >{staff.label || "No instrument name"}</span
-                  >
-                  <span class="summeta">
-                    <span class="clefname"
-                      >{#if clefGlyph(staff)}<MusicGlyph
-                          name={clefGlyph(staff)!}
-                        />{/if}
-                      {clefText(staff)}</span
-                    >
-                    {#if transposes(staff)}
-                      <span>{transText(staff)}</span>
-                    {/if}
-                    {#if !unpitched(staff) && staffKeysig(keysig, staff) !== keysig}
-                      <span>Key: {keysigText(staffKeysig(keysig, staff))}</span>
-                    {/if}
-                  </span>
-                </span>
-              </li>
-            {/each}
-          </ol>
-          {#if groups.length}
-            <ul class="sumgroups">
+          <section>
+            <p class="grouphead">Staves</p>
+            <!-- The groups drawn beside the staves they join, an outer group
+               nearer the staves than the groups inside it. -->
+            <div
+              class="sumstaffs"
+              style:grid-template-columns={`repeat(${groupColumns}, 12px) minmax(0, 1fr)`}
+              style:grid-template-rows={`repeat(${staves.length}, auto)`}
+            >
               {#each ordered as group (group)}
-                <li
-                  class:inner={groupDepth(groups, group) > 0}
+                <span
+                  class="summark"
+                  class:bracket={group.symbol !== "brace"}
                   class:pointed={hoveredGroup === group}
-                  onmouseenter={() => (hoveredGroup = group)}
-                  onmouseleave={() => (hoveredGroup = null)}
+                  style:grid-row={`${group.start} / ${group.end + 1}`}
+                  style:grid-column={groupColumns - groupDepth(groups, group)}
+                  aria-hidden="true"
+                  >{#if group.symbol === "brace"}<MusicGlyph
+                      name="brace"
+                      stretch
+                    />{/if}</span
                 >
-                  <span class="sumname"
-                    ><MusicGlyph name={symbolGlyph(group.symbol)} />
-                    {symbolName(group.symbol)}</span
-                  >
-                  <span class="summeta">{groupText(group)}</span>
-                </li>
               {/each}
-            </ul>
+              <ol class="sumstaves">
+                {#each staves as staff, i (i)}
+                  <li
+                    class:pointed={pointedStaff === i}
+                    onmouseenter={() => (hoveredStaff = i)}
+                    onmouseleave={() => (hoveredStaff = null)}
+                  >
+                    <span class="staffno">{i + 1}</span>
+                    <span class="sumbody">
+                      <span class="sumname" class:unnamed={!staff.label}
+                        >{staff.label || "No instrument name"}</span
+                      >
+                      <span class="summeta">
+                        <span class="clefname"
+                          >{#if clefGlyph(staff)}<MusicGlyph
+                              name={clefGlyph(staff)!}
+                            />{/if}
+                          {clefText(staff)}</span
+                        >
+                        {#if transposes(staff)}
+                          <span>{transText(staff)}</span>
+                        {/if}
+                        {#if !unpitched(staff) && staffKeysig(keysig, staff) !== keysig}
+                          <span
+                            >Key: {keysigText(staffKeysig(keysig, staff))}</span
+                          >
+                        {/if}
+                      </span>
+                    </span>
+                  </li>
+                {/each}
+              </ol>
+            </div>
+          </section>
+          {#if groups.length}
+            <section>
+              <p class="grouphead">Groups</p>
+              <ul class="sumgroups">
+                {#each ordered as group (group)}
+                  <li
+                    class:inner={groupDepth(groups, group) > 0}
+                    class:pointed={hoveredGroup === group}
+                    onmouseenter={() => (hoveredGroup = group)}
+                    onmouseleave={() => (hoveredGroup = null)}
+                  >
+                    <span class="sumname"
+                      ><MusicGlyph name={symbolGlyph(group.symbol)} />
+                      {symbolName(group.symbol)}</span
+                    >
+                    <span class="summeta">{groupText(group)}</span>
+                  </li>
+                {/each}
+              </ul>
+            </section>
           {/if}
         </div>
       {:else}
@@ -2654,13 +2763,35 @@
     flex-direction: column;
     gap: 14px;
   }
+  /* The staff rows, with a 12px column per level of groups before them;
+     a group's mark spans its staves' rows. */
+  .sumstaffs {
+    display: grid;
+    column-gap: 2px;
+    row-gap: 6px;
+  }
   .sumstaves {
+    grid-column: -2;
+    grid-row: 1 / -1;
     list-style: none;
     margin: 0;
     padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
+    display: grid;
+    grid-template-rows: subgrid;
+  }
+  .summark {
+    width: 8px;
+    margin: 6px 0 6px 4px;
+    color: var(--line-input);
+  }
+  .summark.bracket {
+    width: 5px;
+    margin-left: 5px;
+    border: solid currentColor;
+    border-width: 1.5px 0 1.5px 2px;
+  }
+  .summark.pointed {
+    color: var(--accent);
   }
   .sumstaves > li {
     display: flex;
@@ -2801,8 +2932,10 @@
   .addbtn {
     align-self: flex-start;
   }
-  /* The preview column: the rendered setup at the column's width, scaled
-     down to its height when the staves need more. */
+  /* The preview column: a sheet at the column's full size with the
+     rendered setup at the width the script computes (--w), its first staff
+     level with the source's (--offset). Until measured, the rendering takes
+     the column's width, scaled down to its height. */
   .previewbox {
     flex: 1 1 0;
     min-width: 0;
@@ -2813,7 +2946,7 @@
   }
   .sheet {
     position: relative;
-    flex: 0 1 auto;
+    flex: 1 1 0;
     min-height: 0;
     display: flex;
     background: var(--facsimile-paper);
@@ -2841,21 +2974,23 @@
   }
   .sheet > :global(svg) {
     display: block;
-    width: 100%;
+    flex: none;
+    align-self: flex-start;
+    width: var(--w, 100%);
     height: auto;
     max-height: 100%;
+    margin-top: var(--offset, 0);
   }
-  /* Step 2: the staves take clicks and taps, and keep a height they can be
-     hit at (--min-h), the preview scrolling past it. */
+  .sheet.sized > :global(svg) {
+    max-height: none;
+  }
+  /* Step 2: the staves take clicks and taps, the preview scrolling when
+     they need more than its height. */
   .sheet.marking {
     overflow-y: auto;
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
-  }
-  .sheet.marking > :global(svg) {
-    flex: none;
-    min-height: var(--min-h, 0);
   }
   /* The staves a row of the form points at, and the marked ones. */
   .sheet :global(g.staff.pointed),

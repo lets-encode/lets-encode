@@ -8,6 +8,8 @@
   than a bass clef as on the staff. The 3/4 is its two digits stacked; the
   bracket is the font's top and bottom hooks joined by a bar. The brace is
   drawn wider than the font's (sx), which at text size is a hairline.
+  With `stretch` the symbol fills its box instead, distorted to its shape,
+  e.g. a brace over several rows.
 -->
 <script module lang="ts">
   const GLYPHS = {
@@ -72,15 +74,18 @@
 </script>
 
 <script lang="ts">
-  let { name }: { name: MusicGlyphName } = $props();
+  let { name, stretch = false }: { name: MusicGlyphName; stretch?: boolean } =
+    $props();
   const glyph = $derived(GLYPHS[name]);
   const sx = $derived("sx" in glyph ? glyph.sx : 1);
 </script>
 
 <svg
   class="glyph"
+  class:stretch
   viewBox={glyph.box}
-  style:height="{glyph.em}em"
+  preserveAspectRatio={stretch ? "none" : undefined}
+  style:height={stretch ? null : `${glyph.em}em`}
   aria-hidden="true"
   focusable="false"
 >
@@ -94,5 +99,10 @@
     width: auto;
     vertical-align: middle;
     overflow: visible;
+  }
+  .glyph.stretch {
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 </style>
