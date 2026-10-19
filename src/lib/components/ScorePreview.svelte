@@ -128,6 +128,9 @@
   /** Below this preview width the toolbar keeps only the panes and the page
       navigation (the narrow rule in the styles). */
   const PV_NARROW = 560;
+  /** Below this preview width the toolbar's page label shows the numbers
+      only (the compact rule in the styles). */
+  const PV_COMPACT = 1100;
   const pvZoomPos = $derived(
     Math.round(
       (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) *
@@ -150,6 +153,7 @@
   // page-count switch; the chosen view returns when it widens.
   let pvW = $state(0);
   const pvNarrow = $derived(pvW > 0 && pvW < PV_NARROW);
+  const pvCompact = $derived(pvW > 0 && pvW < PV_COMPACT);
   const pvShownView = $derived(pvNarrow ? "single" : pvView);
   const pvSpreads = $derived(
     buildSpreads(pvPageTotal, pvShownView, pvFirstOnRight),
@@ -581,14 +585,14 @@
         class:on={pvView === "single"}
         aria-pressed={pvView === "single"}
         onclick={() => pvSetView("single")}
-        ><Icon name="page-one" />1 page</button
+        ><Icon name="page-one" /><span class="lbl">1 page</span></button
       >
       <button
         type="button"
         class:on={pvView === "double"}
         aria-pressed={pvView === "double"}
         onclick={() => pvSetView("double")}
-        ><Icon name="page-two" />2 pages</button
+        ><Icon name="page-two" /><span class="lbl">2 pages</span></button
       >
     </div>
     {#if pvView === "double"}
@@ -610,7 +614,9 @@
         aria-pressed={showZones}
         onclick={() => (showZones = !showZones)}
         title="Show or hide the measure zones on the facsimile"
-        ><span class="sw"></span>Measure zones</button
+        ><span class="sw"></span><span class="zlong">Measure zones</span><span
+          class="zshort">Zones</span
+        ></button
       >
     {/if}
     {#if selected !== null}
@@ -623,7 +629,6 @@
       >
     {/if}
     <span class="vline zoomline"></span>
-    <!-- The zoom controls wrap onto a second line together. -->
     <span class="zoomgrp">
       <input
         class="zoomslider"
@@ -670,12 +675,12 @@
         disabled={pvAtTop}
         aria-label="Previous page"><Icon name="chevron-left" /></button
       >
-      <!-- A narrow toolbar has room for the numbers only ("1 of 4"). -->
+      <!-- A compact toolbar has room for the numbers only ("1 of 4"). -->
       <span
         class="pglabel"
-        style={`min-width:${pagesLabelCh(pvPageTotal)}ch`}
-        title={pvNarrow ? pvLabel : undefined}
-        >{pvNarrow ? pvLabel.replace(/^Pages? /, "") : pvLabel}</span
+        style={`min-width:${pagesLabelCh(pvPageTotal) - (pvCompact ? "Pages ".length : 0)}ch`}
+        title={pvCompact ? pvLabel : undefined}
+        >{pvCompact ? pvLabel.replace(/^Pages? /, "") : pvLabel}</span
       >
       <button
         type="button"
@@ -874,12 +879,15 @@
   }
 
   /* -------------------------------------------------------------- toolbar */
-  /* Controls that do not fit on one line wrap onto a second. */
-  /* The shared viewer toolbar (.vtoolbar, ui.css), wrapping its groups. */
+  /* The shared viewer toolbar (.vtoolbar, ui.css), on one line: as the
+     preview narrows, labels give way to icons, then the zoom slider and its
+     value to the fit buttons, then the zone switch's label shortens. What
+     still does not fit scrolls sideways. */
   .ptoolbar {
     margin-bottom: 10px;
-    flex-wrap: wrap;
-    overflow-x: visible;
+  }
+  .zshort {
+    display: none;
   }
   .paneseg {
     flex: none;
@@ -909,6 +917,34 @@
       white-space: nowrap;
     }
   }
+  /* Compact (PV_COMPACT): the page-count buttons keep their icon, the page
+     label its numbers. */
+  @container (max-width: 1099px) {
+    .viewseg .lbl {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+  /* Narrower, zoom is the fit buttons, a pinch or Ctrl/Cmd + scroll. */
+  @container (max-width: 899px) {
+    .zoomgrp > .zoomslider,
+    .zoomgrp > .zval {
+      display: none;
+    }
+  }
+  @container (max-width: 799px) {
+    .zlong,
+    .zoomline {
+      display: none;
+    }
+    .zshort {
+      display: inline;
+    }
+  }
   /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size in
      the same order: the pane switch, fit width and the paging, each 32px
      with a 44px press area. The page-count switch, "Page 1 right", the zone
@@ -927,7 +963,8 @@
     .ptoolbar {
       gap: 4px;
       padding: 4px 6px;
-      flex-wrap: nowrap;
+      /* The 44px press areas reach past the toolbar's edge. */
+      overflow-x: visible;
     }
     .viewseg,
     .pcheck,

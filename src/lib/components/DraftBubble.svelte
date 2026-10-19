@@ -66,7 +66,7 @@
     line-height: 1.35;
     text-align: center;
   }
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .bubble {
       bottom: auto;
       top: 0;

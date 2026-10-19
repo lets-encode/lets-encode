@@ -163,8 +163,8 @@ export interface PageModel {
    */
   staves?: MeasureBox[];
   /**
-   * Grand-staff boxes (the staves a brace joins) of a piece prepared by OMR,
-   * whose layout task corrects them. Kept like `staves`.
+   * Grand-staff boxes (staves one performer plays together) of a piece
+   * prepared by OMR, whose layout task corrects them. Kept like `staves`.
    */
   grandstaves?: MeasureBox[];
 }

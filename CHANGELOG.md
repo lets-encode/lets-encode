@@ -5,9 +5,19 @@ parentheses.
 
 ## 2026-10-19
 
+- Upright tablets up to 1100px wide show the side panel as a bottom sheet.
+- A long press in the score editors no longer selects text or opens a context menu.
+- A fully lowered phone sheet shows only the toolbar and tools.
 - The score setup frames the whole first measure, keeps it in view when resized, and has zoom buttons on the source.
 - The score setup's summary draws each brace and bracket beside the staves it joins.
 - The button for releasing a claim reads "Give back task" in every editor and review.
+- The measure correction's toolbar is rearranged for touch screens.
+- The score view's side panel can be hidden and its toolbar stays on one row.
+- On touch screens the Comments button opens a closed task panel on the comments.
+- The review actions sit at the side panel's bottom in the review view and pre-task editors.
+- A score setup change request starts with the staff or group it refers to.
+- The page viewers disable next-page on the last page and show their page label in Safari.
+- Smaller layout fixes in the measure correction and the score viewer.
 
 ## 2026-10-16
 

@@ -18,14 +18,17 @@
   it shows only the view's bar, the tools (while something is selected, its
   controls below them) and the footer until opened, up to SHEET_PEEK_MAX_CSS; without a
   footer the task box stays in view instead. Dragging a closed sheet down
-  lowers it, its content scrolling; dragging a lowered sheet up raises it,
-  and dragging it up from its full closed height opens it.
+  lowers it, its content scrolling; lowered so far that the footer would
+  cover the tools, it shows only the bar and the tools. Dragging a lowered
+  sheet up raises it, and dragging it up from its full closed height opens
+  it.
 -->
 <script module lang="ts">
   // Whether resolved threads are hidden; held for the session across views.
   let hideResolved = $state(false);
-  // The height a closed sheet was lowered to, or null for its full closed
-  // height; held for the session across views.
+  // The height a closed sheet was lowered to, 0 for its lowest (the bar and
+  // the tools only), or null for its full closed height; held for the
+  // session across views.
   let peekHeight = $state<number | null>(null);
 </script>
 
@@ -194,10 +197,19 @@
   // A closed sheet shows the tools and the footer; the task box stays in
   // view only where there is no footer.
   const peek = $derived(sheet && !listShown);
-  const taskBoxShown = $derived(!peek || !footer);
+  // A closed sheet at its lowest shows only the bar and the tools.
+  const lowest = $derived(
+    peek && peekHeight === 0 && drag === null && !!(bar || tools),
+  );
+  const taskBoxShown = $derived(!peek || (!footer && !lowest));
   // With a selection the list area shows its controls or the comments.
   const commentsShown = $derived(!selection || tab === "comments");
   let footHeight = $state(0);
+  // The footer's height while shown, for lowestFit.
+  let footShownHeight = 0;
+  $effect(() => {
+    if (footHeight) footShownHeight = footHeight;
+  });
   const posting = $derived(pendingVerdicts.isProcessing(`comment:${task}`));
   // Until the viewer sets a width, the panel beside the content keeps its
   // default share of the window as the window changes.
@@ -259,14 +271,19 @@
   const writeLabel = $derived(
     composerHint ? composerHint.replace(/…$/, "") : "Write a comment",
   );
+  // The closed panel's button; open, it is a ×.
   const toggleLabel = $derived(
-    open
-      ? "Close"
-      : !task && info
-        ? `Details and comments · ${count}`
-        : count > 0
-          ? `Comments · ${count}`
-          : "Comment",
+    !task && info
+      ? `Details and comments · ${count}`
+      : count > 0
+        ? `Comments · ${count}`
+        : "Comment",
+  );
+  // Docked in a task's own view the header row is otherwise empty (its
+  // title is for assistive technology only), so the open/close button sits
+  // at the right end of the task box's heading instead.
+  const toggleInHead = $derived(
+    docked && (hasMore || !!auth.user) && !!taskBox && !ondeselect,
   );
 
   let aside = $state<HTMLElement>();
@@ -297,6 +314,14 @@
     open = false;
     if (!draft.trim() && !replyTo) fieldOpen = false;
   }
+  // The Comments button: a closed docked panel opens on the comments;
+  // otherwise it switches between the selection and the comments.
+  function showComments() {
+    if (docked && !open) {
+      open = true;
+      tab = "comments";
+    } else tab = tab === "comments" ? "selection" : "comments";
+  }
   // The field's focus leaves before the header button's click lands, so the
   // click acts on whether the panel was open at the press.
   let openAtPress: boolean | null = null;
@@ -322,10 +347,24 @@
   // A drag past DOCK_STEP pixels opens or closes the docked panel. A closed
   // sheet takes the height it is dragged down to, at least clampPanelHeight's
   // minimum; dragged up, a lowered sheet takes its new height, back to its
-  // full closed height (null) at half the window (SHEET_PEEK_MAX_CSS).
+  // full closed height (null) at half the window (SHEET_PEEK_MAX_CSS). Below
+  // lowestFit it takes its lowest (0).
   const DOCK_STEP = 48;
   const lowerTo = (h: number) =>
-    (peekHeight = h >= window.innerHeight / 2 ? null : h);
+    (peekHeight = h >= window.innerHeight / 2 ? null : h < lowestFit() ? 0 : h);
+  let barEl = $state<HTMLElement>();
+  let toolsEl = $state<HTMLElement>();
+  // The sheet height that holds the grip, the bar, the tools and the
+  // footer; 0 without a bar and tools.
+  function lowestFit() {
+    const last = toolsEl ?? barEl;
+    if (!last || !aside || !wrapEl) return 0;
+    const end =
+      last.getBoundingClientRect().bottom +
+      aside.scrollTop -
+      wrapEl.getBoundingClientRect().top;
+    return end + (footer ? footShownHeight : 0);
+  }
   function dockEnd(height: number, startHeight: number) {
     if (sheet && !open && (height < startHeight || peekHeight !== null))
       lowerTo(height);
@@ -339,7 +378,10 @@
   // The arrow keys lower and raise a closed sheet by two steps at a time.
   let wrapEl = $state<HTMLElement>();
   function dockStep(dir: 1 | -1) {
-    const h = wrapEl?.getBoundingClientRect().height ?? 0;
+    const h =
+      lowest && dir === 1
+        ? lowestFit()
+        : (wrapEl?.getBoundingClientRect().height ?? 0);
     if (sheet && !open && (dir === -1 || peekHeight !== null))
       lowerTo(clampPanelHeight(h + dir * 2 * DOCK_STEP, window.innerHeight));
     else if (dir === 1 && hasMore) open = true;
@@ -368,7 +410,7 @@
     title={tab === "comments"
       ? `Show the ${selectionLabel.toLowerCase()} again`
       : "Show the comments on this task"}
-    onclick={() => (tab = tab === "comments" ? "selection" : "comments")}
+    onclick={showComments}
     >{#if posting}<span
         class="spinner"
         role="img"
@@ -378,6 +420,49 @@
       class="cbtnlabel">Comments</span
     ><span class="cbtncount">{count}</span></button
   >
+{/snippet}
+
+<!-- Opens and closes the docked panel. -->
+{#snippet dockToggle()}
+  {#if open}
+    <button
+      type="button"
+      class="btn btn-icon showinline"
+      aria-expanded="true"
+      aria-label="Close"
+      title="Close the panel"
+      onpointerdown={() => (openAtPress = open)}
+      onclick={toggle}
+      >{#if posting}<span
+          class="spinner"
+          role="img"
+          title="Processing comment"
+          aria-label="Processing comment"
+        ></span>{:else}<Icon name="close" />{/if}</button
+    >
+  {:else}
+    <button
+      type="button"
+      class="btn showinline"
+      aria-expanded="false"
+      onpointerdown={() => (openAtPress = open)}
+      onclick={toggle}
+      >{#if posting}<span
+          class="spinner"
+          role="img"
+          title="Processing comment"
+          aria-label="Processing comment"
+        ></span>{/if}{toggleLabel}</button
+    >
+  {/if}
+{/snippet}
+
+<!-- The controls at the right end of the task box's heading. With the
+     Comments button there, a closed docked panel needs no button of its own
+     to open it. -->
+{#snippet headActions()}
+  {#if selection}{@render commentsToggle()}{/if}
+  {#if toggleInHead && (open || !selection)}{@render dockToggle()}{/if}
 {/snippet}
 
 {#snippet composer()}
@@ -416,7 +501,7 @@
       : `max-height: ${
           !peek
             ? DOCKED_MAX_CSS
-            : peekHeight === null
+            : !peekHeight
               ? SHEET_PEEK_MAX_CSS
               : `min(${SHEET_PEEK_MAX_CSS}, ${peekHeight}px)`
         }`
@@ -449,9 +534,11 @@
     {@attach docked && sheet ? markHidden : null}
   >
     {#if docked && sheet}<div class="spedge top" aria-hidden="true"></div>{/if}
-    {#if bar && docked && sheet}<div class="spbar">{@render bar()}</div>{/if}
+    {#if bar && docked && sheet}<div class="spbar" bind:this={barEl}>
+        {@render bar()}
+      </div>{/if}
     {@render banner?.()}
-    <div class="sphead" class:hidden={peek}>
+    <div class="sphead" class:hidden={peek} class:bare={toggleInHead}>
       {#if ondeselect}
         <button
           type="button"
@@ -466,33 +553,23 @@
       <h2 class="sptitle" class:vh={!!taskBox && !ondeselect}>
         {task ? "Task" : "Campaign"}
       </h2>
-      {#if docked && (hasMore || auth.user)}
-        <button
-          type="button"
-          class="btn showinline"
-          aria-expanded={open}
-          onpointerdown={() => (openAtPress = open)}
-          onclick={toggle}
-          >{#if posting}<span
-              class="spinner"
-              role="img"
-              title="Processing comment"
-              aria-label="Processing comment"
-            ></span>{/if}{toggleLabel}</button
-        >
+      {#if docked && (hasMore || auth.user) && !toggleInHead}
+        {@render dockToggle()}
       {/if}
     </div>
     {#if taskBox}
-      {#if taskBoxShown}<div class="pinhead">
-          {@render taskBox(selection ? commentsToggle : undefined)}
-        </div>{/if}
+      <!-- A hidden task box stays mounted: the panel takes its stage colour
+           from it (ui.css). -->
+      <div class="pinhead" class:hidden={!taskBoxShown}>
+        {@render taskBox(selection || toggleInHead ? headActions : undefined)}
+      </div>
     {:else if emptyLine && listShown}
       <p class="empty">{emptyLine}</p>
     {/if}
     {#if tools}
-      <div class="sptools">{@render tools()}</div>
+      <div class="sptools" bind:this={toolsEl}>{@render tools()}</div>
     {/if}
-    {#if peek && selection && selectionActive}
+    {#if peek && !lowest && selection && selectionActive}
       <div class="spsel">{@render selection()}</div>
     {/if}
     {#if selection && listShown && tab === "selection"}
@@ -580,7 +657,7 @@
       <div class="spedge bottom" aria-hidden="true"></div>
     {/if}
     {#if footer}
-      <div class="spfoot" bind:offsetHeight={footHeight}>
+      <div class="spfoot" class:hidden={lowest} bind:offsetHeight={footHeight}>
         {@render footer()}
       </div>
     {/if}
@@ -677,6 +754,11 @@
   .hastask .sphead {
     background: var(--st-wash);
   }
+  /* Holding only the title for assistive technology, the row takes no
+     space. */
+  .sphead.bare {
+    padding: 0;
+  }
   /* Without a task the campaign's comments fill the sheet, on slate. */
   .sp:not(.hastask) {
     background: var(--band);
@@ -718,6 +800,8 @@
   }
   .composerwrap.hidden,
   .sphead.hidden,
+  .spfoot.hidden,
+  .pinhead.hidden,
   .sechead.hidden {
     display: none;
   }
@@ -863,7 +947,8 @@
     min-height: 0;
     overflow-y: visible;
   }
-  .sphead :global(.btn) {
+  .sphead :global(.btn),
+  .showinline {
     padding: 4px 12px;
   }
   .empty {
@@ -878,13 +963,19 @@
     margin-left: auto;
     flex: none;
   }
+  /* Open, the button is the round × of .btn-icon. */
+  .showinline.btn-icon {
+    padding: 0;
+  }
   /* Docked, the header's buttons and the comment button take a 44px press
      through an invisible ::after. */
   .docked .sphead :global(.btn),
+  .docked .showinline,
   .docked .writebtn {
     position: relative;
   }
   .docked .sphead :global(.btn)::after,
+  .docked .showinline::after,
   .docked .writebtn::after {
     content: "";
     position: absolute;

@@ -90,6 +90,7 @@
   } from "$lib/components/FacsimileFrame.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
+  import ReviewActions from "$lib/components/ReviewActions.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
@@ -388,6 +389,8 @@
     anchorPage = data && p >= 0 && p < data.model.pages.length ? p : null;
   }
   const shownPage = $derived(anchorPage ?? firstMeasure?.page ?? 0);
+  // The anchor a change request opens with: the page shown.
+  const reviewPrefill = () => ({ page: String(shownPage + 1), m1: "", m2: "" });
 
   // Like for like: the source's first system is scaled and placed so its
   // staves line up with the preview's. With as many staves on both sides
@@ -931,6 +934,20 @@
   let markTo = $state<number | null>(null);
   let openGroup = $state<StaffGroupModel | null>(null);
   let hoveredGroup = $state<StaffGroupModel | null>(null);
+  // While a reviewer's change request form is open (ReviewActions), a click
+  // on a staff (on the page or in the summary) or on a group in the summary
+  // fills its staff field.
+  let reviewAsking = $state(false);
+  let staffPick = $state<{ text: string } | null>(null);
+  function pickStaff(i: number) {
+    if (!reviewAsking) return;
+    const label = staves[i]?.label;
+    staffPick = { text: label ? `${i + 1} (${label})` : `${i + 1}` };
+  }
+  function pickGroup(g: StaffGroupModel) {
+    if (!reviewAsking) return;
+    staffPick = { text: `${g.start}–${g.end} (${g.symbol})` };
+  }
   let announce = $state("");
   const openG = $derived(
     openGroup && groups.includes(openGroup) ? openGroup : null,
@@ -1370,6 +1387,11 @@
   }
   function sheetClick(e: MouseEvent) {
     dragFrom = null;
+    if (reviewAsking) {
+      const i = staffAt(e.clientY);
+      if (i !== null) pickStaff(i);
+      return;
+    }
     if (!markable) return;
     if (dragMoved) {
       dragMoved = false;
@@ -1426,7 +1448,22 @@
   />
 {/if}
 
-<div class="corrector sidehost" data-stage="pre">
+<!-- On touch screens a long press opens no context menu (Android's save
+     image menu) outside text fields and comment text. -->
+<div
+  class="corrector sidehost"
+  data-stage="pre"
+  role="presentation"
+  oncontextmenu={(e) => {
+    if (
+      coarseQuery.current &&
+      !(e.target as Element).closest(
+        "input, textarea, [contenteditable], .cbody",
+      )
+    )
+      e.preventDefault();
+  }}
+>
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -1553,6 +1590,7 @@
             <div
               class="sheet"
               class:marking={markable}
+              class:picking={reviewAsking}
               class:sized={!!previewSize}
               style:--w={previewSize ? `${previewSize.width}px` : null}
               style:--offset={previewSize ? `${previewSize.offset}px` : null}
@@ -1632,10 +1670,13 @@
               {/each}
               <ol class="sumstaves">
                 {#each staves as staff, i (i)}
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
                   <li
                     class:pointed={pointedStaff === i}
+                    class:pickable={reviewAsking}
                     onmouseenter={() => (hoveredStaff = i)}
                     onmouseleave={() => (hoveredStaff = null)}
+                    onclick={() => pickStaff(i)}
                   >
                     <span class="staffno">{i + 1}</span>
                     <span class="sumbody">
@@ -1669,11 +1710,14 @@
               <p class="grouphead">Groups</p>
               <ul class="sumgroups">
                 {#each ordered as group (group)}
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
                   <li
                     class:inner={groupDepth(groups, group) > 0}
                     class:pointed={hoveredGroup === group}
+                    class:pickable={reviewAsking}
                     onmouseenter={() => (hoveredGroup = group)}
                     onmouseleave={() => (hoveredGroup = null)}
+                    onclick={() => pickGroup(group)}
                   >
                     <span class="sumname"
                       ><MusicGlyph name={symbolGlyph(group.symbol)} />
@@ -2315,6 +2359,26 @@
       </div>
     {/snippet}
 
+    <!-- The viewer's verdict and Give back task, at the panel's bottom. -->
+    {#snippet reviewFooter()}
+      {#if session.card && session.reviewSub !== undefined}
+        <ReviewActions
+          task={session.card.task}
+          sub={session.reviewSub}
+          runner={session.runner}
+          prefill={reviewPrefill}
+          measures={false}
+          staffs
+          {staffPick}
+          bind:asking={reviewAsking}
+          onvalidate={(sub, verdict, comment) =>
+            session.validate(sub, verdict, comment)}
+          onreviewedit={(sub, comment) => session.reviewEdit(sub, comment)}
+          onabandon={(sub) => session.abandon(sub)}
+        />
+      {/if}
+    {/snippet}
+
     <!-- The last command's result, in the task box. -->
     {#snippet resultNote()}
       <RunnerBanner {runner} bar collapsible />
@@ -2328,11 +2392,7 @@
           card={session.card}
           tools={resultNote}
           {headAction}
-          prefill={() => ({
-            page: String(shownPage + 1),
-            m1: "",
-            m2: "",
-          })}
+          prefill={reviewPrefill}
           measures={false}
         />
       {/if}
@@ -2353,7 +2413,11 @@
         selectionActive={canEdit}
         bind:tab={panelTab}
         bind:open={sheetOpen}
-        footer={data.status === "encoding_required" ? footer : undefined}
+        footer={data.status === "encoding_required"
+          ? footer
+          : session.reviewSub !== undefined
+            ? reviewFooter
+            : undefined}
         onanchor={showAnchorFor}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
@@ -2428,7 +2492,7 @@
     box-shadow: var(--shadow-inset);
     overflow: hidden;
   }
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .desk {
       padding: 8px;
     }
@@ -2852,6 +2916,12 @@
     flex-direction: column;
     gap: 6px;
   }
+  /* While a change request is being written, a staff or group in the
+     summary is clicked to name it in the request. */
+  .sumstaves > li.pickable,
+  .sumgroups > li.pickable {
+    cursor: pointer;
+  }
   .sumgroups > li {
     display: flex;
     flex-direction: column;
@@ -2986,6 +3056,9 @@
   }
   /* Step 2: the staves take clicks and taps, the preview scrolling when
      they need more than its height. */
+  .sheet.picking {
+    cursor: pointer;
+  }
   .sheet.marking {
     overflow-y: auto;
     cursor: pointer;
@@ -3019,7 +3092,7 @@
     gap: 8px;
     min-width: 0;
   }
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .wfoot :global(.btn) {
       position: relative;
     }

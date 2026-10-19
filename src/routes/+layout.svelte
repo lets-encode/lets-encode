@@ -466,7 +466,7 @@
       display: none;
     }
   }
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     footer.workspace {
       display: none;
     }
