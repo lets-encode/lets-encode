@@ -42,6 +42,7 @@
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
+  import ReviewActions from "$lib/components/ReviewActions.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
@@ -252,6 +253,14 @@
         ? pages[selected.p]?.zones[selected.z]
         : undefined;
     return zone ? String(zone.override ?? zone.label) : "";
+  });
+  // The anchor a change request opens with: the selected box's page and
+  // measure, else the page in view. Spreads and the row in view are declared
+  // further down; the function runs only on a click.
+  const reviewPrefill = () => ({
+    page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
+    m1: selectedLabel,
+    m2: selectedLabel,
   });
   // Several boxes of one page and the active layer selected together (by
   // Shift+click, Shift+drag or Select several), `selected` among them. Held
@@ -683,11 +692,11 @@
     deskScrolled();
   }
   // Select a box on a touch screen: a tap, after which it can be dragged.
-  // With the hand (Scroll) chosen an editor's tap selects nothing, as in the
-  // wizard's pieces step, and marks the Draw button for DRAW_HINT_MS; a
-  // second tap on the same box within DOUBLE_TAP_MS chooses Draw and
-  // selects the box. In Draw the same double tap on a box chooses the hand
-  // again (doubleTapOn).
+  // With draw mode off an editor's tap selects nothing, as in the wizard's
+  // pieces step, and marks the Draw toggle for DRAW_HINT_MS; a second tap on
+  // the same box within DOUBLE_TAP_MS turns draw mode on and selects the box.
+  // In draw mode the same double tap on a box turns it off again
+  // (doubleTapOn).
   const DRAW_HINT_MS = 1600;
   const DOUBLE_TAP_MS = 350;
   let drawHint = $state(false);
@@ -1203,11 +1212,12 @@
   };
   // A measure's label is smaller in a narrow or low box: with its inset it
   // takes at most LABEL_FIT_W of the box's width and LABEL_FIT_H of its
-  // height, and no less than LABEL_MIN of the full size. The factors are the
-  // label's inset, background and double-bar proportions in the markup.
+  // height, and no less than LABEL_MIN_PX on screen, or the full size where
+  // that is smaller. The factors are the label's inset, background and
+  // double-bar proportions in the markup.
   const LABEL_FIT_W = 0.75;
   const LABEL_FIT_H = 0.35;
-  const LABEL_MIN = 0.5;
+  const LABEL_MIN_PX = 10;
   const zoneLabelFont = (
     p: number,
     pageW: number,
@@ -1220,7 +1230,8 @@
       ((box.lrx - box.ulx) * LABEL_FIT_W) /
       (0.6 + chars * 0.62 + 0.9 + (bar ? 0.7 : 0));
     const byH = ((box.lry - box.uly) * LABEL_FIT_H) / (0.6 + 1.55);
-    return Math.max(full * LABEL_MIN, Math.min(full, byW, byH));
+    const least = full * Math.min(1, LABEL_MIN_PX / (LABEL_PX * damp));
+    return Math.max(least, Math.min(full, byW, byH));
   };
 
   type Drag = {
@@ -2091,7 +2102,7 @@
     ...(canEdit && coarse
       ? [
           [
-            `In draw mode (the square) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. In scroll mode (the hand) a finger drag scrolls the pages, and a double tap on a box selects it and switches to draw mode; in draw mode a double tap on a box or on the page outside a box switches back to scroll mode. Pinch to zoom.`,
+            `With draw mode on (the box with a finger in the toolbar) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. With draw mode off a finger drag scrolls the pages, and a double tap on a box selects it and turns draw mode on; in draw mode a double tap on a box or on the page outside a box turns it off. Pinch to zoom.`,
           ],
           [
             "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
@@ -2126,7 +2137,7 @@
             { text: "Wine red", tone: "staff" },
             ": staff · ",
             { text: "dark green", tone: "grand" },
-            ": grand staff (the staves a brace joins) · ",
+            ": grand staff (staves one performer plays together, often joined by a brace) · ",
           ]
         : []),
       { text: "teal", tone: "measure" },
@@ -2145,10 +2156,9 @@
   ]);
   let helpOpen = $state(false);
   // The View options behind the toolbar's ⋯ button: the page-count switch
-  // below MEDIUM_TOOL, and on a phone sheet (inSheet) the overlap colouring
-  // and the help.
-  // Below VIEW_COMPACT pixels of tool column the boxes and whole-page
-  // buttons move from the toolbar into the ⋯ menu.
+  // below MEDIUM_TOOL, and on a phone sheet (inSheet) the help.
+  // Below VIEW_COMPACT pixels of tool column the boxes, overlaps and
+  // whole-page buttons move from the toolbar into the ⋯ menu.
   const VIEW_COMPACT = 720;
   const viewCompact = $derived(toolW > 0 && toolW < VIEW_COMPACT);
   const viewMenu = $derived(inSheet || medium);
@@ -2181,7 +2191,22 @@
   />
 {/if}
 
-<div class="corrector sidehost" data-stage="pre">
+<!-- On touch screens a long press opens no context menu (Android's save
+     image menu) outside text fields and comment text. -->
+<div
+  class="corrector sidehost"
+  data-stage="pre"
+  role="presentation"
+  oncontextmenu={(e) => {
+    if (
+      coarse &&
+      !(e.target as Element).closest(
+        "input, textarea, [contenteditable], .cbody",
+      )
+    )
+      e.preventDefault();
+  }}
+>
   {#if session.campaign.error}
     <div class="deskwrap">
       <div class="banner err">
@@ -2241,7 +2266,12 @@
         style={`--desk-h:${deskH}px`}
       >
         {#if !inSheet}
-          <div class="ctoolbar vtoolbar">{@render toolbarItems()}</div>
+          <div
+            class="ctoolbar vtoolbar"
+            class:drawing={canEdit && coarse && drawMode}
+          >
+            {@render toolbarItems()}
+          </div>
         {/if}
         {#if helpOpen}
           <div
@@ -2275,7 +2305,7 @@
             aria-label={inSheet ? "View options and help" : "View options"}
           >
             {#if !narrow}{@render viewOptions()}{/if}
-            {#if viewCompact && !coarse}
+            {#if viewCompact}
               <button
                 type="button"
                 class="chip-switch"
@@ -2283,6 +2313,16 @@
                 aria-pressed={!showBoxes}
                 title="Hide the boxes to see the page underneath"
                 onclick={toggleBoxes}>Hide the boxes</button
+              >
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={showOverlaps}
+                aria-pressed={showOverlaps}
+                disabled={!showBoxes}
+                title="Show or hide the colour on areas where two boxes overlap"
+                onclick={() => (showOverlaps = !showOverlaps)}
+                >Show overlaps</button
               >
               {#if hasPartPages}
                 <button
@@ -2297,7 +2337,6 @@
               {/if}
             {/if}
             {#if inSheet}
-              {@render overlapSwitch()}
               <button
                 type="button"
                 class="btn"
@@ -2684,18 +2723,6 @@
           {/each}
         </div>
       </div>
-      <!-- On a touch screen what a finger does and the box visibility float
-           over the pages' bottom right corner, on an anchor that takes no
-           height (as DraftBubble's). -->
-      {#if coarse}
-        <div class="deskctl">
-          <div class="deskctl-group">
-            {#if canEdit}{@render modePair()}{@render pickButton()}{/if}
-            {@render boxesButton()}
-            {@render wholePageButton()}
-          </div>
-        </div>
-      {/if}
       <DraftBubble {session} />
     </div>
 
@@ -2755,10 +2782,11 @@
           title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
         >
       {/if}
+      {#if canEdit && coarse}{@render drawToggle()}{@render pickButton()}{/if}
       {#if canEdit}<span class="vline"></span>{/if}
       {#if !medium}{@render viewOptions()}{/if}
-      {#if !coarse && !viewCompact}{@render boxesButton()}{@render wholePageButton()}{/if}
-      {#if !medium || !(coarse || viewCompact)}<span class="vline viewline"
+      {#if !viewCompact}{@render boxesButton()}{@render overlapButton()}{@render wholePageButton()}<span
+          class="vline viewline"
         ></span>{/if}
       <span class="zoomset">
         <button
@@ -2826,7 +2854,7 @@
           : corner
             ? `First corner set on page ${corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
             : drawHint
-              ? `Choose Draw, or tap the ${boxName} twice, to select it.`
+              ? `Turn on Draw, or tap the ${boxName} twice, to select it.`
               : ""}</span
       >
       <!-- Last in the toolbar, next to the side panel on the right. -->
@@ -2886,7 +2914,12 @@
     {/snippet}
 
     {#snippet sheetBar()}
-      <div class="ctoolbar vtoolbar insheet">{@render toolbarItems()}</div>
+      <div
+        class="ctoolbar vtoolbar insheet"
+        class:drawing={canEdit && coarse && drawMode}
+      >
+        {@render toolbarItems()}
+      </div>
     {/snippet}
     <!-- The selected box's body and its resize handles, over the page in
          screen pixels: a body that drags the box, round corner dots, and
@@ -2945,7 +2978,7 @@
     {/snippet}
 
     <!-- The task tools in the side panel: the layout steps (an OMR-prepared
-         piece) or the counts, and the overlap colouring. -->
+         piece) or the counts. -->
     {#snippet tools()}
       <div class="wtools">
         {#if omr}
@@ -2980,40 +3013,23 @@
             section{movementCount === 1 ? "" : "s"}</span
           >
         {/if}
-        {#if !inSheet}
-          <div class="toolrow">{@render overlapSwitch()}</div>
-        {/if}
       </div>
     {/snippet}
 
-    <!-- What a finger does on the pages, as in the wizard's pieces step: the
-         hand scrolls and deselects, the square draws and selects. -->
-    {#snippet modePair()}
-      <span class="tbtn-pair" role="group" aria-label="What a finger does">
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={!drawMode}
-          aria-pressed={!drawMode}
-          aria-label="Scroll"
-          title="A finger drag scrolls the pages"
-          onclick={leaveDrawMode}
-          ><Icon name="hand" size={16} /><span class="mode-label">Scroll</span
-          ></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={drawMode}
-          class:drawhint={drawHint && !drawMode}
-          aria-pressed={drawMode}
-          aria-label={`Draw a ${boxName}`}
-          title={`A finger drag draws a new ${boxName}`}
-          onclick={() => (drawMode = true)}
-          ><Icon name="square" size={16} /><span class="mode-label">Draw</span
-          ></button
-        >
-      </span>
+    <!-- Draw mode, on a touch screen: on, a finger drag draws and a tap
+         selects; off, a drag scrolls the pages and a tap deselects. -->
+    {#snippet drawToggle()}
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        class:on={drawMode}
+        class:drawhint={drawHint && !drawMode}
+        aria-pressed={drawMode}
+        aria-label="Draw"
+        title={`Draw: a finger drag draws a new ${boxName}. Off, a drag scrolls the pages.`}
+        onclick={() => (drawMode ? leaveDrawMode() : (drawMode = true))}
+        ><Icon name="touch-box" size={16} /></button
+      >
     {/snippet}
 
     {#snippet boxesButton()}
@@ -3044,15 +3060,17 @@
       {/if}
     {/snippet}
 
-    {#snippet overlapSwitch()}
+    {#snippet overlapButton()}
       <button
         type="button"
-        class="chip-switch"
+        class="tbtn tbtn-icon"
         class:on={showOverlaps}
         aria-pressed={showOverlaps}
-        onclick={() => (showOverlaps = !showOverlaps)}
+        disabled={!showBoxes}
+        aria-label="Show overlaps"
         title="Show or hide the colour on areas where two boxes overlap"
-        ><span class="sw"></span>Show overlaps</button
+        onclick={() => (showOverlaps = !showOverlaps)}
+        ><Icon name="overlap" size={16} /></button
       >
     {/snippet}
 
@@ -3328,7 +3346,7 @@
           {#if coarse && canEdit && pickMode}
             Tap boxes to select them.
           {:else if coarse && canEdit && !drawMode}
-            Tap a box twice, or choose Draw, to edit it.
+            Tap a box twice, or turn on Draw, to edit it.
           {:else}
             {coarse ? "Tap" : "Click"} a box on the page to {canEdit
               ? "edit it"
@@ -3352,7 +3370,7 @@
             type="button"
             class="btn btn-secondary"
             onclick={() => setLayoutStep(2)}
-            title="Go on to step 2: the grand staves, one box around the staves each brace joins. Submission is in step 3."
+            title="Go on to step 2: the grand staves, one box around the staves one performer plays together. Submission is in step 3."
           >
             Next: grand staves
           </button>
@@ -3382,6 +3400,22 @@
       </div>
     {/snippet}
 
+    <!-- The viewer's verdict and Give back task, at the panel's bottom. -->
+    {#snippet reviewFooter()}
+      {#if session.card && session.reviewSub !== undefined}
+        <ReviewActions
+          task={session.card.task}
+          sub={session.reviewSub}
+          runner={session.runner}
+          prefill={reviewPrefill}
+          onvalidate={(sub, verdict, comment) =>
+            session.validate(sub, verdict, comment)}
+          onreviewedit={(sub, comment) => session.reviewEdit(sub, comment)}
+          onabandon={(sub) => session.abandon(sub)}
+        />
+      {/if}
+    {/snippet}
+
     <!-- The last command's result, in the task box. -->
     {#snippet resultNote()}
       <RunnerBanner {runner} bar collapsible />
@@ -3395,11 +3429,7 @@
           card={session.card}
           tools={resultNote}
           {headAction}
-          prefill={() => ({
-            page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
-            m1: selectedLabel,
-            m2: selectedLabel,
-          })}
+          prefill={reviewPrefill}
         />
       {/if}
     {/snippet}
@@ -3420,7 +3450,11 @@
         selectionActive={!!selectedItem}
         bind:tab={panelTab}
         {compose}
-        footer={data.status === "encoding_required" ? footer : undefined}
+        footer={data.status === "encoding_required"
+          ? footer
+          : session.reviewSub !== undefined
+            ? reviewFooter
+            : undefined}
         bar={inSheet ? sheetBar : undefined}
         composerHint={selectedLabel
           ? `Comment on measure ${selectedLabel}…`
@@ -3520,15 +3554,9 @@
     color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
   }
-  .toolrow {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  /* The Draw button after a tap on a box while Scroll is chosen: its fill
-     blinks twice in the accent tint; its border stays, so it does not merge
-     with the chosen Scroll button's. */
-  .tbtn-pair > .tbtn.drawhint {
+  /* The Draw toggle after a tap on a box while draw mode is off: its fill
+     blinks twice in the accent tint. */
+  .tbtn.drawhint {
     color: var(--accent);
     background: var(--accent-tint-strong);
     animation: drawhint 0.4s ease-out 4 alternate;
@@ -3539,54 +3567,12 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .tbtn-pair > .tbtn.drawhint {
+    .tbtn.drawhint {
       animation: none;
     }
   }
-  /* The Scroll / Draw pair's names, beside their icons where there is room. */
-  .mode-label {
-    margin-left: 5px;
-    font: 600 12px var(--font);
-    line-height: 1;
-  }
-  .deskctl {
-    flex: none;
-    position: relative;
-    height: 0;
-    z-index: 6;
-  }
-  .deskctl-group {
-    --btn-bg: var(--card);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
-    position: absolute;
-    right: 12px;
-    bottom: 12px;
-    display: flex;
-    gap: 8px;
-  }
-  .deskctl-group > * {
-    border-radius: 999px;
-    box-shadow: var(--shadow-sm);
-  }
-  /* The buttons stay 32px to the eye but take a 44px press. */
-  .deskctl-group .tbtn {
-    position: relative;
-    box-sizing: border-box;
-    min-width: 32px;
-    min-height: 32px;
-    justify-content: center;
-  }
-  .deskctl-group .tbtn::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
-  }
-  .deskctl-group .tbtn-pair > .tbtn::after {
-    inset: -6px 0;
-  }
-  @media (orientation: portrait) and (max-width: 860px) {
-    /* The steps and the Scroll / Draw pair share one row; the pair shows
-       its icons only. */
+  @media (orientation: portrait) and (max-width: 1100px) {
+    /* The steps fill one row. */
     .wtools {
       flex-direction: row;
       flex-wrap: wrap;
@@ -3596,32 +3582,16 @@
     .steps {
       flex: 1 1 200px;
     }
-    .toolrow {
-      flex-wrap: nowrap;
-    }
-    .mode-label {
-      display: none;
-    }
-    .tbtn-pair > .tbtn {
-      min-height: 32px;
-    }
-    .toolrow .chip-switch,
     .viewmenu .chip-switch,
     .viewmenu .btn {
       position: relative;
       min-height: 32px;
     }
-    .toolrow .chip-switch::after,
     .viewmenu .chip-switch::after,
     .viewmenu .btn::after {
       content: "";
       position: absolute;
       inset: -6px;
-    }
-    .tbtn-pair > .tbtn::after {
-      content: "";
-      position: absolute;
-      inset: -6px 0;
     }
   }
   /* "Measure" and the number field read as the heading's one name. */
@@ -3652,7 +3622,7 @@
     white-space: nowrap;
   }
   /* Docked as a sheet the buttons take a 44px press. */
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .wfoot :global(.btn) {
       position: relative;
     }
@@ -3895,8 +3865,16 @@
     background: transparent;
     box-shadow: none;
   }
-  .insheet .pgnav {
-    background: transparent;
+  /* In draw mode the toolbar takes the stage's wash and line, so the mode
+     shows over the pages. */
+  .ctoolbar.drawing {
+    background: var(--st-wash);
+    border-color: var(--st);
+  }
+  .ctoolbar.insheet.drawing {
+    background: var(--st-wash);
+    border: 1px solid var(--st);
+    border-radius: 12px;
   }
   .tspacer {
     flex: 1;

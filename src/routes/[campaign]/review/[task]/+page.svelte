@@ -45,7 +45,7 @@
     PieceRef,
   } from "$lib/campaign-tables.ts";
   import { pageOfLocator, preTaskRoute } from "$lib/campaign-graph.ts";
-  import { buildBoard } from "$lib/campaign-board.ts";
+  import { buildBoard, buildRecord } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
@@ -54,6 +54,7 @@
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
+  import ReviewActions from "$lib/components/ReviewActions.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
 
@@ -117,6 +118,10 @@
   const card = $derived(
     board.columns.flatMap((c) => c.cards).find((c) => c.task === taskId) ??
       null,
+  );
+  /** The review slot the viewer holds on the task, if any. */
+  const reviewSub = $derived(
+    card ? buildRecord(card, viewer).find((r) => r.mine)?.sub : undefined,
   );
   // A pre-task is reviewed in its own editor; its review address leads there.
   $effect(() => {
@@ -504,6 +509,21 @@
         </p>
       {/if}
     {/snippet}
+    <!-- The viewer's verdict and Give back task, at the panel's bottom. -->
+    {#snippet reviewFooter()}
+      {#if reviewSub !== undefined}
+        <ReviewActions
+          task={card.task}
+          sub={reviewSub}
+          {runner}
+          {prefill}
+          onvalidate={(sub, verdict, comment) =>
+            validate(card.task, sub, verdict, comment)}
+          onreviewedit={(sub, comment) => reviewEdit(card.task, sub, comment)}
+          onabandon={(sub) => abandon(card.task, sub)}
+        />
+      {/if}
+    {/snippet}
     <TaskPageSidePanel
       tables={panelTables}
       {taskId}
@@ -516,6 +536,7 @@
       selection={measureSelection}
       selectionLabel="Selection"
       selectionActive={!!selectedMeasure}
+      footer={reviewSub !== undefined ? reviewFooter : undefined}
       bind:tab={panelTab}
       composerHint={selectedMeasure
         ? `Comment on measure ${selectedMeasure}…`

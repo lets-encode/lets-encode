@@ -1985,7 +1985,7 @@
     padding: 12px 16px 12px 0;
     box-sizing: border-box;
   }
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .volsplit.split,
     .boardview.split {
       flex-direction: column;
@@ -2235,6 +2235,12 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+  /* On the page's tinted background the score button sits on paper. */
+  .scorebtn {
+    --btn-bg: var(--card);
+    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   .slug {
     font-size: 13px;

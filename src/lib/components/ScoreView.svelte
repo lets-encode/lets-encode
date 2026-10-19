@@ -4,9 +4,15 @@
   the campaign. Comment anchors on this piece turn the score to their page
   and highlight their measures; a comment posted while a measure is selected
   carries that measure. The panel shows the selected measure and the
-  comments as two tabs. The view is addressed by the campaign page's ?score=
-  parameter; the back link returns to the campaign.
+  comments as two tabs; a button in the heading row hides and shows it. The
+  view is addressed by the campaign page's ?score= parameter; the back link
+  returns to the campaign.
 -->
+<script module lang="ts">
+  // Whether the side panel is hidden; held for the session across views.
+  let panelHidden = $state(false);
+</script>
+
 <script lang="ts">
   import { untrack, type Snippet } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
@@ -200,6 +206,18 @@
       >{clipTitle(pieceLabel(piece))}</span
     >
     <span class="scamp">{campaignTitle}</span>
+    <button
+      type="button"
+      class="btn panelbtn"
+      aria-expanded={!panelHidden}
+      onclick={() => (panelHidden = !panelHidden)}
+      title={panelHidden
+        ? "Show the task and comments panel"
+        : "Hide the task and comments panel"}
+      ><Icon name="side-panel" />{panelHidden
+        ? "Show panel"
+        : "Hide panel"}</button
+    >
   </div>
   <div class="srow sidehost">
     <div class="smain">
@@ -213,31 +231,35 @@
         {onmeasureselect}
       />
     </div>
-    <SidePanel
-      {task}
-      zone={card ? cardZone : 0}
-      review={card?.column === "validation"}
-      {comments}
-      {logins}
-      {viewer}
-      {canPush}
-      {runner}
-      bind:panel
-      inScore
-      emptyLine="Select a task on the board to show it here."
-      composerHint={selectionAnchor() && selected
-        ? `Comment on measure ${selected.label}…`
-        : ""}
-      {banner}
-      taskBox={card ? taskBox : undefined}
-      selection={measureSelection}
-      bind:tab={panelTab}
-      ondeselect={card ? ondeselect : undefined}
-      onanchor={showAnchor}
-      oncomment={(kind, body, parent_id) =>
-        oncomment(task, kind, body, parent_id, selectionAnchor())}
-      {onresolve}
-    />
+    <!-- Hidden, the panel stays mounted so a comment draft and the tab are
+         kept. -->
+    <div class="panelslot" class:hidden={panelHidden}>
+      <SidePanel
+        {task}
+        zone={card ? cardZone : 0}
+        review={card?.column === "validation"}
+        {comments}
+        {logins}
+        {viewer}
+        {canPush}
+        {runner}
+        bind:panel
+        inScore
+        emptyLine="Select a task on the board to show it here."
+        composerHint={selectionAnchor() && selected
+          ? `Comment on measure ${selected.label}…`
+          : ""}
+        {banner}
+        taskBox={card ? taskBox : undefined}
+        selection={measureSelection}
+        bind:tab={panelTab}
+        ondeselect={card ? ondeselect : undefined}
+        onanchor={showAnchor}
+        oncomment={(kind, body, parent_id) =>
+          oncomment(task, kind, body, parent_id, selectionAnchor())}
+        {onresolve}
+      />
+    </div>
   </div>
 </div>
 
@@ -271,6 +293,21 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* On the page's tinted background the button sits on paper. */
+  .panelbtn {
+    flex: none;
+    margin-left: auto;
+    --btn-bg: var(--card);
+    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
+  }
+  /* The slot leaves the panel to lay itself out in the row. */
+  .panelslot {
+    display: contents;
+  }
+  .panelslot.hidden {
+    display: none;
+  }
   .srow {
     flex: 1;
     min-height: 0;
@@ -286,7 +323,7 @@
   }
   /* Docked panel (DOCKED_QUERY in side-panels.ts): the panel spans the
      window's width under the score. */
-  @media (orientation: portrait) and (max-width: 860px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .scoreview {
       padding: 10px 0 0;
       gap: 8px;

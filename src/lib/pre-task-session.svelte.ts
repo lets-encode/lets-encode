@@ -21,7 +21,11 @@ import type {
   FailComment,
   Result,
 } from "./commands.ts";
-import { buildBoard, fragmentPieceName } from "./campaign-board.ts";
+import {
+  buildBoard,
+  buildRecord,
+  fragmentPieceName,
+} from "./campaign-board.ts";
 import {
   findRow,
   pieceNamesOf,
@@ -128,6 +132,12 @@ export class PreTaskSession {
       board.columns.flatMap((c) => c.cards).find((c) => c.task === task) ?? null
     );
   });
+  /** The review slot the viewer holds on the task, if any. */
+  reviewSub = $derived(
+    this.card
+      ? buildRecord(this.card, this.viewer).find((r) => r.mine)?.sub
+      : undefined,
+  );
 
   constructor(name: () => string, taskId: () => string, hooks: PreTaskHooks) {
     this.#name = name;

@@ -490,16 +490,13 @@ button.chip {
   width: 32px;
   min-height: 32px;
 }
-/* The paging cluster stays in view at the right edge when a narrow toolbar
-   scrolls sideways; the controls before it pass underneath. */
+/* The paging cluster. It is not sticky: Safari leaves text that changes
+   inside a sticky element in a sideways-scrolling toolbar unpainted. */
 .pgnav {
-  position: sticky;
-  right: 0;
   flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
-  background: var(--card);
 }
 .vline {
   width: 1px;
@@ -570,6 +567,18 @@ button.chip {
     user-select: none;
   }
   [title] :is(input, textarea, [contenteditable]) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* In the score editors a long press on the pages, toolbar or panel neither
+     selects text nor opens the browser's callout; text fields and comment
+     text stay selectable. Safari reads only the prefixed property. */
+  .corrector {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .corrector :is(input, textarea, [contenteditable], .cbody) {
     -webkit-user-select: text;
     user-select: text;
   }
@@ -1013,7 +1022,7 @@ textarea.input {
    query (DOCKED_QUERY in side-panels.ts) the row stacks: the content above,
    the panel below, its top border meeting the content as on the campaign
    page. Markup: <div class="sidehost">content<SidePanel /></div> */
-@media (orientation: portrait) and (max-width: 860px) {
+@media (orientation: portrait) and (max-width: 1100px) {
   .sidehost {
     flex-direction: column !important;
     gap: 0 !important;
@@ -1124,7 +1133,7 @@ textarea.input {
 }
 /* Docked as a sheet (DOCKED_QUERY in side-panels.ts): tighter, and the
    buttons take a 44px press through an invisible ::after. */
-@media (orientation: portrait) and (max-width: 860px) {
+@media (orientation: portrait) and (max-width: 1100px) {
   .selpanel {
     gap: 10px;
   }
@@ -1237,7 +1246,7 @@ textarea.input {
 .stepn {
   display: none;
 }
-@media (orientation: portrait) and (max-width: 860px) {
+@media (orientation: portrait) and (max-width: 1100px) {
   .steps {
     flex-direction: row;
     padding: 3px;

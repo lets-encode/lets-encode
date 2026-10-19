@@ -80,8 +80,9 @@
         otherwise an outline, beside a primary elsewhere in the view. */
     primary?: boolean;
     /** The box sits in the task's own view (the review view or the
-        pre-task's editor): the footer leaves out the links to that view and
-        offers only review actions. */
+        pre-task's editor): the footer leaves out the links to that view, and
+        the viewer's verdict controls and Give back task go to the view's
+        side panel footer (ReviewActions). */
     inView?: boolean;
     /** The view's own controls, below the status row. */
     tools?: Snippet;
@@ -271,6 +272,7 @@
         {runner}
         prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
         {measures}
+        actions={!inView}
         {onvalidate}
         {onreviewedit}
       />
@@ -370,11 +372,9 @@
           >
         {/if}
       </div>
-    {:else if myReview}
+    {:else if myReview && !inView}
       <div class="tspfoot">
-        {#if inView}
-          <!-- The review happens in this view. -->
-        {:else if card.pre}
+        {#if card.pre}
           <a
             class="btn"
             class:btn-primary={primary}
