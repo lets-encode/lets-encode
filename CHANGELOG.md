@@ -5,6 +5,11 @@ parentheses.
 
 ## 2026-10-19
 
+- On phones the measure correction's step switch, selection heading and actions take less height.
+- On tablets and phones the measure correction's selection panel takes fewer rows.
+- Switching steps in the measure correction turns Draw off, and the hint shows the Draw icon.
+- Board cards say in one sentence what the task asks for and are larger on touch screens.
+- The "Recently active" sort places campaigns without activity by their creation time.
 - Upright tablets up to 1100px wide show the side panel as a bottom sheet.
 - A long press in the score editors no longer selects text or opens a context menu.
 - A fully lowered phone sheet shows only the toolbar and tools.

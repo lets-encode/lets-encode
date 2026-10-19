@@ -53,6 +53,7 @@
   } from "$lib/campaign-graph.ts";
   import {
     buildBoard,
+    cardSummary,
     doneLabel,
     elapsed,
     expiresIn,
@@ -1758,6 +1759,9 @@
                                     >{` · ${card.scope}`}</span
                                   >{/if}
                               </div>
+                              {#if cardSummary(card)}
+                                <p class="card-what">{cardSummary(card)}</p>
+                              {/if}
                               {#if piecesListed}
                                 <div
                                   class="card-piece"
@@ -2638,7 +2642,7 @@
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     box-shadow: var(--shadow-sm);
     cursor: pointer;
     flex: none;
@@ -2722,6 +2726,27 @@
   }
   .card-scope {
     color: var(--ink-soft);
+  }
+  .card-what {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--ink-soft);
+  }
+  /* On a touch screen the cards are larger targets with larger type. */
+  @media (pointer: coarse) {
+    .well {
+      gap: 10px;
+    }
+    .card {
+      padding: 12px 14px;
+    }
+    .card-title {
+      font-size: 15px;
+    }
+    .card-what {
+      font-size: 13.5px;
+    }
   }
   /* The piece line, shown where several pieces share the board. A long
      title is cut to one line; the full title is its tooltip. */

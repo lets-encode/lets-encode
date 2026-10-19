@@ -1096,11 +1096,52 @@ textarea.input {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* Named groups of properties: <div class="selprops"> of .selgroup and
+   .selflags pairs. */
+.selprops {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
 /* A group's name above its toggles, close to them. */
 .selgroup {
   margin: 0 0 -6px;
   font: 600 12px var(--font);
   color: var(--ink-soft);
+}
+/* A wide panel (a sheet on an upright tablet): the actions on the heading's
+   row and each group's name left of its toggles. */
+@container spsel (min-width: 560px) {
+  .selpanel {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 16px;
+  }
+  .selpanel > * {
+    grid-column: 1 / -1;
+  }
+  .selpanel > .selhead:has(+ .selactions),
+  .selhead + .selactions {
+    grid-column: auto;
+  }
+  .selhead + .selactions {
+    justify-content: flex-end;
+    align-self: center;
+  }
+  .selprops {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 8px 12px;
+  }
+  .selprops .selgroup {
+    margin: 0;
+  }
+}
+/* A toggle's label in full (.sellong) and short (.selshort); a toggle with
+   a symbol has no short label and shows the symbol alone. */
+.selshort {
+  display: none;
 }
 .selflags .chip-switch {
   min-height: 32px;
@@ -1152,6 +1193,30 @@ textarea.input {
     content: "";
     position: absolute;
     inset: -6px -3px;
+  }
+  /* A narrow sheet (a phone): the short labels, so each group fits a row,
+     and no group names; a group's aria-label still names it. */
+  @container spsel (max-width: 559px) {
+    .selprops .selgroup {
+      display: none;
+    }
+    .sellong {
+      display: none;
+    }
+    .selshort {
+      display: inline;
+    }
+    .selflags .chip-switch {
+      padding-inline: 10px;
+    }
+    /* Lower actions, the press area still 44px. */
+    .selactions .btn {
+      min-height: 28px;
+      padding-block: 4px;
+    }
+    .selactions .btn::after {
+      inset: -8px -3px;
+    }
   }
 }
 
@@ -1301,5 +1366,22 @@ textarea.input {
   .step.on .stepn {
     color: var(--st);
     font-weight: 600;
+  }
+}
+/* A phone sheet: a lower row, the press area still 44px. */
+@media (orientation: portrait) and (max-width: 559px) {
+  .steps {
+    padding: 2px;
+  }
+  .step {
+    min-height: 26px;
+  }
+  .step::after {
+    inset: -9px 0;
+  }
+  .stepno {
+    width: 18px;
+    height: 18px;
+    font-size: 10.5px;
   }
 }

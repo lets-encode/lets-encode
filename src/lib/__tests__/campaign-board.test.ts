@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildBoard,
+  cardSummary,
   cardTitle,
   doneLabel,
   buildThreads,
@@ -194,6 +195,43 @@ test("a card in review knows whether the viewer submitted it", () => {
     card("9").slots.some((s) => s.claimable),
     true,
   );
+});
+
+test("cardSummary describes the task by kind and stage", () => {
+  const card = {
+    column: "ready" as const,
+    locator: "",
+    pre: false,
+    omr: false,
+    scope: "",
+  };
+  assert.equal(cardSummary(card), "Encode the music of the piece.");
+  assert.equal(
+    cardSummary({ ...card, scope: "p. 2" }),
+    "Encode the music of this page.",
+  );
+  assert.equal(
+    cardSummary({ ...card, scope: "p. 2", omr: true }),
+    "Correct the notes read automatically from this page.",
+  );
+  assert.equal(
+    cardSummary({ ...card, locator: "measure-zones", pre: true }),
+    "Check the measure boxes on each page and correct the wrong ones.",
+  );
+  assert.equal(
+    cardSummary({
+      ...card,
+      column: "validation",
+      locator: "score-setup",
+      pre: true,
+    }),
+    "Check the submitted work and approve it or request changes.",
+  );
+  assert.equal(
+    cardSummary({ ...card, column: "validation" }),
+    "Compare the encoding with the scan and approve it or request changes.",
+  );
+  assert.equal(cardSummary({ ...card, column: "done" }), "");
 });
 
 test("doneLabel gives the review count, or done, and when the task finished", () => {

@@ -254,6 +254,28 @@ export function doneLabel(
   return `${card.doneLine || "done"}${when}`;
 }
 
+/** A card's one-sentence description of what the task asks for; '' for a
+    finished task. */
+export function cardSummary(
+  card: Pick<BoardCard, "column" | "locator" | "pre" | "omr" | "scope">,
+): string {
+  if (card.column === "done") return "";
+  if (card.column === "validation")
+    return card.pre
+      ? "Check the submitted work and approve it or request changes."
+      : "Compare the encoding with the scan and approve it or request changes.";
+  if (card.locator === "score-setup")
+    return "Copy the staves, clefs, key and time signature from the source's first measure.";
+  if (card.locator === "omr-layout")
+    return "Check the staff, grand staff and measure boxes on each page and correct the wrong ones.";
+  if (card.locator === "measure-zones")
+    return "Check the measure boxes on each page and correct the wrong ones.";
+  if (card.omr) return "Correct the notes read automatically from this page.";
+  return card.scope
+    ? "Encode the music of this page."
+    : "Encode the music of the piece.";
+}
+
 /** A card in review's line: the viewer's claimed reviews, other people's,
     and the reviews still unclaimed, which may have to come from someone
     other than the viewer ("your review in progress · waits for 1 more

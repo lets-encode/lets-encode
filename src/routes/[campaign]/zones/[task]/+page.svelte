@@ -231,8 +231,7 @@
   const tool = $derived<Layer>(omr ? STEP_LAYERS[layoutStep - 1] : "measures");
   function setLayoutStep(step: 1 | 2 | 3) {
     layoutStep = step;
-    selected = null;
-    corner = null;
+    leaveDrawMode();
   }
   // A page's boxes in a layer, for the geometry code shared by all.
   const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
@@ -3229,103 +3228,121 @@
           {/if}
           {#if tool === "measures"}
             {#if canEdit}
-              <p class="selgroup">Breaks</p>
-              <div class="selflags" role="group" aria-label="Breaks">
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={sbActive(p, z)}
-                  aria-pressed={sbActive(p, z)}
-                  onclick={() => toggleSb(p, z)}
-                  disabled={pbAt(z)}
-                  title={pbAt(z)
-                    ? "The first measure on a page always starts a system"
-                    : "This measure starts a new system (line) of the score"}
-                  >Starts a system</button
-                >
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={startsMovement(p, z)}
-                  aria-pressed={startsMovement(p, z)}
-                  onclick={() => toggleSection(p, z)}
-                  disabled={sectionLocked(p, z)}
-                  title={sectionLocked(p, z)
-                    ? "The first measure always starts the first section"
-                    : "This measure starts a new movement or section"}
-                  >Starts a section</button
-                >
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={pages[p].zones[z].pickup}
-                  aria-pressed={pages[p].zones[z].pickup}
-                  onclick={() => togglePickup(p, z)}
-                  title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
-                  >Pickup</button
-                >
-              </div>
-              <p class="selgroup">Repeats</p>
-              <div class="selflags" role="group" aria-label="Repeats">
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={!!pages[p].zones[z].rptStart}
-                  aria-pressed={!!pages[p].zones[z].rptStart}
-                  onclick={() => toggleRepeat(p, z, "start")}
-                  title="A repeat barline at the start of this measure"
-                  ><Icon name="repeat-start" />Repeat start</button
-                >
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={!!pages[p].zones[z].rptEnd}
-                  aria-pressed={!!pages[p].zones[z].rptEnd}
-                  onclick={() => toggleRepeat(p, z, "end")}
-                  title="A repeat barline at the end of this measure"
-                  ><Icon name="repeat-end" />Repeat end</button
-                >
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={!!pages[p].zones[z].rptBoth}
-                  aria-pressed={!!pages[p].zones[z].rptBoth}
-                  onclick={() => toggleRepeat(p, z, "both")}
-                  title="A double repeat barline at the end of this measure: the end of one repeat and the start of the next"
-                  ><Icon name="repeat-both" />Double repeat</button
-                >
-                <div
-                  class="seg"
-                  role="group"
-                  aria-label="Ending"
-                  title="The ending (volta) this measure belongs to; neighbouring measures with the same ending share one bracket"
-                >
-                  {#each ["", "1", "2", "3"] as n (n)}
-                    <button
-                      type="button"
-                      class:on={(pages[p].zones[z].ending ?? "") === n}
-                      aria-pressed={(pages[p].zones[z].ending ?? "") === n}
-                      onclick={() => setEnding(p, z, n)}
-                      >{n ? `${n}.` : "No ending"}</button
-                    >
-                  {/each}
-                </div>
-              </div>
-              <p class="selgroup">Signs</p>
-              <div class="selflags" role="group" aria-label="Signs">
-                {#each MEASURE_SIGNS as sign (sign)}
+              <div class="selprops">
+                <p class="selgroup">Breaks</p>
+                <div class="selflags" role="group" aria-label="Breaks">
                   <button
                     type="button"
                     class="chip-switch"
-                    class:on={!!pages[p].zones[z].signs?.includes(sign)}
-                    aria-pressed={!!pages[p].zones[z].signs?.includes(sign)}
-                    onclick={() => toggleSign(p, z, sign)}
-                    title={SIGN_TITLE[sign]}
-                    >{#if sign === "segno" || sign === "coda"}<Icon
-                        name={sign}
-                      />{/if}{SIGN_NAME[sign]}</button
+                    class:on={sbActive(p, z)}
+                    aria-pressed={sbActive(p, z)}
+                    onclick={() => toggleSb(p, z)}
+                    disabled={pbAt(z)}
+                    title={pbAt(z)
+                      ? "The first measure on a page always starts a system"
+                      : "This measure starts a new system (line) of the score"}
+                    ><span class="sellong">Starts a system</span><span
+                      class="selshort">System</span
+                    ></button
                   >
-                {/each}
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={startsMovement(p, z)}
+                    aria-pressed={startsMovement(p, z)}
+                    onclick={() => toggleSection(p, z)}
+                    disabled={sectionLocked(p, z)}
+                    title={sectionLocked(p, z)
+                      ? "The first measure always starts the first section"
+                      : "This measure starts a new movement or section"}
+                    ><span class="sellong">Starts a section</span><span
+                      class="selshort">Section</span
+                    ></button
+                  >
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={pages[p].zones[z].pickup}
+                    aria-pressed={pages[p].zones[z].pickup}
+                    onclick={() => togglePickup(p, z)}
+                    title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
+                    >Pickup</button
+                  >
+                </div>
+                <p class="selgroup">Repeats</p>
+                <div class="selflags" role="group" aria-label="Repeats">
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={!!pages[p].zones[z].rptStart}
+                    aria-pressed={!!pages[p].zones[z].rptStart}
+                    onclick={() => toggleRepeat(p, z, "start")}
+                    aria-label="Repeat start"
+                    title="A repeat barline at the start of this measure"
+                    ><Icon name="repeat-start" /><span class="sellong"
+                      >Repeat start</span
+                    ></button
+                  >
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={!!pages[p].zones[z].rptEnd}
+                    aria-pressed={!!pages[p].zones[z].rptEnd}
+                    onclick={() => toggleRepeat(p, z, "end")}
+                    aria-label="Repeat end"
+                    title="A repeat barline at the end of this measure"
+                    ><Icon name="repeat-end" /><span class="sellong"
+                      >Repeat end</span
+                    ></button
+                  >
+                  <button
+                    type="button"
+                    class="chip-switch"
+                    class:on={!!pages[p].zones[z].rptBoth}
+                    aria-pressed={!!pages[p].zones[z].rptBoth}
+                    onclick={() => toggleRepeat(p, z, "both")}
+                    title="A double repeat barline at the end of this measure: the end of one repeat and the start of the next"
+                    aria-label="Double repeat"
+                    ><Icon name="repeat-both" /><span class="sellong"
+                      >Double repeat</span
+                    ></button
+                  >
+                  <div
+                    class="seg"
+                    role="group"
+                    aria-label="Ending"
+                    title="The ending (volta) this measure belongs to; neighbouring measures with the same ending share one bracket"
+                  >
+                    {#each ["", "1", "2", "3"] as n (n)}
+                      <button
+                        type="button"
+                        class:on={(pages[p].zones[z].ending ?? "") === n}
+                        aria-pressed={(pages[p].zones[z].ending ?? "") === n}
+                        onclick={() => setEnding(p, z, n)}
+                        >{#if n}{n}.{:else}<span class="sellong">No ending</span
+                          ><span class="selshort">No</span>{/if}</button
+                      >
+                    {/each}
+                  </div>
+                </div>
+                <p class="selgroup">Signs</p>
+                <div class="selflags" role="group" aria-label="Signs">
+                  {#each MEASURE_SIGNS as sign (sign)}
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={!!pages[p].zones[z].signs?.includes(sign)}
+                      aria-pressed={!!pages[p].zones[z].signs?.includes(sign)}
+                      onclick={() => toggleSign(p, z, sign)}
+                      aria-label={SIGN_NAME[sign]}
+                      title={SIGN_TITLE[sign]}
+                      >{#if sign === "segno" || sign === "coda"}<Icon
+                          name={sign}
+                        /><span class="sellong">{SIGN_NAME[sign]}</span
+                        >{:else}{SIGN_NAME[sign]}{/if}</button
+                    >
+                  {/each}
+                </div>
               </div>
             {:else}
               <!-- Read-only, the toggles give way to the breaks that apply. -->
@@ -3346,7 +3363,14 @@
           {#if coarse && canEdit && pickMode}
             Tap boxes to select them.
           {:else if coarse && canEdit && !drawMode}
-            Tap a box twice, or turn on Draw, to edit it.
+            <!-- One inline run: the flex .selnone drops the spaces around a
+                 bare icon. -->
+            <span
+              >Tap a box twice, or turn on Draw <Icon
+                name="touch-box"
+                size={16}
+              />, to edit it.</span
+            >
           {:else}
             {coarse ? "Tap" : "Click"} a box on the page to {canEdit
               ? "edit it"
@@ -3592,6 +3616,15 @@
       content: "";
       position: absolute;
       inset: -6px;
+    }
+  }
+  /* A phone sheet: less space around the steps and the selection's heading. */
+  @media (orientation: portrait) and (max-width: 559px) {
+    .corrector :global(.sptools) {
+      padding-block: 6px;
+    }
+    .corrector :global(.spsel) {
+      padding-block: 8px 10px;
     }
   }
   /* "Measure" and the number field read as the heading's one name. */
