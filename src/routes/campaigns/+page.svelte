@@ -480,7 +480,10 @@
         (a, b) =>
           (b.total ? b.done / b.total : 0) - (a.total ? a.done / a.total : 0),
       );
-    else list.sort((a, b) => ts(b.lastActivity) - ts(a.lastActivity));
+    else {
+      const active = (s: CampaignStats) => ts(s.lastActivity || s.createdAt);
+      list.sort((a, b) => active(b) - active(a));
+    }
     return list;
   });
   const shown = $derived(filtered.slice(0, visibleCount));

@@ -846,6 +846,7 @@
      too short the panel scrolls as a whole, and a new selection scrolls
      them into view above the footer. */
   .spsel {
+    container: spsel / inline-size;
     padding: 14px 16px;
     background: var(--band);
     border-top: 1px solid var(--line);
