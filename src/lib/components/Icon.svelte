@@ -44,6 +44,7 @@
     | "copy"
     | "select-several"
     | "draw-box"
+    | "focus"
     | "comment"
     | "more"
     | "grip"
@@ -105,6 +106,8 @@
     copy: "M9 9h11v11H9zM15 5V4H4v11h1",
     "select-several": "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17.5l2 2 4-4",
     "draw-box": "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
+    focus:
+      "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M14.5 12a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z",
     comment: "M5 5h14v10h-9l-4 4v-4H5z",
     more: "M5 12h.01M12 12h.01M19 12h.01",
     grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",

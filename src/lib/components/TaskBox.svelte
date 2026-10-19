@@ -358,7 +358,7 @@
           class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
-          title="Reserves this review for you for a limited time. Give back releases it."
+          title="Reserves this review for you for a limited time. Give back task releases it."
           >Claim to review</button
         >
         {#if !card.pre && !inView}

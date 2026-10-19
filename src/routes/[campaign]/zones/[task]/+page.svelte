@@ -3630,7 +3630,7 @@
     align-items: center;
     gap: 8px;
   }
-  /* Give back and the step's button at the two ends of one row; the draft
+  /* Give back task and the step's button at the two ends of one row; the draft
      state shows over the pages (DraftBubble). */
   .wfoot {
     display: flex;

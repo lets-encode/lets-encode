@@ -1,5 +1,5 @@
 <!--
-  "Give back" for a claim the viewer holds, confirmed in place: the first
+  "Give back task" for a claim the viewer holds, confirmed in place: the first
   click turns the button into a question with the two answers beside it.
   Giving back an edit claim deletes the viewer's unsubmitted changes, so its
   confirming button is the danger outline; a review claim (`review`) has none.
@@ -32,7 +32,8 @@
       onclick={() => {
         asking = false;
         onabandon();
-      }}>{review ? "Give back" : "Give back and delete changes"}</button
+      }}
+      >{review ? "Give back task" : "Give back task and delete changes"}</button
     >
     <button type="button" class="btn" onclick={() => (asking = false)}
       >{review ? "Keep reviewing" : "Keep working"}</button
@@ -47,7 +48,7 @@
     title={review
       ? "Releases your review claim so someone else can review the task."
       : "Releases your claim and deletes your unsubmitted changes. The task is open to others again."}
-    >Give back</button
+    >Give back task</button
   >
 {/if}
 

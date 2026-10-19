@@ -1,20 +1,59 @@
 <!--
   A facsimile page in a scrolling view that opens framed on one region of it
-  (`frame`, in the page image's pixels), fitted whole into the view, with a
-  second region (`mark`) outlined. Scrolling or a mouse drag pans, a pinch or
-  Ctrl/Cmd + scroll zooms (zoomGestures); once moved away, a fit button
-  brings the frame back. While framed, the view keeps the frame fitted as it
-  resizes; a new frame is fitted afresh. A host showing something other than
-  its usual frame sets `away`: the fit button then shows and calls `onfit`.
-  Given `align`, the frame is not fitted but lined up: scaled so its top and
-  bottom edges meet the two given heights on the screen, its left edge at the
-  view's left.
+  (`frame`, in the page image's pixels), fitted whole into the view below the
+  zoom controls, with a second region (`mark`) outlined. Scrolling or a mouse
+  drag pans; the − / + buttons, a pinch or Ctrl/Cmd + scroll zoom
+  (zoomGestures); the fit button brings the frame back. While framed, the
+  view keeps the frame fitted as it resizes; a new frame is fitted afresh.
+  Once moved away, a zoom or a resize keeps the point at the view's centre in
+  place. A host showing something other than its usual frame sets `away`:
+  the fit button then calls `onfit`.
+  Given `align`, the frame is not fitted but lined up: scaled so the image
+  heights `uly` and `lry` meet the screen heights `top` and `bottom`, the
+  frame's left edge at the view's left.
 -->
+<script module lang="ts">
+  export type Box = { ulx: number; uly: number; lrx: number; lry: number };
+
+  /** Room left around the fitted frame, in CSS pixels. */
+  const MARGIN = 6;
+  /** The band at the view's top the zoom controls take; the fitted frame
+      stays below it. */
+  const BAND = 44;
+
+  /** The room a fitted frame takes in a view of the given size, in CSS
+      pixels from the view's top left: inside the margin, below the
+      controls. */
+  export function fitRoom(vw: number, vh: number) {
+    return {
+      left: MARGIN,
+      top: BAND,
+      width: Math.max(0, vw - 2 * MARGIN),
+      height: Math.max(0, vh - BAND - MARGIN),
+    };
+  }
+
+  /** CSS pixels per image pixel at which `frame` fits a view of the given
+      size. */
+  function fitScale(frame: Box, vw: number, vh: number): number {
+    const room = fitRoom(vw, vh);
+    const fw = Math.max(1, frame.lrx - frame.ulx);
+    const fh = Math.max(1, frame.lry - frame.uly);
+    return Math.min(room.width / fw, room.height / fh);
+  }
+
+  /** The height of the fitted frame's top edge in the view at scale `k`:
+      centred in the room. */
+  function fitTop(frame: Box, vh: number, k: number): number {
+    const room = fitRoom(0, vh);
+    const fh = Math.max(1, frame.lry - frame.uly);
+    return room.top + Math.max(0, (room.height - fh * k) / 2);
+  }
+</script>
+
 <script lang="ts">
   import { zoomGestures } from "$lib/zoom-gestures.ts";
-  import FitIcon from "./FitIcon.svelte";
-
-  type Box = { ulx: number; uly: number; lrx: number; lry: number };
+  import Icon from "./Icon.svelte";
 
   let {
     url,
@@ -43,15 +82,14 @@
     away?: boolean;
     /** The fit button was pressed. */
     onfit?: () => void;
-    /** Viewport y coordinates, in CSS pixels, the frame's top and bottom
-        edges are lined up with while framed. */
-    align?: { top: number; bottom: number } | null;
+    /** Image heights and the viewport y coordinates, in CSS pixels, they
+        are lined up with while framed. */
+    align?: { uly: number; lry: number; top: number; bottom: number } | null;
   } = $props();
 
-  const ZOOM_MIN = 0.5;
+  const ZOOM_MIN = 0.25;
   const ZOOM_MAX = 8;
-  /** Room left around the fitted frame, in CSS pixels. */
-  const MARGIN = 6;
+  const ZOOM_STEP = 1.25;
 
   let view = $state<HTMLDivElement>();
   let vw = $state(0);
@@ -60,32 +98,42 @@
   let zoom = $state(1);
   let framed = $state(true);
   const fw = $derived(Math.max(1, frame.lrx - frame.ulx));
-  const fh = $derived(Math.max(1, frame.lry - frame.uly));
   // CSS pixels per image pixel.
   const k = $derived(
     !vw || !vh
       ? 0
-      : (align && align.bottom > align.top
-          ? (align.bottom - align.top) / fh
-          : Math.min((vw - 2 * MARGIN) / fw, (vh - 2 * MARGIN) / fh)) * zoom,
+      : (align && align.bottom > align.top && align.lry > align.uly
+          ? (align.bottom - align.top) / (align.lry - align.uly)
+          : fitScale(frame, vw, vh)) * zoom,
   );
   // The drawing holds a page's height of room above and below the page, so
   // any part of it can be scrolled to any height in the view; the room
   // scales with the page, which keeps a pinch on the point under it.
   const top = (y: number) => (y + height) * k;
 
-  // Scrolls the frame into place: lined up with `align`, or centred, at a
-  // page edge as near as the page allows.
+  // Scrolls the frame into place: lined up with `align`, or centred below
+  // the controls, at a page edge as near as the page allows.
   function centre() {
     if (!view || !k) return;
     if (align) {
-      view.scrollLeft = frame.ulx * k;
+      view.scrollLeft = frame.ulx * k - MARGIN;
       view.scrollTop =
-        top(frame.uly) - (align.top - view.getBoundingClientRect().top);
-      return;
+        top(align.uly) - (align.top - view.getBoundingClientRect().top);
+    } else {
+      view.scrollLeft = (frame.ulx + fw / 2) * k - vw / 2;
+      view.scrollTop = top(frame.uly) - fitTop(frame, vh, k);
     }
-    view.scrollLeft = (frame.ulx + fw / 2) * k - vw / 2;
-    view.scrollTop = top(frame.uly + fh / 2) - vh / 2;
+    hold();
+  }
+  // The drawing point at the view's centre, in image pixels at the drawing's
+  // scale 1, recorded on every scroll.
+  let held: { x: number; y: number } | null = null;
+  function hold() {
+    if (view && k)
+      held = {
+        x: (view.scrollLeft + vw / 2) / k,
+        y: (view.scrollTop + vh / 2) / k,
+      };
   }
   let frameKey = "";
   $effect(() => {
@@ -97,18 +145,31 @@
   });
   $effect(() => {
     void k;
+    void vw;
+    void vh;
     void frame;
     void align?.top;
     if (framed) centre();
+    else if (held && view && k) {
+      view.scrollLeft = held.x * k - vw / 2;
+      view.scrollTop = held.y * k - vh / 2;
+    }
   });
   // The viewer's own scrolling leaves the frame; the view's resizing and
   // the scroll positions it clamps do not.
-  const leave = () => (framed = false);
+  function leave() {
+    if (framed) hold();
+    framed = false;
+  }
   function fit() {
     onfit?.();
     zoom = 1;
     framed = true;
     centre();
+  }
+  function zoomBy(factor: number) {
+    leave();
+    zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor));
   }
 
   // A mouse drag pans; touch pans by the browser's own scrolling.
@@ -144,7 +205,10 @@
     bind:this={view}
     bind:clientWidth={vw}
     bind:clientHeight={vh}
-    onwheel={leave}
+    onscroll={hold}
+    onwheel={(e) => {
+      if (!e.ctrlKey && !e.metaKey) leave();
+    }}
     ontouchmove={leave}
     onpointerdown={down}
     onpointermove={move}
@@ -153,8 +217,8 @@
     {@attach zoomGestures({
       get: () => zoom,
       set: (z) => {
+        leave();
         zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-        framed = false;
       },
       follow: true,
     })}
@@ -178,15 +242,37 @@
       </svg>
     {/if}
   </div>
-  {#if !framed || away}
+  <div class="fftools">
+    <span class="tbtn-pair">
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        aria-label="Zoom out"
+        title="Zoom out"
+        disabled={zoom <= ZOOM_MIN}
+        onclick={() => zoomBy(1 / ZOOM_STEP)}
+        ><Icon name="zoom-out" size={16} /></button
+      >
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        aria-label="Zoom in"
+        title="Zoom in"
+        disabled={zoom >= ZOOM_MAX}
+        onclick={() => zoomBy(ZOOM_STEP)}
+        ><Icon name="zoom-in" size={16} /></button
+      >
+    </span>
     <button
       type="button"
-      class="tbtn tbtn-icon fffit"
+      class="tbtn tbtn-icon"
+      class:on={framed && !away}
+      aria-pressed={framed && !away}
       aria-label={fitLabel}
       title={fitLabel}
-      onclick={fit}><FitIcon kind="page" /></button
+      onclick={fit}><Icon name="focus" size={16} /></button
     >
-  {/if}
+  </div>
 </div>
 
 <style>
@@ -222,18 +308,24 @@
     stroke: var(--accent);
     stroke-width: 2;
   }
-  /* 32px with a 44px press through an invisible ::after. */
-  .fffit {
+  /* The zoom controls in the view's top band. 32px buttons with a 44px
+     press through an invisible ::after. */
+  .fftools {
     position: absolute;
-    top: 8px;
-    right: 8px;
+    top: 6px;
+    right: 6px;
+    display: flex;
+    gap: 6px;
+  }
+  .fftools .tbtn-icon {
+    position: relative;
     box-sizing: border-box;
     min-width: 32px;
     min-height: 32px;
     justify-content: center;
     box-shadow: var(--shadow-sm);
   }
-  .fffit::after {
+  .fftools .tbtn-icon::after {
     content: "";
     position: absolute;
     inset: -6px;
