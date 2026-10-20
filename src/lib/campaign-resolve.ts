@@ -57,7 +57,7 @@ export async function lookupSlug(name: string): Promise<SlugInfo | null> {
 /** A held name's token, or why the name could not be held. */
 export type ClaimResult =
   | { token: string }
-  | { error: "taken" | "invalid" | "unreachable" };
+  | { error: "taken" | "invalid" | "limit" | "unreachable" };
 
 /**
  * Hold a name in the registry before the repo it will belong to exists, so the
@@ -79,6 +79,13 @@ export async function claimName(name: string): Promise<ClaimResult> {
       };
     if (res.status === 409) return { error: "taken" };
     if (res.status === 422) return { error: "invalid" };
+    // The login holds the registry's limit of claims (MAX_PENDING_CLAIMS);
+    // the broker's own rate limit marks its 429.
+    if (
+      res.status === 429 &&
+      res.headers.get("X-Lets-Encode-Upstream") !== "broker"
+    )
+      return { error: "limit" };
     return { error: "unreachable" };
   } catch {
     return { error: "unreachable" };
@@ -110,13 +117,21 @@ export async function releaseClaim(
 }
 
 /** The outcome of registering a name against a repo id. */
-export type RegisterResult = "ok" | "conflict" | "invalid" | "error";
+export type RegisterResult =
+  | "ok"
+  | "conflict"
+  | "renamed"
+  | "repo_taken"
+  | "invalid"
+  | "error";
 
 /**
  * Register a campaign name against its repo id on `forge`, after the repo has
  * been created, presenting the token the name was held under. Idempotent for the
  * same (forge, repo id). 'conflict' means the name now belongs to a different
- * repo; 'invalid' means it isn't a valid slug.
+ * repo; 'renamed' that the repo no longer has the campaign's name;
+ * 'repo_taken' that the repo is registered under another name; 'invalid' that
+ * the name isn't a valid slug.
  */
 export async function registerCampaign(
   name: string,
@@ -136,7 +151,14 @@ export async function registerCampaign(
       }),
     });
     if (res.ok) return "ok";
-    if (res.status === 409) return "conflict";
+    if (res.status === 409) {
+      const { reason } = (await res.json().catch(() => ({}))) as {
+        reason?: string;
+      };
+      if (reason === "repo_name") return "renamed";
+      if (reason === "repo_taken") return "repo_taken";
+      return "conflict";
+    }
     if (res.status === 422) return "invalid";
     return "error";
   } catch {

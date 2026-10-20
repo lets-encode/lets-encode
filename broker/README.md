@@ -19,13 +19,23 @@ mutations and notification muting.
   onboarding wizard. Campaign sources come from arbitrary institutions, which
   rules out both a CSP host allowlist and direct browser fetches (many IIIF
   servers send no CORS headers); relaying same-origin solves both. Login-gated
-  and rate-limited; no credentials are attached upstream.
+  and rate-limited; no credentials are attached upstream. Each worker relays
+  at most `RELAY_SLOTS` requests at once (`RELAY_SLOTS_PER_LOGIN` per login),
+  each until its answer is sent, buffers at most `RELAY_BUFFER_BYTES` of
+  bodies, and answers 429 beyond either. A download starts no hop and no read
+  after `RELAY_DEADLINE_S`, so it ends within that plus the read timeout;
+  headers sent a byte at a time can take longer. Each login has a daily
+  allowance (see [Relay use](#relay-use)).
 - `/omr/api/<path>` and `/omr/blob?url=…` — relay the Musibot OMR service for
   the console's OMR preparation: a fixed set of API endpoints (create page,
   presigned file URLs, start and poll an execution, delete page, list
   pipelines) with the institutional token attached server-side, and file
   transfers to and from the presigned URLs on the service's host. Login-gated
-  and rate-limited; answers 503 unless `MUSIBOT_TOKEN` is set.
+  and rate-limited; answers 503 unless `MUSIBOT_TOKEN` is set. A page is
+  relayed only to the login that created it, an execution only on the page it
+  was started on. File transfers take the IIIF relay's slots; downloads also
+  have its deadline. Each login has daily allowances (see
+  [Relay use](#relay-use)).
 - `/registry/…` — the campaign name registry blueprint: the name → (forge,
   repo id) mapping behind every campaign address, with the claim/register
   lifecycle around it. Claiming and registering are login-gated; resolving a
@@ -46,11 +56,16 @@ Registration happens at the _end_ of setup, not when the
 repository is created — a repository is not yet a campaign, and an abandoned
 setup must never be published as one. A claim is a short lease: one that
 nobody promotes occupies nothing once it has run out (reads report the name
-free and the next write drops the row), so there is no sweeper.
+free and the next write drops the row), so there is no sweeper. A claim's
+token works only in the session of the login that made it, and one login
+holds at most `MAX_PENDING_CLAIMS` (10) claims at a time. A repository is the
+campaign of one active name, the one it is named after.
 
-The admin surface is two routes: `GET /registry/admin/slugs` (list everything)
-and `DELETE /registry/admin/slugs/<name>` (tombstone a name; the row is kept,
-so the name stays occupied).
+The admin surface is three routes: `GET /registry/admin/slugs` (list
+everything), `DELETE /registry/admin/slugs/<name>` (tombstone a name; the row
+is kept, so the name stays occupied) and `POST
+/registry/admin/slugs/<name>/free` (remove a name's row, so anyone may take
+the name).
 
 **`/registry/admin/` must be protected by institutional auth at the reverse
 proxy** before requests reach the broker (see `README.md` §6). The
@@ -63,8 +78,34 @@ at startup.
 
 Sessions are files under `instance/sessions` (gitignored, `0700`), shared
 between gunicorn workers on the same host; set `SESSION_DIR` to override. The
-session ID is rotated after OAuth login and server-side sessions expire after
-12 hours.
+session ID is rotated after OAuth login and server-side sessions expire 12
+hours after their last request. There is no limit on the number of session
+files: expired ones are removed on a write, at most every ten minutes per
+worker. `/login` writes a session file and is limited to 30 requests a minute
+per client address.
+
+## Relay use
+
+Each login may use the relays up to an allowance per UTC day, set by
+environment variables:
+
+| Variable           | What is counted                               | Default |
+| ------------------ | --------------------------------------------- | ------- |
+| `IIIF_DAILY_BYTES` | bytes fetched through `/iiif`                 | 20 GiB  |
+| `OMR_DAILY_BYTES`  | bytes through `/omr/blob`, in both directions | 10 GiB  |
+| `OMR_DAILY_RUNS`   | OMR pipeline runs started through `/omr/api`  | 500     |
+
+Past an allowance the relay answers 429 with `X-Lets-Encode-Limit: daily` and
+a `Retry-After` of the seconds to 00:00 UTC; the request that passes it is
+completed. The counts are kept per login and day in `instance/relay.db`
+(`RELAY_DB_PATH`), which also records the login that created each Musibot
+page. Every counted request writes one `relay_use` log line with the login,
+what was counted, the amount, and the IIIF host, the transfer's direction or
+the OMR page. The totals per day and login:
+
+```sh
+sqlite3 instance/relay.db "SELECT day, login, kind, amount FROM relay_use ORDER BY day, login"
+```
 
 ## Same-origin requirement
 
@@ -114,7 +155,7 @@ container env, …) and skip the file.
 ## Run
 
 ```sh
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 
 # development (reads broker/.env; the Vite proxy makes it same-origin)
 flask --app app run --port 7777
@@ -143,7 +184,9 @@ python -m unittest broker.test_app broker.test_registry -v
 The proxy writes one structured `github_api` log entry for every authenticated
 GitHub request. It includes the method, endpoint path, status, duration,
 GitHub rate-limit bucket, limit, remaining/used counts, reset time and GitHub
-request ID. Query strings, request bodies and OAuth tokens are not logged.
+request ID. Query strings, request bodies and OAuth tokens are not logged;
+the access log (`gunicorn_config.py`) records request paths without their
+query strings.
 
 The shared forge client emits the same rate-limit fields in browser developer
 tools and GitHub Actions logs. Its in-process counters are available through

@@ -57,6 +57,7 @@
           <div class="rawlink">
             <input
               readonly
+              aria-label="mei-friend link"
               value={result.meiFriendUrl}
               onfocus={(e) => (e.target as HTMLInputElement).select()}
             />

@@ -536,6 +536,9 @@ export function commentAnchor(c: CommentRow): MeasureAnchor {
 /** locking.stale_after_minutes when config.yaml does not set it. */
 export const DEFAULT_STALE_MINUTES = 1440;
 
+/** locking.max_claims_per_person when config.yaml does not set it. */
+export const DEFAULT_MAX_CLAIMS = 10;
+
 /** A positive-integer scalar from config.yaml by key, or `fallback`. */
 export function configNumber(
   yaml: string | null,

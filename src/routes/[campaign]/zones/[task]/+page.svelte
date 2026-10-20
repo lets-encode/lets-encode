@@ -22,6 +22,7 @@
   } from "$lib/mei-facsimile.ts";
   import { taskDescription } from "$lib/campaign-graph.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
+  import { anchorCell, MAX_ANCHOR_LENGTH } from "$lib/campaign-submit.ts";
   import {
     DOCKED_QUERY,
     PANEL_MIN_REVIEW,
@@ -264,8 +265,8 @@
   // further down; the function runs only on a click.
   const reviewPrefill = () => ({
     page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
-    m1: selectedLabel,
-    m2: selectedLabel,
+    m1: anchorCell(selectedLabel),
+    m2: anchorCell(selectedLabel),
   });
   // Several boxes of one page and the active layer selected together (by
   // Shift+click, Shift+drag or Select several), `selected` among them. Held
@@ -2264,6 +2265,7 @@
     </div>
   {:else if data}
     <div class="main">
+      <h1 class="vh">{taskTitle} · {session.pieceName || campaign}</h1>
       <div
         class="tbar"
         class:bare={inSheet}
@@ -3084,6 +3086,7 @@
       {@const zone = pages[p].zones[z]}
       <input
         class="selnum"
+        maxlength={MAX_ANCHOR_LENGTH}
         value={zone.override ?? zone.label}
         oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
         onchange={() => commit()}

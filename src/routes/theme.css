@@ -230,7 +230,7 @@
   /* Solid badges darken on dark — a bright fill under white text glares. */
   --warn-solid: #a8672e;
   --warn-btn-hover: #8d5526;
-  --danger: #f2765e;
+  --danger: #f78f79;
   --danger-bg: rgba(242, 118, 94, 0.2);
   --danger-line: rgba(242, 118, 94, 0.45);
   --danger-solid: #c8452f;

@@ -53,7 +53,8 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { startAutoRefresh } from "$lib/auto-refresh.ts";
+  import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
+  import RefreshNotice from "$lib/components/RefreshNotice.svelte";
 
   const PER_PAGE = 12;
 
@@ -204,11 +205,14 @@
   // again. The topic search, which finds new campaigns, runs again only when
   // the tab becomes visible. Logged out, every request counts against the
   // shared per-address limit, so polling waits for the tab to become visible.
+  let refreshStatus = $state(REFRESH_OK);
   $effect(() => {
+    refreshStatus = REFRESH_OK;
     if (!listLoaded) return;
     return startAutoRefresh({
       interval: () => (auth.user ? 10_000 : null),
       held: () => listLoading || runner.busy,
+      onStatus: (status) => (refreshStatus = status),
       poll: async (resumed) => {
         const f = readForge();
         if (resumed)
@@ -506,6 +510,7 @@
 <div class="screen">
   <h1 class="vh">Campaigns</h1>
   <RunnerBanner {runner} />
+  <RefreshNotice status={refreshStatus} retrying={!!auth.user} bar={false} />
 
   <div class="layout" class:split={auth.user && wide.current}>
     {#if auth.user}

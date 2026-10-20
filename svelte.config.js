@@ -63,6 +63,8 @@ const config = {
           ...(dev ? ["ws:"] : []),
         ],
         "base-uri": ["self"],
+        // The app's forms are handled in script and submit nowhere.
+        "form-action": ["self"],
         "object-src": ["none"],
       },
     },

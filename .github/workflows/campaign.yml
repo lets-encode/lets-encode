@@ -43,6 +43,9 @@ jobs:
     # drafts and non-user pull requests alone.
     if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 3 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
     runs-on: ubuntu-24.04
+    # A run ends after this long whatever it is doing. The schema check of a
+    # score at GitHub's 100 MB file limit takes about a minute.
+    timeout-minutes: 30
     steps:
       # The central pointer comes from config.yaml on the base ref — a fork PR
       # cannot redirect where central lives (GITHUB_SHA is the base branch head

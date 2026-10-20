@@ -49,9 +49,9 @@ Register, then **Generate a new client secret**. Both the **Client ID** and the
 **Client secret** go _only_ in the broker; the SPA needs neither.
 
 Login requests the `public_repo` scope (plus `notifications` for muting campaign
-repos) — enough to create and administer public campaign repos and forks (e.g. to
-give their Actions a read/write token), without access to the user's private
-repositories. Private campaigns would need the broader `repo` scope.
+repos) — enough to create and administer public campaign repos and forks,
+without access to the user's private repositories. Private campaigns would need
+the broader `repo` scope.
 
 ## 3. Configure the SPA
 
@@ -87,7 +87,7 @@ created it. Pin it to a commit SHA for production releases. See the comments in 
 
 ```bash
 cd broker
-pip install -r requirements.txt
+pip install --require-hashes -r requirements.txt
 cp .env.example .env     # then fill in the values (see broker/README.md)
 flask --app app run --port 7777
 ```
@@ -165,9 +165,15 @@ broker (section 4), with its own OAuth App whose callback is
 
   ```bash
   git pull
-  npm ci
+  npm ci --ignore-scripts
   npm run build
   ```
+
+  `--ignore-scripts` keeps the dependencies' install scripts from running on
+  the server; the build needs none of them. After a change to
+  `broker/requirements.txt`, also run
+  `broker/venv/bin/pip install --require-hashes -r broker/requirements.txt`
+  and restart the broker.
 
   The same commands on every instance: `vite.config.js` reads the checked-out
   branch and builds `main` in production mode, `staging` in staging mode and

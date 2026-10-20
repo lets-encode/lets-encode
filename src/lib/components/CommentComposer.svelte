@@ -14,6 +14,7 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { handle } from "$lib/campaign-graph.ts";
+  import { MAX_COMMENT_LENGTH } from "$lib/campaign-submit.ts";
 
   let {
     task,
@@ -43,6 +44,7 @@
     placeholder?: string;
   } = $props();
 
+  const uid = $props.id();
   let sending = $state(false);
   // Pending from Send until the comment PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
@@ -51,7 +53,7 @@
   );
 
   async function postComment() {
-    if (!text.trim()) return;
+    if (!text.trim() || text.length > MAX_COMMENT_LENGTH) return;
     const kind = replyTo ? "reply" : "comment";
     const parent_id = replyTo?.comment_id ?? "";
     sending = true;
@@ -134,8 +136,21 @@
       {placeholder}
       rows="1"
       aria-label="Comment text"
+      aria-describedby={text.length >= MAX_COMMENT_LENGTH * 0.9
+        ? `${uid}-count`
+        : undefined}
+      maxlength={MAX_COMMENT_LENGTH}
       onkeydown={keydown}
     ></textarea>
+    <!-- The count shows once the text nears the limit. -->
+    {#if text.length >= MAX_COMMENT_LENGTH * 0.9}
+      <span
+        id={`${uid}-count`}
+        class="hint"
+        class:hint-err={text.length > MAX_COMMENT_LENGTH}
+        aria-live="polite">{text.length}/{MAX_COMMENT_LENGTH} characters</span
+      >
+    {/if}
     <div class="composer-actions">
       <button
         type="button"
@@ -147,7 +162,9 @@
         type="button"
         class="btn btn-soft"
         onclick={postComment}
-        disabled={runner.busy || !text.trim()}>Send</button
+        disabled={runner.busy ||
+          !text.trim() ||
+          text.length > MAX_COMMENT_LENGTH}>Send</button
       >
     </div>
   </div>

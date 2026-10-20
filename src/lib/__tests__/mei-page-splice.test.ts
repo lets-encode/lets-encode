@@ -227,3 +227,17 @@ test("firstElementOfPage returns the page's first note, else its first measure",
   assert.equal(firstElementOfPage(noted, "surface-1"), "measure-1");
   assert.equal(firstElementOfPage(base, "surface-9"), null);
 });
+
+test("splices and checks a page in linear time whatever its comments hold", () => {
+  // Start tags with no ">" after them, in a comment on the fork's page.
+  const crafted = forkAll.replace(
+    '<measure xml:id="measure-4"',
+    `<!--${"<measure <note ".repeat(32 * 1024)}-->\n<measure xml:id="measure-4"`,
+  );
+  const started = performance.now();
+  const spliced = splicePage(base, crafted, "surface-2");
+  firstElementOfPage(spliced, "surface-2");
+  const elapsed = performance.now() - started;
+  assert.ok(spliced.includes("<measure <note <measure"));
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});

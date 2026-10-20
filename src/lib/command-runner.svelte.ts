@@ -18,6 +18,42 @@ export const viewerId = (): string =>
 /** The session's authenticated forge client, or an anonymous one. */
 export const readForge = (): ForgeClient => forge() ?? createForge("");
 
+// A mei-friend hand-off made from this browser, kept per campaign and task in
+// localStorage so the return reaches it from any tab. The return URL alone is
+// a link anyone can build; only a recorded hand-off lets it act unasked.
+const handOffKey = (campaign: string, task: string) =>
+  `lets-encode:editor-hand-off:${campaign}/${task}`;
+// A record older than this no longer authorises a return.
+const HAND_OFF_MAX_AGE_MS = 24 * 60 * 60_000;
+
+function recordHandOff(url: string): void {
+  try {
+    const params = new URL(url).searchParams;
+    const campaign = params.get("le_campaignname");
+    const task = params.get("le_taskid");
+    if (campaign && task)
+      localStorage.setItem(handOffKey(campaign, task), String(Date.now()));
+  } catch {
+    /* without the record the return asks before acting */
+  }
+}
+
+/**
+ * True when this browser handed `task` to mei-friend within the last
+ * HAND_OFF_MAX_AGE_MS; the record is removed, so one hand-off authorises one
+ * return.
+ */
+export function takeHandOff(campaign: string, task: string): boolean {
+  try {
+    const key = handOffKey(campaign, task);
+    const recorded = Number(localStorage.getItem(key));
+    localStorage.removeItem(key);
+    return recorded > 0 && Date.now() - recorded < HAND_OFF_MAX_AGE_MS;
+  } catch {
+    return false;
+  }
+}
+
 /** A command that finished cleanly with a mei-friend hand-off URL. */
 const handsOff = (result: Result | null): boolean =>
   Boolean(result?.ok && !result.warn && result.meiFriendUrl);
@@ -97,6 +133,7 @@ export class CommandRunner {
     this.log.clear();
     try {
       const result = (this.result = await command());
+      if (result?.meiFriendUrl) recordHandOff(result.meiFriendUrl);
       // A command that resolved to an error stopped in its open step; mark
       // it so the log shows where, rather than closing it as got-through.
       if (result?.error) this.log.fail();

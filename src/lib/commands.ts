@@ -28,10 +28,12 @@ import {
   appendHistory,
   findRow,
   configString,
+  configNumber,
   passThresholdOf,
   configFlag,
   configPieces,
   resolveLogins,
+  DEFAULT_MAX_CLAIMS,
   COMMENT_PATH,
   CONFIG_PATH,
   HISTORY_PATH,
@@ -41,6 +43,7 @@ import {
   configPieceRegions,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
+import { claimLimitReached } from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -669,6 +672,26 @@ async function settleWhenProcessed(
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
 // the invoking command's envelope in its body. Shared by the claim command
 // and "open in mei-friend" (where opening == claiming).
+/**
+ * Why the viewer may not claim another task, when they hold the most claims
+ * the campaign allows one person at once (locking.max_claims_per_person, which
+ * the campaign automation enforces); null otherwise. `locks` are the live ones.
+ */
+function claimLimitError(
+  locks: LockRow[],
+  viewer: string,
+  configYaml: string | null,
+): string | null {
+  const max = configNumber(
+    configYaml,
+    "max_claims_per_person",
+    DEFAULT_MAX_CLAIMS,
+  );
+  return claimLimitReached(locks, viewer, max)
+    ? `You hold ${max} claims, as many as this campaign allows one person at once. Submit or give back one of them first.`
+    : null;
+}
+
 async function openClaimPr(
   ctx: CommandContext,
   task_id: string,
@@ -678,9 +701,13 @@ async function openClaimPr(
 ) {
   const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
   await muteOnce(ctx);
-  const lockRows = parseLockCsv(
-    (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
-  );
+  const [lockCsv, configYaml] = await Promise.all([
+    f.getRepoFile(owner, repo, LOCK_PATH),
+    f.getRepoFile(owner, repo, CONFIG_PATH),
+  ]);
+  const lockRows = parseLockCsv(lockCsv ?? "");
+  const limited = claimLimitError(liveLocks(lockRows), viewer, configYaml);
+  if (limited) throw new Error(limited);
   lockRows.push({
     task_id,
     subtask_id,
@@ -980,6 +1007,8 @@ const openEditor: CommandDef<
           )
         )
           return { error: `Someone else holds the claim on ${task_id}.` };
+        const limited = claimLimitError(locks, viewer, configYaml);
+        if (limited) return { error: limited };
       }
 
       const { sha, canPush } = await f.getRepoHead(owner, repo);

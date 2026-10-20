@@ -53,7 +53,7 @@
   const inScore = $derived(inCampaign && page.url.searchParams.has("score"));
   const campaignHref = $derived.by(() => {
     const task = page.url.searchParams.get("task");
-    return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
+    return `/${encodeURIComponent(page.params.campaign ?? "")}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
   });
 
   // The back link to a campaign names it by its title once a page has read
@@ -120,7 +120,7 @@
   {:else if corrector}
     <a
       class="nav-link back"
-      href={`/${page.params.campaign}`}
+      href={`/${encodeURIComponent(page.params.campaign ?? "")}`}
       aria-label={campaignTitleShown ? undefined : page.params.campaign}
       ><Icon name="arrow-left" />
       {#if campaignTitleShown}<span class="backlabel">{campaignTitleShown}</span

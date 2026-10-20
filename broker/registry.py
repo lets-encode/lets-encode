@@ -36,12 +36,21 @@ Route map (paths relative to the /registry mount):
     DELETE /claim/<name>     → { claim_token } → gives the name back.
     POST   /register         → { name, repo_id, forge, claim_token } → stores
                                the mapping. 201, 200 (idempotent repeat),
-                               409 on collision, 422 invalid, 403 without push
+                               409 with a reason: name_taken on collision,
+                               repo_name when the repository has another
+                               name, repo_taken when it is another name's
+                               campaign; 422 invalid, 403 without push
                                permission on the repo, 404 unknown repo.
     GET    /api/slug/<name>  → public resolver: { name, status, forge,
                                repo_id } (forge/repo_id only when active).
     GET    /admin/slugs          → list everything (JSON).
     DELETE /admin/slugs/<name>   → tombstone a name (row kept, stays occupied).
+    POST   /admin/slugs/<name>/free → remove a name's row, whatever its
+                               status, so anyone may take the name.
+
+A claim belongs to the login that made it: its token works only in that
+login's session, and one login holds at most MAX_PENDING_CLAIMS at a time. A
+repository is the campaign of one active name, the one it is named after.
 
 Admin routes are gated by the ADMIN_TOKEN bearer check — a dev/local fallback
 and defence in depth, not a production auth system. In production the reverse
@@ -60,12 +69,12 @@ from flask import Blueprint, jsonify, request, session
 
 try:
     from . import slug_validation as validation
-    from .slug_db import SlugExists, Store, in_minutes_iso, now_iso
+    from .slug_db import RepoTaken, SlugExists, Store, in_minutes_iso, now_iso
 except (
     ImportError
 ):  # run as top-level modules (flask --app app run, gunicorn app:app)
     import slug_validation as validation
-    from slug_db import SlugExists, Store, in_minutes_iso, now_iso
+    from slug_db import RepoTaken, SlugExists, Store, in_minutes_iso, now_iso
 
 # How long a claimed name is held before anyone else may take it. It spans a
 # whole campaign setup — from the name being chosen to the finished campaign
@@ -74,6 +83,9 @@ except (
 # as long as nobody else has taken the name; a setup that is given up releases
 # its name at once rather than waiting this out.
 CLAIM_TTL_MINUTES = 24 * 60
+# The claims one login may hold at a time: a setup holds one, and a few more
+# cover setups started and not yet given up.
+MAX_PENDING_CLAIMS = 10
 
 GITHUB_API = "https://api.github.com"
 
@@ -109,11 +121,20 @@ def claim():
     error = validation.registration_error(name)
     if error is not None:
         return jsonify(error=error), 422
+    login = session.get("userLogin", "")
+    if store.pending_count(login) >= MAX_PENDING_CLAIMS:
+        return (
+            jsonify(
+                error="You hold {} names for setups already; give one back"
+                " first".format(MAX_PENDING_CLAIMS)
+            ),
+            429,
+        )
     store.drop_expired_claim(name)
     claim_token = secrets.token_urlsafe(24)
     expires_at = in_minutes_iso(CLAIM_TTL_MINUTES)
     try:
-        store.create_pending(name, claim_token, expires_at)
+        store.create_pending(name, claim_token, expires_at, login)
     except SlugExists:
         return jsonify(error="'{}' is already taken".format(name)), 409
     return (
@@ -135,16 +156,19 @@ def release(name):
     if "githubToken" not in session:
         return jsonify(error="Authentication required"), 401
     body = request.get_json(silent=True) or {}
-    if not store.release(name, str(body.get("claim_token") or "")):
+    if not store.release(
+        name, str(body.get("claim_token") or ""), session.get("userLogin", "")
+    ):
         return jsonify(error="'{}' is not claimed by you".format(name)), 404
     return jsonify(name=name, status="free")
 
 
-def _push_permission_error(forge, repo_id):
+def _push_permission_error(forge, repo_id, name):
     """The repo-ownership gate for /register, as the error to return or None.
     The session's token must see the repository at GitHub and hold push
     permission on it, so a name cannot be registered against somebody else's
-    repo (or a repo id picked at random)."""
+    repo (or a repo id picked at random), and the repository must be named
+    after the campaign, so one repository cannot claim names it is not."""
     if forge != "github":
         return (
             jsonify(
@@ -170,7 +194,8 @@ def _push_permission_error(forge, repo_id):
         )
     if not response.ok:
         return jsonify(error="could not verify the repository"), 502
-    permissions = response.json().get("permissions") or {}
+    repository = response.json()
+    permissions = repository.get("permissions") or {}
     if not permissions.get("push"):
         return (
             jsonify(
@@ -179,6 +204,17 @@ def _push_permission_error(forge, repo_id):
                 )
             ),
             403,
+        )
+    repo_name = str(repository.get("name") or "")
+    if repo_name.lower() != name:
+        return (
+            jsonify(
+                error="repository {} is named '{}', not '{}'".format(
+                    repo_id, repo_name, name
+                ),
+                reason="repo_name",
+            ),
+            409,
         )
     return None
 
@@ -206,7 +242,7 @@ def register():
         return jsonify(error="repo_id must be an integer"), 422
     forge = str(body.get("forge") or "github")
     claim_token = body.get("claim_token") or None
-    denied = _push_permission_error(forge, repo_id)
+    denied = _push_permission_error(forge, repo_id, name)
     if denied:
         return denied
     active = {
@@ -215,7 +251,24 @@ def register():
         "forge": forge,
         "repo_id": repo_id,
     }
-    if store.activate(name, forge, repo_id, claim_token):
+    # One active name per repository: a repeat is idempotent, another name is
+    # a collision.
+    current = store.active_name_of(forge, repo_id)
+    if current == name:
+        return jsonify(**active)
+    if current is not None:
+        return (
+            jsonify(
+                error="repository {} is the campaign '{}' already".format(
+                    repo_id, current
+                ),
+                reason="repo_taken",
+            ),
+            409,
+        )
+    if store.activate(
+        name, forge, repo_id, claim_token, session.get("userLogin", "")
+    ):
         return jsonify(**active), 201
     # No claim of ours to activate: the name must be free — either never
     # claimed, or claimed by someone who let it run out.
@@ -223,15 +276,22 @@ def register():
     try:
         store.create_active(name, forge, repo_id)
     except SlugExists:
-        row = store.get(name)
-        if (
-            row is not None
-            and row["status"] == "active"
-            and row["forge"] == forge
-            and row["repo_id"] == repo_id
-        ):
-            return jsonify(**active)
-        return jsonify(error="'{}' is already taken".format(name)), 409
+        return (
+            jsonify(
+                error="'{}' is already taken".format(name), reason="name_taken"
+            ),
+            409,
+        )
+    except RepoTaken:
+        return (
+            jsonify(
+                error="repository {} is another campaign already".format(
+                    repo_id
+                ),
+                reason="repo_taken",
+            ),
+            409,
+        )
     return jsonify(**active), 201
 
 
@@ -277,6 +337,18 @@ def admin_list():
     if denied:
         return denied
     return jsonify([dict(row) for row in store.list_all()])
+
+
+@registry.post("/admin/slugs/<name>/free")
+def admin_free(name):
+    """Free a name, whatever its status, by removing its row: for a name held
+    by someone who should not have it. A tombstone keeps a name occupied."""
+    denied = _admin_error()
+    if denied:
+        return denied
+    if not store.delete(name):
+        return jsonify(error="'{}' does not exist".format(name)), 404
+    return jsonify(name=name, status="free")
 
 
 @registry.delete("/admin/slugs/<name>")

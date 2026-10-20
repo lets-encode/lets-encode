@@ -42,6 +42,15 @@ test("envelopeFromPrBody: rejects invalid envelope fields", () => {
   const body = (envelope: unknown) =>
     `<!-- lets-encode:command ${JSON.stringify(envelope)} -->`;
   assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, command: "" })), null);
+  // Only a command id of the app's shape, at most 64 characters.
+  for (const command of [
+    "campaign submitComment",
+    "x".repeat(70),
+    `campaign.${"a".repeat(60)}`,
+    "campaign.claim\n::error::forged",
+  ]) {
+    assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, command })), null);
+  }
   assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, version: 0 })), null);
   assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, version: 1.5 })), null);
   assert.equal(envelopeFromPrBody(body({ ...ENVELOPE, user_id: "" })), null);

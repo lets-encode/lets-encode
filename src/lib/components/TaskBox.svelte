@@ -74,8 +74,13 @@
     canPush: boolean;
     runner: CommandRunner;
     /** An error from the return from mei-friend; `label` names mei-friend
-        when the text is its own message. */
-    editorError?: { label: string; text: string } | null;
+        when the text is its own message, `confirm` offers the action the
+        return did not take. */
+    editorError?: {
+      label: string;
+      text: string;
+      confirm?: { label: string; run: () => void };
+    } | null;
     /** The footer's action is the view's primary action (a solid button);
         otherwise an outline, beside a primary elsewhere in the view. */
     primary?: boolean;
@@ -226,6 +231,14 @@
         >{#if editorError.label}<b>{editorError.label}:</b
           >{" "}{/if}{editorError.text}</span
       >
+      {#if editorError.confirm}
+        <button
+          type="button"
+          class="btn btn-soft"
+          disabled={runner.busy}
+          onclick={editorError.confirm.run}>{editorError.confirm.label}</button
+        >
+      {/if}
     </div>
   {/if}
   <div class="statusrow">

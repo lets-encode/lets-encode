@@ -141,12 +141,11 @@
     <div class="views-row">{@render heading()}</div>
   {/if}
   {#if subhead}{@render subhead()}{/if}
-  <div class="views" role="tablist" aria-label="Metadata detail">
+  <div class="views" role="group" aria-label="Metadata detail">
     {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
       <button
         type="button"
-        role="tab"
-        aria-selected={view === id}
+        aria-pressed={view === id}
         class="pill"
         class:pill-sm={heading !== undefined}
         class:on={view === id}

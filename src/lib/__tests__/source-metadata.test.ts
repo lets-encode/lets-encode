@@ -152,3 +152,21 @@ test("trims surrounding whitespace from typed values", () => {
   });
   assert.match(xml, /<title[^>]*>Padded<\/title>/);
 });
+
+test("reads a header in linear time whatever its comments hold", () => {
+  const head = buildSourceHead(filled());
+  // Start tags with no ">" after them, in comments that end the element
+  // around them early, and person names and dates never closed.
+  const crafted = head
+    .replace("</title>", `<!--${"<b ".repeat(64 * 1024)}</title>--></title>`)
+    .replace(
+      "</respStmt>",
+      `<!--${"<persName>".repeat(32 * 1024)}--></respStmt>`,
+    )
+    .replace("</edition>", `<!--${"<date ".repeat(64 * 1024)}--></edition>`);
+  assert.ok(crafted.length > head.length + 900_000);
+  const started = performance.now();
+  parseSourceHead(crafted);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});

@@ -27,6 +27,7 @@
   } from "$lib/campaign-tables.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
+  import { anchorCell } from "$lib/campaign-submit.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import type { SidePanelState } from "$lib/side-panels.ts";
   import ScorePreview from "./ScorePreview.svelte";
@@ -116,11 +117,17 @@
     selected && (task === "" || cardOnPiece)
       ? {
           page: String(selected.page + 1),
-          measure_start: selected.label,
-          measure_end: selected.label,
+          measure_start: anchorCell(selected.label),
+          measure_end: anchorCell(selected.label),
           fragment: task === "" ? piece.path : "",
         }
       : undefined;
+
+  let heading = $state<HTMLHeadingElement>();
+  /** Move focus to the view's heading, the piece name. */
+  export function focusHeading() {
+    heading?.focus();
+  }
 
   /** Turn the open score to a page (0-based), highlighting `range` when
       given; the campaign page calls it for links into the score shown. */
@@ -202,9 +209,14 @@
 
 <div class="scoreview">
   <div class="shead">
-    <span class="sname" title={pieceLabel(piece)}
-      >{clipTitle(pieceLabel(piece))}</span
+    <h1
+      class="sname"
+      bind:this={heading}
+      tabindex="-1"
+      title={pieceLabel(piece)}
     >
+      {clipTitle(pieceLabel(piece))}
+    </h1>
     <span class="scamp">{campaignTitle}</span>
     <button
       type="button"
@@ -279,6 +291,7 @@
     gap: 10px;
   }
   .sname {
+    margin: 0;
     font-size: 15px;
     font-weight: 600;
     color: var(--ink);

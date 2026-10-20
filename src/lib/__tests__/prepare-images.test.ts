@@ -62,6 +62,19 @@ const relayed = (status: number) => marked(status, "iiif");
 const refused = (status: number) => marked(status, "broker");
 /** A relay error raised before reaching out, which carries no marker at all. */
 const unmarked = (status: number) => marked(status, null);
+/** The relay's refusal once the account has used the day's allowance. */
+const dailyLimited = () =>
+  ({
+    ok: false,
+    status: 429,
+    headers: {
+      get: (name: string) =>
+        ({
+          "x-lets-encode-upstream": "broker",
+          "x-lets-encode-limit": "daily",
+        })[name] ?? null,
+    },
+  }) as unknown as Response;
 
 const okFetch = (marker = "iiif") => {
   const requested: string[] = [];
@@ -436,6 +449,35 @@ test("names the server that refused a canvas, and re-attempts the relay’s own 
   }
 });
 
+test("does not re-attempt a canvas or a manifest past the relay's daily limit", async () => {
+  let requests = 0;
+  const fetchFn = async () => {
+    requests++;
+    return dailyLimited();
+  };
+  await assert.rejects(
+    () =>
+      prepareCandidates(
+        [],
+        [{ service: null, url: "https://iiif.example/p" }],
+        undefined,
+        { ...stubs, fetchFn, brokerUrl: "/auth" },
+      ),
+    /Could not fetch the IIIF image at https:\/\/iiif\.example\/p: this account has reached today's limit for IIIF downloads/,
+  );
+  assert.equal(requests, 1);
+  requests = 0;
+  await assert.rejects(
+    () =>
+      fetchIiifCanvases("https://iiif.example/manifest", "/auth", {
+        fetchFn,
+        wait: async () => {},
+      }),
+    /today's limit for IIIF downloads/,
+  );
+  assert.equal(requests, 1);
+});
+
 test("stops fetching previews once one canvas has failed", async () => {
   const canvases = Array.from({ length: 40 }, (_, i) =>
     service(`https://iiif.example/img/${i + 1}`),
@@ -603,11 +645,31 @@ test("fetches a manifest and returns its canvases", async () => {
   );
 });
 
+test("re-attempts a manifest the relay refused", async () => {
+  const manifest = v3Manifest("https://iiif.example/img/9");
+  const waits: number[] = [];
+  let requests = 0;
+  const fetchFn = async () =>
+    ++requests === 1
+      ? refused(429)
+      : ({ ok: true, json: async () => manifest } as unknown as Response);
+  assert.deepEqual(
+    await fetchIiifCanvases("https://iiif.example/manifest", "/auth", {
+      fetchFn,
+      wait: async (ms) => void waits.push(ms),
+    }),
+    [{ service: "https://iiif.example/img/9", url: "" }],
+  );
+  assert.equal(requests, 2);
+  assert.equal(waits.length, 1);
+});
+
 test("names the server that refused a manifest", async () => {
   await assert.rejects(
     () =>
       fetchIiifCanvases("https://iiif.example/manifest", "/auth", {
         fetchFn: async () => refused(429),
+        wait: async () => {},
       }),
     /Could not fetch the IIIF manifest at https:\/\/iiif\.example\/manifest: too many requests to the image relay/,
   );

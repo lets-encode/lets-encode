@@ -169,6 +169,19 @@ test("encoding claim is rejected when already locked", () => {
   assert.equal(claim({ locks }).reason, "already_locked");
 });
 
+test("a claim is rejected once the person holds the campaign's most claims at once", () => {
+  // carol holds two claims on other tasks; bob's does not count against her.
+  const locks = parseLockCsv(
+    LOCK_HEADER +
+      "T0002,,carol,2026-06-25T09:30:00Z,encoding\n" +
+      "T0003,S0001,carol,2026-06-25T09:30:00Z,validation\n" +
+      "T0004,,bob,2026-06-25T09:30:00Z,encoding\n",
+  );
+  assert.equal(claim({ locks, maxClaims: 2 }).reason, "too_many_claims");
+  assert.equal(claim({ locks, maxClaims: 3 }).ok, true);
+  assert.equal(claim({ locks }).ok, true);
+});
+
 test("encoding claim is rejected in the wrong state", () => {
   assert.equal(claim({ state: validationRequired }).reason, "wrong_state");
 });

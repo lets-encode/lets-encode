@@ -32,6 +32,7 @@ import {
   appendHistory,
   configFlag,
   configNumber,
+  DEFAULT_MAX_CLAIMS,
   DEFAULT_STALE_MINUTES,
   passThresholdOf,
   COMMENT_PATH,
@@ -60,6 +61,8 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
+  MAX_ANCHOR_LENGTH,
+  MAX_COMMENT_LENGTH,
   resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
@@ -83,6 +86,7 @@ import {
   keptWorkSince,
   pieceKindForPath,
   priorDecision,
+  rejectionDetail,
   removedRowFromPatch,
   resolveEncodingTask,
   resolvedCommentFromPatch,
@@ -178,6 +182,19 @@ const MAX_OPEN_PRS_PER_AUTHOR = 10;
 const CATCHUP_MIN_AGE_MS = 3 * 60_000;
 const CATCHUP_MAX_AGE_MS = 7 * 24 * 60 * 60_000;
 const CATCHUP_MAX_PRS = 20;
+// The envelope input recorded on a history row, as JSON, at most this many
+// characters; a longer input is left out. The input comes from the PR body,
+// and every history row is read by each later run and by the app.
+const MAX_HISTORY_INPUT = 4096;
+
+const historyColumns = (
+  envelope: CommandEnvelope | null,
+): ReturnType<typeof envelopeColumns> => {
+  const columns = envelopeColumns(envelope);
+  return columns.input.length > MAX_HISTORY_INPUT
+    ? { ...columns, input: "" }
+    : columns;
+};
 
 // A rejection's `reason` is the machine-readable code recorded in the history
 // table; `detail` is the human explanation behind it, for the PR comment only.
@@ -205,6 +222,8 @@ const REASON_TEXT: Record<string, string> = {
   already_locked: "someone already holds this claim",
   review_in_progress:
     "someone else is reviewing this task; reviews run one at a time",
+  too_many_claims:
+    "you hold as many claims as this campaign allows one person at once; submit or give back one of them first",
   self_validation: "the encoder cannot review their own work",
   already_validated: "this person already recorded a verdict on this subtask",
   no_open_validation_slot: "no review slot is open",
@@ -220,6 +239,8 @@ const REASON_TEXT: Record<string, string> = {
   not_permitted:
     "only a reviewer who requested changes or the campaign owner may do this",
   empty_comment: "the comment is empty",
+  comment_too_long: `the comment is longer than ${MAX_COMMENT_LENGTH} characters`,
+  invalid_anchor: `the comment's page or measures are longer than ${MAX_ANCHOR_LENGTH} characters, or its piece is not the path of an MEI file`,
   unknown_parent: "the reply's parent comment does not exist",
   invalid_parent:
     "a parent comment must be a top-level comment, and only replies carry one",
@@ -479,6 +500,11 @@ async function attemptClaim(
           configText,
           claimState.validationColumns.length,
         ),
+        maxClaims: configNumber(
+          configText,
+          "max_claims_per_person",
+          DEFAULT_MAX_CLAIMS,
+        ),
       })
     : { ok: false, reason: "malformed_claim" };
 
@@ -495,7 +521,7 @@ async function attemptClaim(
     action: `claim_${intent?.kind || "unknown"}`,
     outcome: verdict.ok ? "accepted" : "rejected",
     detail: verdict.ok ? "" : verdict.reason!,
-    ...envelopeColumns(envelope),
+    ...historyColumns(envelope),
     pr: String(prNumber),
   };
   const auditFree = isAuditFree(verdict);
@@ -611,7 +637,7 @@ async function attemptRelease(
     action: `release_${intent.kind}`,
     outcome: verdict.ok ? "accepted" : "rejected",
     detail: verdict.ok ? "" : verdict.reason!,
-    ...envelopeColumns(envelope),
+    ...historyColumns(envelope),
     pr: String(prNumber),
   };
   const files: FileChange[] = [
@@ -743,7 +769,7 @@ async function attemptReviewEdit(
     action: "review_edit",
     outcome: verdict.ok ? "accepted" : "rejected",
     detail: verdict.ok ? "" : verdict.reason,
-    ...envelopeColumns(envelope),
+    ...historyColumns(envelope),
     pr: String(prNumber),
   };
   const files: FileChange[] = [
@@ -849,6 +875,36 @@ async function decideEncoding(
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
   // in `detail`, since the reason code is what the tables record.
+  // Everything but the MEI check is decided before the fork's file is read:
+  // a submitter who holds no claim cannot make the run parse their file.
+  const precheck = checkEncoding({
+    tasks,
+    state,
+    locks,
+    intent: { task_id: task.task_id },
+    author,
+    changedPaths,
+    meiValid: true,
+    now,
+    expired,
+  });
+  if (!precheck.ok) {
+    return {
+      ok: false,
+      reason: precheck.reason,
+      detail: "",
+      history: {
+        timestamp: now,
+        task_id: task.task_id,
+        subtask_id: "",
+        user_id: author,
+        action: "submit_encoding",
+        outcome: "rejected",
+        detail: precheck.reason,
+      },
+    };
+  }
+
   const isPageTask = task.locator.startsWith("surface-");
   const readStart = Date.now();
   const [forkMei, baseMei, configText, commitMessage] = await Promise.all([
@@ -1188,7 +1244,7 @@ async function attemptSubmit(
       outcome: "rejected",
       detail: outcome.reason ?? "rejected",
     }),
-    ...envelopeColumns(envelope),
+    ...historyColumns(envelope),
     pr: String(prNumber),
   };
   const files: FileChange[] = [
@@ -1242,7 +1298,7 @@ async function runSubmit(
   const body = verdict.ok
     ? `✅ Submission accepted (${kind === "validation" ? "review" : kind}).`
     : `❌ Submission rejected: ${explainReason(verdict.reason)}. No changes were made.` +
-      (verdict.detail ? ` ${verdict.detail}` : "");
+      (verdict.detail ? ` ${rejectionDetail(verdict.detail)}` : "");
   const closeStart = Date.now();
   await commentAndClosePr(token, owner, repo, prNumber, body);
   if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
@@ -1318,7 +1374,7 @@ async function attemptComment(
     action,
     outcome: verdict.ok ? "accepted" : "rejected",
     detail: verdict.ok ? row!.kind : verdict.reason,
-    ...envelopeColumns(envelope),
+    ...historyColumns(envelope),
     pr: String(prNumber),
   };
   const files: FileChange[] = [
@@ -1561,6 +1617,11 @@ async function run(): Promise<void> {
   });
   await processPullRequest();
 }
+
+// Text from forks reaches this run's log, and the runner acts on a line such
+// as `::add-mask::` or `::error::` in it. The coordinator issues no workflow
+// commands, so the runner stops processing them for the rest of the run.
+console.log(`::stop-commands::${crypto.randomUUID()}`);
 
 run()
   .catch((e) => {

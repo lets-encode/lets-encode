@@ -864,6 +864,7 @@ textarea.input {
    itself stays ink, like the fail boxes. */
 .banner {
   display: flex;
+  overflow-wrap: anywhere;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;

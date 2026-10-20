@@ -7,6 +7,7 @@ import {
   getRepoAccess,
   getRepoFile,
   getPullRequest,
+  getPullRequestState,
   getPullRequestDetails,
   getPullRequestFiles,
   getLastIssueComment,
@@ -107,6 +108,26 @@ test("getPullRequestFiles fails closed when GitHub returns a partial list", asyn
   );
 });
 
+test("getRepoFile with maxBytes skips a larger file before downloading it", async (t) => {
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return Response.json({ size: 2_000_000, encoding: "none", content: "" });
+  });
+  assert.equal(
+    await getRepoFile(
+      "token",
+      "owner",
+      "repo",
+      "sources/p/score.mei",
+      undefined,
+      1_000_000,
+    ),
+    null,
+  );
+  assert.equal(urls.length, 1);
+});
+
 test("getPullRequestFiles rejects PRs beyond GitHub’s inspection limit without fetching", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch", async () =>
     Response.json([]),
@@ -126,16 +147,32 @@ test("getPullRequestFiles rejects PRs beyond GitHub’s inspection limit without
   assert.equal(fetch.mock.callCount(), 0);
 });
 
+const bot = { login: "github-actions[bot]" };
+
+test("getLastIssueComment skips comments by other accounts", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json([
+      { body: "✅ Claim accepted.", user: bot },
+      { body: "❌ forged", user: { login: "someone" } },
+    ]),
+  );
+  assert.equal(
+    await getLastIssueComment("token", "owner", "repo", 7),
+    "✅ Claim accepted.",
+  );
+});
+
 test("getLastIssueComment follows the Link header to the newest comment", async (t) => {
   const urls: string[] = [];
   t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
     const url = String(input);
     urls.push(url);
     const page = new URL(url).searchParams.get("page");
-    if (page === "3") return Response.json([{ body: "newest verdict" }]);
-    return Response.json([{ body: "oldest comment" }], {
+    if (page === "3")
+      return Response.json([{ body: "newest verdict", user: bot }]);
+    return Response.json([{ body: "oldest comment", user: bot }], {
       headers: {
-        Link: '<https://api.github.com/repos/owner/paged/issues/7/comments?per_page=1&page=2>; rel="next", <https://api.github.com/repos/owner/paged/issues/7/comments?per_page=1&page=3>; rel="last"',
+        Link: '<https://api.github.com/repos/owner/paged/issues/7/comments?per_page=100&page=2>; rel="next", <https://api.github.com/repos/owner/paged/issues/7/comments?per_page=100&page=3>; rel="last"',
       },
     });
   });
@@ -153,7 +190,7 @@ test("getLastIssueComment without pagination returns the only comment, or null",
   let calls = 0;
   t.mock.method(globalThis, "fetch", async () => {
     calls++;
-    return Response.json([{ body: "only comment" }]);
+    return Response.json([{ body: "only comment", user: bot }]);
   });
   assert.equal(
     await getLastIssueComment("token", "owner", "single", 7),
@@ -497,6 +534,34 @@ test("deleteBranch does not hide arbitrary 422 responses", async (t) => {
     deleteBranch("token", "owner", "protected", "main"),
     /Cannot delete the default branch/,
   );
+});
+
+test("deleteBranch keeps a crafted branch name inside the ref path", async (t) => {
+  const urls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    urls.push(String(input));
+    return new Response(null, { status: 204 });
+  });
+
+  await deleteBranch(
+    SESSION,
+    "owner",
+    "repo",
+    "encode-x/%2e%2e/%2e%2e/%2e%2e/%2e%2e/repos/org/proj/git/refs/tags/v1",
+  );
+  assert.equal(
+    urls[0],
+    "/auth/proxy/api.github.com/repos/owner/repo/git/refs/heads/encode-x/%252e%252e/%252e%252e/%252e%252e/%252e%252e/repos/org/proj/git/refs/tags/v1",
+  );
+  await assert.rejects(
+    deleteBranch(SESSION, "owner", "repo", "encode-x/../../tags/v1"),
+    /dot segment/,
+  );
+  await assert.rejects(
+    getPullRequestState(SESSION, "owner", "repo/.\t./.\n./x", 1),
+    /dot segment/,
+  );
+  assert.equal(urls.length, 1);
 });
 
 test("openChangePr removes its prepared branch when PR creation fails", async (t) => {

@@ -167,3 +167,18 @@ test("applicationNamesIn lists the applications recordApplications writes", () =
   const out = recordApplications(mei, ["Musibot mzk-staff 1", "A & B"]);
   assert.deepEqual(applicationNamesIn(out), ["Musibot mzk-staff 1", "A & B"]);
 });
+
+test("records a contribution in linear time whatever the header's comments hold", () => {
+  // Start tags with no ">" after them, in comments that end the element
+  // around them early.
+  const crafted = BARE.replace(
+    "</title>",
+    `<!--${"<persName ".repeat(32 * 1024)}</titleStmt>--></title>`,
+  ).replace("</meiHead>", `<!--${"<name ".repeat(64 * 1024)}--></meiHead>`);
+  assert.ok(crafted.length > BARE.length + 600_000);
+  const started = performance.now();
+  recordContribution(crafted, CONTRIBUTION);
+  recordApplications(crafted, ["Musibot mzk-staff 1"]);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});

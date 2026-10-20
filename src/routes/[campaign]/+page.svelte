@@ -10,6 +10,7 @@
     readForge,
     viewerId,
     openMeiFriend,
+    takeHandOff,
   } from "$lib/command-runner.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import {
@@ -77,7 +78,8 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { startAutoRefresh } from "$lib/auto-refresh.ts";
+  import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
+  import RefreshNotice from "$lib/components/RefreshNotice.svelte";
   import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
@@ -463,6 +465,12 @@
     a: MeasureAnchor | null = null,
   ) {
     anchor = a;
+    if (!scoreView)
+      scoreReturnFocus =
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+          ? document.activeElement
+          : null;
     const query = new URLSearchParams();
     if (detailTask) query.set("task", detailTask);
     query.set("score", path);
@@ -477,6 +485,28 @@
       replaceState: same,
     });
   }
+  // Focus follows the score view: to its heading when it opens or shows
+  // another piece, and on close back to the element it was opened from, or
+  // to the View score button when that element is gone.
+  let scoreReturnFocus: HTMLElement | null = null;
+  let viewScoreButton = $state<HTMLButtonElement>();
+  let focusedScore: string | null = null;
+  $effect(() => {
+    const path = scoreView?.piece.path ?? null;
+    if (path === focusedScore) return;
+    focusedScore = path;
+    void tick().then(() => {
+      if (path) {
+        scoreViewRef?.focusHeading();
+        return;
+      }
+      const target = scoreReturnFocus?.isConnected
+        ? scoreReturnFocus
+        : viewScoreButton;
+      scoreReturnFocus = null;
+      target?.focus();
+    });
+  });
   function closeScoreView() {
     goto(
       `/${campaign}${detailTask ? `?task=${encodeURIComponent(detailTask)}` : ""}`,
@@ -611,7 +641,9 @@
   // Other people's claims, submissions, verdicts and comments: the tables are
   // read again whenever the default branch has moved since the last read.
   // Logged out, every request counts against the shared per-address limit.
+  let refreshStatus = $state(REFRESH_OK);
   $effect(() => {
+    refreshStatus = REFRESH_OK;
     if (!owner || !repo) return;
     return startAutoRefresh({
       interval: () => (auth.user ? 10_000 : 300_000),
@@ -620,6 +652,7 @@
         const { sha } = await readForge().getRepoHead(owner, repo);
         if (sha !== headSha) await load(true);
       },
+      onStatus: (status) => (refreshStatus = status),
     });
   });
 
@@ -794,7 +827,10 @@
     task: string;
     label: string;
     text: string;
+    confirm?: { label: string; run: () => void };
   } | null>(null);
+  // The longest message from mei-friend the panel shows.
+  const MAX_EDITOR_MESSAGE = 500;
   /** The task mei-friend just reported complete, highlighted until `until`. */
   let completed = $state<{ task: string; until: number } | null>(null);
   const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
@@ -828,13 +864,21 @@
       msg,
     });
     if (status === "failed") {
-      editorError = msg
-        ? { task, label: "Message from mei-friend", text: msg }
-        : {
-            task,
-            label: "",
-            text: "mei-friend reported that the task could not be completed.",
-          };
+      // mei-friend's own message only for a hand-off this browser made: the
+      // return URL is a link anyone can build.
+      const handedOff = takeHandOff(campaign, task);
+      editorError =
+        msg && handedOff
+          ? {
+              task,
+              label: "Message from mei-friend",
+              text: msg.slice(0, MAX_EDITOR_MESSAGE),
+            }
+          : {
+              task,
+              label: "",
+              text: "mei-friend reported that the task could not be completed.",
+            };
       return;
     }
     if (status !== "complete" && status !== "abandoned") return;
@@ -849,10 +893,34 @@
       };
       return;
     }
-    if (status === "complete") {
-      completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
-      submitpr(task);
-    } else abandon(task, "");
+    // A return this browser did not hand off may come from a link someone
+    // else built, so it waits for the volunteer.
+    if (!takeHandOff(campaign, task)) {
+      editorError =
+        status === "complete"
+          ? {
+              task,
+              label: "",
+              text: "mei-friend reported the task complete, but it was not opened from this browser, so nothing was submitted yet.",
+              confirm: {
+                label: "Submit for review",
+                run: () => submitCompleted(task),
+              },
+            }
+          : {
+              task,
+              label: "",
+              text: "mei-friend reported the task abandoned, but it was not opened from this browser, so the claim was kept.",
+            };
+      return;
+    }
+    if (status === "complete") submitCompleted(task);
+    else abandon(task, "");
+  }
+  function submitCompleted(task: string) {
+    editorError = null;
+    completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
+    submitpr(task);
   }
 
   const validate = (
@@ -1073,7 +1141,11 @@
 <svelte:window
   bind:innerWidth={windowWidth}
   onkeydown={(e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    // Escape in a text field belongs to the field; closing here would
+    // discard what was typed.
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("input, textarea, select, [contenteditable]")) return;
     if (scoreView) closeScoreView();
     else if (detailTask) closeTask();
   }}
@@ -1338,12 +1410,20 @@
       </div>
     {:else}
       <div class="viewcol">
+        <RefreshNotice status={refreshStatus} />
         {#if !resolved}
           <p class="msg muted">Finding the campaign…</p>
         {:else if loading}
           <p class="msg muted">Loading campaign…</p>
         {:else if loadError}
-          <div class="banner bar err"><span>{loadError}</span></div>
+          <div class="banner bar err">
+            <span>
+              {loadError}
+              <button type="button" class="linkish" onclick={() => load()}
+                >Try again</button
+              >
+            </span>
+          </div>
         {:else if notInitialised}
           <div class="banner bar warn">
             <span>
@@ -1388,6 +1468,7 @@
             </ScoreView>
           {/key}
         {:else if manage && canPush}
+          <h1 class="vh">{title || repo} · Manage</h1>
           <div class="crumbrow">
             <button
               type="button"
@@ -1455,6 +1536,7 @@
                     <button
                       type="button"
                       class="btn scorebtn"
+                      bind:this={viewScoreButton}
                       onclick={viewContextScore}
                       title={scoreHint}>View score</button
                     >
@@ -1530,6 +1612,7 @@
                       <button
                         type="button"
                         class="btn scorebtn"
+                        bind:this={viewScoreButton}
                         onclick={viewContextScore}
                         title={scoreHint}>View score</button
                       >
@@ -2586,7 +2669,7 @@
   .bcol-count {
     font-size: 11px;
     font-weight: 700;
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.22);
     border-radius: 999px;
     line-height: 1;
     padding: 3px 8px;
@@ -2677,7 +2760,8 @@
     background: var(--ok-wash);
   }
   .card.failtint {
-    background: var(--danger-bg);
+    background:
+      linear-gradient(var(--danger-wash), var(--danger-wash)), var(--card);
     border-color: var(--danger-line);
   }
   /* The card the side panel shows: an outline the stage and fail tints

@@ -13,13 +13,41 @@ import type { VerovioToolkit } from "verovio/esm";
 const SANITIZE_SVG = {
   USE_PROFILES: { svg: true, svgFilters: true },
   ADD_TAGS: ["use"],
+  // A rendered score links nowhere; a link's content is kept. Verovio writes
+  // no style attributes.
+  FORBID_TAGS: ["a"],
+  FORBID_ATTR: ["style"],
 };
-// <use> is off the profile because it can reference other documents; keep it
-// to same-document fragments.
+// SVG that an MEI file embeds (<fig><svg>) reaches the output as written, so
+// these rules hold for every element. A <style> applies to the whole page:
+// only Verovio's own, written as a child of its top-level <svg>, is kept.
+DOMPurify.addHook("uponSanitizeElement", (node, data) => {
+  if (data.tagName !== "style") return;
+  const parent = node.parentElement;
+  const topLevel =
+    parent?.nodeName.toLowerCase() === "svg" &&
+    parent.parentElement?.nodeName.toLowerCase() === "body";
+  if (!topLevel) parent?.removeChild(node);
+});
+// Nothing may load another document: an href that is not a fragment, and a
+// url() that is not one in any attribute, are removed, and so is a <use> left
+// without an href. Both href attributes count: SVG 2 browsers follow href,
+// older ones xlink:href.
+const EXTERNAL_URL = /url\(\s*(?!['"]?#)/i;
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.nodeName.toLowerCase() !== "use") return;
-  const href = node.getAttribute("xlink:href") ?? node.getAttribute("href");
-  if (!href?.startsWith("#")) node.remove();
+  for (const attribute of [...node.attributes]) {
+    const external =
+      attribute.localName === "href"
+        ? !attribute.value.startsWith("#")
+        : EXTERNAL_URL.test(attribute.value);
+    if (external) node.removeAttribute(attribute.name);
+  }
+  if (
+    node.nodeName.toLowerCase() === "use" &&
+    !node.hasAttribute("href") &&
+    !node.hasAttribute("xlink:href")
+  )
+    node.remove();
 });
 
 // Verovio is a ~2 MB WASM module — loaded on first preview, then reused. The

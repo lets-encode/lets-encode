@@ -7,7 +7,14 @@
 // rest of the file. Same conventions as source-metadata.ts: pure regex and
 // string handling, no DOM, filesystem or network access.
 
-import { escapeRegex, indent, xmlEscape, xmlUnescape } from "./mei-xml.ts";
+import {
+  elementsNamed,
+  firstElementNamed,
+  indent,
+  stripTags,
+  xmlEscape,
+  xmlUnescape,
+} from "./mei-xml.ts";
 
 /** One accepted contribution, as recorded in the header. */
 export interface Contribution {
@@ -29,39 +36,34 @@ function insertBefore(xml: string, closer: string, addition: string): string {
 
 /** The contributor among the file's responsibility statements, added once. */
 function withContributor(head: string, name: string): string {
-  const fileDesc = /<fileDesc\b[^>]*>[\s\S]*?<\/fileDesc>/.exec(head);
+  const fileDesc = firstElement(head, "fileDesc");
   if (!fileDesc) return head;
-  const titleStmt = /<titleStmt\b[^>]*>[\s\S]*?<\/titleStmt>/.exec(fileDesc[0]);
+  const titleStmt = firstElement(fileDesc.text, "titleStmt");
   if (!titleStmt) return head;
 
   // Already named in the file's title statement (in any role): nothing to add.
-  const named = [
-    ...titleStmt[0].matchAll(/<persName\b[^>]*>([\s\S]*?)<\/persName>/g),
-  ].some(
-    (m) =>
-      m[1]
-        .replace(/<[^>]*>/g, " ")
-        .replace(/\s+/g, " ")
-        .trim() === name,
+  const named = [...elementsNamed(titleStmt.text, "persName")].some(
+    (persName) =>
+      stripTags(persName.inner).replace(/\s+/g, " ").trim() === name,
   );
   if (named) return head;
 
   const entry = `${indent(5)}<persName role="contributor">${xmlEscape(name)}</persName>\n`;
-  const updated = titleStmt[0].includes("</respStmt>")
-    ? insertBefore(titleStmt[0], "</respStmt>", entry)
+  const updated = titleStmt.text.includes("</respStmt>")
+    ? insertBefore(titleStmt.text, "</respStmt>", entry)
     : insertBefore(
-        titleStmt[0],
+        titleStmt.text,
         "</titleStmt>",
         `${indent(4)}<respStmt>\n${entry}${indent(4)}</respStmt>\n${indent(3)}`,
       );
   // Function replacement: `updated` carries user text, which must not be read for $-patterns.
-  return head.replace(titleStmt[0], () => updated);
+  return head.replace(titleStmt.text, () => updated);
 }
 
 /** The application among <appInfo>'s entries, added once (matched by name). */
 function withApplication(head: string, name: string): string {
-  const present = new RegExp(`<name[^>]*>\\s*${escapeRegex(name)}\\s*</name>`);
-  if (present.test(head)) return head;
+  if ([...elementsNamed(head, "name")].some((el) => el.inner.trim() === name))
+    return head;
 
   const id = `app-${
     name
@@ -114,13 +116,27 @@ function withChange(head: string, c: Contribution): string {
   );
 }
 
+/**
+ * The first element called `name`, with its offset, found in linear time
+ * (firstElementNamed): scores come from forks.
+ */
+function firstElement(
+  xml: string,
+  name: string,
+): { index: number; text: string } | null {
+  const element = firstElementNamed(xml, name);
+  return element
+    ? { index: element.start, text: xml.slice(element.start, element.end) }
+    : null;
+}
+
 /** The application names a document's header records in <appInfo>, in order. */
 export function applicationNamesIn(mei: string): string[] {
-  const head = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(mei)?.[0] ?? "";
-  const appInfo = /<appInfo\b[^>]*>[\s\S]*?<\/appInfo>/.exec(head)?.[0] ?? "";
+  const head = firstElement(mei, "meiHead")?.text ?? "";
+  const appInfo = firstElement(head, "appInfo")?.text ?? "";
   return [
     ...appInfo.matchAll(
-      /<application\b[^>]*>[\s\S]*?<name\b[^>]*>\s*([^<]*?)\s*<\/name>/g,
+      /<application\b[^>]{0,2000}>[\s\S]{0,2000}?<name\b[^>]{0,2000}>\s*([^<]*?)\s*<\/name>/g,
     ),
   ].map((m) => xmlUnescape(m[1]));
 }
@@ -130,13 +146,15 @@ export function applicationNamesIn(mei: string): string[] {
  * The score is returned unchanged when it has no <meiHead>.
  */
 export function recordApplications(mei: string, names: string[]): string {
-  const match = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(mei);
+  const match = firstElement(mei, "meiHead");
   if (!match) return mei;
-  let head = match[0];
+  let head = match.text;
   for (const name of names)
     if (name.trim()) head = withApplication(head, name.trim());
   return (
-    mei.slice(0, match.index) + head + mei.slice(match.index + match[0].length)
+    mei.slice(0, match.index) +
+    head +
+    mei.slice(match.index + match.text.length)
   );
 }
 
@@ -145,18 +163,20 @@ export function recordApplications(mei: string, names: string[]): string {
  * when it has no <meiHead>.
  */
 export function recordContribution(mei: string, c: Contribution): string {
-  const match = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(mei);
+  const match = firstElement(mei, "meiHead");
   if (!match) return mei;
   const name = c.name.trim();
   const message = (
     c.message.split("\n", 1)[0] || "Contribution accepted."
   ).trim();
 
-  let head = match[0];
+  let head = match.text;
   if (name) head = withContributor(head, name);
   if (c.application?.trim()) head = withApplication(head, c.application.trim());
   head = withChange(head, { ...c, name, message });
   return (
-    mei.slice(0, match.index) + head + mei.slice(match.index + match[0].length)
+    mei.slice(0, match.index) +
+    head +
+    mei.slice(match.index + match.text.length)
   );
 }

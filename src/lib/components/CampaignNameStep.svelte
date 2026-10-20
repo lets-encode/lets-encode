@@ -191,7 +191,9 @@
         ? `“${name}” has just been taken by another campaign. Choose a different name.`
         : result.error === "invalid"
           ? `“${name}” cannot be used as a campaign name.`
-          : "The name could not be reserved just now. Check your connection and try again.";
+          : result.error === "limit"
+            ? "You are holding the names of too many unfinished setups. Discard one under Drafts on the campaign list, or wait until a name is released 24 hours after it was reserved."
+            : "The name could not be reserved just now. Check your connection and try again.";
   }
 
   // Take over the name held by this browser's unfinished setup of the same
