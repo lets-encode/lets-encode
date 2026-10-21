@@ -6,6 +6,7 @@ parentheses.
 ## 2026-10-21
 
 - Proxied writes are limited to campaigns, session tokens are encrypted and revoked on expiry, and the compromised eMudhra CAs are no longer trusted.
+- Vite and the cookie package are updated to versions without known vulnerabilities.
 
 ## 2026-10-20
 
