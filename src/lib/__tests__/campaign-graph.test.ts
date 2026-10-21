@@ -222,6 +222,7 @@ test("buildGraph: a validator with a recorded verdict is not offered the next sl
   const asCarol = buildGraph(d, "carol").find((n) => n.task === "T0001")!.slots;
   assert.equal(asCarol[1].claimable, false);
   assert.equal(asCarol[1].who, "open — needs another volunteer");
+  assert.equal(asCarol[1].needsAnother, true);
   const asOther = buildGraph(d, "you").find((n) => n.task === "T0001")!.slots;
   assert.equal(asOther[1].claimable, true);
   // The self-validation flag lifts the rule.
@@ -240,6 +241,7 @@ test("buildGraph: the encoder sees an open slot needs another volunteer, not a c
   const asEncoder = slotFor("alice");
   assert.equal(asEncoder.claimable, false);
   assert.equal(asEncoder.who, "open — needs another volunteer");
+  assert.equal(asEncoder.needsAnother, true);
   const asOther = slotFor("you");
   assert.equal(asOther.claimable, true);
   assert.equal(asOther.who, "open — claim to review");
@@ -265,10 +267,10 @@ test("buildGraph: numeric user ids render as logins via the map", () => {
   const withLogin = buildGraph(data, "", logins).find(
     (n) => n.task === "T0001",
   );
-  assert.equal(withLogin?.slots[0].who, "@octocat · pass");
+  assert.equal(withLogin?.slots[0].who, "@octocat · approved");
   // No map entry → the id stands in for the login, never a blank.
   const withoutLogin = buildGraph(data, "").find((n) => n.task === "T0001");
-  assert.equal(withoutLogin?.slots[0].who, "@12345 · pass");
+  assert.equal(withoutLogin?.slots[0].who, "@12345 · approved");
 });
 
 test("claimLabel names mei-friend for an encoding only", () => {

@@ -3,6 +3,164 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-21
+
+- Proxied writes are limited to campaigns, session tokens are encrypted and revoked on expiry, and the compromised eMudhra CAs are no longer trusted.
+
+## 2026-10-20
+
+- The broker's relays and proxy are limited per login and to the requests the app makes.
+- The broker logs each login's relay use and no longer logs query strings.
+- Sessions are no longer ended early when many are open.
+- Campaign names are bound to their repository and to the login that reserved them.
+- The coordinator refuses oversized or malformed fork input and stops runs after 30 minutes.
+- One person may hold at most ten claims at once in a campaign.
+- Scores are read in linear time and rendered without links, outside references or embedded styles.
+- A return from mei-friend acts only on a hand-off this browser started.
+- Comments and change requests are limited to 5,000 characters.
+- Accessibility and error-state fixes on the campaign, task and score pages.
+- The campaign pages say when background updates are paused or failing.
+- Creating a campaign no longer gives the repository's workflows write access by default.
+- Dependencies are updated, pinned with hashes and installed without install scripts.
+
+## 2026-10-19
+
+- On iOS the page no longer zooms into a focused text field, and touch screens keep each field's text size.
+- Posted comments use 12.5px text instead of 12px.
+- The comment field has 14px text, grows with it, takes new lines with Shift+Enter, and has its buttons below it.
+- In review Give back task, Request changes and Approve stay on one line, on phones with smaller buttons.
+- Switching steps in the measure correction scrolls back to the top of the first page.
+- On phones the measure correction's step switch, selection heading and actions take less height.
+- On tablets and phones the measure correction's selection panel takes fewer rows.
+- Switching steps in the measure correction turns Draw off, and the hint shows the Draw icon.
+- Board cards say in one sentence what the task asks for and are larger on touch screens.
+- The "Recently active" sort places campaigns without activity by their creation time.
+- Upright tablets up to 1100px wide show the side panel as a bottom sheet.
+- A long press in the score editors no longer selects text or opens a context menu.
+- A fully lowered phone sheet shows only the toolbar and tools.
+- The score setup frames the whole first measure, keeps it in view when resized, and has zoom buttons on the source.
+- The score setup's summary draws each brace and bracket beside the staves it joins.
+- The button for releasing a claim reads "Give back task" in every editor and review.
+- The measure correction's toolbar is rearranged for touch screens.
+- The score view's side panel can be hidden and its toolbar stays on one row.
+- On touch screens the Comments button opens a closed task panel on the comments.
+- The review actions sit at the side panel's bottom in the review view and pre-task editors.
+- A score setup change request starts with the staff or group it refers to.
+- The page viewers disable next-page on the last page and show their page label in Safari.
+- Smaller layout fixes in the measure correction and the score viewer.
+
+## 2026-10-16
+
+- On a touch screen a double tap on a box in draw mode switches back to scroll mode.
+- The region editors select several boxes by Shift+click, Shift+drag or Select several, and move, copy and delete them together.
+- The measure correction marks repeats, endings and navigation signs, and shows a system start as a bracket.
+- The score workspaces share one panel, their stage's colour, soft round buttons and one toolbar order at every size.
+- A new campaign's repository can be created in one of your GitHub organisations.
+- Tasks in review show whose reviews are in progress and whether you may take the next one.
+- The measure correction shows the selected box's controls in the same aligned rows on every screen, with New on phones too.
+- The measure correction keeps its instructions in the task text and shows only counts in the detection result.
+- The wizard's page views keep the same small gap between rows of pages at fit page.
+- The campaign list and campaign page update in place when other people's changes land.
+- On phones the measure correction keeps its steps in view while a box is selected.
+- The measure correction keeps only the boxes inside the piece's regions, from new detections and from saved scores and drafts.
+- The measure correction shows only the piece's part of a page, with a button to show the whole page.
+
+## 2026-10-15
+
+- Measures can be marked as pickups, numbered 0 at a section start and as halves such as 12a and 12b elsewhere.
+- Measure numbers restart at 1 in each section.
+- The measure correction can hide its boxes to show the page underneath.
+- Measure numbers shrink in narrow or low measure boxes.
+- On phones the measure correction's Scroll and Draw buttons sit over the pages.
+- On phones a double tap on the page outside a box returns the measure correction to scroll mode.
+- The draft note sits centred just above the docked side panel.
+- On phones the task sheet fades at an edge with more to scroll.
+- The score viewer's pane switch uses the toolbar's joined buttons, and on phones its page label shows the numbers only.
+- A Comments button in the task box heading replaces the selection and comments tabs of the task views.
+- The score setup shows the source's first measure beside the preview, split by a draggable divider.
+- The score setup scales the source's first system so its staves line up with the preview's.
+- On phones the closed task sheet can be dragged lower to give the work area more room.
+- On phones a dragged task sheet moves over the work area and shows the task box only once opened.
+- The score setup task description explains the source view, the divider and marking groups.
+- Score setup staves of transposing instruments have a tint of their own.
+- The score setup clef menu lists Treble, Bass and Alto first, above the full list.
+- The score setup shows the brace, bracket and numeric time signature symbols beside their names.
+
+## 2026-10-14
+
+- The score setup preview numbers the staves in its left margin.
+- On phones the score viewer's toolbar buttons are set like the measure correction's.
+- Score setup braces and brackets are marked by clicking or tapping staves in the preview and nest two levels deep.
+- Score setup groups record whether their barlines run through and whether a brace is one instrument.
+- OMR score setups start with braces from the corrected grand-staff boxes.
+- On phones the closed task sheet takes at most half the screen, so the score setup page stays in view.
+- Score setup shows the source page beside the preview and records transposing instruments and per-staff key signatures.
+- Reviewers of a score setup see the submitted values as text.
+- OMR page drafts keep each transposing staff in its own key.
+- The score setup lists each staff as a tinted block.
+- Score setup staves are reordered by dragging their handle and removed with the trashcan.
+- The campaign and task pages show the last result in the side panel, foldable by an arrow.
+- The score setup has two steps, staves with the key and time signature, then groups.
+- The score setup key and time controls match the staff rows and show ♯ and ♭.
+- Score setup clefs and the common and cut time signatures are chosen by their drawn symbols.
+- Measure correction can be used with the keyboard, and Cmd/Ctrl+drag copies a box or a wizard region.
+- Measure correction on touch screens has Scroll and Draw modes and a magnifier on touch.
+- The measure correction toolbar and side panel are rearranged for phones and tablets.
+- Measure correction marks system and section starts and shows why Submit is not available.
+- Screen readers describe measure correction boxes, and form controls have 3:1 contrast.
+- The draft save state shows as a bubble over the pages.
+- All buttons are at most 32px tall.
+- A claimed task is labelled "Ongoing" instead of "Encoding".
+- The under-construction banner stays on one line.
+
+## 2026-10-13
+
+- Measure correction, review and the score view show the selected measure in the side panel and anchor new comments to it.
+- On phones and upright tablets the side panel is a bottom sheet and the toolbar sits below the pages.
+- Measure correction box handles are touch-sized, with a magnifier while a finger drags one.
+- Task pages hide the page footer on phones and upright tablets.
+- The wizard's upload card keeps its height for the first file, and only the file list scrolls.
+- The wizard's page toolbars group their buttons, and pages are centred.
+- The campaign title stays on one line, and the repository link shows only on desktop.
+- The wizard drops the step count and the Campaign setup label.
+- Drawing a piece's first region on a phone no longer resizes the pages, and scroll mode hides the delete button.
+- The preparation step says it is about using optical music recognition.
+
+## 2026-10-13
+
+- On phones, measure correction keeps the zoom buttons together, opens at page width and shows its help over the pages.
+- Wizard pages can be moved by holding one and then clicking or tapping where it goes, and every move is announced.
+- Change requests have one name everywhere, and campaign rows count them instead of tasks.
+- Comment links say "Show on page N" or "Show m. N in the score".
+- The wizard's Pieces hint wraps to two lines and shows its full text on hover.
+
+## 2026-10-12
+
+- The setup wizard creates the campaign repository on Create campaign and says beforehand what it creates.
+- The wizard gives the page images more room on tablets and small laptops.
+- The wizard says why Continue is not available, and a single facsimile piece covers every page from the start.
+- Pages, piece regions and measure correction boxes can be placed without dragging.
+- Measure correction draws staves in wine red and grand staves in dark green, with a help panel and zoom buttons.
+- Score setup shows read-only values as plain text and keeps form and pages side by side on tablets.
+- The side panel docks below the content on tablets held upright.
+- Reviews say approve and request changes, and change requests on finished tasks are no longer red.
+- Abandon is called Give back.
+- Task names and labels drop the OMR and layout-task terms and use British spelling.
+- Unknown addresses show an error page, and an empty campaign links to the other campaigns.
+- A new campaign opens with a confirmation of its address.
+- The theme follows the system's light or dark setting until the bulb is used.
+- Toggles and icon buttons tell screen readers their state and use drawn icons.
+- On phones the task panel opens to the task box's height, and the comment field opens only on request.
+- The comment field follows the comments instead of sitting at the side panel's bottom.
+- On phones the campaign's settings and View score buttons sit on the campaign name's line.
+- The campaign setup wizard fits phones, tablets and small windows, with Continue always in view.
+- The wizard's page panes zoom and pan with two fingers, and pages and piece regions can be edited by touch.
+- A failed wizard finish shows Retry in blue, not green.
+- The top bar is 44px tall in windows 500px tall or less.
+- The under-construction banner is a straight strip without rounded corners.
+- At fit page the wizard's page panes show one whole page, and dragging a region near the pane's edge scrolls the pages.
+- Wizard cards use more of a phone's width and fade at the top as well as the bottom when they scroll.
+
 ## 2026-10-09
 
 - The pieces table in the volunteer view shows each piece's full title.

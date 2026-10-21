@@ -83,10 +83,13 @@ export const IIIF_PREVIEW_REQUESTS = 4;
 // under the ceiling, with room left for a manifest fetch beside them. Raising
 // this means raising the relay's own limit with it (see broker/app.py).
 export const IIIF_REQUESTS_PER_SECOND = 16;
-// Waits before re-attempting a canvas the relay refused, in ms, each longer than
-// the last. The pass as a whole waits, not just the refused request: the budget
-// a 429 reports exhausted is shared by every request in the pass.
-const IIIF_RETRY_WAITS = [500, 1000, 2000];
+// Waits before re-attempting a request the relay refused, in ms, each longer
+// than the last. The pass as a whole waits, not just the refused request: the
+// budget a 429 reports exhausted is shared by every request in the pass. The
+// relay also refuses while its requests in flight are taken, which a slow
+// source holds for up to RELAY_DEADLINE_S plus the read timeout (see
+// broker/app.py), so the waits add up to more than a minute.
+const IIIF_RETRY_WAITS = [500, 1000, 2000, 4000, 8000, 15000, 15000, 15000];
 const JPEG_QUALITY = 0.85;
 // Committed pages keep the source's resolution, as the OMR staff model is run
 // on the source image itself: uploads are committed byte-for-byte, IIIF images
@@ -409,18 +412,30 @@ type Pacer = ReturnType<typeof createPacer>;
 // broker's. So the header's value attributes a failure, not its presence.
 const RELAY_MARKER = "x-lets-encode-upstream";
 const SOURCE_MARKER = "iiif";
+// The relay's refusal once an account has used the day's allowance of IIIF
+// downloads carries this header with the value `daily`. The relay refuses every
+// further request until 00:00 UTC, so it is not re-attempted.
+const LIMIT_MARKER = "x-lets-encode-limit";
+
+/** Whether a failed relay request is re-attempted. */
+const reattempt = (res: Response) =>
+  res.status === 429 && res.headers.get(LIMIT_MARKER) !== "daily";
 
 /**
  * Why a relayed request failed, naming the server that refused it. The relay
- * caps how many requests a session may make per second and answers 429 past
- * that, which says nothing about the source it was pointed at.
+ * caps how many requests a session may make per second, how many may be under
+ * way at once and how much an account may download per day, and answers 429
+ * past each, which says nothing about the source it was pointed at.
  */
 function relayFailure(res: Response, what: string): string {
   if (res.headers.get(RELAY_MARKER) === SOURCE_MARKER) {
     return `${what}: the source server returned ${res.status}.`;
   }
+  if (res.headers.get(LIMIT_MARKER) === "daily") {
+    return `${what}: this account has reached today's limit for IIIF downloads; the limit is reset at 00:00 UTC.`;
+  }
   if (res.status === 429) {
-    return `${what}: too many requests to the image relay in too short a time (429).`;
+    return `${what}: too many requests to the image relay at once or in too short a time (429).`;
   }
   return `${what}: the image relay answered ${res.status}.`;
 }
@@ -443,7 +458,7 @@ async function fetchIiifImage(
     await pacer.take();
     const res = await doFetch(iiifProxyUrl(url, brokerUrl));
     if (res.ok) return res.blob();
-    if (res.status !== 429 || attempt === IIIF_RETRY_WAITS.length) {
+    if (!reattempt(res) || attempt === IIIF_RETRY_WAITS.length) {
       throw new Error(
         relayFailure(res, `Could not fetch the IIIF image at ${url}`),
       );
@@ -662,18 +677,30 @@ export async function resolvePages(
 export async function fetchIiifCanvases(
   manifestUrl: string,
   brokerUrl: string,
-  options: { fetchFn?: typeof fetch } = {},
+  options: {
+    fetchFn?: typeof fetch;
+    wait?: (ms: number) => Promise<void>;
+  } = {},
 ): Promise<IiifCanvas[]> {
   const doFetch = options.fetchFn ?? fetch;
-  let res: Response;
-  try {
-    res = await doFetch(iiifProxyUrl(manifestUrl, brokerUrl), {
-      headers: { accept: "application/json" },
-    });
-  } catch {
-    // fetch() rejects with an opaque TypeError on network and CORS failures.
-    throw new Error(`Could not reach the IIIF manifest at ${manifestUrl}.`);
-  }
+  const wait = options.wait ?? sleep;
+  // A request the relay refused is re-attempted, as a canvas's is.
+  const fetchManifest = async (): Promise<Response> => {
+    for (let attempt = 0; ; attempt++) {
+      let res: Response;
+      try {
+        res = await doFetch(iiifProxyUrl(manifestUrl, brokerUrl), {
+          headers: { accept: "application/json" },
+        });
+      } catch {
+        // fetch() rejects with an opaque TypeError on network and CORS failures.
+        throw new Error(`Could not reach the IIIF manifest at ${manifestUrl}.`);
+      }
+      if (!reattempt(res) || attempt === IIIF_RETRY_WAITS.length) return res;
+      await wait(IIIF_RETRY_WAITS[attempt]);
+    }
+  };
+  const res = await fetchManifest();
   if (!res.ok) {
     throw new Error(
       relayFailure(res, `Could not fetch the IIIF manifest at ${manifestUrl}`),

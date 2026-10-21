@@ -7,7 +7,7 @@
   work needs no editing here.
 
   With page images the preparation step follows and finishes the setup; without
-  them there is nothing to prepare, that step is skipped and Finish is here.
+  them there is nothing to prepare, that step is skipped and Create campaign is here.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
@@ -22,12 +22,24 @@
     pagesCovered,
     pieceColour,
   } from "$lib/pieces.ts";
-  import { wizard, nextStep, previousStep } from "$lib/wizard.svelte.ts";
-  import { CampaignFinisher } from "$lib/campaign-finish.svelte.ts";
+  import {
+    wizard,
+    nextStep,
+    piecesSummary,
+    previousStep,
+  } from "$lib/wizard.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
+  import {
+    CampaignFinisher,
+    finishSummary,
+  } from "$lib/campaign-finish.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
+  import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
+  import { pieceIdLabel } from "$lib/campaign-tables.ts";
 
   let selected = $state(0);
   // With no page images the preparation step is skipped, so this step
@@ -39,7 +51,8 @@
 
   // Seed the pieces the first time the step is opened; returning from a later
   // step must not discard edits.
-  if (!wizard.pieces.length) {
+  const seeded = !wizard.pieces.length;
+  if (seeded) {
     wizard.pieces = initialPieces(
       wizard.encodings.map((encoding) => encoding.name),
       wizard.images.length > 0,
@@ -77,6 +90,22 @@
     };
   });
   onDestroy(() => liveUrls.forEach((url) => URL.revokeObjectURL(url)));
+
+  // A freshly seeded single facsimile piece is the whole source: it starts
+  // with every page, once the page sizes are known.
+  let autoCovered = false;
+  $effect(() => {
+    if (!seeded || autoCovered || !pages.length) return;
+    autoCovered = true;
+    const facsimile = wizard.pieces.filter((p) => p.kind === "facsimile");
+    if (facsimile.length !== 1 || facsimile[0].zones.length) return;
+    coverPages(
+      wizard.pieces,
+      wizard.pieces.indexOf(facsimile[0]),
+      pages.map((_, i) => i),
+      pages,
+    );
+  });
 
   function addPiece() {
     // With no page images there are no regions to mark, so an added piece is
@@ -164,7 +193,9 @@
   }
 
   const piece = $derived(wizard.pieces[selected]);
-  const label = $derived(piece ? piece.meta.title.trim() || piece.id : "");
+  const label = $derived(
+    piece ? piece.meta.title.trim() || pieceIdLabel(piece.id) : "",
+  );
   const covered = $derived(piece ? pagesCovered(piece) : []);
   // A facsimile piece with no regions would produce no tasks at all, so it
   // blocks finishing unless marked as having none on purpose.
@@ -175,7 +206,7 @@
   );
 
   const labelOf = (p: (typeof wizard.pieces)[number]) =>
-    p.meta.title.trim() || p.id;
+    p.meta.title.trim() || pieceIdLabel(p.id);
   const rangeOf = (p: (typeof wizard.pieces)[number]) => {
     if (p.kind === "encoded") return "encoding";
     if (p.kind === "physical-only") {
@@ -194,15 +225,14 @@
     wizard.pieces[selected].pages = Number.isFinite(n) && n > 0 ? n : undefined;
   }
 
-  const railStatus = $derived.by(() => {
-    const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
-    if (!wizard.images.length) return count;
-    const marked = new Set(
-      wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)),
-    );
-    const open = wizard.images.filter((_, i) => !marked.has(i)).length;
-    return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
-  });
+  // Where the pages are, for the hints that send the user to them.
+  const wherePages = $derived(
+    {
+      side: "in the pane on the left",
+      stacked: "in the pane above",
+      switch: "under Pages",
+    }[wizardLayout.materialMode],
+  );
 
   // Whether the selected piece's XML view holds a well-formed <meiHead>.
   // While it does not, nothing that leaves the piece is available.
@@ -226,6 +256,8 @@
     bind:pieces={wizard.pieces}
     {pages}
     selectedPiece={selected}
+    onselect={selectPiece}
+    selectBlocked={xmlBlock}
   />
 {/snippet}
 
@@ -233,20 +265,30 @@
   step="pieces"
   heading={wizard.images.length ? "Mark the pieces" : "Describe the pieces"}
   intro="The separate works in this source. Each becomes its own score and its own set of tasks."
-  status={railStatus}
+  status={piecesSummary()}
   material={pages.length ? material : undefined}
+  panes={{
+    form: "Pieces",
+    formCount: wizard.pieces.length,
+    material: "Pages",
+    materialCount: pages.length,
+    materialFirst: true,
+  }}
   onBack={previousStep}
   backDisabled={busy}
   navBlocked={xmlBlock}
   onNext={last ? () => finisher.run() : nextStep}
   nextDisabled={busy || !wizard.pieces.length || unmarked.length > 0}
+  nextReason={unmarked.length && (pages.length || !wizard.images.length)
+    ? `${unmarked.map(labelOf).join(", ")} ${unmarked.length === 1 ? "has" : "have"} no regions marked, so ${unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark regions, or mark the piece as having no regions on purpose, to ${last ? "finish" : "continue"}.`
+    : undefined}
   nextLabel={!last
     ? "Continue"
     : busy
       ? "Working…"
       : finisher.error
         ? "Retry"
-        : "Finish"}
+        : "Create campaign"}
   nextIcon={!last
     ? "arrow-right"
     : busy
@@ -254,7 +296,7 @@
       : finisher.error
         ? "arrow-right"
         : "check"}
-  finish={last}
+  finish={last && !finisher.error}
 >
   <div class="pieces-head">
     <span class="pieces-count">Pieces · {wizard.pieces.length}</span>
@@ -305,7 +347,7 @@
                 aria-label="Remove {labelOf(p)}"
                 title="Remove this piece"
               >
-                ×
+                <Icon name="close" size={14} />
               </button>
             {/if}
           {/if}
@@ -417,12 +459,11 @@
           <strong style="color: {pieceColour(selected)}">{label}</strong>
           {#if covered.length}
             covers page{covered.length === 1 ? "" : "s"}
-            {formatRanges(covered.map((p) => p + 1))}. Adjust its regions in the
-            pane on the left.
+            {formatRanges(covered.map((p) => p + 1))}. Adjust its regions {wherePages}.
           {:else if piece.noRegions}
             covers no regions on purpose and gets no tasks.
           {:else}
-            has no regions marked yet. Mark them in the pane on the left.
+            has no regions marked yet. Mark them {wherePages}.
           {/if}
         </p>
       {:else if piece.kind === "physical-only"}
@@ -457,19 +498,14 @@
     <p class="covered">Add a piece to describe what this campaign encodes.</p>
   {/if}
 
-  {#if unmarked.length}
-    <p class="msg-warn" role="status">
-      {unmarked.map((p) => p.meta.title.trim() || p.id).join(", ")}
-      {unmarked.length === 1 ? "has" : "have"} no regions marked, so
-      {unmarked.length === 1 ? "it" : "they"} would produce no tasks. Mark regions,
-      or mark the piece as having no regions on purpose, to finish.
-    </p>
-  {/if}
-
-  {#if finisher.error}
-    <p class="msg-error" role="alert">{finisher.error}</p>
-  {/if}
-  <ProgressSteps log={finisher.log} />
+  {#snippet pinned()}
+    {#if finisher.error}
+      <p class="msg-error" role="alert">{finisher.error}</p>
+    {:else if last && !finisher.busy && auth.user}
+      <p class="finish-note">{finishSummary(auth.user.login)}</p>
+    {/if}
+    <ProgressSteps log={finisher.log} />
+  {/snippet}
 </WizardCard>
 
 <style>
@@ -555,13 +591,13 @@
   .delete {
     flex: none;
     margin-right: 10px;
-    min-height: 22px;
+    min-height: 24px;
     font-size: 11.5px;
     padding: 2px 9px;
   }
   .delete.btn-icon {
-    width: 22px;
-    font-size: 15px;
+    width: 24px;
+    padding: 0;
     border-radius: 6px;
     color: var(--ink-faint);
     border-color: transparent;
@@ -572,6 +608,17 @@
       color: var(--danger);
       border-color: var(--danger-line);
       background: var(--danger-bg);
+    }
+  }
+  /* On touch the remove button's press area grows to 44px. */
+  @media (pointer: coarse) {
+    .delete.btn-icon {
+      position: relative;
+    }
+    .delete.btn-icon::after {
+      content: "";
+      position: absolute;
+      inset: -10px;
     }
   }
   .piece-actions {

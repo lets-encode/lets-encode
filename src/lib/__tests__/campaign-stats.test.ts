@@ -87,7 +87,6 @@ const stats: CampaignStats = {
   createdAt: "",
   allowSelfValidation: false,
   pieceNames: {},
-  preparations: {},
   taskDefs,
   rows: state.rows,
   validationColumns: state.validationColumns,
@@ -95,6 +94,7 @@ const stats: CampaignStats = {
   history: [],
   comments,
   passThreshold: 2,
+  headSha: "",
 };
 
 test("readyCount: locked and blocked tasks are not claimable", () => {
@@ -126,7 +126,7 @@ test("isNearlyDone: from 80% up, but never when finished", () => {
   assert.equal(isNearlyDone(0, 0), false);
 });
 
-test("attentionCount: unfinished tasks with an unresolved change request", () => {
+test("attentionCount: unresolved change requests on unfinished tasks", () => {
   // Only T0003 carries a change request (c1).
   assert.equal(attentionCount(stats), 1);
   const resolved = {
@@ -159,6 +159,21 @@ test("myTasksIn groups the viewer's tasks by what needs doing", () => {
   assert.equal(byGroup.awaiting.task, "T0004");
   assert.equal(byGroup.awaiting.passes, 1);
   assert.deepEqual(byGroup.awaiting.dots, ["pass", "open"]);
+  assert.equal(byGroup.awaiting.myReviews, 0);
+  assert.equal(byGroup.awaiting.otherReviews, 0);
+  assert.equal(byGroup.awaiting.needsAnother, true);
+  // Someone else's review claim on it → another person's review in progress.
+  const underReview = {
+    ...stats,
+    locks: parseLockCsv(
+      LOCK_HEADER + "T0004,S0001,9,2026-08-01T10:00:00Z,validation\n",
+    ),
+  };
+  const awaiting = myTasksIn(underReview, "7").find(
+    (t) => t.group === "awaiting" && t.task === "T0004",
+  );
+  assert.equal(awaiting?.myReviews, 0);
+  assert.equal(awaiting?.otherReviews, 1);
   assert.equal(myTasksIn(stats, "").length, 0);
   // A held validation claim → validating, with the lock's expiry.
   const reviewing = {
@@ -264,6 +279,7 @@ const fakeForge = (
     searchReposByTopic: async () => repos,
     getRepoFile,
     getUserLogin: async () => null,
+    getRepoHead: async () => ({ sha: "h" }),
   }) as unknown as ForgeClient;
 
 const rateLimit = () =>

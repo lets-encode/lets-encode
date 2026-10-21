@@ -1,6 +1,5 @@
-// Creating the campaign repository, shared by the upload and pages steps: the
-// pages step creates it when there are pages to commit, the upload step when
-// there are none (the pages step is skipped then). Creation is idempotent —
+// Creating the campaign repository, which the wizard's final step does before
+// it commits the campaign. Creation is idempotent —
 // a repository left behind by an attempt whose response never arrived (a
 // network drop after GitHub created it) is adopted on the next try instead of
 // failing on the name, and a transient network error is retried once before
@@ -138,15 +137,6 @@ export async function ensureCampaignRepo(
 
     // The listing topic is not stamped here: it marks a campaign, and this
     // repository is not one until the final step has set it up.
-    // Give the campaign's Actions a read/write token (non-fatal for org limits).
-    try {
-      await f.setActionsWorkflowPermissions(repo.owner, repo.name);
-    } catch (err) {
-      console.warn(
-        "Could not set Actions workflow permissions:",
-        (err as Error).message,
-      );
-    }
   }
 
   // Generating from a template is asynchronous — wait until the repo has

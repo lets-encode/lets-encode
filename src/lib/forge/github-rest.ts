@@ -245,10 +245,25 @@ function recordRequest(
   return entry;
 }
 
+// A `.` or `..` path segment, literal or percent-encoded, with `/` or `\` as
+// separator. fetch() resolves these before sending, so a repository value
+// interpolated into a path could otherwise move the request to another
+// endpoint. The URL parser drops tabs and newlines first, so the test does
+// too.
+const DOT_SEGMENT = /(^|[/\\])(\.|%2e){1,2}([/\\]|$)/i;
+
 async function githubFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
+  const path = String(input instanceof Request ? input.url : input)
+    .replace(/[\t\n\r]/g, "")
+    .split(/[?#]/)[0];
+  if (DOT_SEGMENT.test(path)) {
+    throw new Error(
+      `Refused a request with a dot segment in its path: ${path}`,
+    );
+  }
   const startedAt = Date.now();
   let res: Response;
   try {
@@ -609,7 +624,8 @@ function encodeRepoPath(path: string): string {
 
 /**
  * Fetch and decode a UTF-8 text file from a repo. Returns the file's content as
- * a string, or null if it doesn't exist yet (404).
+ * a string, or null if it doesn't exist yet (404) or, with `maxBytes`, is
+ * larger than that; the size is read before the content is downloaded.
  */
 export async function getRepoFile(
   token: string,
@@ -617,10 +633,12 @@ export async function getRepoFile(
   repo: string,
   path: string,
   ref?: string,
+  maxBytes?: number,
 ): Promise<string | null> {
   const query = ref ? `?ref=${encodeURIComponent(ref)}` : "";
   const { status, ok, data } = await ghGet<
-    { content?: string; encoding?: string; message?: string } | Array<unknown>
+    | { content?: string; encoding?: string; size?: number; message?: string }
+    | Array<unknown>
   >(
     `${apiRoot(token)}/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}${query}`,
     token,
@@ -629,6 +647,7 @@ export async function getRepoFile(
   if (Array.isArray(data))
     throw new Error(`Failed to fetch ${path}: the path is a directory`);
   if (!ok) throw new Error(data?.message || `Failed to fetch ${path}`);
+  if (maxBytes !== undefined && (data?.size ?? 0) > maxBytes) return null;
   if (data?.encoding === "base64" && data.content != null)
     return decodeBase64Utf8(data.content);
   // Files over the Contents API's 1 MB inline limit come back with
@@ -785,7 +804,10 @@ export async function getRepoHead(
   const branchRes = await ghGet<{
     commit: { sha: string; commit: { tree: { sha: string } } };
     message?: string;
-  }>(`${apiRoot(token)}/repos/${owner}/${repo}/branches/${info.branch}`, token);
+  }>(
+    `${apiRoot(token)}/repos/${owner}/${repo}/branches/${encodeRepoPath(info.branch)}`,
+    token,
+  );
   if (!branchRes.ok)
     throw new Error(
       `${branchRes.data?.message || "Failed to read branch"} (${branchRes.status} GET branches/${info.branch})`,
@@ -1230,7 +1252,14 @@ export async function getPullRequestState(
   return data?.state ?? "open";
 }
 
-/** The body of a pull request's most recent comment, or null if none. */
+// The account a workflow's GITHUB_TOKEN comments as: the coordinator's.
+const ACTIONS_BOT = "github-actions[bot]";
+
+/**
+ * The body of the coordinator's most recent comment on a pull request, or
+ * null if it has none. Comments by anyone else are skipped: any GitHub user
+ * can comment on a public pull request.
+ */
 export async function getLastIssueComment(
   token: string,
   owner: string,
@@ -1238,31 +1267,35 @@ export async function getLastIssueComment(
   number: number,
 ): Promise<string | null> {
   // The per-issue comments endpoint serves oldest-first and has no sort
-  // parameter, so with per_page=1 the newest comment is the single item on
-  // the last page: probe page 1, then follow the Link header's rel="last".
-  // No Link header means there are 0 or 1 comments and the probe already
-  // holds the answer.
-  const url = `${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments?per_page=1`;
-  const probe = await ghGet<Array<{ body?: string }>>(url, token);
-  if (!probe.ok)
-    throw new Error(
-      (probe.data as unknown as ErrorResponse)?.message ||
-        "Failed to read comments",
+  // parameter: probe page 1, then walk back from the Link header's
+  // rel="last". No Link header means page 1 holds every comment.
+  type Comment = { body?: string; user?: { login?: string } };
+  const url = `${apiRoot(token)}/repos/${owner}/${repo}/issues/${number}/comments?per_page=100`;
+  const readPage = async (page: number | null) => {
+    const res = await ghGet<Comment[]>(
+      page === null ? url : `${url}&page=${page}`,
+      token,
     );
-  const lastPage = probe.link?.match(
-    /<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/,
-  )?.[1];
-  if (!lastPage)
-    return (Array.isArray(probe.data) ? probe.data : [])[0]?.body ?? null;
-  const { ok, data } = await ghGet<Array<{ body?: string }>>(
-    `${url}&page=${lastPage}`,
-    token,
+    if (!res.ok)
+      throw new Error(
+        (res.data as unknown as ErrorResponse)?.message ||
+          "Failed to read comments",
+      );
+    return res;
+  };
+  const newestByBot = (data: Comment[]) =>
+    (Array.isArray(data) ? data : [])
+      .filter((c) => c.user?.login === ACTIONS_BOT)
+      .at(-1)?.body ?? null;
+  const probe = await readPage(null);
+  const lastPage = Number(
+    probe.link?.match(/<[^>]*[?&]page=(\d+)[^>]*>;\s*rel="last"/)?.[1] ?? 1,
   );
-  if (!ok)
-    throw new Error(
-      (data as unknown as ErrorResponse)?.message || "Failed to read comments",
-    );
-  return (Array.isArray(data) ? data : [])[0]?.body ?? null;
+  for (let page = lastPage; page > 1; page--) {
+    const body = newestByBot((await readPage(page)).data);
+    if (body !== null) return body;
+  }
+  return newestByBot(probe.data);
 }
 
 /** A workflow run, as far as the console follows it. */
@@ -1489,7 +1522,7 @@ export async function commitFiles(
   if (!headSha) {
     const ref = await ghSend<{ object: { sha: string } }>(
       "GET",
-      `${api}/git/ref/heads/${targetBranch}`,
+      `${api}/git/ref/heads/${encodeRepoPath(targetBranch)}`,
       token,
     );
     headSha = ref.object.sha;
@@ -1567,9 +1600,14 @@ export async function commitFiles(
       sha: commit.sha,
     });
   } else {
-    await ghSend("PATCH", `${api}/git/refs/heads/${targetBranch}`, token, {
-      sha: commit.sha,
-    });
+    await ghSend(
+      "PATCH",
+      `${api}/git/refs/heads/${encodeRepoPath(targetBranch)}`,
+      token,
+      {
+        sha: commit.sha,
+      },
+    );
   }
 
   return commit.sha;
@@ -1602,7 +1640,7 @@ export async function fastForwardBranch(
   sha: string,
 ): Promise<boolean> {
   const res = await githubFetch(
-    `${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+    `${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${encodeRepoPath(branch)}`,
     {
       method: "PATCH",
       headers: { ...baseHeaders, ...authHeaders(token) },
@@ -1630,7 +1668,7 @@ export async function deleteBranch(
   branch: string,
 ): Promise<void> {
   const res = await githubFetch(
-    `${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${branch}`,
+    `${apiRoot(token)}/repos/${owner}/${repo}/git/refs/heads/${encodeRepoPath(branch)}`,
     {
       method: "DELETE",
       headers: { ...baseHeaders, ...authHeaders(token) },
@@ -1794,26 +1832,6 @@ export async function setRepoTopics(
   return ghSend<unknown>("PUT", `/repos/${owner}/${repo}/topics`, token, {
     names,
   });
-}
-
-/**
- * Set the repo's default GITHUB_TOKEN permissions for workflows to read/write,
- * so the campaign Actions (which commit the tracking tables and resolve
- * claim/submission PRs) have the access they need. Requires admin on the repo.
- */
-export async function setActionsWorkflowPermissions(
-  token: string,
-  owner: string,
-  repo: string,
-): Promise<void> {
-  await ghSend(
-    "PUT",
-    `/repos/${owner}/${repo}/actions/permissions/workflow`,
-    token,
-    {
-      default_workflow_permissions: "write",
-    },
-  );
 }
 
 /**

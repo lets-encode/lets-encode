@@ -5,56 +5,72 @@
   previous step read are shown here as previews to choose between, and can be
   moved into reading order.
 
-  This is where the campaign repository is created, under the name the first step
-  reserved: on Continue the chosen pages are fetched or rendered at committing
-  size — and only those, so an unchosen page costs nothing — and committed, so
-  later steps work against a real repository. The reservation keeps the name
-  through all of this; it is registered as a campaign by the final step, once
-  there is a campaign to register. Configuration, tracking tables and the piece
-  MEIs are written there too, not here. Because the repository outlives a failure
-  after it exists, a retry re-runs only the commit rather than creating a second
-  one. An upload with no page images never reaches this step — navigation skips
-  it, and the upload step creates the repository instead (campaign-repo.ts).
+  On Continue the chosen pages are fetched or rendered at committing size — and
+  only those, so an unchosen page costs nothing — and kept in the browser
+  (draft-images.ts). The final step creates the campaign repository and commits
+  them there with the configuration, tracking tables and piece MEIs. An upload
+  with no page images never reaches this step: navigation skips it.
 -->
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import {
-    IMAGE_DIR,
-    resolvePages,
-    blobToBase64,
-  } from "$lib/prepare-images.ts";
-  import { ensureCampaignRepo } from "$lib/campaign-repo.ts";
+  import { resolvePages } from "$lib/prepare-images.ts";
   import {
     wizard,
     draftSnapshot,
+    keepDraftImages,
     saveDraft,
     nextStep,
     previousStep,
   } from "$lib/wizard.svelte.ts";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
-  import type { FileChange } from "$lib/forge/types.ts";
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
+  import ZoomLevel, {
+    fitPageZoom,
+    nearFit,
+    ZOOM_MAX,
+    ZOOM_MIN,
+  } from "./ZoomLevel.svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
+  import Icon from "./Icon.svelte";
+  import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let busy = $state(false);
   let error = $state<string | null>(null);
-  // Whether the commit has been attempted here and stopped part way, which is
-  // what makes the next press a retry of it.
+  // Whether reading the pages has been attempted here and stopped part way,
+  // which is what makes the next press a retry of it.
   let failed = $state(false);
   const log = new ProgressLog();
 
   // Fewer pages than the row would hold show one row at its widest; a long
-  // source packs more per row. Not persisted, so every setup starts here.
+  // source packs more per row. Phones and tablets, whose pane is narrow,
+  // start at two; a window 500px tall or less shows whole pages, five to a
+  // row. Not persisted, so every setup starts here.
   function defaultPerRow(count: number) {
+    if (wizardLayout.short) return Math.min(5, count) || 1;
+    if (wizardLayout.materialMode !== "side") return Math.min(2, count) || 1;
     if (count <= 4) return Math.max(1, count);
     return count > 10 ? 5 : 4;
   }
   let perRow = $state(defaultPerRow(wizard.candidates.length));
+  // Beside the card the pane can be narrow: once its width is known, the
+  // starting row holds no more pages than fit at MIN_TILE each (the grid has
+  // 16px padding and 14px gaps).
+  const MIN_TILE = 140;
+  let rowFitted = false;
+  $effect(() => {
+    if (rowFitted || !bodyW || wizardLayout.materialMode !== "side") return;
+    rowFitted = true;
+    perRow = Math.max(
+      1,
+      Math.min(perRow, Math.floor((bodyW - 32 + 14) / (MIN_TILE + 14))),
+    );
+  });
   let zoom = $state(100);
+  let fit = $state<"width" | "page" | null>(wizardLayout.short ? "page" : null);
   // The body's inner size and each preview's own size, for the page fit.
   let bodyW = $state(0);
   let bodyH = $state(0);
@@ -74,6 +90,151 @@
   // The page being dragged, and the one it is currently over.
   let dragIndex = $state<number | null>(null);
   let overIndex = $state<number | null>(null);
+
+  // Touch: holding a page still lifts it, and it lands where the finger lets
+  // go. A finger that moves before the hold completes scrolls instead. A page
+  // let go where it was lifted, or held still under the mouse, is picked up:
+  // the next page pressed takes it to that page's place. The press that ends
+  // a hold does not also keep or drop the page.
+  const HOLD_MS = 450;
+  const SLOP = 10;
+  let lifted = $state(false);
+  let picked = $state<number | null>(null);
+  let swallowClick = false;
+  // The page being moved by drag or pick-up, for the drop markers.
+  const moving = $derived(dragIndex ?? picked);
+  // Read out by screen readers when a page is picked up or moved.
+  let announcement = $state("");
+  const press = $derived(wizardLayout.coarse ? "Tap" : "Click");
+
+  function pick(index: number) {
+    picked = index;
+    announcement = `Page ${index + 1} picked up. ${press} the page whose place it takes, or ${press.toLowerCase()} it again to leave it.`;
+  }
+
+  /** Put the picked-up page in the place of the page pressed. */
+  function place(index: number) {
+    if (picked === null) return;
+    overIndex = null;
+    if (picked === index) {
+      picked = null;
+      announcement = `Page ${index + 1} left in place.`;
+    } else move(picked, index);
+  }
+
+  function liftToReorder(list: HTMLElement) {
+    let hold: { timer: number; x: number; y: number } | null = null;
+    const cancelHold = () => {
+      if (hold) clearTimeout(hold.timer);
+      hold = null;
+    };
+    const indexAt = (x: number, y: number) => {
+      const li = document
+        .elementFromPoint(x, y)
+        ?.closest<HTMLElement>("li[data-index]");
+      return li ? Number(li.dataset.index) : null;
+    };
+    const start = (e: TouchEvent) => {
+      swallowClick = false;
+      cancelHold();
+      const index = indexAt(e.touches[0].clientX, e.touches[0].clientY);
+      if (busy || e.touches.length !== 1 || index === null) return;
+      const { clientX: x, clientY: y } = e.touches[0];
+      hold = {
+        x,
+        y,
+        timer: window.setTimeout(() => {
+          hold = null;
+          dragIndex = index;
+          overIndex = index;
+          lifted = true;
+          swallowClick = true;
+          navigator.vibrate?.(10);
+        }, HOLD_MS),
+      };
+    };
+    const drag = (e: TouchEvent) => {
+      const t = e.touches[0];
+      if (hold) {
+        if (
+          e.touches.length > 1 ||
+          Math.hypot(t.clientX - hold.x, t.clientY - hold.y) > SLOP
+        )
+          cancelHold();
+        return;
+      }
+      if (!lifted) return;
+      e.preventDefault();
+      overIndex = indexAt(t.clientX, t.clientY) ?? overIndex;
+      // Near the pane's top or bottom edge the pane scrolls along.
+      const pane = list.parentElement;
+      if (!pane) return;
+      const box = pane.getBoundingClientRect();
+      if (t.clientY < box.top + 48) pane.scrollTop -= 12;
+      else if (t.clientY > box.bottom - 48) pane.scrollTop += 12;
+    };
+    const drop = (e: TouchEvent) => {
+      cancelHold();
+      if (!lifted) return;
+      if (e.type === "touchend" && dragIndex !== null && overIndex !== null) {
+        if (overIndex === dragIndex) pick(dragIndex);
+        else move(dragIndex, overIndex);
+      }
+      lifted = false;
+      dragIndex = null;
+      overIndex = null;
+    };
+    // A mouse held still on a page picks it up; one that moves drags it.
+    const mouseDown = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      swallowClick = false;
+      cancelHold();
+      if (e.button !== 0 || busy) return;
+      const index = indexAt(e.clientX, e.clientY);
+      if (index === null) return;
+      hold = {
+        x: e.clientX,
+        y: e.clientY,
+        timer: window.setTimeout(() => {
+          hold = null;
+          pick(index);
+          swallowClick = true;
+        }, HOLD_MS),
+      };
+    };
+    const mouseMove = (e: PointerEvent) => {
+      if (
+        hold &&
+        e.pointerType === "mouse" &&
+        Math.hypot(e.clientX - hold.x, e.clientY - hold.y) > SLOP
+      )
+        cancelHold();
+    };
+    const mouseUp = (e: PointerEvent) => {
+      if (e.pointerType === "mouse") cancelHold();
+    };
+    list.addEventListener("touchstart", start, { passive: true });
+    list.addEventListener("touchmove", drag, { passive: false });
+    list.addEventListener("touchend", drop);
+    list.addEventListener("touchcancel", drop);
+    list.addEventListener("pointerdown", mouseDown);
+    list.addEventListener("pointermove", mouseMove);
+    list.addEventListener("pointerup", mouseUp);
+    list.addEventListener("pointercancel", mouseUp);
+    list.addEventListener("dragstart", cancelHold);
+    return () => {
+      cancelHold();
+      list.removeEventListener("touchstart", start);
+      list.removeEventListener("touchmove", drag);
+      list.removeEventListener("touchend", drop);
+      list.removeEventListener("touchcancel", drop);
+      list.removeEventListener("pointerdown", mouseDown);
+      list.removeEventListener("pointermove", mouseMove);
+      list.removeEventListener("pointerup", mouseUp);
+      list.removeEventListener("pointercancel", mouseUp);
+      list.removeEventListener("dragstart", cancelHold);
+    };
+  }
 
   // One object URL per preview, cached so a re-render — a reorder, a change of
   // selection — hands the same <img> the same src. They are all released together
@@ -102,9 +263,7 @@
     return wizard.candidates.map((page) => (page.include ? ++n : 0));
   });
 
-  // Only an attempt that stopped part way is a retry. A repository that already
-  // exists otherwise — a setup continued from a draft, a second pass through this
-  // step — is committed to the same way a new one is, so it reads the same.
+  // Only an attempt that stopped part way is a retry.
   const continueLabel = $derived(
     busy
       ? "Working…"
@@ -149,13 +308,14 @@
     pages.splice(to, 0, page);
     wizard.candidates = pages;
     anchor = null;
+    picked = null;
+    announcement = `Page ${from + 1} moved to page ${to + 1} of ${pages.length}.`;
   }
 
-  async function commitAndContinue() {
+  async function prepareAndContinue() {
     error = null;
     const user = auth.user;
-    const f = forge();
-    if (!user || !f) {
+    if (!user) {
       error = "You are signed out. Log in with GitHub to continue.";
       return;
     }
@@ -163,10 +323,9 @@
     busy = true;
     failed = false;
     log.clear();
-    let rendered = false;
     try {
-      // Fetching and rendering happens before the repository is created, so an
-      // upload that cannot be read leaves nothing behind.
+      // The chosen pages are fetched and rendered at committing size here; the
+      // final step commits them to the repository it creates.
       const pages = chosen.map(({ include, ...page }) => page);
       const images = pages.length
         ? await resolvePages(
@@ -178,70 +337,14 @@
             { brokerUrl: provider.brokerUrl },
           )
         : [];
-      rendered = true;
-
-      const repo = await ensureCampaignRepo(
-        f,
-        user.login,
-        ({ step, detail }) => {
-          if (step) log.step(step);
-          if (detail) log.detail(detail);
-        },
-      );
-
-      // Pages the repository holds that this selection does not: the chosen ones
-      // are committed over the paths they had, but a shorter selection, or one
-      // whose pages are named differently, would leave the rest behind. The
-      // repository is asked rather than this browser, so pages committed by an
-      // attempt whose images are not held here are removed too.
-      //
-      // Only a run that had pages to choose from removes any: a continued setup
-      // cannot pick its files again, and reaches this step with nothing chosen,
-      // which says nothing about what the campaign's pages should be.
-      let stale: string[] = [];
-      if (wizard.candidates.length) {
-        log.step("Reading the pages already committed", { timed: false });
-        const held = await f.getDirDownloadUrls(
-          repo.owner,
-          repo.name,
-          IMAGE_DIR,
-        );
-        stale = Object.keys(held)
-          .map((name) => `${IMAGE_DIR}/${name}`)
-          .filter((path) => !images.some((image) => image.path === path));
-      }
-
-      if (images.length || stale.length) {
-        log.step(`Committing ${images.length} image(s)`);
-        const files: FileChange[] = [];
-        for (const image of images) {
-          log.detail(`encoding ${files.length + 1}/${images.length}`);
-          files.push({
-            path: image.path,
-            contentBase64: await blobToBase64(image.blob),
-          });
-        }
-        if (stale.length)
-          log.detail(`removing ${stale.length} page(s) not kept`);
-        log.detail(`uploading 0/${images.length}`);
-        await f.commitFiles(
-          repo.owner,
-          repo.name,
-          files,
-          wizard.images.length ? "Update source images" : "Add source images",
-          {
-            deletePaths: stale,
-            onUpload: (done, total) => log.detail(`uploading ${done}/${total}`),
-          },
-        );
-      }
       // Only a run that had pages to choose from replaces what the step already
       // produced. A continued setup, whose files cannot be picked again, keeps
-      // the images the repository already holds instead of emptying them.
-      if (wizard.candidates.length) wizard.images = images;
-      // Which pages the repository holds has just changed; the draft records
-      // their paths, and is read back against the repository when a setup is
-      // continued, so it is stored before the step moves on.
+      // the images it already holds.
+      if (wizard.candidates.length) {
+        wizard.images = images;
+        log.step("Keeping the pages in this browser", { timed: false });
+        await keepDraftImages(wizard.handle);
+      }
       saveDraft(user.login, draftSnapshot());
 
       log.done();
@@ -249,17 +352,19 @@
       nextStep();
     } catch (err) {
       console.error("Pages step failed:", (err as Error).message);
-      error = wizard.repo
-        ? `The repository ${wizard.repo.full_name} was created, but the upload didn't finish: ${(err as Error).message}`
-        : rendered
-          ? `Could not create the repository: ${(err as Error).message}`
-          : `Could not read the pages: ${(err as Error).message}`;
+      error = `Could not read the pages: ${(err as Error).message}`;
       log.fail();
       failed = true;
       busy = false;
     }
   }
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape" && picked !== null) place(picked);
+  }}
+/>
 
 {#snippet material()}
   <div class="material-card">
@@ -269,45 +374,68 @@
       {/if}
       <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
-      <ZoomLevel bind:value={zoom} {fitPage} />
+      <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
       <div class="toolbar-rule"></div>
-      <button
-        type="button"
-        class="tbtn"
-        class:on={chosen.length === wizard.candidates.length}
-        aria-pressed={chosen.length === wizard.candidates.length}
-        onclick={() => setAll(true)}
-        disabled={busy}
-      >
-        Keep all
-      </button>
-      <button
-        type="button"
-        class="tbtn"
-        class:on={chosen.length === 0}
-        aria-pressed={chosen.length === 0}
-        onclick={() => setAll(false)}
-        disabled={busy}
-      >
-        Keep none
-      </button>
+      <span class="tbtn-pair keep">
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={chosen.length === wizard.candidates.length}
+          aria-pressed={chosen.length === wizard.candidates.length}
+          aria-label="Keep all"
+          title="Keep all"
+          onclick={() => setAll(true)}
+          disabled={busy}
+        >
+          <Icon name="pages" size={16} />
+        </button>
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={chosen.length === 0}
+          aria-pressed={chosen.length === 0}
+          aria-label="Keep none"
+          title="Keep none"
+          onclick={() => setAll(false)}
+          disabled={busy}
+        >
+          <Icon name="page-none" size={16} />
+        </button>
+      </span>
     </div>
     <div
       class="material-body"
       bind:clientWidth={bodyW}
       bind:clientHeight={bodyH}
+      {@attach zoomGestures({
+        get: () => zoom,
+        set: (z) => {
+          zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+          fit = null;
+        },
+        follow: true,
+        onpinchend: () => (fit = nearFit(zoom, fitPage)),
+      })}
     >
-      <ol class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
+      <ol
+        class="material-grid"
+        style="--per-row: {perRow}; width: {zoom}%"
+        {@attach liftToReorder}
+      >
         {#each wizard.candidates as page, i (page.id)}
           <li
+            data-index={i}
             class:out={!page.include}
-            class:dragging={dragIndex === i}
-            class:drop-before={dragIndex !== null &&
-              overIndex === i &&
-              dragIndex > i}
-            class:drop-after={dragIndex !== null &&
-              overIndex === i &&
-              dragIndex < i}
+            class:lifted={(lifted && dragIndex === i) || picked === i}
+            class:dragging={!lifted && dragIndex === i}
+            class:drop-before={moving !== null && overIndex === i && moving > i}
+            class:drop-after={moving !== null && overIndex === i && moving < i}
+            onpointerenter={() => {
+              if (picked !== null) overIndex = i;
+            }}
+            onpointerleave={() => {
+              if (picked !== null && overIndex === i) overIndex = null;
+            }}
             ondragover={(e) => {
               if (dragIndex === null) return;
               // Accepting the drag is what makes this position a drop target.
@@ -330,9 +458,26 @@
               class="thumb"
               aria-pressed={page.include}
               disabled={busy}
-              title={page.label}
-              draggable={!busy}
-              onclick={(e) => toggle(i, e.shiftKey)}
+              title={wizardLayout.coarse ? undefined : page.label}
+              draggable={!busy && !wizardLayout.coarse}
+              onclick={(e) => {
+                if (swallowClick) swallowClick = false;
+                else if (picked !== null) place(i);
+                else toggle(i, e.shiftKey);
+              }}
+              oncontextmenu={(e) => wizardLayout.coarse && e.preventDefault()}
+              onkeydown={(e) => {
+                if (!e.altKey) return;
+                const by =
+                  e.key === "ArrowLeft" || e.key === "ArrowUp"
+                    ? -1
+                    : e.key === "ArrowRight" || e.key === "ArrowDown"
+                      ? 1
+                      : 0;
+                if (!by) return;
+                e.preventDefault();
+                move(i, i + by);
+              }}
               ondragstart={(e) => {
                 dragIndex = i;
                 // Firefox starts a drag only once the transfer carries data.
@@ -367,6 +512,39 @@
         {/each}
       </ol>
     </div>
+    <span class="vh" role="status">{announcement}</span>
+  </div>
+{/snippet}
+
+{#snippet hints()}
+  <ul class="how">
+    {#if wizardLayout.coarse}
+      <li>Tap a page to keep or leave it out</li>
+      <li>Hold a page, then drag it or tap where it goes</li>
+    {:else}
+      <li>Click a page to keep or leave it out</li>
+      <li>Shift-click marks a whole run</li>
+      <li>
+        Drag a page to move it, hold it and click where it goes, or press Alt
+        and an arrow key
+      </li>
+    {/if}
+  </ul>
+{/snippet}
+
+<!-- The count as one line over its bar, under the heading when the pages take
+     the card's body. -->
+{#snippet minibar()}
+  <div class="minibar">
+    <div class="progress">
+      <div
+        class="progress-fill"
+        style="width: {(chosen.length / wizard.candidates.length) * 100}%"
+      ></div>
+    </div>
+    <span class="minibar-count"
+      ><b>{chosen.length}</b> of {wizard.candidates.length} kept</span
+    >
   </div>
 {/snippet}
 
@@ -377,10 +555,12 @@
   status="{chosen.length} of {wizard.candidates.length} kept"
   onBack={previousStep}
   backDisabled={busy}
-  onNext={commitAndContinue}
+  onNext={prepareAndContinue}
   nextDisabled={busy}
   nextLabel={continueLabel}
   material={wizard.candidates.length ? material : undefined}
+  info={hints}
+  compactHead={minibar}
 >
   {#if !wizard.candidates.length}
     <p class="note">
@@ -390,7 +570,6 @@
           ? " becomes a piece in its own right and needs"
           : "s become pieces in their own right and need"} no pages chosen.
       {/if}
-      Continuing creates the campaign's repository.
     </p>
   {:else}
     <div class="count-row">
@@ -405,19 +584,15 @@
           : 0}%"
       ></div>
     </div>
-    <ul class="how">
-      <li>Click a page to keep or leave it out</li>
-      <li>Shift-click marks a whole run</li>
-      <li>Drag a page to move it</li>
-    </ul>
+    {@render hints()}
   {/if}
 
-  <div class="spacer"></div>
-
-  {#if error}
-    <p class="msg-error" role="alert">{error}</p>
-  {/if}
-  <ProgressSteps {log} />
+  {#snippet pinned()}
+    {#if error}
+      <p class="msg-error" role="alert">{error}</p>
+    {/if}
+    <ProgressSteps {log} />
+  {/snippet}
 </WizardCard>
 
 <style>
@@ -452,6 +627,32 @@
     height: 100%;
     background: linear-gradient(90deg, var(--blue), var(--green));
   }
+  .minibar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+  .minibar .progress {
+    flex: 1;
+    margin: 0;
+  }
+  /* A window 500px tall or less shows the count in the step rail beside the
+     card, so the pages get this row too. */
+  @media (max-height: 500px) and (min-width: 640px) {
+    .minibar {
+      display: none;
+    }
+  }
+  .minibar-count {
+    font-size: 13px;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .minibar-count b {
+    font-weight: 600;
+    color: var(--ink);
+  }
   .how {
     list-style: none;
     margin: 22px 0 0;
@@ -461,14 +662,22 @@
     font-size: 12.5px;
     color: var(--ink-soft);
   }
-  .spacer {
-    flex: 1;
+
+  /* Phone-width panes: the view controls start the row and Keep all / Keep
+     none end it. */
+  @container material (max-width: 479px) {
+    .material-toolbar .toolbar-gap {
+      display: none;
+    }
+    .keep {
+      margin-left: auto;
+    }
   }
 
   /* ---- Page tiles in the material pane ---- */
   ol.material-grid {
     list-style: none;
-    margin: 0;
+    margin-block: 0;
   }
   li {
     position: relative;
@@ -476,6 +685,14 @@
     flex-direction: column;
     gap: 5px;
     min-width: 0;
+  }
+  /* A page held by a finger, following it until it is let go, or picked up
+     and waiting for its place. */
+  li.lifted .thumb {
+    outline: 3px solid var(--accent);
+    outline-offset: 1px;
+    transform: scale(1.04);
+    box-shadow: var(--shadow);
   }
   li.dragging {
     opacity: 0.4;
@@ -511,6 +728,10 @@
     cursor: pointer;
     /* Safari drags an element from a form control only when told to. */
     -webkit-user-drag: element;
+    /* A held page lifts for reordering instead of opening the image menu or
+       selecting text. */
+    -webkit-touch-callout: none;
+    user-select: none;
   }
   li.out .thumb {
     border-color: var(--line);

@@ -56,6 +56,14 @@ function clear(): void {
   auth.status = "anonymous";
 }
 
+// What a failed login's ?auth_error code means (broker/app.py authorize).
+const AUTH_ERRORS: Record<string, string> = {
+  denied: "the login was cancelled on GitHub.",
+  state: "the login could not be matched to this browser. Try again.",
+  user: "GitHub did not say which account logged in. Try again.",
+  busy: "too many logins were started from your network just now. Try again in a minute.",
+};
+
 /**
  * On app start: ask the API (via the broker proxy) who the session belongs to.
  * A 401 from the proxy means there is no session — anonymous. Also surfaces
@@ -64,7 +72,10 @@ function clear(): void {
 export async function initAuth(): Promise<void> {
   const params = new URLSearchParams(location.search);
   if (params.has("auth_error")) {
-    auth.error = params.get("auth_error");
+    const code = params.get("auth_error") ?? "";
+    auth.error = Object.hasOwn(AUTH_ERRORS, code)
+      ? AUTH_ERRORS[code]
+      : "the login could not be completed. Try again.";
     params.delete("auth_error");
     const query = params.toString();
     replaceState(location.pathname + (query ? `?${query}` : ""), {});

@@ -17,7 +17,6 @@
     TaskRow,
     ParsedState,
     PieceNames,
-    PiecePreparations,
   } from "$lib/campaign-tables.ts";
 
   let {
@@ -27,7 +26,6 @@
     locks,
     logins,
     pieceNames,
-    preparations,
     busy,
     onsave,
     oncancel,
@@ -38,8 +36,6 @@
     locks: LockRow[];
     logins: Logins;
     pieceNames: PieceNames;
-    /** Fragment path → the piece's preparation ("omr"). */
-    preparations: PiecePreparations;
     busy: boolean;
     onsave: (tasks: TaskRow[]) => void;
     oncancel: () => void;
@@ -98,12 +94,7 @@
   };
   const titleOf = (g: Group) =>
     g.task.fragment
-      ? cardTitle(
-          g.task.fragment,
-          g.task.locator,
-          pieceNames,
-          preparations[g.task.fragment] === "omr",
-        )
+      ? cardTitle(g.task.fragment, g.task.locator, pieceNames)
       : g.task.task_id;
   const sizeOf = (g: Group): string => {
     if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
@@ -262,12 +253,7 @@
             </div>
           {/if}
         </div>
-        <span class="ptype"
-          >{taskDescription(
-            g.task.locator,
-            preparations[g.task.fragment] === "omr",
-          )}</span
-        >
+        <span class="ptype">{taskDescription(g.task.locator)}</span>
         <span class="psize"
           >{sizeOf(g)}{#if !g.editable}<span class="lockmark">
               · locked</span

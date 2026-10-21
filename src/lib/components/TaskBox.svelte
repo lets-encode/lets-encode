@@ -2,7 +2,7 @@
   A task's box in the side panel (SidePanel.svelte) of the campaign page, the
   review view and the pre-task editors: one continuous card — piece-tinted header with the task's
   name over its piece, status pill, submission and the viewer's own review
-  slot (on a phone, DOCKED_QUERY, the submission and others' reviews fold
+  slot (docked, DOCKED_QUERY, the submission and others' reviews fold
   behind a disclosure), and the action footer. Commands run through callbacks the
   host page passes in.
 -->
@@ -51,6 +51,7 @@
     primary = true,
     inView = false,
     tools,
+    headAction,
     prefill,
     measures = true,
     onclaim,
@@ -73,17 +74,26 @@
     canPush: boolean;
     runner: CommandRunner;
     /** An error from the return from mei-friend; `label` names mei-friend
-        when the text is its own message. */
-    editorError?: { label: string; text: string } | null;
+        when the text is its own message, `confirm` offers the action the
+        return did not take. */
+    editorError?: {
+      label: string;
+      text: string;
+      confirm?: { label: string; run: () => void };
+    } | null;
     /** The footer's action is the view's primary action (a solid button);
         otherwise an outline, beside a primary elsewhere in the view. */
     primary?: boolean;
     /** The box sits in the task's own view (the review view or the
-        pre-task's editor): the footer leaves out the links to that view and
-        offers only review actions. */
+        pre-task's editor): the footer leaves out the links to that view, and
+        the viewer's verdict controls and Give back task go to the view's
+        side panel footer (ReviewActions). */
     inView?: boolean;
     /** The view's own controls, below the status row. */
     tools?: Snippet;
+    /** A control at the heading's right end (the side panel's comments
+        button). */
+    headAction?: Snippet;
     /** The anchor a fresh fail form opens with; defaults to the task's page. */
     prefill?: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
@@ -160,28 +170,41 @@
           : "",
   );
 
-  // What the task asks of the volunteer, in one line: the panel is where a
-  // touch screen reads it.
+  // What the task asks of the volunteer, and for the score setup how its
+  // view is used: the panel is where a touch screen reads it.
   const help = $derived.by(() => {
     if (card.column === "done") return "";
     if (card.column === "validation")
-      return card.pre
-        ? `Check the submitted work in the ${editorName} and approve it or request changes.`
-        : inView
-          ? "Compare the encoding with the scan and approve it or request changes."
-          : "Compare the encoding with the scan in the review view and approve it or request changes.";
+      return taskState?.encoder === viewer && !claimableSub && !myReview
+        ? "Another volunteer reviews your submission."
+        : card.pre
+          ? `Check the submitted work in the ${editorName} and approve it or request changes.`
+          : inView
+            ? "Compare the encoding with the scan and approve it or request changes."
+            : "Compare the encoding with the scan in the review view and approve it or request changes.";
     if (card.locator === "score-setup")
-      return "Set the score's staves, clefs, key signature and time signature from the source.";
+      return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
     if (card.locator === "omr-layout")
-      return "Check the staff and measure boxes on each page and correct the wrong ones.";
+      return "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.";
     if (card.locator === "measure-zones")
       return "Check the measure boxes on each page and correct the wrong ones.";
     if (card.omr)
-      return "Correct the notes that optical music recognition (OMR) read from this page, in the mei-friend editor.";
+      return "Correct the notes of this page's draft, read automatically from the scan, in the mei-friend editor.";
     return card.scope
       ? "Encode the music of this page in the mei-friend editor."
       : "Encode the music of the piece in the mei-friend editor.";
   });
+
+  // The stage whose colour the box and its side panel take (ui.css).
+  const stage = $derived(
+    card.column === "validation"
+      ? "review"
+      : card.column === "done"
+        ? "done"
+        : card.pre
+          ? "pre"
+          : "encode",
+  );
 
   // The task's page, prefilling a fail's anchor.
   const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
@@ -189,7 +212,7 @@
 
 <div
   class="taskcard"
-  class:volunteer={!canPush}
+  data-stage={stage}
   style={zone ? `--zone: var(--zone-${zone})` : ""}
 >
   <div class="tsphead">
@@ -199,6 +222,7 @@
       piece={pieceName}
       task={canPush ? card.task : ""}
     />
+    {@render headAction?.()}
   </div>
   <TaskRunState task={card.task} bar />
   {#if editorError}
@@ -207,6 +231,14 @@
         >{#if editorError.label}<b>{editorError.label}:</b
           >{" "}{/if}{editorError.text}</span
       >
+      {#if editorError.confirm}
+        <button
+          type="button"
+          class="btn btn-soft"
+          disabled={runner.busy}
+          onclick={editorError.confirm.run}>{editorError.confirm.label}</button
+        >
+      {/if}
     </div>
   {/if}
   <div class="statusrow">
@@ -233,7 +265,7 @@
       <div class="subline">
         <span class="avatar">{initialOf(encoderLogin)}</span>
         <span class="subtext"
-          >encoded by <b>{encoderLogin}</b>{taskState?.encoded_at
+          >submitted by <b>{encoderLogin}</b>{taskState?.encoded_at
             ? elapsed(taskState.encoded_at) === "now"
               ? " · just now"
               : ` · ${elapsed(taskState.encoded_at)} ago`
@@ -253,6 +285,7 @@
         {runner}
         prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
         {measures}
+        actions={!inView}
         {onvalidate}
         {onreviewedit}
       />
@@ -340,22 +373,21 @@
           class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
-          title="Reserve this review slot.">Claim to review</button
+          title="Reserves this review for you for a limited time. Give back task releases it."
+          >Claim to review</button
         >
         {#if !card.pre && !inView}
           <a
             class="btn btn-soft"
             href={`/${campaign}/review/${card.task}`}
-            title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
+            title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review view</a
           >
         {/if}
       </div>
-    {:else if myReview}
+    {:else if myReview && !inView}
       <div class="tspfoot">
-        {#if inView}
-          <!-- The review happens in this view. -->
-        {:else if card.pre}
+        {#if card.pre}
           <a
             class="btn"
             class:btn-primary={primary}
@@ -370,7 +402,7 @@
             class:btn-primary={primary}
             href={processing ? undefined : `/${campaign}/review/${card.task}`}
             aria-disabled={processing}
-            title="Open the full-screen review view: score and facsimile side by side, with the verdict controls."
+            title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review view</a
           >
         {/if}
@@ -394,24 +426,35 @@
 </div>
 
 <style>
+  /* The box is the top of its side panel's sheet (SidePanel): the heading
+     and status in the stage's wash, the submission, reviews and actions on
+     slate below, each section under a hairline. Buttons sit on paper. */
   .taskcard {
-    background: var(--card);
-    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
-    border-radius: 12px;
     overflow-x: hidden;
-    box-shadow: var(--shadow-sm);
+    --btn-bg: var(--card);
+    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
+  /* The heading's width is a container (taskhead), so a control at its
+     right end can drop its label where the heading is narrow. */
   .tsphead {
-    background: color-mix(in srgb, var(--zone) 10%, var(--card));
-    border-bottom: 1px solid color-mix(in srgb, var(--zone) 25%, var(--line));
-    padding: 9px 12px;
+    container: taskhead / inline-size;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: var(--st-wash);
+    padding: 10px 16px 4px;
+  }
+  .tsphead > :global(.taskheading) {
+    flex: 1;
   }
   .statusrow {
     display: flex;
     align-items: center;
     gap: 8px;
     flex-wrap: wrap;
-    padding: 10px 12px;
+    padding: 6px 16px 14px;
+    background: var(--st-wash);
   }
   .help {
     flex-basis: 100%;
@@ -421,21 +464,23 @@
     color: var(--ink-soft);
   }
   .section {
-    padding: 10px 12px;
-    border-top: 1px solid var(--hairline, var(--line));
+    padding: 12px 16px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
     display: flex;
     flex-direction: column;
     gap: 6px;
   }
   .more {
-    border-top: 1px solid var(--hairline, var(--line));
+    background: var(--band);
+    border-top: 1px solid var(--line);
   }
   .more summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: 32px;
-    padding: 0 12px;
+    min-height: 36px;
+    padding: 0 16px;
     font-size: 12px;
     font-weight: 600;
     color: var(--ink-soft);
@@ -487,8 +532,9 @@
     color: var(--ink);
   }
   .tspfoot {
-    padding: 10px 12px;
-    border-top: 1px solid var(--hairline, var(--line));
+    padding: 12px 16px;
+    background: var(--band);
+    border-top: 1px solid var(--line);
     display: flex;
     gap: 8px;
     flex-wrap: wrap;
@@ -503,40 +549,38 @@
   .tspfoot .btn {
     padding-block: 4px;
   }
-  /* A volunteer's task actions are their main action: 44px, as on the
-     volunteer view's next-task card. */
-  .volunteer .tspfoot .btn {
-    min-height: 44px;
+  /* On a touch screen the 32px buttons take a 44px press through an
+     invisible ::after. */
+  @media (pointer: coarse) {
+    .tspfoot .btn {
+      position: relative;
+    }
+    .tspfoot .btn::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+    }
   }
 
   /* ---------------------------------------------------------------- pills */
+  /* The status on paper over the wash, in the stage's colour once the task
+     is under way. */
   .pill {
     display: inline-flex;
     align-items: center;
     gap: 4px;
     font-weight: 600;
-    font-size: 11px;
+    font-size: 11.5px;
     line-height: 1;
-    padding: 4px 10px;
+    padding: 5px 10px;
     border-radius: 999px;
     white-space: nowrap;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    color: var(--ink-faint);
+    background: var(--card);
+    color: var(--ink-soft);
   }
-  .pill.c-encoding {
-    background: var(--info-bg);
-    border-color: var(--info-line);
-    color: var(--info);
-  }
-  .pill.c-validation {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-    color: var(--warn);
-  }
+  .pill.c-encoding,
+  .pill.c-validation,
   .pill.c-done {
-    background: var(--ok-bg);
-    border-color: var(--ok-line);
-    color: var(--ok);
+    color: var(--st);
   }
 </style>

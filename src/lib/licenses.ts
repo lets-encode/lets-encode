@@ -31,7 +31,7 @@ export const LICENSES: LicenseOption[] = [
     id: "CC-BY-SA-4.0",
     name: "CC BY-SA 4.0 — Attribution, ShareAlike",
     url: "https://creativecommons.org/licenses/by-sa/4.0/",
-    info: "Like CC BY, but anything built on the encoding must be published under this same license.",
+    info: "Like CC BY, but anything built on the encoding must be published under this same licence.",
   },
   {
     id: "CC-BY-NC-4.0",
@@ -43,7 +43,7 @@ export const LICENSES: LicenseOption[] = [
     id: "CC-BY-NC-SA-4.0",
     name: "CC BY-NC-SA 4.0 — Attribution, NonCommercial, ShareAlike",
     url: "https://creativecommons.org/licenses/by-nc-sa/4.0/",
-    info: "Non-commercial use only, with credit, and anything built on the encoding must keep this same license.",
+    info: "Non-commercial use only, with credit, and anything built on the encoding must keep this same licence.",
   },
 ];
 

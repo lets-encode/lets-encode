@@ -7,16 +7,18 @@
    ========================================================================= */
 
 /* ---- Buttons -----------------------------------------------------------
-   One vocabulary for every button in the app. .btn is the outline default:
-   card fill, pill radius. Variants set emphasis:
+   One vocabulary for every button in the app. .btn is the soft default: a
+   faint ink-tinted fill (--soft) with no outline, pill radius. A surface
+   that is itself tinted sets --btn-bg (and --btn-shadow) to lift its
+   buttons onto paper instead. Variants set emphasis:
      .btn-primary   solid accent — at most one per surface (page, open dock
                     panel, or wizard footer); its label states the consequence
      .btn-finish    the solid green Pass/complete action (the only solid green)
-     .btn-secondary / .btn-soft   tinted fill, medium emphasis
-     .btn-danger    outline only — danger actions are never solid
-     .btn-icon      square icon-only button (32×32, radius 8px)
-     .btn-lg        the larger wizard-footer size
-   Sizing beyond .btn-lg comes from context, not new classes. */
+     .btn-secondary / .btn-soft   the same soft fill, kept as names
+     .btn-danger    red label on the soft fill — danger actions are never solid
+     .btn-icon      round icon-only button (32×32)
+   Buttons are at most 32px tall; sizing comes from context, not new
+   classes. */
 .btn {
   cursor: pointer;
   display: inline-flex;
@@ -28,9 +30,10 @@
   min-height: 32px;
   box-sizing: border-box;
   color: var(--ink);
-  background: var(--card);
-  border: 1px solid var(--line-input);
+  background: var(--btn-bg, var(--soft));
+  border: 1px solid transparent;
   border-radius: 999px;
+  box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
 /* Links styled as buttons drop their underline. */
@@ -39,8 +42,8 @@ a.btn {
 }
 @media (hover: hover) {
   .btn:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
+    color: var(--ink);
+    background: var(--btn-bg-hover, var(--soft-hover));
   }
 }
 .btn:disabled {
@@ -51,12 +54,6 @@ a.btn {
 a.btn[aria-disabled="true"] {
   opacity: 0.5;
   pointer-events: none;
-}
-/* The larger size for wizard footers and hero actions. */
-.btn-lg {
-  font-size: 14px;
-  padding: 10px 22px;
-  min-height: 42px;
 }
 
 .btn-primary {
@@ -72,27 +69,13 @@ a.btn[aria-disabled="true"] {
     border-color: transparent;
   }
 }
-/* The solid green completing action: Pass, or the wizard's final step. */
+/* The solid green completing action: Approve, or the wizard's Create campaign. */
 .btn-primary.btn-finish {
   background: var(--ok-btn);
 }
 @media (hover: hover) {
   .btn-primary.btn-finish:hover:not(:disabled) {
     background: var(--ok-btn-hover);
-  }
-}
-
-.btn-secondary,
-.btn-soft {
-  background: var(--bg-tint);
-  border-color: transparent;
-}
-@media (hover: hover) {
-  .btn-secondary:hover:not(:disabled),
-  .btn-soft:hover:not(:disabled) {
-    color: var(--ink);
-    background: var(--line);
-    border-color: transparent;
   }
 }
 
@@ -114,31 +97,37 @@ a.btn[aria-disabled="true"] {
     background: var(--warn-btn-hover);
   }
 }
+/* A primary that cannot be pressed yet drops its fill, so the one solid
+   button on a surface is always one that acts. */
+.btn-primary:disabled,
+.btn-primary.btn-finish:disabled,
+.btn-primary.btn-pre:disabled,
+.btn-primary.btn-review:disabled {
+  opacity: 1;
+  color: var(--ink-faint);
+  background: var(--btn-bg, var(--soft));
+  box-shadow: none;
+}
 .btn.btn-pre:not(.btn-primary) {
   color: var(--pre);
-  border-color: var(--pre);
 }
 @media (hover: hover) {
   .btn.btn-pre:not(.btn-primary):hover:not(:disabled) {
     color: var(--pre);
-    border-color: var(--pre);
     background: var(--pre-wash);
   }
 }
 .btn.btn-review:not(.btn-primary) {
   color: var(--warn);
-  border-color: var(--warn);
 }
 @media (hover: hover) {
   .btn.btn-review:not(.btn-primary):hover:not(:disabled) {
     color: var(--warn);
-    border-color: var(--warn);
     background: var(--warn-wash);
   }
 }
 .btn.btn-enc:not(.btn-primary) {
   color: var(--info);
-  border-color: var(--info);
 }
 @media (hover: hover) {
   .btn.btn-enc:not(.btn-primary):hover:not(:disabled) {
@@ -146,20 +135,18 @@ a.btn[aria-disabled="true"] {
   }
 }
 
-/* Danger actions are outlines, never solid fills. */
+/* Danger actions take a red label, never a solid fill. */
 .btn-danger {
   color: var(--danger);
-  border-color: var(--danger-line);
 }
 @media (hover: hover) {
   .btn-danger:hover:not(:disabled) {
     color: var(--danger);
     background: var(--danger-bg);
-    border-color: var(--danger);
   }
 }
 
-/* A square icon-only button: paging arrows, row reorder, steppers. Always
+/* A round icon-only button: paging arrows, row reorder, steppers. Always
    carries an aria-label. */
 .btn-icon {
   width: 32px;
@@ -167,8 +154,54 @@ a.btn[aria-disabled="true"] {
   padding: 0;
   font-size: 14px;
   line-height: 1;
-  border-radius: 8px;
+  border-radius: 50%;
   flex: none;
+}
+
+/* ---- Stage colour -------------------------------------------------------
+   A workspace takes its stage's colour as its accent: the active step, a
+   pressed toggle or toolbar button and the status chip use it. --st is the
+   text and line colour, --st-solid the fill under white, --st-wash the
+   header band, --st-tint a pressed control's fill. data-stage on an element
+   sets it for its subtree; the side panel takes the stage of the task box it
+   holds. Without a stage the accent blue applies. */
+:root,
+[data-stage] {
+  --st: var(--accent);
+  --st-solid: var(--accent-btn);
+  --st-wash: var(--accent-tint);
+}
+[data-stage="pre"],
+.sp:has(.taskcard[data-stage="pre"]) {
+  --st: var(--pre);
+  --st-solid: var(--pre-btn);
+  --st-wash: var(--pre-wash);
+}
+[data-stage="review"],
+.sp:has(.taskcard[data-stage="review"]) {
+  --st: var(--warn);
+  --st-solid: var(--warn-solid);
+  --st-wash: var(--warn-wash);
+}
+[data-stage="done"],
+.sp:has(.taskcard[data-stage="done"]) {
+  --st: var(--ok);
+  --st-solid: var(--ok-solid);
+  --st-wash: var(--ok-wash);
+}
+/* In the dark theme the stage's wash is mixed from its colour, so the
+   heading band keeps its hue against the dark paper. */
+[data-theme="dark"],
+[data-theme="dark"] [data-stage],
+[data-theme="dark"] .sp:has(.taskcard[data-stage]) {
+  --st-wash: color-mix(in srgb, var(--st) 15%, var(--card));
+}
+/* The tints mix where the stage is set, so they follow it. */
+:root,
+[data-stage],
+.sp:has(.taskcard[data-stage]) {
+  --st-tint: color-mix(in srgb, var(--st) 16%, var(--card));
+  --st-tint-hover: color-mix(in srgb, var(--st) 24%, var(--card));
 }
 
 /* Pointer targets are at least 24px tall (WCAG 2.2, 2.5.8): the small pill
@@ -183,6 +216,7 @@ a.btn[aria-disabled="true"] {
   gap: 2px;
   padding: 3px;
   background: var(--bg-tint);
+  box-shadow: inset 0 0 0 1px var(--line);
   border-radius: 999px;
 }
 .seg > button {
@@ -207,7 +241,7 @@ a.btn[aria-disabled="true"] {
 .seg > button.on {
   color: var(--ink);
   background: var(--card);
-  box-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+  box-shadow: 0 1px 3px rgba(31, 36, 51, 0.22);
 }
 .seg > button:disabled {
   opacity: 0.5;
@@ -247,29 +281,32 @@ button.pill:disabled {
   cursor: not-allowed;
 }
 
-/* A toolbar button: square-ish, sits in a material-pane toolbar. */
+/* A toolbar button: the soft pill of .btn at toolbar weight; `.on` marks a
+   pressed one in the stage tint. */
 .tbtn {
   cursor: pointer;
   font: 12.5px var(--font);
   padding: 6px 12px;
   color: var(--ink-soft);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  background: var(--btn-bg, var(--soft));
+  border: 1px solid transparent;
+  border-radius: 999px;
+  box-shadow: var(--btn-shadow, none);
 }
 @media (hover: hover) {
   .tbtn:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
+    color: var(--ink);
+    background: var(--btn-bg-hover, var(--soft-hover));
   }
 }
 .tbtn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.tbtn.on {
-  color: var(--accent);
-  border-color: var(--accent);
+.tbtn.on,
+.tbtn.on:hover:not(:disabled) {
+  color: var(--st);
+  background: var(--st-tint);
 }
 /* A .tbtn holding only a glyph. */
 .tbtn-icon {
@@ -327,58 +364,45 @@ button.chip {
   background: currentColor;
 }
 
-/* An on/off filter chip with a mini switch inside — never a leading ✓, which
-   reads as "done". Markup: <button class="chip-switch" class:on>
-   <span class="sw"></span> label </button>. Info tint when on. */
+/* An on/off toggle: a soft pill at rest, the stage tint with the stage's
+   colour when on; aria-pressed carries the state. Markup: <button
+   class="chip-switch" class:on aria-pressed> label </button>; a leading
+   <span class="sw"></span> from older markup is not drawn. */
 .chip-switch {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font: 600 11.5px var(--font);
-  padding: 4px 11px 4px 6px;
-  min-height: 24px;
+  gap: 6px;
+  font: 600 12px var(--font);
+  padding: 4px 12px;
+  min-height: 26px;
   color: var(--ink-soft);
-  background: var(--card);
-  border: 1px solid var(--line-input);
+  background: var(--btn-bg, var(--soft));
+  border: 1px solid transparent;
   border-radius: 999px;
+  box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
 .chip-switch .sw {
-  flex: none;
-  position: relative;
-  width: 22px;
-  height: 12px;
-  border-radius: 999px;
-  background: var(--bg-tint);
-  border: 1px solid var(--line-input);
-  box-sizing: border-box;
-  transition: background 0.15s;
+  display: none;
 }
-.chip-switch .sw::after {
-  content: "";
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--card);
-  box-shadow: 0 1px 2px rgba(31, 36, 51, 0.25);
-  transition: left 0.15s;
+@media (hover: hover) {
+  .chip-switch:hover:not(:disabled):not(.on) {
+    color: var(--ink);
+    background: var(--btn-bg-hover, var(--soft-hover));
+  }
+  .chip-switch.on:hover:not(:disabled) {
+    background: var(--st-tint-hover);
+  }
 }
 .chip-switch.on {
-  color: var(--info);
-  background: var(--info-bg);
-  border-color: var(--info-line);
+  color: var(--st);
+  background: var(--st-tint);
+  box-shadow: none;
 }
-.chip-switch.on .sw {
-  background: var(--info);
-  border-color: var(--info);
-}
-.chip-switch.on .sw::after {
-  left: 11px;
-  background: #fff;
+.chip-switch:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* A button that reads as a link, for actions inside a sentence. */
@@ -395,11 +419,65 @@ button.chip {
   text-decoration: underline;
 }
 
-/* ---- Viewer toolbar controls --------------------------------------------
-   The paging and zoom cluster every page-viewer toolbar shares: .btn-icon
-   .pgbtn arrows around a .pglabel at the toolbar's right end, a .vline
-   divider, and a zoom group of .zoomslider + .zval readout + a .tbtn Fit
-   button. */
+/* ---- Pane divider --------------------------------------------------------
+   The grab bar between two panes side by side, with a centred handle;
+   dragging it moves the boundary. */
+.pane-grip {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  cursor: ew-resize;
+  touch-action: none;
+}
+.pane-grip::before {
+  content: "";
+  width: 3px;
+  height: 2.5rem;
+  border-radius: 999px;
+  background: var(--line);
+}
+@media (hover: hover) {
+  .pane-grip:hover::before {
+    background: var(--accent);
+  }
+}
+
+/* ---- Viewer toolbar -----------------------------------------------------
+   Every page viewer with paging and zoom (measure correction, and the score
+   preview of review and View score) has one toolbar, .vtoolbar, in one
+   order at every
+   width: undo and redo · the view options · the zoom, then at the right end
+   the paging (.pgnav: .btn-icon .pgbtn arrows around a .pglabel), the help
+   and the ⋯ menu. Groups are divided by a .vline; where the toolbar
+   narrows, groups give way or move into the ⋯ menu, none changes place. It
+   sits above the pages, below them only on a narrow touch screen.
+   Its buttons are 32px soft circles (.btn-icon, .tbtn-icon). */
+.vtoolbar {
+  flex: none;
+  min-height: 46px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+.vtoolbar .tbtn-icon {
+  box-sizing: border-box;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  justify-content: center;
+}
+.vtoolbar .seg > button {
+  min-height: 26px;
+}
 .pglabel {
   font-size: 12.5px;
   font-weight: 600;
@@ -409,23 +487,21 @@ button.chip {
   flex: none;
 }
 .btn-icon.pgbtn {
-  width: 34px;
-  min-height: 34px;
+  width: 32px;
+  min-height: 32px;
 }
-/* The paging cluster stays in view at the right edge when a narrow toolbar
-   scrolls sideways; the controls before it pass underneath. */
+/* The paging cluster. It is not sticky: Safari leaves text that changes
+   inside a sticky element in a sideways-scrolling toolbar unpainted. */
 .pgnav {
-  position: sticky;
-  right: 0;
   flex: none;
   display: flex;
   align-items: center;
-  gap: 10px;
-  background: var(--card);
+  gap: 6px;
 }
 .vline {
   width: 1px;
-  height: 18px;
+  height: 20px;
+  margin: 0 2px;
   background: var(--line);
   flex: none;
 }
@@ -447,41 +523,34 @@ button.chip {
   white-space: nowrap;
 }
 
-/* A small toggle chip in a viewer toolbar; `.on` is the info tint. */
+/* A small toggle chip in a viewer toolbar: the soft pill, the stage tint
+   when on. */
 .tchip {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   font-family: inherit;
   padding: 4px 11px;
-  min-height: 24px;
+  min-height: 26px;
   border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--card);
+  border: 1px solid transparent;
+  background: var(--btn-bg, var(--soft));
   color: var(--ink-soft);
   cursor: pointer;
   flex: none;
   white-space: nowrap;
 }
 .tchip.on {
-  border-color: var(--info-line);
-  background: var(--info-bg);
-  color: var(--info);
+  background: var(--st-tint);
+  color: var(--st);
 }
 
 /* ---- Touch screens ------------------------------------------------------
    Buttons are 32px tall on every screen. On a coarse pointer the segmented
    controls grow from 24px to 32px, their neighbours being too close for a
-   finger, and text fields use 16px text: iOS Safari zooms the page into a
-   focused field set smaller. */
+   finger. */
 @media (pointer: coarse) {
   .seg > button {
     min-height: 32px;
-  }
-  /* The zone editor's measure label keeps its toolbar size. */
-  input:not([type="checkbox"], [type="radio"], [type="range"], .znum),
-  textarea,
-  select {
-    font-size: max(16px, 1em) !important;
   }
   /* A long press on an element with a title shows it (TouchTooltip.svelte)
      instead of selecting text or opening the browser's callout. */
@@ -491,6 +560,18 @@ button.chip {
     user-select: none;
   }
   [title] :is(input, textarea, [contenteditable]) {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  /* In the score editors a long press on the pages, toolbar or panel neither
+     selects text nor opens the browser's callout; text fields and comment
+     text stay selectable. Safari reads only the prefixed property. */
+  .corrector {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  .corrector :is(input, textarea, [contenteditable], .cbody) {
     -webkit-user-select: text;
     user-select: text;
   }
@@ -586,6 +667,13 @@ textarea.input {
   font-size: 0.9rem;
   color: var(--ink-soft);
 }
+/* What a final action will do, stated above its button. */
+.finish-note {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+}
 .msg-warn {
   margin: 1rem 0 0;
   font-size: 0.85rem;
@@ -596,6 +684,8 @@ textarea.input {
    The centre zone of the wizard workbench: a white card with a fixed toolbar
    and a recessed scrolling body. Steps fill these with their own content. */
 .material-card {
+  /* The toolbar compacts by the pane's own width (container queries). */
+  container: material / inline-size;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -612,9 +702,11 @@ textarea.input {
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   padding: 4px 16px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  /* The last resort when a narrow pane cannot fit the compacted controls. */
+  overflow-x: auto;
   border-bottom: 1px solid var(--line);
   background: var(--card);
 }
@@ -632,6 +724,92 @@ textarea.input {
 .material-toolbar .toolbar-gap {
   flex: 1;
 }
+.material-toolbar .tbtn {
+  white-space: nowrap;
+}
+/* Every toolbar control is one square size, so joined groups line up. */
+.material-toolbar .tbtn-icon {
+  box-sizing: border-box;
+  min-width: 32px;
+  min-height: 32px;
+  justify-content: center;
+}
+/* Toolbar buttons joined into one control, e.g. the two fits. A .tval between
+   them is a read-out segment, e.g. a stepper's value. */
+.tbtn-pair {
+  flex: none;
+  display: inline-flex;
+}
+.tbtn-pair > .tval {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--ink-soft);
+  background: var(--btn-bg, var(--soft));
+}
+.tbtn-pair > .tbtn {
+  position: relative;
+  justify-content: center;
+  border-radius: 0;
+}
+.tbtn-pair > .tbtn:first-child {
+  border-radius: 999px 0 0 999px;
+}
+.tbtn-pair > .tbtn:last-child {
+  border-radius: 0 999px 999px 0;
+}
+.tbtn-pair > * + * {
+  margin-left: 2px;
+}
+/* The active one's accent border shows on both sides. */
+.tbtn-pair > .tbtn.on {
+  z-index: 1;
+}
+/* Below 640px of pane the file name gives way. */
+@container material (max-width: 639px) {
+  .material-toolbar .toolbar-name {
+    display: none;
+  }
+  .material-toolbar {
+    padding: 4px 10px;
+  }
+}
+/* Phone-width panes: the groups sit closer and the rule between them goes. */
+@container material (max-width: 479px) {
+  .material-toolbar {
+    gap: 8px;
+  }
+  .material-toolbar .toolbar-rule {
+    display: none;
+  }
+}
+/* Touch: toolbar buttons stay 32px to the eye but take a 44px press. */
+@media (pointer: coarse) {
+  .material-toolbar .tbtn,
+  .material-toolbar .btn-icon {
+    position: relative;
+    min-width: 32px;
+    min-height: 32px;
+    justify-content: center;
+  }
+  .material-toolbar .tbtn::after,
+  .material-toolbar .btn-icon::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+  /* Joined buttons share their edge, so their press areas only grow up and
+     down. */
+  .material-toolbar .tbtn-pair > .tbtn::after {
+    inset: -6px 0;
+  }
+}
 .material-toolbar .toolbar-rule {
   width: 1px;
   height: 22px;
@@ -641,6 +819,8 @@ textarea.input {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  /* A pinch zooms the pages (zoomGestures), not the window. */
+  touch-action: pan-x pan-y;
   background: var(--bg-inset);
   box-shadow: var(--shadow-inset);
 }
@@ -660,11 +840,8 @@ textarea.input {
 }
 .material-grid .page-caption {
   text-align: center;
-  font:
-    10.5px ui-monospace,
-    Menlo,
-    monospace;
-  color: var(--ink-faint);
+  font-size: 11.5px;
+  color: var(--ink-soft);
 }
 /* The label centred above a page in the page views, e.g. "Page 2 ·
    Facsimile". On a page wider than its scroll area it stays at the nearest
@@ -676,7 +853,7 @@ textarea.input {
   left: 0;
   right: 0;
   font-size: 11.5px;
-  color: var(--ink-faint);
+  color: var(--ink-soft);
 }
 
 /* ---- Result banners ------------------------------------------------------
@@ -687,6 +864,7 @@ textarea.input {
    itself stays ink, like the fail boxes. */
 .banner {
   display: flex;
+  overflow-wrap: anywhere;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
@@ -730,6 +908,7 @@ textarea.input {
   min-width: 0;
 }
 .banner .dismiss {
+  min-height: 24px;
   font-size: 11px;
   font-weight: 600;
   background: none;
@@ -837,9 +1016,382 @@ textarea.input {
    query (DOCKED_QUERY in side-panels.ts) the row stacks: the content above,
    the panel below, its top border meeting the content as on the campaign
    page. Markup: <div class="sidehost">content<SidePanel /></div> */
-@media (orientation: portrait) and (max-width: 753px) {
+@media (orientation: portrait) and (max-width: 1100px) {
   .sidehost {
     flex-direction: column !important;
     gap: 0 !important;
   }
+}
+
+/* ------------------------------------------------------- selection controls
+   The selected box or measure in a score workspace's side panel (its
+   Selection tab, SidePanel.svelte): the item as the heading (its name, for
+   a measure the number field, where it is, and previous and next at the
+   right end), its actions (.selactions of labelled buttons) and its on/off
+   properties (.selflags of .chip-switch). Markup: <div class="selpanel"><div class="selhead"><span
+   class="selname"/> <span class="selwhere"/> <span class="selnav">buttons
+   </span></div> <div class="selflags"/> <div class="selactions"/></div>, or
+   <p class="selnone">. */
+.selpanel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.selhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.selname {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 16px;
+  white-space: nowrap;
+}
+.selwhere {
+  font-size: 12px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+/* Previous and next: small, at the heading's right end. */
+.selnav {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.selnav .btn-icon {
+  width: 28px;
+  min-height: 28px;
+}
+/* A measure's number field in the heading. */
+.selnum {
+  box-sizing: border-box;
+  width: 48px;
+  height: 28px;
+  padding: 0 6px;
+  text-align: center;
+  font: 600 13.5px var(--font);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line-input);
+  border-radius: 999px;
+}
+.selnum:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.selflags,
+.selactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* Named groups of properties: <div class="selprops"> of .selgroup and
+   .selflags pairs. */
+.selprops {
+  display: flex;
+  flex-direction: column;
+  gap: inherit;
+}
+/* A group's name above its toggles, close to them. */
+.selgroup {
+  margin: 0 0 -6px;
+  font: 600 12px var(--font);
+  color: var(--ink-soft);
+}
+/* A wide panel (a sheet on an upright tablet): the actions on the heading's
+   row and each group's name left of its toggles. */
+@container spsel (min-width: 560px) {
+  .selpanel {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    column-gap: 16px;
+  }
+  .selpanel > * {
+    grid-column: 1 / -1;
+  }
+  .selpanel > .selhead:has(+ .selactions),
+  .selhead + .selactions {
+    grid-column: auto;
+  }
+  .selhead + .selactions {
+    justify-content: flex-end;
+    align-self: center;
+  }
+  .selprops {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 8px 12px;
+  }
+  .selprops .selgroup {
+    margin: 0;
+  }
+}
+/* A toggle's label in full (.sellong) and short (.selshort); a toggle with
+   a symbol has no short label and shows the symbol alone. */
+.selshort {
+  display: none;
+}
+.selflags .chip-switch {
+  min-height: 32px;
+}
+/* A property at rest reads lighter than the actions below it. */
+.selflags .chip-switch:not(.on) {
+  font-weight: 400;
+}
+/* The three actions fit one row of the narrowest panel. */
+.selactions .btn {
+  padding-inline: 11px;
+  font-size: 12px;
+}
+.selflagtext {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+/* As tall as the Write a comment row (SidePanel), so switching between the
+   Selection and Comments tabs keeps the panel's height. */
+.selnone {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-height: 38px;
+  margin: 0;
+  padding: 4px 2px;
+  font-size: 12.5px;
+  color: var(--ink-soft);
+}
+/* Docked as a sheet (DOCKED_QUERY in side-panels.ts): tighter, and the
+   buttons take a 44px press through an invisible ::after. */
+@media (orientation: portrait) and (max-width: 1100px) {
+  .selpanel {
+    gap: 10px;
+  }
+  .selnav .btn-icon {
+    width: 32px;
+    min-height: 32px;
+  }
+  .selnav .btn-icon,
+  .selflags .chip-switch,
+  .selactions .btn {
+    position: relative;
+  }
+  .selnav .btn-icon::after,
+  .selflags .chip-switch::after,
+  .selactions .btn::after {
+    content: "";
+    position: absolute;
+    inset: -6px -3px;
+  }
+  /* A narrow sheet (a phone): the short labels, so each group fits a row,
+     and no group names; a group's aria-label still names it. */
+  @container spsel (max-width: 559px) {
+    .selprops .selgroup {
+      display: none;
+    }
+    .sellong {
+      display: none;
+    }
+    .selshort {
+      display: inline;
+    }
+    .selflags .chip-switch {
+      padding-inline: 10px;
+    }
+    /* Lower actions, the press area still 44px. */
+    .selactions .btn {
+      min-height: 28px;
+      padding-block: 4px;
+    }
+    .selactions .btn::after {
+      inset: -8px -3px;
+    }
+  }
+}
+
+/* ------------------------------------------------------------ step lists
+   A task's steps in its side panel (measure correction, score setup): a
+   numbered list joined by a line, each step with the glyph of what it marks
+   (StepGlyph) and its count; the active step's number takes the stage's
+   solid colour. Docked as a sheet the list becomes one row of equal cells
+   with the short name and count. Markup: <div class="steps" role="group">
+   <button class="step" class:on><span class="stepno">1</span> glyph <span
+   class="steplong"/><span class="stepshort"/><span class="stepcount"/><span
+   class="stepn"/></button>…</div>. */
+.steps {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.steps::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: 16px;
+  bottom: 16px;
+  width: 2px;
+  background: var(--line);
+}
+.step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  /* 2px around the 28px number, so the row's rounding is concentric with
+     the number's. */
+  min-height: 32px;
+  padding: 2px 12px 2px 2px;
+  font: 600 13px var(--font);
+  color: var(--ink-soft);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .step:hover:not(.on) {
+    color: var(--ink);
+    background: var(--btn-bg-hover, var(--soft-hover));
+  }
+}
+.step.on {
+  color: var(--ink);
+  background: var(--st-tint);
+}
+.stepno {
+  flex: none;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font: 600 12px var(--font);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-soft);
+  background: var(--card);
+  border: 1.5px solid var(--line-strong);
+}
+.step.on .stepno {
+  color: #fff;
+  background: var(--st-solid);
+  border-color: var(--st-solid);
+}
+.steplong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.stepcount {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.step.on .stepcount {
+  color: var(--st);
+}
+.stepshort,
+.stepn {
+  display: none;
+}
+@media (orientation: portrait) and (max-width: 1100px) {
+  .steps {
+    flex-direction: row;
+    padding: 3px;
+    background: var(--bg-tint);
+    box-shadow: inset 0 0 0 1px var(--line);
+    border-radius: 999px;
+  }
+  .steps::before {
+    display: none;
+  }
+  .step {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    gap: 6px;
+    min-height: 32px;
+    padding: 0 6px;
+    font-size: 12px;
+  }
+  .step::after {
+    content: "";
+    position: absolute;
+    inset: -6px 0;
+  }
+  .step.on {
+    background: var(--card);
+    box-shadow: 0 1px 3px rgba(31, 36, 51, 0.22);
+  }
+  /* Dark paper is darker than the track; the active cell lifts lighter. */
+  [data-theme="dark"] .step.on {
+    background: color-mix(in srgb, var(--ink) 16%, var(--card));
+  }
+  .stepno {
+    width: 20px;
+    height: 20px;
+    font-size: 11px;
+  }
+  .steps .step .stepglyph,
+  .steplong,
+  .stepcount {
+    display: none;
+  }
+  .stepshort,
+  .stepn {
+    display: inline;
+  }
+  .stepn {
+    font-weight: 400;
+    color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .step.on .stepn {
+    color: var(--st);
+    font-weight: 600;
+  }
+}
+/* A phone sheet: a lower row, the press area still 44px. */
+@media (orientation: portrait) and (max-width: 559px) {
+  .steps {
+    padding: 2px;
+  }
+  .step {
+    min-height: 26px;
+  }
+  .step::after {
+    inset: -9px 0;
+  }
+  .stepno {
+    width: 18px;
+    height: 18px;
+    font-size: 10.5px;
+  }
+}
+
+/* Verovio's own rules for the SVG it renders, which reach the page without
+   its <style> (verovio-render.ts). The rendered page's root <svg> holds the
+   svg.definition-scale. */
+svg:has(> svg.definition-scale) :is(g.ending, g.fing, g.reh, g.tempo) {
+  font-weight: bold;
+}
+svg:has(> svg.definition-scale) :is(g.dir, g.dynam, g.mNum) {
+  font-style: italic;
+}
+svg:has(> svg.definition-scale) g.label {
+  font-weight: normal;
+}
+svg:has(> svg.definition-scale) :is(ellipse, path, polygon, polyline, rect) {
+  stroke: currentColor;
 }

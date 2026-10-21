@@ -111,7 +111,8 @@ export function clefToken(musicxml: string | null): string | null {
  * definition gets its own clef); the key and the meter from the first staff
  * that carries them, searched through `signatureSources` first (the page's
  * opening system, where signatures are printed) and then the clef system,
- * since the model reads an unprinted signature as none. Groups are not
+ * since the model reads an unprinted signature as none; a staff of the clef
+ * system reading another key keeps its own (`keysig`). Groups are not
  * proposed. Missing values keep the defaults: treble clef, no accidentals,
  * 4/4.
  */
@@ -130,6 +131,15 @@ export function proposeScoreDef(
   const fifths =
     signatures.find((a) => a?.fifths !== null && a?.fifths !== undefined)
       ?.fifths ?? 0;
+  // A staff of the clef system reading another key than the score's keeps
+  // it as its own (a transposing instrument), provided some staff there
+  // reads the score's key, so the system's signatures were read at all.
+  const staffFifths = read.map((a) => a?.fifths ?? null);
+  if (staffFifths.includes(fifths))
+    staffFifths.forEach((f, i) => {
+      if (f !== null && f !== fifths)
+        staves[i] = { ...staves[i], keysig: keysigFor(f) };
+    });
   const time = signatures.find((a) => a?.time)?.time ?? null;
   const symbol =
     time?.symbol === "common" || time?.symbol === "cut" ? time.symbol : "";

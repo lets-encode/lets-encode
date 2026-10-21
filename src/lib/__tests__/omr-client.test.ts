@@ -286,3 +286,32 @@ test("a failing relay status carries the relay's message and the status", async 
     return true;
   });
 });
+
+test("a call past the login's daily allowance fails at once with the relay's reason", async () => {
+  let calls = 0;
+  const { fetch } = fakeFetch({
+    [`POST ${BASE}/api/musicorpus-pages/p1/pipeline-executions`]: () => {
+      calls++;
+      return Response.json(
+        {
+          error:
+            "This account has reached today's limit for OMR runs; the limit is reset at 00:00 UTC",
+          source: "broker",
+        },
+        {
+          status: 429,
+          headers: {
+            "X-Lets-Encode-Upstream": "broker",
+            "X-Lets-Encode-Limit": "daily",
+          },
+        },
+      );
+    },
+  });
+  const client = createOmrClient("/auth", { fetch, ...noSleep });
+  await assert.rejects(
+    client.run("p1", { name: "mzk-staff", version: "1" }, ["a.jpg"]),
+    /^Error: The OMR relay refused POST .*: This account has reached today's limit for OMR runs/,
+  );
+  assert.equal(calls, 1);
+});

@@ -19,15 +19,21 @@
   import { onDestroy, type Snippet } from "svelte";
   import type { PageImage } from "$lib/prepare-images.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
-  import ZoomLevel, { fitPageZoom } from "./ZoomLevel.svelte";
+  import ZoomLevel, {
+    fitPageZoom,
+    nearFit,
+    ZOOM_MAX,
+    ZOOM_MIN,
+  } from "./ZoomLevel.svelte";
+  import { zoomGestures } from "$lib/zoom-gestures.ts";
 
   // `toolbar` renders extra controls at the end of the toolbar.
   let { pages, toolbar }: { pages: PageImage[]; toolbar?: Snippet } = $props();
 
-  // Two pages per row, each shown whole, to begin with.
-  let perRow = $state(2);
+  // Two pages per row at the pane's width to begin with; one on a phone.
+  let perRow = $state(window.innerWidth < 600 ? 1 : 2);
   let zoom = $state(100);
-  let fit = $state<"width" | "page" | null>("page");
+  let fit = $state<"width" | "page" | null>("width");
   // The body's inner size and each image's own size, for the page fit.
   let bodyW = $state(0);
   let bodyH = $state(0);
@@ -80,6 +86,15 @@
       class="material-body"
       bind:clientWidth={bodyW}
       bind:clientHeight={bodyH}
+      {@attach zoomGestures({
+        get: () => zoom,
+        set: (z) => {
+          zoom = Math.round(Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z)));
+          fit = null;
+        },
+        follow: true,
+        onpinchend: () => (fit = nearFit(zoom, fitPage)),
+      })}
     >
       <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
         {#each urls as url, i (url)}
@@ -113,8 +128,7 @@
     box-sizing: border-box;
     /* Scanned pages keep their own light ground in either theme. */
     background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    box-shadow: var(--shadow-sm);
+    border: 1px solid var(--line-input);
+    box-shadow: var(--shadow-paper);
   }
 </style>

@@ -81,3 +81,24 @@ test("returns null without a header and empty fields for a bare header", () => {
     contributors: [],
   });
 });
+
+test("reads a header in linear time whatever its comments hold", () => {
+  const head = buildPieceHead(
+    { title: "Sonata", composer: "C. P. E. Bach" },
+    emptySourceMetadata(),
+    { date: "2026-08-14" },
+  );
+  // Start tags with no ">" after them, in comments that end the element
+  // around them early, and person names never closed.
+  const crafted = head
+    .replace("</title>", `<!--${"<b ".repeat(64 * 1024)}</title>--></title>`)
+    .replace(
+      "</meiHead>",
+      `<!--${"<corpName>".repeat(64 * 1024)}--></meiHead>`,
+    );
+  assert.ok(crafted.length > head.length + 800_000);
+  const started = performance.now();
+  parseMeiHeader(`<mei>\n${crafted}\n</mei>`);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});

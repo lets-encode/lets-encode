@@ -7,6 +7,23 @@
   `fitPageZoom`, at which a whole page is visible top to bottom.
 -->
 <script module lang="ts">
+  /** The zoom's range, in percent. */
+  export const ZOOM_MIN = 50;
+  export const ZOOM_MAX = 400;
+
+  /**
+   * The fit a zoom is close to — within 8% of the width fit (100%) or of the
+   * page fit — or null. Lets a pinch that ends near a fit settle on it.
+   */
+  export function nearFit(
+    zoom: number,
+    fitPage?: number,
+  ): "width" | "page" | null {
+    const near = (target: number) => Math.abs(zoom / target - 1) <= 0.08;
+    if (fitPage !== undefined && near(fitPage)) return "page";
+    return near(100) ? "width" : null;
+  }
+
   /**
    * The zoom, in percent, at which the tallest page of a material grid fits the
    * body top to bottom. The grid's padding, gap and the height a tile needs
@@ -33,6 +50,7 @@
 
 <script lang="ts">
   import FitIcon from "./FitIcon.svelte";
+  import Icon from "./Icon.svelte";
 
   let {
     value = $bindable(),
@@ -55,17 +73,38 @@
 
   // The slider runs on a log scale: equal drags multiply the zoom equally,
   // so the low end moves in fine steps and the high end in coarse ones.
-  const LEAST = 50;
-  const MOST = 400;
+  const LEAST = ZOOM_MIN;
+  const MOST = ZOOM_MAX;
   const STOPS = 100;
   const pos = $derived(
     Math.round((Math.log(value / LEAST) / Math.log(MOST / LEAST)) * STOPS),
   );
   const setPos = (p: number) =>
     (value = Math.round(LEAST * (MOST / LEAST) ** (p / STOPS)));
+  // The buttons that stand in for the slider on touch and in narrow panes.
+  function step(factor: number) {
+    value = Math.round(Math.min(MOST, Math.max(LEAST, value * factor)));
+    fit = null;
+  }
 </script>
 
 <span class="zoomctl">
+  <span class="tbtn-pair zstep">
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom out"
+      disabled={value <= LEAST}
+      onclick={() => step(1 / 1.25)}><Icon name="zoom-out" size={16} /></button
+    >
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom in"
+      disabled={value >= MOST}
+      onclick={() => step(1.25)}><Icon name="zoom-in" size={16} /></button
+    >
+  </span>
   <input
     class="zoomslider"
     type="range"
@@ -81,31 +120,65 @@
     }}
   />
   <span class="zval">{value}%</span>
-  <button
-    type="button"
-    class="tbtn tbtn-icon"
-    class:on={fit === "width"}
-    onclick={() => (fit = "width")}
-    aria-label="Fit the page width"
-    title="Fit the page width to the pane"><FitIcon kind="width" /></button
-  >
-  {#if fitPage !== undefined}
+  <span class="tbtn-pair">
     <button
       type="button"
-      class="tbtn tbtn-icon"
-      class:on={fit === "page"}
-      onclick={() => (fit = "page")}
-      aria-label="Fit the whole page"
-      title="Fit the whole page in the pane, top to bottom"
-      ><FitIcon kind="page" /></button
+      class="tbtn tbtn-icon fit-width"
+      class:on={fit === "width"}
+      aria-pressed={fit === "width"}
+      onclick={() => (fit = "width")}
+      aria-label="Fit the page width"
+      title="Fit the page width to the pane"><FitIcon kind="width" /></button
     >
-  {/if}
+    {#if fitPage !== undefined}
+      <button
+        type="button"
+        class="tbtn tbtn-icon fit-page"
+        class:on={fit === "page"}
+        aria-pressed={fit === "page"}
+        onclick={() => (fit = "page")}
+        aria-label="Fit the whole page"
+        title="Fit the whole page in the pane, top to bottom"
+        ><FitIcon kind="page" /></button
+      >
+    {/if}
+  </span>
 </span>
 
 <style>
+  /* A mouse gets the slider, touch the − / + buttons. Narrower panes drop the
+     readout, and below 440px the slider gives way to the buttons. */
   .zoomctl {
+    flex: none;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
+  }
+  .zstep {
+    display: none;
+  }
+  @media (pointer: coarse) {
+    .zoomctl .zoomslider {
+      display: none;
+    }
+    .zstep {
+      display: inline-flex;
+    }
+  }
+  @container material (max-width: 639px) {
+    .zoomctl .zoomslider {
+      width: 70px;
+    }
+    .zval {
+      display: none;
+    }
+  }
+  @container material (max-width: 439px) {
+    .zoomctl .zoomslider {
+      display: none;
+    }
+    .zstep {
+      display: inline-flex;
+    }
   }
 </style>

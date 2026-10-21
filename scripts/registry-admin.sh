@@ -4,6 +4,7 @@
 # Usage:
 #   scripts/registry-admin.sh <instance> list
 #   scripts/registry-admin.sh <instance> tombstone <name> [--notes "<why>"]
+#   scripts/registry-admin.sh <instance> free <name>
 #   scripts/registry-admin.sh --help
 #
 # Commands:
@@ -11,6 +12,9 @@
 #   tombstone   Retire <name>: its campaign stops resolving, and the row is kept
 #               so the name can never be registered again. Cannot be undone;
 #               you are asked to type the name to confirm. --notes records why.
+#   free        Remove <name>'s row, whatever its state, so anyone may take the
+#               name, e.g. one held by a repository that should not have it.
+#               Its campaign stops resolving; you are asked to type the name.
 #
 # Instances:
 #   A name from the INSTANCES table at the top of this script, or any origin,
@@ -127,6 +131,26 @@ case $command in
     fi
     # A tombstone keeps the row, so the name can never be registered again.
     printf 'Tombstone "%s" on %s? It cannot be undone. Type the name to confirm: ' \
+      "$name" "$origin" >/dev/tty
+    read -r confirm </dev/tty
+    [ "$confirm" = "$name" ] || {
+      echo "not confirmed; nothing changed" >&2
+      exit 1
+    }
+    ;;
+  free)
+    [ $# -eq 1 ] || usage
+    name=$1
+    case $name in
+      *[!a-z0-9-]* | "")
+        echo "'$name' is not a valid campaign name" >&2
+        exit 2
+        ;;
+    esac
+    method=POST
+    path=/registry/admin/slugs/$name/free
+    body=
+    printf 'Free "%s" on %s? Its campaign stops resolving. Type the name to confirm: ' \
       "$name" "$origin" >/dev/tty
     read -r confirm </dev/tty
     [ "$confirm" = "$name" ] || {

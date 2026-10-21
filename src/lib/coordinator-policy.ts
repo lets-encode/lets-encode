@@ -50,13 +50,23 @@ export function pieceKindForPath(
   return pieceFieldForPath(configText, path, "kind");
 }
 
+// The lines of a unified diff from its first hunk on. Before the first "@@" a
+// line starting with "+++" or "---" is a file header; inside a hunk it is an
+// added or removed line whose text starts with "++" or "--".
+function hunkLines(patch: string): string[] {
+  const lines = patch.split("\n");
+  const first = lines.findIndex((line) => line.startsWith("@@"));
+  return first < 0
+    ? lines.filter((line) => !line.startsWith("+++") && !line.startsWith("---"))
+    : lines.slice(first);
+}
+
 /** Return the sole added CSV row in a patch that removes no rows. */
 export function addedRowFromPatch(patch: string | undefined): string | null {
   if (!patch) return null;
   const added: string[] = [];
   let removed = 0;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
+  for (const line of hunkLines(patch)) {
     if (line.startsWith("+")) added.push(line.slice(1));
     else if (line.startsWith("-")) removed++;
   }
@@ -69,8 +79,7 @@ export function removedRowFromPatch(patch: string | undefined): string | null {
   if (!patch) return null;
   const removed: string[] = [];
   let added = 0;
-  for (const line of patch.split("\n")) {
-    if (line.startsWith("+++") || line.startsWith("---")) continue;
+  for (const line of hunkLines(patch)) {
     if (line.startsWith("-")) removed.push(line.slice(1));
     else if (line.startsWith("+")) added++;
   }
@@ -87,13 +96,7 @@ function csvRowsFromPatch(
   if (!patch) return null;
   const added: string[] = [];
   const removed: string[] = [];
-  for (const line of patch.split("\n")) {
-    if (
-      line.startsWith("+++") ||
-      line.startsWith("---") ||
-      line.startsWith("\\")
-    )
-      continue;
+  for (const line of hunkLines(patch)) {
     if (line.startsWith("+")) added.push(line.slice(1));
     else if (line.startsWith("-")) removed.push(line.slice(1));
   }
@@ -353,4 +356,20 @@ export function priorDecision(
   for (let i = history.length - 1; i >= 0; i--)
     if (history[i].pr === pr) return history[i];
   return null;
+}
+
+/** The longest detail a rejection comment carries, in characters. */
+export const MAX_REJECTION_DETAIL = 500;
+
+/**
+ * A rejection's detail as the pull request comment carries it: one line of at
+ * most MAX_REJECTION_DETAIL characters, as inline code. The detail can quote
+ * the fork's markup; as code, no mention, link or HTML in it is rendered.
+ */
+export function rejectionDetail(detail: string): string {
+  const characters = Array.from(
+    detail.replace(/[\u0000-\u001f\u007f]/g, " ").replaceAll("`", "'"),
+  );
+  const line = characters.slice(0, MAX_REJECTION_DETAIL).join("");
+  return `\`${characters.length > MAX_REJECTION_DETAIL ? `${line}…` : line}\``;
 }

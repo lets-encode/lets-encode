@@ -128,6 +128,9 @@
   /** Below this preview width the toolbar keeps only the panes and the page
       navigation (the narrow rule in the styles). */
   const PV_NARROW = 560;
+  /** Below this preview width the toolbar's page label shows the numbers
+      only (the compact rule in the styles). */
+  const PV_COMPACT = 1100;
   const pvZoomPos = $derived(
     Math.round(
       (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) *
@@ -150,6 +153,7 @@
   // page-count switch; the chosen view returns when it widens.
   let pvW = $state(0);
   const pvNarrow = $derived(pvW > 0 && pvW < PV_NARROW);
+  const pvCompact = $derived(pvW > 0 && pvW < PV_COMPACT);
   const pvShownView = $derived(pvNarrow ? "single" : pvView);
   const pvSpreads = $derived(
     buildSpreads(pvPageTotal, pvShownView, pvFirstOnRight),
@@ -179,6 +183,10 @@
       ...needs.map((n) => (pvScrollH - n.extra) / (colW * n.aspect)),
     );
     return Math.min(1, Math.max(PV_ZOOM_MIN, Math.floor(z * 1000) / 1000));
+  });
+  // A narrow preview has no whole-page fit: it opens at the page width.
+  $effect(() => {
+    if (pvNarrow && pvFit === "page") pvFit = "width";
   });
   $effect(() => {
     if (pvFit === "width") pvZoom = 1;
@@ -395,7 +403,28 @@
     tick().then(() => showPage(page));
   }
 
+  // The measures in reading order: the facsimile's zone labels, page by page.
+  const measureOrder = $derived(
+    (preview?.facs ?? []).flatMap((pg) => pg.zones.map((z) => z.label)),
+  );
+  /** Whether a measure comes before (-1) or after (1) the selected one. */
+  export function canStepMeasure(dir: 1 | -1): boolean {
+    if (selected === null) return false;
+    const i = measureOrder.indexOf(selected);
+    return i >= 0 && measureOrder[i + dir] !== undefined;
+  }
+  /** Select the measure before (-1) or after (1) the selected one. */
+  export function stepMeasure(dir: 1 | -1) {
+    if (!canStepMeasure(dir)) return;
+    selectMeasure(measureOrder[measureOrder.indexOf(selected!) + dir]);
+  }
+
   /** Show or hide the measure zones on the facsimile. */
+  /** Clear the measure selection. */
+  export function clearSelection() {
+    if (selected !== null) selectMeasure(selected);
+  }
+
   export function setZones(on: boolean) {
     showZones = on;
   }
@@ -508,14 +537,17 @@
 </script>
 
 <div class="preview" bind:clientWidth={pvW}>
-  <div class="ptoolbar">
+  <div class="ptoolbar vtoolbar">
     {#if preview?.facs?.length}
-      <!-- Where the toolbar is too narrow for the labels, the buttons carry
-           their icon alone; the label stays for screen readers. -->
-      <div class="seg paneseg">
+      <!-- Joined toolbar buttons, as the measure correction's Scroll / Draw
+           pair. Where the toolbar is too narrow for the labels, the buttons
+           carry their icon alone; the label stays for screen readers. -->
+      <span class="tbtn-pair paneseg" role="group" aria-label="Panes">
         <button
           type="button"
+          class="tbtn tbtn-icon"
           class:on={pane === "facs"}
+          aria-pressed={pane === "facs"}
           onclick={() => setPane("facs")}
           title="Show the page images of the source"
           ><span class="ico" aria-hidden="true"><Icon name="facsimile" /></span
@@ -523,7 +555,9 @@
         >
         <button
           type="button"
+          class="tbtn tbtn-icon"
           class:on={pane === "enc"}
+          aria-pressed={pane === "enc"}
           onclick={() => setPane("enc")}
           title="Show the encoding rendered as notation"
           ><span class="ico" aria-hidden="true"><Icon name="notes" /></span
@@ -531,14 +565,16 @@
         >
         <button
           type="button"
+          class="tbtn tbtn-icon"
           class:on={pane === "both"}
+          aria-pressed={pane === "both"}
           onclick={() => setPane("both")}
           title="Show the facsimile and the rendered encoding next to each other"
           ><span class="ico" aria-hidden="true"
             ><Icon name="side-by-side" /></span
           ><span class="lbl">Side by side</span></button
         >
-      </div>
+      </span>
     {/if}
     <div
       class="seg viewseg"
@@ -547,36 +583,40 @@
       <button
         type="button"
         class:on={pvView === "single"}
-        onclick={() => pvSetView("single")}>1 page</button
+        aria-pressed={pvView === "single"}
+        onclick={() => pvSetView("single")}
+        ><Icon name="page-one" /><span class="lbl">1 page</span></button
       >
       <button
         type="button"
         class:on={pvView === "double"}
-        onclick={() => pvSetView("double")}>2 pages</button
+        aria-pressed={pvView === "double"}
+        onclick={() => pvSetView("double")}
+        ><Icon name="page-two" /><span class="lbl">2 pages</span></button
       >
     </div>
     {#if pvView === "double"}
-      <label
-        class="pcheck"
+      <button
+        type="button"
+        class="chip-switch pcheck"
+        class:on={pvFirstOnRight}
+        aria-pressed={pvFirstOnRight}
+        onclick={() => pvSetFirstOnRight(!pvFirstOnRight)}
         title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
+        >Page 1 right</button
       >
-        <input
-          type="checkbox"
-          checked={pvFirstOnRight}
-          onchange={(e) =>
-            pvSetFirstOnRight((e.target as HTMLInputElement).checked)}
-        />
-        Page 1 right
-      </label>
     {/if}
     {#if facsVisible}
       <button
         type="button"
         class="chip-switch zonesw"
         class:on={showZones}
+        aria-pressed={showZones}
         onclick={() => (showZones = !showZones)}
         title="Show or hide the measure zones on the facsimile"
-        ><span class="sw"></span>Measure zones</button
+        ><span class="sw"></span><span class="zlong">Measure zones</span><span
+          class="zshort">Zones</span
+        ></button
       >
     {/if}
     {#if selected !== null}
@@ -588,8 +628,7 @@
         >m. {selected} <Icon name="close" size={11} /></button
       >
     {/if}
-    <span class="mspacer"></span>
-    <!-- The zoom controls wrap onto a second line together. -->
+    <span class="vline zoomline"></span>
     <span class="zoomgrp">
       <input
         class="zoomslider"
@@ -610,6 +649,7 @@
         type="button"
         class="tbtn tbtn-icon fitbtn"
         class:on={pvFit === "width"}
+        aria-pressed={pvFit === "width"}
         onclick={() => (pvFit = "width")}
         aria-label="Fit the page width"
         title="Fit the page width to the pane"><FitIcon kind="width" /></button
@@ -618,15 +658,16 @@
         type="button"
         class="tbtn tbtn-icon fitbtn"
         class:on={pvFit === "page"}
+        aria-pressed={pvFit === "page"}
         onclick={pvFitWholePage}
         aria-label="Fit the whole page"
         title="Fit the whole page in the pane, top to bottom"
         ><FitIcon kind="page" /></button
       >
     </span>
+    <span class="mspacer"></span>
     <!-- Last in the toolbar, next to the side panel on the right. -->
     <div class="pgnav">
-      <span class="vline"></span>
       <button
         type="button"
         class="btn btn-icon pgbtn"
@@ -634,8 +675,12 @@
         disabled={pvAtTop}
         aria-label="Previous page"><Icon name="chevron-left" /></button
       >
-      <span class="pglabel" style={`min-width:${pagesLabelCh(pvPageTotal)}ch`}
-        >{pvLabel}</span
+      <!-- A compact toolbar has room for the numbers only ("1 of 4"). -->
+      <span
+        class="pglabel"
+        style={`min-width:${pagesLabelCh(pvPageTotal) - (pvCompact ? "Pages ".length : 0)}ch`}
+        title={pvCompact ? pvLabel : undefined}
+        >{pvCompact ? pvLabel.replace(/^Pages? /, "") : pvLabel}</span
       >
       <button
         type="button"
@@ -834,21 +879,15 @@
   }
 
   /* -------------------------------------------------------------- toolbar */
-  /* Controls that do not fit on one line wrap onto a second. */
+  /* The shared viewer toolbar (.vtoolbar, ui.css), on one line: as the
+     preview narrows, labels give way to icons, then the zoom slider and its
+     value to the fit buttons, then the zone switch's label shortens. What
+     still does not fit scrolls sideways. */
   .ptoolbar {
-    min-height: 44px;
-    flex: none;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    box-shadow: var(--shadow-sm);
     margin-bottom: 10px;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    padding: 4px 16px;
-    box-sizing: border-box;
-    gap: 6px 10px;
+  }
+  .zshort {
+    display: none;
   }
   .paneseg {
     flex: none;
@@ -856,7 +895,7 @@
   .zoomgrp {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 6px;
   }
   .paneseg .ico {
     display: none;
@@ -866,9 +905,6 @@
   /* Below this the labels no longer fit beside the paging and zoom controls, so
      the pane buttons keep their icon and hide their label from sight only. */
   @container (max-width: 1200px) {
-    .paneseg button {
-      padding: 4px 10px;
-    }
     .paneseg .ico {
       display: inline-block;
     }
@@ -881,35 +917,95 @@
       white-space: nowrap;
     }
   }
-  /* Narrow (PV_NARROW): the pane switch and the page navigation at touch
-     size; the page-count switch, "Page 1 right", the zone switch, the zoom
-     slider and the fit buttons are hidden. Zoom stays reachable by pinch
-     and Ctrl/Cmd + scroll. */
+  /* Compact (PV_COMPACT): the page-count buttons keep their icon, the page
+     label its numbers. */
+  @container (max-width: 1099px) {
+    .viewseg .lbl {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+  /* Narrower, zoom is the fit buttons, a pinch or Ctrl/Cmd + scroll. */
+  @container (max-width: 899px) {
+    .zoomgrp > .zoomslider,
+    .zoomgrp > .zval {
+      display: none;
+    }
+  }
+  @container (max-width: 799px) {
+    .zlong,
+    .zoomline {
+      display: none;
+    }
+    .zshort {
+      display: inline;
+    }
+  }
+  /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size in
+     the same order: the pane switch, fit width and the paging, each 32px
+     with a 44px press area. The page-count switch, "Page 1 right", the zone
+     switch, the measure chip, the zoom slider and fit page are hidden; zoom
+     is a pinch or Ctrl/Cmd + scroll. On a touch screen the toolbar moves
+     below the pages, within thumb reach. */
+  @media (pointer: coarse) {
+    @container (max-width: 559px) {
+      .ptoolbar {
+        order: 2;
+        margin: 8px 0 0;
+      }
+    }
+  }
   @container (max-width: 559px) {
     .ptoolbar {
-      min-height: 48px;
       gap: 4px;
-      padding: 1px 4px;
+      padding: 4px 6px;
+      /* The 44px press areas reach past the toolbar's edge. */
+      overflow-x: visible;
     }
     .viewseg,
     .pcheck,
     .zonesw,
-    .zoomgrp,
-    .pgnav > .vline {
+    .tchip,
+    .zoomline,
+    .zoomgrp > .zoomslider,
+    .zoomgrp > .zval,
+    .zoomgrp > .fitbtn + .fitbtn {
       display: none;
     }
-    .ptoolbar .pgbtn {
-      min-width: 44px;
-      min-height: 44px;
+    .zoomgrp {
+      flex: none;
     }
-  }
-  .pcheck {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: var(--ink-soft);
-    white-space: nowrap;
+    .pglabel {
+      min-width: 0 !important;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ptoolbar .pgbtn,
+    .ptoolbar .fitbtn,
+    .paneseg > .tbtn {
+      position: relative;
+      box-sizing: border-box;
+      min-width: 32px;
+      min-height: 32px;
+      justify-content: center;
+    }
+    .ptoolbar .pgbtn::after,
+    .ptoolbar .fitbtn::after {
+      content: "";
+      position: absolute;
+      inset: -6px -3px;
+    }
+    /* Joined buttons share their edge, so their press areas only grow up
+       and down. */
+    .paneseg > .tbtn::after {
+      content: "";
+      position: absolute;
+      inset: -6px 0;
+    }
   }
   /* ---------------------------------------------------------------- panes */
   .pbody-panes {
@@ -933,8 +1029,8 @@
     min-height: 0;
   }
   .pane-cap {
-    font-size: 10.5px;
-    color: var(--ink-faint);
+    font-size: 11.5px;
+    color: var(--ink-soft);
     text-align: center;
     flex: none;
     padding-bottom: 2px;
@@ -997,18 +1093,18 @@
     width: 100%;
     height: auto;
     display: block;
-    border: 1px solid var(--line);
-    border-radius: 8px;
+    border: 1px solid var(--line-input);
     background: var(--facsimile-paper);
+    box-shadow: var(--shadow-paper);
   }
   /* The rendered pages are paper: they stay light in both themes. */
   .pv-sheet :global(svg) {
     width: 100%;
     height: auto;
     display: block;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: #fdfdfe;
+    border: 1px solid var(--line-input);
+    background: var(--facsimile-paper);
+    box-shadow: var(--shadow-paper);
   }
   .pv-page figcaption.blank {
     visibility: hidden;

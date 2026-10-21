@@ -85,6 +85,46 @@ export type SubmitResult =
 
 const reject = (reason: string): SubmitResult => ({ ok: false, reason });
 
+/** The longest comment body the automation accepts, in UTF-16 code units, as
+    a field's `maxlength` counts them. */
+export const MAX_COMMENT_LENGTH = 5000;
+/** The longest page or measure value a comment's anchor may carry. */
+export const MAX_ANCHOR_LENGTH = 20;
+/** A page or measure value as a comment's anchor carries it: '' when it is
+    longer than the automation accepts, so the comment is sent without it. */
+export const anchorCell = (value: string): string =>
+  value.length <= MAX_ANCHOR_LENGTH ? value : "";
+const MAX_PIECE_PATH_LENGTH = 200;
+
+/** A repository path of an MEI file: no empty, `.` or `..` segment and no
+    control character. */
+function isPiecePath(path: string): boolean {
+  return (
+    path.length <= MAX_PIECE_PATH_LENGTH &&
+    path.endsWith(".mei") &&
+    !/[\u0000-\u001f\u007f]/.test(path) &&
+    path.split("/").every((s) => s !== "" && s !== "." && s !== "..")
+  );
+}
+
+/**
+ * Why the automation refuses the cells a fork wrote into a comment row, or
+ * null: `comment_too_long` past MAX_COMMENT_LENGTH, `invalid_anchor` when a
+ * page or measure is longer than MAX_ANCHOR_LENGTH or the piece is not an MEI
+ * file's repository path.
+ */
+function commentCellsError(row: CommentRow): string | null {
+  if (row.body.length > MAX_COMMENT_LENGTH) return "comment_too_long";
+  if (
+    [row.page, row.measure_start, row.measure_end].some(
+      (value) => value.length > MAX_ANCHOR_LENGTH,
+    ) ||
+    (row.fragment !== "" && !isPiecePath(row.fragment))
+  )
+    return "invalid_anchor";
+  return null;
+}
+
 function cloneState(state: ParsedState): ParsedState {
   return {
     header: [...state.header],
@@ -254,6 +294,8 @@ export function checkValidation({
     ) {
       return reject("fail_without_comment");
     }
+    const cells = commentCellsError(failComment);
+    if (cells) return reject(cells);
   } else if (!boundaryCheck(changedPaths, [STATE_PATH])) {
     return reject("out_of_bounds");
   }
@@ -370,6 +412,8 @@ export function checkReviewEdit({
     failComment.body.trim() === ""
   )
     return reject("fail_without_comment");
+  const cells = commentCellsError(failComment);
+  if (cells) return reject(cells);
   if (row.status !== "validation_required") return reject("wrong_state");
   const holdsLock = locks.some(
     (l) =>
@@ -449,10 +493,12 @@ export function checkComment({
   if (!DISCUSSION_KINDS.includes(added.kind))
     return { ok: false, reason: "invalid_kind" };
   if (added.body.trim() === "") return { ok: false, reason: "empty_comment" };
+  const cells = commentCellsError(added);
+  if (cells) return { ok: false, reason: cells };
+  // A discussion comment names a task or the campaign, never a subtask.
   if (
-    added.task_id === ""
-      ? added.subtask_id !== ""
-      : !findRow(state.rows, added.task_id, "")
+    added.subtask_id !== "" ||
+    (added.task_id !== "" && !findRow(state.rows, added.task_id, ""))
   )
     return { ok: false, reason: "unknown_task" };
   if (added.kind === "reply") {

@@ -3,6 +3,8 @@
   width it has, so fewer per row shows each page larger.
 -->
 <script lang="ts">
+  import Icon from "./Icon.svelte";
+
   let {
     value = $bindable(),
   }: {
@@ -12,39 +14,37 @@
   const MOST = 5;
 </script>
 
-<span class="stepper">
+<span class="tbtn-pair">
   <button
     type="button"
-    class="btn btn-icon"
+    class="tbtn tbtn-icon"
     aria-label="Fewer pages per row"
     disabled={value <= 1}
     onclick={() => value--}
   >
-    −
+    <Icon name="minus" size={16} />
   </button>
-  <span class="per-row">{value} per row</span>
+  <span class="tval" title="{value} per row"
+    >{value}<span class="per-row-word">per row</span></span
+  >
   <button
     type="button"
-    class="btn btn-icon"
+    class="tbtn tbtn-icon"
     aria-label="More pages per row"
     disabled={value >= MOST}
     onclick={() => value++}
   >
-    +
+    <Icon name="plus" size={16} />
   </button>
 </span>
 
 <style>
-  .stepper {
-    display: flex;
-    align-items: center;
-    gap: 4px;
+  .per-row-word {
+    margin-left: 0.3em;
   }
-  .per-row {
-    font-size: 12px;
-    padding: 0 2px;
-    font-variant-numeric: tabular-nums;
-    color: var(--ink-soft);
-    white-space: nowrap;
+  @container material (max-width: 439px) {
+    .per-row-word {
+      display: none;
+    }
   }
 </style>

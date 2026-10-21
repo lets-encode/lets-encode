@@ -11,10 +11,12 @@ import {
   relinkFacsimileImages,
   sortReadingOrder,
   nextLabel,
+  measureLabels,
   DEFAULT_SCORE_DEF,
   type FacsimilePage,
   type FacsimileModel,
   type ScoreDefModel,
+  type StaffGroupModel,
   replaceScoreDef,
 } from "../mei-facsimile.ts";
 
@@ -80,6 +82,115 @@ test("volta labels: alphanumeric labels are emitted and nextLabel advances their
   assert.equal(nextLabel("1a"), "2");
   const mei = buildFacsimileMei(m, { withBreaks: true });
   assert.ok(mei.includes('n="1a" facs="#zone-1-2"'));
+});
+
+test("measureLabels: sections count from 1, pickups are 0 at a section start and halves inside one", () => {
+  const m = (
+    pickup = false,
+    sectionStart = false,
+    override: string | null = null,
+  ) => ({
+    override,
+    pickup,
+    sectionStart,
+  });
+  assert.deepEqual(
+    measureLabels([m(true, true), m(), m(), m(true), m(), m(false, true), m()]),
+    ["0", "1", "2a", "2b", "3", "1", "2"],
+  );
+  // A hand-set label before a pickup keeps its label.
+  assert.deepEqual(measureLabels([m(), m(false, false, "7"), m(true), m()]), [
+    "1",
+    "7",
+    "7b",
+    "8",
+  ]);
+});
+
+test("a pickup is emitted as metcon=false and parsed back", () => {
+  const m = model();
+  m.pages[0].zones[0].pickup = true;
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.ok(mei.includes('metcon="false" facs="#zone-1-1"'));
+  assert.ok(!mei.includes('metcon="false" facs="#zone-1-2"'));
+  assert.deepEqual(
+    parseFacsimileMei(mei).pages[0].zones.map((z) => z.pickup),
+    [true, false],
+  );
+});
+
+test("repeats, endings and signs are emitted and parsed back; rebuilding reproduces the file", () => {
+  const m = model();
+  const [a, b] = m.pages[0].zones;
+  Object.assign(a, { rptStart: true, ending: "1", signs: ["fine", "segno"] });
+  Object.assign(b, { ending: "1", rptEnd: true, signs: ["toCoda"] });
+  Object.assign(m.pages[1].zones[0], { ending: "2", signs: ["coda"] });
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.ok(mei.includes('left="rptstart" facs="#zone-1-1"'));
+  assert.ok(mei.includes('right="rptend" facs="#zone-1-2"'));
+  // Signs keep MEASURE_SIGNS order: segno at the left barline, Fine at the right.
+  assert.ok(
+    /func="segno" staff="1" tstamp="0"[\s\S]*func="fine" staff="1" tstamp="5"/.test(
+      mei,
+    ),
+  );
+  assert.ok(mei.includes('tstamp="5" place="above">To Coda</dir>'));
+  // One ending per run; the page break between the runs stands outside both.
+  assert.equal((mei.match(/<ending\b/g) ?? []).length, 2);
+  assert.ok(
+    /<\/ending>\s*<pb[^>]*facs="#surface-2"[^>]*>\s*<ending[^>]*n="2"/.test(
+      mei,
+    ),
+  );
+
+  const parsed = parseFacsimileMei(mei);
+  const zones = parsed.pages.flatMap((pg) => pg.zones);
+  assert.deepEqual(
+    zones.map((z) => [
+      z.rptStart ?? false,
+      z.rptEnd ?? false,
+      z.ending ?? "",
+      z.signs ?? [],
+    ]),
+    [
+      [true, false, "1", ["segno", "fine"]],
+      [false, true, "1", ["toCoda"]],
+      [false, false, "2", ["coda"]],
+    ],
+  );
+  const rebuilt = buildFacsimileMei(
+    { headXml: parsed.headXml, pages: parsed.pages } satisfies FacsimileModel,
+    { withBreaks: true },
+  );
+  assert.equal(rebuilt, mei);
+});
+
+test("a double repeat is written as right=rptboth on its measure and parsed back", () => {
+  const m = model();
+  Object.assign(m.pages[0].zones[0], { rptBoth: true });
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.ok(mei.includes('right="rptboth" facs="#zone-1-1"'));
+  assert.ok(!mei.includes('right="rptend"'));
+  const zones = parseFacsimileMei(mei).pages[0].zones;
+  assert.equal(zones[0].rptBoth, true);
+  assert.equal(zones[0].rptEnd, undefined);
+  assert.equal(zones[1].rptBoth, undefined);
+});
+
+test("an ending closes at a new section and before a measure without one", () => {
+  const m = model();
+  Object.assign(m.pages[0].zones[0], { ending: "1" });
+  Object.assign(m.pages[0].zones[1], { ending: "1", mdiv: true });
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.equal((mei.match(/<ending\b/g) ?? []).length, 2);
+  assert.equal((mei.match(/<\/ending>/g) ?? []).length, 2);
+  // Each <mdiv> holds its own ending.
+  for (const mdiv of mei.match(/<mdiv\b[\s\S]*?<\/mdiv>/g) ?? []) {
+    assert.equal(
+      (mdiv.match(/<ending\b/g) ?? []).length,
+      (mdiv.match(/<\/ending>/g) ?? []).length,
+    );
+  }
 });
 
 test("parseFacsimileMei rejects input without an MEI header", () => {
@@ -439,6 +550,49 @@ test("the score definition round-trips through both builders", () => {
   assert.ok(facsimile.includes(">Violoncello &amp; Basso</label>"));
 });
 
+test("transposed staves round-trip with their own key signatures", () => {
+  const scoreDef: ScoreDefModel = {
+    ...THREE_STAVES,
+    keysig: "2f",
+    staves: [
+      // Clarinet in B♭: written a major 2nd up, so no sharps or flats.
+      {
+        clefShape: "G",
+        clefLine: 2,
+        ...PLAIN,
+        label: "Clarinetto in B",
+        transDiat: -1,
+        transSemi: -2,
+      },
+      // Horn in F written without a key signature.
+      {
+        clefShape: "G",
+        clefLine: 2,
+        ...PLAIN,
+        label: "Corno in F",
+        transDiat: -4,
+        transSemi: -7,
+        keysig: "0",
+      },
+      // Timpani without a key signature, not transposing.
+      { clefShape: "F", clefLine: 4, ...PLAIN, label: "Timpani", keysig: "0" },
+      { clefShape: "F", clefLine: 4, ...PLAIN, label: "Basso" },
+    ],
+  };
+  const mei = buildBlankScoreMei(HEAD, 0, scoreDef);
+  assert.match(
+    mei,
+    /<staffDef[^>]* n="1"[^>]* keysig="0" trans\.diat="-1" trans\.semi="-2"/,
+  );
+  assert.match(
+    mei,
+    /<staffDef[^>]* n="2"[^>]* keysig="0" trans\.diat="-4" trans\.semi="-7"/,
+  );
+  assert.match(mei, /<staffDef[^>]* n="3"[^>]* keysig="0" meter/);
+  assert.doesNotMatch(mei, /<staffDef[^>]* n="4"[^>]* (keysig|trans)/);
+  assert.deepEqual(parseScoreDef(mei), scoreDef);
+});
+
 test("keysig 0 means no accidentals and emits no attribute", () => {
   const mei = buildFacsimileMei({
     ...model(),
@@ -495,7 +649,16 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
       { clefShape: "F", clefLine: 4, ...PLAIN, label: "" },
       { clefShape: "G", clefLine: 2, ...PLAIN, label: "Violino" },
     ],
-    groups: [{ start: 1, end: 2, symbol: "brace", label: "Piano & Co." }],
+    groups: [
+      {
+        start: 1,
+        end: 2,
+        symbol: "brace",
+        label: "Piano & Co.",
+        barThru: true,
+        oneInstrument: true,
+      },
+    ],
   };
   const mei = buildFacsimileMei({ ...model(), scoreDef: piano });
   // The group label sits directly inside the staffGrp, escaped.
@@ -503,6 +666,8 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
     mei,
     /<staffGrp[^>]*symbol="brace"[^>]*>\n\s*<label[^>]*>Piano &amp; Co\.<\/label>/,
   );
+  // One instrument: an <instrDef> follows the label.
+  assert.match(mei, /Co\.<\/label>\n\s*<instrDef[^>]*\/>/);
   // The braced pair sits in its own staffGrp with barlines through; the
   // third staff stays outside it.
   assert.match(
@@ -510,15 +675,66 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
     /<staffGrp xml:id="staffGrp-2" symbol="brace" bar\.thru="true">[\s\S]*?n="2"[\s\S]*?<\/staffGrp>\n\s*<staffDef[^>]*n="3"/,
   );
   assert.deepEqual(parseScoreDef(mei), piano);
-  // A bracket groups without running the barlines through.
+  // A bracket without barlines through writes no bar.thru.
   const bracketed = {
     ...piano,
-    groups: [{ start: 2, end: 3, symbol: "bracket", label: "" }],
+    groups: [
+      {
+        start: 2,
+        end: 3,
+        symbol: "bracket",
+        label: "",
+        barThru: false,
+        oneInstrument: false,
+      },
+    ],
   };
   const bracketMei = buildFacsimileMei({ ...model(), scoreDef: bracketed });
   assert.ok(bracketMei.includes('symbol="bracket"'));
   assert.ok(!bracketMei.includes("bar.thru"));
+  assert.ok(!bracketMei.includes("instrDef"));
   assert.deepEqual(parseScoreDef(bracketMei), bracketed);
+});
+
+test("staff groups nest two levels deep and round-trip in document order", () => {
+  const staff = { clefShape: "G", clefLine: 2, ...PLAIN, label: "" };
+  const group = (
+    start: number,
+    end: number,
+    symbol: string,
+    label = "",
+  ): StaffGroupModel => ({
+    start,
+    end,
+    symbol,
+    label,
+    barThru: true,
+    oneInstrument: false,
+  });
+  const orchestra: ScoreDefModel = {
+    ...DEFAULT_SCORE_DEF,
+    staves: Array.from({ length: 7 }, () => ({ ...staff })),
+    // Woodwinds holding a flute pair, a single staff, then strings holding
+    // the violins.
+    groups: [
+      group(1, 3, "bracket", "Legni"),
+      group(1, 2, "brace", "Flauti"),
+      group(5, 7, "bracket"),
+      group(5, 6, "brace"),
+    ],
+  };
+  const mei = buildFacsimileMei({ ...model(), scoreDef: orchestra });
+  // The flute brace opens inside the woodwind bracket, after its label.
+  assert.match(
+    mei,
+    /symbol="bracket" bar\.thru="true">\n\s*<label[^>]*>Legni<\/label>\n\s*<staffGrp[^>]*symbol="brace"/,
+  );
+  // Staff 4 stands outside every group, between the two brackets.
+  assert.match(
+    mei,
+    /<\/staffGrp>\n\s*<staffDef[^>]*n="4"[^>]*\/>\n\s*<staffGrp[^>]*symbol="bracket"/,
+  );
+  assert.deepEqual(parseScoreDef(mei), orchestra);
 });
 
 test("percussion, tablature and octave-displaced staves round-trip", () => {
@@ -630,4 +846,60 @@ test("measuredSurfaceIds: only pages holding measure zones", () => {
   };
   const mei = buildFacsimileMei(m, { withBreaks: true });
   assert.deepEqual(measuredSurfaceIds(mei), ["surface-2", "surface-3"]);
+});
+
+test("reads a score in linear time whatever its comments hold", () => {
+  // Comments the schema ignores: a long run of spaces before the header, and
+  // many start tags with no end tag after them. Each made the old patterns
+  // quadratic (128 KB of spaces took 8 s).
+  const spaces = " ".repeat(512 * 1024);
+  const openers = (name: string) => `<${name}>`.repeat(32 * 1024);
+  const score = buildFacsimileMei(model(), { withBreaks: true });
+  const crafted = score
+    .replace("<meiHead", `<!--${spaces}--><meiHead`)
+    .replace(
+      "</mei>",
+      `<!--${openers("surface")}${openers("scoreDef")}${openers("staffDef")}${openers("meiHead")}${openers("body")}${`<dir `.repeat(32 * 1024)}--></mei>`,
+    );
+  const started = performance.now();
+  assert.deepEqual(measuredSurfaceIds(crafted), measuredSurfaceIds(score));
+  assert.equal(parseFacsimileMei(crafted).pages.length, 2);
+  parseScoreDef(crafted);
+  replaceScoreDef(crafted, DEFAULT_SCORE_DEF);
+  relinkFacsimileImages(crafted, []);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("reads a score in linear time when a comment holds the end of the element around it", () => {
+  // The first </surface> and </body> sit in comments, so the start tags
+  // before them in the element's content have no ">".
+  const unclosed = (name: string, end: string) =>
+    `<!--${`<${name} `.repeat(32 * 1024)}</${end}>-->`;
+  const crafted = buildFacsimileMei(model(), { withBreaks: true })
+    .replace("<graphic", `${unclosed("zone", "surface")}<graphic`)
+    .replace("</section>", `${unclosed("dir", "body")}</section>`);
+  assert.ok(
+    crafted.includes("</surface>-->") && crafted.includes("</body>-->"),
+  );
+  const started = performance.now();
+  measuredSurfaceIds(crafted);
+  parseFacsimileMei(crafted);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("reads self-closing staff definitions after one named in a comment", () => {
+  const mei =
+    '<mei><music><body><mdiv><score><scoreDef meter.count="4" meter.unit="4"><staffGrp><!-- one <staffDef> per part -->' +
+    '<staffDef n="1" lines="5" clef.shape="F" clef.line="4"/>' +
+    '<staffDef n="2" lines="5" clef.shape="C" clef.line="3"/>' +
+    "</staffGrp></scoreDef></score></mdiv></body></music></mei>";
+  assert.deepEqual(
+    parseScoreDef(mei).staves.map((s) => [s.clefShape, s.clefLine]),
+    [
+      ["F", 4],
+      ["C", 3],
+    ],
+  );
 });

@@ -145,6 +145,20 @@
       handleCheck.state !== "checking",
   );
 
+  // Why Continue is disabled, beside it in the footer.
+  const blockReason = $derived.by(() => {
+    const h = wizard.handle.trim();
+    const t = wizard.title.trim();
+    if (!h && !t) return "Enter a campaign name and a title.";
+    if (!h) return "Enter a campaign name.";
+    if (!isValidHandle(h)) return "The campaign name is not valid yet.";
+    if (handleCheck.state === "checking") return "Checking the name…";
+    if (handleCheck.state === "taken" || handleCheck.state === "draft")
+      return "Choose a different campaign name.";
+    if (!t) return "Enter a title.";
+    return "";
+  });
+
   let claiming = $state(false);
   let claimError = $state<string | null>(null);
   let releaseNote = $state<string | null>(null);
@@ -177,7 +191,9 @@
         ? `“${name}” has just been taken by another campaign. Choose a different name.`
         : result.error === "invalid"
           ? `“${name}” cannot be used as a campaign name.`
-          : "The name could not be reserved just now. Check your connection and try again.";
+          : result.error === "limit"
+            ? "You are holding the names of too many unfinished setups. Discard one under Drafts on the campaign list, or wait until a name is released 24 hours after it was reserved."
+            : "The name could not be reserved just now. Check your connection and try again.";
   }
 
   // Take over the name held by this browser's unfinished setup of the same
@@ -206,7 +222,7 @@
     const released = await releaseClaim(claim.name, claim.token);
     releaseNote = released
       ? null
-      : `“${claim.name}” could not be given back, so it stays reserved for up to half an hour before it is free again.`;
+      : `“${claim.name}” could not be given back, so it stays reserved for up to 24 hours before it is free again.`;
   }
 </script>
 
@@ -317,10 +333,16 @@
 
     <!-- Continue submits the form, so this step draws its own footer. -->
     {#snippet footer()}
+      {#if !canAdvance && blockReason}
+        <span class="footnote" id="name-block-reason">{blockReason}</span>
+      {/if}
       <button
         type="submit"
-        class="btn btn-lg btn-primary"
+        class="btn btn-primary"
         disabled={!canAdvance || claiming}
+        aria-describedby={!canAdvance && blockReason
+          ? "name-block-reason"
+          : undefined}
       >
         {claiming ? "Reserving the name…" : "Continue"}{#if !claiming}<Icon
             name="arrow-right"
@@ -338,8 +360,22 @@
   .field {
     margin-top: 18px;
   }
+  .footnote {
+    margin-right: auto;
+    align-self: center;
+    font-size: 12.5px;
+    color: var(--ink-faint);
+  }
   .field:first-child {
     margin-top: 26px;
+  }
+  @media (max-width: 599px) {
+    .field {
+      margin-top: 14px;
+    }
+    .field:first-child {
+      margin-top: 18px;
+    }
   }
   /* Sits under the field's hints rather than beside the input. */
   .btn-inline {

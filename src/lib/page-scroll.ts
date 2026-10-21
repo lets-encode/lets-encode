@@ -23,6 +23,8 @@ export interface RowView {
   /** Rows within one view height of the visible area. */
   near: number[];
   atTop: boolean;
+  /** The view is scrolled to the bottom or reading the last row: no row
+      follows to page to. */
   atEnd: boolean;
 }
 
@@ -30,7 +32,8 @@ export function rowView(scroller: HTMLElement, rows: HTMLElement[]): RowView {
   const top = scroller.scrollTop;
   const h = scroller.clientHeight;
   const boxes = rowBoxes(scroller, rows);
-  const current = boxes.findIndex((b) => b.top + b.h > top + h / 3);
+  const found = boxes.findIndex((b) => b.top + b.h > top + h / 3);
+  const current = found < 0 ? rows.length - 1 : found;
   const shown: number[] = [];
   const near: number[] = [];
   boxes.forEach((b, i) => {
@@ -39,11 +42,11 @@ export function rowView(scroller: HTMLElement, rows: HTMLElement[]): RowView {
     if (b.top < top + 2 * h && b.top + b.h > top - h) near.push(i);
   });
   return {
-    current: current < 0 ? rows.length - 1 : current,
+    current,
     shown,
     near,
     atTop: top <= 1,
-    atEnd: top + h >= scroller.scrollHeight - 1,
+    atEnd: top + h >= scroller.scrollHeight - 1 || current >= rows.length - 1,
   };
 }
 

@@ -15,6 +15,11 @@ export interface CommandEnvelope {
 }
 
 const MARKER = "lets-encode:command";
+// A command id as the app names its commands, e.g.
+// "campaign.submitComment": the only shape an envelope may carry, so the PR
+// body cannot put arbitrary text into the history table's command column.
+const COMMAND_ID = /^[a-z]+(\.[A-Za-z]+)+$/;
+const MAX_COMMAND_LENGTH = 64;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -40,7 +45,8 @@ export function envelopeFromPrBody(
     if (
       !isRecord(parsed) ||
       typeof parsed.command !== "string" ||
-      parsed.command.trim() === "" ||
+      parsed.command.length > MAX_COMMAND_LENGTH ||
+      !COMMAND_ID.test(parsed.command) ||
       !Number.isInteger(parsed.version) ||
       (parsed.version as number) < 1 ||
       typeof parsed.user_id !== "string" ||

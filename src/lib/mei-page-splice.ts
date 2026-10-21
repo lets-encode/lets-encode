@@ -17,20 +17,37 @@
 // checked afterwards (assertSpliceIntegrity) so a fork that smuggles in a
 // page break or a duplicate measure is rejected rather than merged.
 
-import { escapeRegex } from "./mei-xml.ts";
+import { tagsIn } from "./mei-xml.ts";
 
-/** The first facs-matched `<pb>` for `surfaceId` at or after `from`. */
+/**
+ * The `<pb>` tags of `xml` from offset `from`, outside comments, with the
+ * surface each names ("surface-N" from facs="#surface-N"), or null when it
+ * names none or its attributes cannot be read.
+ */
+function* pageBreaks(
+  xml: string,
+  from = 0,
+): Generator<{ start: number; end: number; surface: string | null }> {
+  for (const tag of tagsIn(xml, from)) {
+    if (tag.name !== "pb" || tag.kind === "end") continue;
+    const facs = tag.attributes?.get("facs") ?? "";
+    yield {
+      start: tag.start,
+      end: tag.end,
+      surface: facs.startsWith("#") ? facs.slice(1) : null,
+    };
+  }
+}
+
+/** The first `<pb>` for `surfaceId` at or after `from`. */
 function pbTagAt(
   xml: string,
   surfaceId: string,
   from = 0,
-): RegExpExecArray | null {
-  const pb = new RegExp(
-    `<pb\\b[^>]*\\bfacs="#${escapeRegex(surfaceId)}"[^>]*>`,
-    "g",
-  );
-  pb.lastIndex = from;
-  return pb.exec(xml);
+): { start: number; end: number } | null {
+  for (const pb of pageBreaks(xml, from))
+    if (pb.surface === surfaceId) return pb;
+  return null;
 }
 
 /**
@@ -47,11 +64,11 @@ function pageSpanAt(
 ): { from: number; to: number } {
   const pb = pbTagAt(xml, surfaceId);
   if (!pb) throw new Error(`No page break found for ${surfaceId}.`);
-  const from = pb.index + pb[0].length;
+  const from = pb.end;
   if (nextSurfaceId === null) return { from, to: closeOfEnclosure(xml, from) };
   const next = pbTagAt(xml, nextSurfaceId, from);
   if (!next) throw new Error(`No page break found for ${nextSurfaceId}.`);
-  return { from, to: next.index };
+  return { from, to: next.start };
 }
 
 // A span that runs to the end of the body must not swallow the enclosing
@@ -59,13 +76,12 @@ function pageSpanAt(
 // enclosing it. <section>/<mdiv> elements opened inside the span are tracked
 // by depth, so a nested section's close does not end the span early.
 function closeOfEnclosure(xml: string, from: number): number {
-  const tags = /<(\/?)(section|mdiv)\b[^>]*?(\/?)>/g;
-  tags.lastIndex = from;
   let depth = 0;
-  for (let match = tags.exec(xml); match; match = tags.exec(xml)) {
-    if (match[3]) continue; // self-closing: opens nothing
-    if (!match[1]) depth++;
-    else if (depth === 0) return match.index;
+  for (const tag of tagsIn(xml, from)) {
+    if (tag.name !== "section" && tag.name !== "mdiv") continue;
+    if (tag.kind === "start") depth++;
+    else if (tag.kind === "empty") continue;
+    else if (depth === 0) return tag.start;
     else depth--;
   }
   return xml.length;
@@ -73,9 +89,14 @@ function closeOfEnclosure(xml: string, from: number): number {
 
 /** Every `<pb>` facs target ("surface-N") in `xml`, in document order. */
 function pbSurfaces(xml: string): string[] {
-  return [...xml.matchAll(/<pb\b[^>]*\bfacs="#([^"]*)"[^>]*>/g)].map(
-    (match) => match[1],
+  return [...pageBreaks(xml)].flatMap((pb) =>
+    pb.surface === null ? [] : [pb.surface],
   );
+}
+
+/** How many `<pb>` tags of `xml` name no surface. */
+function unplacedPageBreaks(xml: string): number {
+  return [...pageBreaks(xml)].filter((pb) => pb.surface === null).length;
 }
 
 /**
@@ -115,16 +136,28 @@ function assertSpliceIntegrity(
     }
   }
 
+  if (unplacedPageBreaks(splicedMei) > unplacedPageBreaks(baseMei)) {
+    throw new Error(
+      `Splicing ${locator} introduced a page break that names no surface.`,
+    );
+  }
+
   const measureIds = new Set<string>();
-  for (const match of splicedMei.matchAll(
-    /<measure\b[^>]*\bxml:id="([^"]*)"/g,
-  )) {
-    if (measureIds.has(match[1])) {
+  for (const tag of tagsIn(splicedMei)) {
+    if (tag.name !== "measure" || tag.kind === "end") continue;
+    if (tag.attributes === null) {
       throw new Error(
-        `Duplicate measure xml:id "${match[1]}" after splicing ${locator}.`,
+        `A measure's attributes cannot be read after splicing ${locator}.`,
       );
     }
-    measureIds.add(match[1]);
+    const id = tag.attributes.get("xml:id");
+    if (id === undefined) continue;
+    if (measureIds.has(id)) {
+      throw new Error(
+        `Duplicate measure xml:id "${id}" after splicing ${locator}.`,
+      );
+    }
+    measureIds.add(id);
   }
 }
 
@@ -157,11 +190,19 @@ export function firstElementOfPage(
   const at = surfaces.indexOf(locator);
   if (at === -1) return null;
   const { from, to } = pageSpanAt(mei, locator, surfaces[at + 1] ?? null);
-  const page = mei.slice(from, to);
-  const element =
-    /<note\b[^>]*\bxml:id="([^"]*)"/.exec(page) ??
-    /<measure\b[^>]*\bxml:id="([^"]*)"/.exec(page);
-  return element ? element[1] : null;
+  const tags = [...tagsIn(mei.slice(from, to))];
+  for (const name of ["note", "measure"]) {
+    const id = tags
+      .find(
+        (tag) =>
+          tag.name === name &&
+          tag.kind !== "end" &&
+          tag.attributes?.has("xml:id"),
+      )
+      ?.attributes?.get("xml:id");
+    if (id !== undefined) return id;
+  }
+  return null;
 }
 
 /**

@@ -25,7 +25,7 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed, expiresIn } from "$lib/campaign-board.ts";
+  import { elapsed, expiresIn, reviewWaitLabel } from "$lib/campaign-board.ts";
   import {
     handle,
     isPreTask,
@@ -53,6 +53,8 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
+  import RefreshNotice from "$lib/components/RefreshNotice.svelte";
 
   const PER_PAGE = 12;
 
@@ -77,15 +79,15 @@
 
   // Stats arrive one campaign at a time; each resolves into the grid as it
   // lands rather than waiting for the slowest repository.
+  const placeRow = (s: CampaignStats) =>
+    (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]);
+
   async function loadAll() {
     try {
       const listing = await loadAllCampaignStats(
         readForge(),
         provider.repoTopic,
-        {
-          onEach: (s) =>
-            (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]),
-        },
+        { onEach: placeRow },
       );
       listFailed = listing.failed;
       listFailure = listing.failure;
@@ -199,6 +201,34 @@
     }
   }
 
+  // A campaign whose default branch has moved since its row was read is read
+  // again. The topic search, which finds new campaigns, runs again only when
+  // the tab becomes visible. Logged out, every request counts against the
+  // shared per-address limit, so polling waits for the tab to become visible.
+  let refreshStatus = $state(REFRESH_OK);
+  $effect(() => {
+    refreshStatus = REFRESH_OK;
+    if (!listLoaded) return;
+    return startAutoRefresh({
+      interval: () => (auth.user ? 10_000 : null),
+      held: () => listLoading || runner.busy,
+      onStatus: (status) => (refreshStatus = status),
+      poll: async (resumed) => {
+        const f = readForge();
+        if (resumed)
+          await loadAllCampaignStats(f, provider.repoTopic, {
+            onEach: placeRow,
+          });
+        await Promise.all(
+          stats.map(async (s) => {
+            const { sha } = await f.getRepoHead(s.owner, s.repo);
+            if (sha !== s.headSha) await refreshStats(s);
+          }),
+        );
+      },
+    });
+  });
+
   async function run(
     t: MyTask,
     command: (c: CommandContext) => Promise<Result>,
@@ -298,7 +328,7 @@
   const claimMeta = (t: MyTask) =>
     `claimed ${ago(t.claimedAt)}${claimExpiry(t) ? ` · ${claimExpiry(t)}` : ""}`;
   const reviewMeta = (t: MyTask) =>
-    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${t.passes} of ${t.threshold} reviews`;
+    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
 
   // Wide screens show the viewer's work in a side column; narrower ones fold
   // it behind a one-line summary bar.
@@ -454,7 +484,10 @@
         (a, b) =>
           (b.total ? b.done / b.total : 0) - (a.total ? a.done / a.total : 0),
       );
-    else list.sort((a, b) => ts(b.lastActivity) - ts(a.lastActivity));
+    else {
+      const active = (s: CampaignStats) => ts(s.lastActivity || s.createdAt);
+      list.sort((a, b) => active(b) - active(a));
+    }
     return list;
   });
   const shown = $derived(filtered.slice(0, visibleCount));
@@ -477,6 +510,7 @@
 <div class="screen">
   <h1 class="vh">Campaigns</h1>
   <RunnerBanner {runner} />
+  <RefreshNotice status={refreshStatus} retrying={!!auth.user} bar={false} />
 
   <div class="layout" class:split={auth.user && wide.current}>
     {#if auth.user}
@@ -498,7 +532,7 @@
                     <span
                       class="chip danger"
                       title="A review asked for changes; the task is back with its encoder."
-                      >Change requested</span
+                      >Change request</span
                     >
                   </a>
                 {:else}
@@ -540,21 +574,21 @@
             {#if wide.current}
               <div class="phead">
                 <h2 class="stitle">Your open work</h2>
-                <span class="countpill">{openCount}</span>
+                <span class="countpill">{openCount} to do</span>
               </div>
             {:else}
               <h2 class="barh">
                 <button
                   type="button"
                   class="workbar"
-                  aria-label={`Your open work: ${openCount} to act on, ${listLoading && tasks.length === 0 ? "loading" : workSummary}`}
+                  aria-label={`Your open work: ${openCount} to do, ${listLoading && tasks.length === 0 ? "loading" : workSummary}`}
                   aria-expanded={workOpen}
                   aria-controls="worklist"
                   onclick={() => (workOpen = !workOpen)}
                 >
                   <span class="phead"
                     ><span class="btitle">Your open work</span><span
-                      class="countpill">{openCount}</span
+                      class="countpill">{openCount} to do</span
                     ></span
                   >
                   <span class="wsum"
@@ -603,7 +637,7 @@
                         <span class="imeta">{claimMeta(t)}</span>
                       </a>
                       {#if t.group === "encoding"}
-                        <span class="chip blue">Encoding</span>
+                        <span class="chip blue">Ongoing</span>
                       {:else}
                         <span class="chip review">Reviewing</span>
                       {/if}

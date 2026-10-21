@@ -27,7 +27,6 @@ import {
   parseStateCsv,
   parseTaskCsv,
   pieceNamesOf,
-  piecePreparationsOf,
   resolveLogins,
   COMMENT_PATH,
   CONFIG_PATH,
@@ -41,7 +40,6 @@ import type {
   HistoryRow,
   LockRow,
   PieceNames,
-  PiecePreparations,
   StateRow,
   TaskRow,
 } from "./campaign-tables.ts";
@@ -52,15 +50,9 @@ import type { RepoSummary } from "./forge/github-rest.ts";
 
 /** A task's one-line title in a campaign (cardTitle). */
 const titleOf = (
-  stats: Pick<CampaignStats, "pieceNames" | "preparations">,
+  stats: Pick<CampaignStats, "pieceNames">,
   def: TaskRow,
-): string =>
-  cardTitle(
-    def.fragment,
-    def.locator,
-    stats.pieceNames,
-    stats.preparations[def.fragment] === "omr",
-  );
+): string => cardTitle(def.fragment, def.locator, stats.pieceNames);
 
 /** One campaign's tracking tables condensed for the dashboard views. */
 export interface CampaignStats {
@@ -94,8 +86,6 @@ export interface CampaignStats {
   allowSelfValidation: boolean;
   /** Fragment path → piece display name, from the config's pieces list. */
   pieceNames: PieceNames;
-  /** Fragment path → the piece's preparation ("omr"), from the same list. */
-  preparations: PiecePreparations;
   // The raw tables, for the my-work projections.
   taskDefs: TaskRow[];
   rows: StateRow[];
@@ -104,6 +94,8 @@ export interface CampaignStats {
   history: HistoryRow[];
   comments: CommentRow[];
   passThreshold: number;
+  /** The default branch's head commit the tables were read at; '' when it could not be read. */
+  headSha: string;
 }
 
 /** Tasks claimable right now (unclaimed, unblocked encoding_required). */
@@ -331,6 +323,12 @@ async function fetchStats(
 ): Promise<CampaignStats> {
   const owner = summary.owner ?? summary.full_name.split("/")[0];
   const repo = summary.name;
+  // The head is read before the tables: a commit that lands during the read
+  // moves the branch past `headSha`, and the next poll reads again.
+  const headSha = await f.getRepoHead(owner, repo).then(
+    (h) => h.sha,
+    () => "",
+  );
   const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
     await Promise.all([
       f.getRepoFile(owner, repo, TASK_PATH),
@@ -404,7 +402,6 @@ async function fetchStats(
     createdAt: summary.created_at || history[0]?.timestamp || "",
     allowSelfValidation: configFlag(yaml, "allow_self_validation"),
     pieceNames: pieceNamesOf(configPieces(yaml)),
-    preparations: piecePreparationsOf(configPieces(yaml)),
     taskDefs,
     rows: state.rows,
     validationColumns: state.validationColumns,
@@ -412,6 +409,7 @@ async function fetchStats(
     history,
     comments,
     passThreshold,
+    headSha,
   };
   return stats;
 }
@@ -438,6 +436,12 @@ export interface MyTask {
   /** Awaiting group: validation progress on the task's subtasks. */
   passes: number;
   threshold: number;
+  /** Awaiting group: the task's reviews claimed by the viewer and by others. */
+  myReviews: number;
+  otherReviews: number;
+  /** Awaiting group: the reviews have to come from someone other than the
+      viewer, the task's encoder. */
+  needsAnother: boolean;
   /** Slot dots for the awaiting group. */
   dots: Array<"pass" | "open">;
   /** When the encoding was submitted (awaiting/done groups). */
@@ -454,6 +458,18 @@ export interface FeedComment {
   logins: Record<string, string>;
 }
 
+/** Unresolved change requests (fail comments) on unfinished tasks. */
+function openChangeRequests(stats: CampaignStats) {
+  const done = new Set(
+    stats.rows
+      .filter((r) => r.subtask_id === "" && r.status === "completed")
+      .map((r) => r.task_id),
+  );
+  return stats.comments.filter(
+    (c) => c.kind === "fail" && c.resolved !== "true" && !done.has(c.task_id),
+  );
+}
+
 /**
  * Unfinished tasks with an unresolved change request (fail comment), each
  * with its display title.
@@ -461,28 +477,16 @@ export interface FeedComment {
 export function changeRequestTasks(
   stats: CampaignStats,
 ): { task: string; title: string }[] {
-  const done = new Set(
-    stats.rows
-      .filter((r) => r.subtask_id === "" && r.status === "completed")
-      .map((r) => r.task_id),
-  );
-  const tasks = new Set(
-    stats.comments
-      .filter(
-        (c) =>
-          c.kind === "fail" && c.resolved !== "true" && !done.has(c.task_id),
-      )
-      .map((c) => c.task_id),
-  );
+  const tasks = new Set(openChangeRequests(stats).map((c) => c.task_id));
   return [...tasks].map((task) => {
     const def = findRow(stats.taskDefs, task, "");
     return { task, title: def ? titleOf(stats, def) : task };
   });
 }
 
-/** Unfinished tasks with an unresolved change request (fail comment). */
+/** The number of unresolved change requests on unfinished tasks. */
 export function attentionCount(stats: CampaignStats): number {
-  return changeRequestTasks(stats).length;
+  return openChangeRequests(stats).length;
 }
 
 /** The viewer's tasks in one campaign, grouped by what needs doing. */
@@ -496,6 +500,9 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
     );
     const cells = subRows.flatMap((r) =>
       stats.validationColumns.map((c) => r[c] ?? ""),
+    );
+    const reviewLocks = stats.locks.filter(
+      (l) => l.kind === "validation" && l.task_id === task,
     );
     const dots = cells.map((cell) =>
       isFinalValidation(cell) ? ("pass" as const) : ("open" as const),
@@ -512,6 +519,9 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       expiresAt: "",
       passes: dots.filter((d) => d === "pass").length,
       threshold: taskThreshold(stats.passThreshold, subRows.length),
+      myReviews: reviewLocks.filter((l) => l.user_id === viewer).length,
+      otherReviews: reviewLocks.filter((l) => l.user_id !== viewer).length,
+      needsAnother: !stats.allowSelfValidation,
       dots,
       submittedAt: findRow(stats.rows, task, "")?.encoded_at ?? "",
       logins: stats.logins,

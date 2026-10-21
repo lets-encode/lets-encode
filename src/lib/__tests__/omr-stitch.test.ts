@@ -310,6 +310,44 @@ test("a key the first system changes is reported for the page opening", () => {
   );
 });
 
+test("a transposing part keeps its own key, and a key change moves every part by the same fifths", () => {
+  // Concert 3 sharps; part 2 a clarinet in A written in C.
+  const start = { fifths: 3, keys: [3, 0], time: null };
+  const page = stitchPage(
+    [
+      [staff(key(3) + G, [rest]), staff(key(0) + G, [rest])],
+      // Both move one fifth up: concert 4 sharps, the clarinet 1 sharp.
+      [staff(key(4) + G, [rest]), staff(key(1) + G, [rest])],
+    ],
+    ["G2", "G2"],
+    [
+      [0, 1],
+      [0, 1],
+    ],
+    start,
+  );
+  assert.equal(page.opening.fifths, null);
+  assert.deepEqual(partOf(page.musicxml, 1).match(/<fifths>-?\d+<\/fifths>/g), [
+    "<fifths>3</fifths>",
+    "<fifths>4</fifths>",
+  ]);
+  assert.deepEqual(partOf(page.musicxml, 2).match(/<fifths>-?\d+<\/fifths>/g), [
+    "<fifths>0</fifths>",
+    "<fifths>1</fifths>",
+  ]);
+  assert.equal(page.end.fifths, 4);
+  assert.deepEqual(page.end.keys, [4, 1]);
+  // A change on the opening system reports each part's key.
+  const opening = stitchPage(
+    [[staff(key(-1) + G, [rest]), staff(key(-4) + G, [rest])]],
+    ["G2", "G2"],
+    [[0, 1]],
+    start,
+  ).opening;
+  assert.equal(opening.fifths, -1);
+  assert.deepEqual(opening.keys, [-1, -4]);
+});
+
 test("a page whose first system has no transcription opens at the next system", () => {
   const page = stitchPage(
     [

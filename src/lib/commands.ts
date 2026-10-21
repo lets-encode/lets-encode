@@ -28,18 +28,22 @@ import {
   appendHistory,
   findRow,
   configString,
+  configNumber,
   passThresholdOf,
   configFlag,
   configPieces,
   resolveLogins,
+  DEFAULT_MAX_CLAIMS,
   COMMENT_PATH,
   CONFIG_PATH,
   HISTORY_PATH,
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
+  configPieceRegions,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
+import { claimLimitReached } from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -50,6 +54,7 @@ import type {
   HistoryRow,
   CommentRow,
   PieceRef,
+  PageRegion,
 } from "./campaign-tables.ts";
 import { appendEnvelopeToPrBody, envelopeColumns } from "./command-envelope.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
@@ -74,7 +79,10 @@ import {
   splicePage,
   splicePageSpan,
 } from "./mei-page-splice.ts";
-import { resolveFacsimileImageUrls } from "./facsimile-images.ts";
+import {
+  resolveFacsimileImageUrls,
+  resolveRepoRelativeTarget,
+} from "./facsimile-images.ts";
 import { WorkflowRunWatch } from "./run-watch.ts";
 import { checkMei } from "./mei-check.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
@@ -661,6 +669,26 @@ async function settleWhenProcessed(
   );
 }
 
+/**
+ * Why the viewer may not claim another task, when they hold the most claims
+ * the campaign allows one person at once (locking.max_claims_per_person, which
+ * the campaign automation enforces); null otherwise. `locks` are the live ones.
+ */
+function claimLimitError(
+  locks: LockRow[],
+  viewer: string,
+  configYaml: string | null,
+): string | null {
+  const max = configNumber(
+    configYaml,
+    "max_claims_per_person",
+    DEFAULT_MAX_CLAIMS,
+  );
+  return claimLimitReached(locks, viewer, max)
+    ? `You hold ${max} claims, as many as this campaign allows one person at once. Submit or give back one of them first.`
+    : null;
+}
+
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
 // the invoking command's envelope in its body. Shared by the claim command
 // and "open in mei-friend" (where opening == claiming).
@@ -673,9 +701,13 @@ async function openClaimPr(
 ) {
   const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
   await muteOnce(ctx);
-  const lockRows = parseLockCsv(
-    (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
-  );
+  const [lockCsv, configYaml] = await Promise.all([
+    f.getRepoFile(owner, repo, LOCK_PATH),
+    f.getRepoFile(owner, repo, CONFIG_PATH),
+  ]);
+  const lockRows = parseLockCsv(lockCsv ?? "");
+  const limited = claimLimitError(liveLocks(lockRows), viewer, configYaml);
+  if (limited) throw new Error(limited);
   lockRows.push({
     task_id,
     subtask_id,
@@ -871,7 +903,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
     const kind = subtask_id ? "validation" : "encoding";
     const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
     try {
-      ctx.progress({ step: "Abandoning the task…" });
+      ctx.progress({ step: "Giving the task back…" });
       await muteOnce(ctx);
       const locks = parseLockCsv(
         (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
@@ -916,7 +948,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
       if (kind === "encoding") await deleteTaskBranch(ctx, task_id);
       return { ...res, message: `You abandoned ${target}.` };
     } catch (e) {
-      return { error: `Abandoning the task failed: ${(e as Error).message}` };
+      return { error: `Giving the task back failed: ${(e as Error).message}` };
     }
   },
 };
@@ -975,6 +1007,8 @@ const openEditor: CommandDef<
           )
         )
           return { error: `Someone else holds the claim on ${task_id}.` };
+        const limited = claimLimitError(locks, viewer, configYaml);
+        if (limited) return { error: limited };
       }
 
       const { sha, canPush } = await f.getRepoHead(owner, repo);
@@ -1813,6 +1847,9 @@ export interface FacsimileTaskData {
   locator: string;
   /** The piece's preparation from config.yaml: 'measure-detection' or 'omr'. */
   preparation: string;
+  /** Per page (same order as model.pages), the piece's regions on it from
+      config.yaml, in image pixels; empty where the config gives none. */
+  regions: PageRegion[][];
   /** Whether the score holds any notation (notes, rests, chords). */
   hasNotation: boolean;
   status: string;
@@ -1894,6 +1931,13 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       fragment: task.fragment,
       locator: task.locator,
       preparation,
+      regions: configPieceRegions(
+        configYaml,
+        task.fragment,
+        model.pages.map((page) =>
+          resolveRepoRelativeTarget(task.fragment, page.image),
+        ),
+      ),
       hasNotation: hasNotation(mei),
       status: taskState?.status ?? "",
       holdsLock,

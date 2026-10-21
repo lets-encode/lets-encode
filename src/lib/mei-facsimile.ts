@@ -23,8 +23,15 @@
 
 import { addXmlIds } from "./mei-ids.ts";
 import { MEI_SCHEMA_URL } from "./mei-schema.ts";
-import { xmlEscape, xmlUnescape } from "./mei-xml.ts";
+import {
+  elementsNamed,
+  firstElementNamed,
+  startTags,
+  xmlEscape,
+  xmlUnescape,
+} from "./mei-xml.ts";
 import { pageSystems } from "./omr-layout.ts";
+import { writtenKeysig } from "./transposition.ts";
 
 /** The XML declaration, schema association and <mei> start tag of a generated score. */
 const MEI_OPENING =
@@ -59,6 +66,93 @@ export interface ZoneModel {
    * <mdiv>; its flag is ignored.
    */
   mdiv: boolean;
+  /**
+   * Whether the measure is a pickup (an incomplete measure that is not
+   * counted), emitted as @metcon="false" on its <measure> at stage C.
+   * Absent means false.
+   */
+  pickup?: boolean;
+  /** A repeat barline at the measure's start (@left="rptstart"). Absent means false. */
+  rptStart?: boolean;
+  /** A repeat barline at the measure's end (@right="rptend"). Absent means false. */
+  rptEnd?: boolean;
+  /**
+   * A double repeat barline at the measure's end (@right="rptboth"): the end
+   * of one repeat and the start of the next. Takes the place of rptEnd.
+   * Absent means false.
+   */
+  rptBoth?: boolean;
+  /**
+   * The ending (volta) the measure belongs to: "1", "2", "3". Consecutive
+   * measures of one section with the same ending form one <ending>. Absent
+   * means none.
+   */
+  ending?: string;
+  /** The navigation signs the measure carries (MEASURE_SIGNS order). */
+  signs?: MeasureSign[];
+}
+
+/**
+ * A navigation sign on a measure: segno, coda, D.C., D.S. and Fine are a
+ * <repeatMark> with that @func; To Coda is a <dir>.
+ */
+export type MeasureSign =
+  | "segno"
+  | "coda"
+  | "daCapo"
+  | "dalSegno"
+  | "fine"
+  | "toCoda";
+/** The signs in the order they are written. */
+export const MEASURE_SIGNS: MeasureSign[] = [
+  "segno",
+  "coda",
+  "daCapo",
+  "dalSegno",
+  "fine",
+  "toCoda",
+];
+/** The text a sign carries; segno and coda are symbols only. */
+export const SIGN_TEXT: Record<MeasureSign, string> = {
+  segno: "",
+  coda: "",
+  daCapo: "D.C.",
+  dalSegno: "D.S.",
+  fine: "Fine",
+  toCoda: "To Coda",
+};
+/** Segno and coda stand at the measure's start, the others at its end. */
+const SIGN_AT_START = new Set<MeasureSign>(["segno", "coda"]);
+
+/** The beats of a measure in `scoreDef`'s meter. */
+function meterBeats(scoreDef: ScoreDefModel): number {
+  if (scoreDef.meterSym === "common") return 4;
+  if (scoreDef.meterSym === "cut") return 2;
+  return Math.max(1, Number(scoreDef.meterCount) || 4);
+}
+
+/**
+ * A measure's signs as control events on its first staff, above it: @tstamp
+ * 0 is the left barline, the meter's beats + 1 the right barline.
+ */
+function signsXml(
+  signs: MeasureSign[] | undefined,
+  measureNo: number,
+  beats: number,
+): string {
+  return MEASURE_SIGNS.filter((sign) => signs?.includes(sign))
+    .map((sign, k) => {
+      const at = SIGN_AT_START.has(sign) ? 0 : beats + 1;
+      const id = `${sign === "toCoda" ? "dir" : "repeatMark"}-${measureNo}-${k + 1}`;
+      const where = `staff="1" tstamp="${at}" place="above"`;
+      const text = SIGN_TEXT[sign];
+      if (sign === "toCoda")
+        return `                  <dir xml:id="${id}" ${where}>${text}</dir>\n`;
+      return text
+        ? `                  <repeatMark xml:id="${id}" func="${sign}" ${where}>${text}</repeatMark>\n`
+        : `                  <repeatMark xml:id="${id}" func="${sign}" ${where}/>\n`;
+    })
+    .join("");
 }
 
 /** One page of the facsimile model. */
@@ -75,8 +169,8 @@ export interface PageModel {
    */
   staves?: MeasureBox[];
   /**
-   * Grand-staff boxes (the staves a brace joins) of a piece prepared by OMR,
-   * whose layout task corrects them. Kept like `staves`.
+   * Grand-staff boxes (staves one performer plays together) of a piece
+   * prepared by OMR, whose layout task corrects them. Kept like `staves`.
    */
   grandstaves?: MeasureBox[];
 }
@@ -101,11 +195,34 @@ export interface StaffModel {
   notationType: string;
   /** Instrument label, written as a <label> child; '' emits none. */
   label: string;
+  /**
+   * MEI staffDef @trans.diat and @trans.semi: the interval from written to
+   * sounding pitch of a transposing instrument (a clarinet in B♭: -1, -2).
+   * Absent or both 0 is no transposition.
+   */
+  transDiat?: number;
+  transSemi?: number;
+  /**
+   * The staff's own key signature (MEI @keysig) where it differs from the
+   * one its transposition gives (`staffKeysig`); absent follows it.
+   */
+  keysig?: string;
 }
 
-/** A run of staves joined by one symbol: a brace (one instrument, like a
- * piano — its barlines run through) or a bracket (a section, like the
- * strings). Staff numbers are 1-based and inclusive. */
+/** The key signature a staff is written in: its own, else the score's moved by its transposition. */
+export function staffKeysig(scoreKeysig: string, staff: StaffModel): string {
+  return (
+    staff.keysig ??
+    writtenKeysig(scoreKeysig, {
+      diat: staff.transDiat ?? 0,
+      semi: staff.transSemi ?? 0,
+    })
+  );
+}
+
+/** A run of staves joined by one symbol: a brace (a piano; a pair of horns)
+ * or a bracket (a section, like the strings). Staff numbers are 1-based and
+ * inclusive. A group within another's staves nests inside it (staff-groups.ts). */
 export interface StaffGroupModel {
   start: number;
   end: number;
@@ -113,6 +230,14 @@ export interface StaffGroupModel {
   symbol: string;
   /** Group label, written as a <label> child; '' emits none. */
   label: string;
+  /** MEI staffGrp @bar.thru: the barlines run through the group's staves. */
+  barThru: boolean;
+  /**
+   * The staves are one instrument (a piano, a harp: one part over several
+   * staves), written as an <instrDef> in the <staffGrp>; false for staves of
+   * separate instruments (Horn 1, 2). Braces only.
+   */
+  oneInstrument: boolean;
 }
 
 /** The initial score definition: staves with clefs, key signature and meter. */
@@ -212,6 +337,37 @@ export function nextLabel(prevLabel: string | undefined): string {
 }
 
 /**
+ * The labels of a score's measures in reading order. A section start counts
+ * from 1, or is 0 when it is a pickup. A pickup inside a section completes
+ * the measure before it: the two are numbered as halves (12a, 12b), the
+ * first only while its label is automatic. Other measures count on from the
+ * previous label (nextLabel). A measure with an `override` takes that label.
+ */
+export function measureLabels(
+  measures: {
+    override: string | null;
+    pickup: boolean;
+    sectionStart: boolean;
+  }[],
+): string[] {
+  const labels: string[] = [];
+  measures.forEach((m, i) => {
+    const prev = labels[i - 1];
+    let auto: string;
+    if (m.sectionStart || i === 0) auto = m.pickup ? "0" : "1";
+    else if (m.pickup) {
+      const base = parseInt(prev, 10) || 0;
+      const before = measures[i - 1];
+      if (before.override === null && !before.pickup)
+        labels[i - 1] = `${base}a`;
+      auto = `${base}b`;
+    } else auto = nextLabel(prev);
+    labels.push(m.override ?? auto);
+  });
+  return labels;
+}
+
+/**
  * The initial model for freshly detected pages: labels numbered continuously
  * across pages in the given order, system flags from the row grouping. The
  * header is left empty — the caller supplies its own headXml (buildPieceHead).
@@ -250,10 +406,12 @@ export function initialFacsimileModel(pages: FacsimilePage[]): FacsimileModel {
 }
 
 // The <scoreDef> block at its fixed indentation inside <score>: the key
-// signature on the scoreDef, one staffDef per staff carrying its clef, the
-// meter and an optional <label>. keysig '0' means no accidentals and emits no
-// attribute. Grouped staves nest in their own <staffGrp>; a brace joins the
-// staves of one instrument, so its barlines run through (bar.thru).
+// signature on the scoreDef, one staffDef per staff carrying its clef, its
+// own key signature where it differs from the scoreDef's, its transposition,
+// the meter and an optional <label>. keysig '0' means no accidentals and emits no
+// attribute. Grouped staves nest in their own <staffGrp>, an inner group
+// inside the outer one, with bar.thru where the barlines run through and an
+// <instrDef> where a brace's staves are one instrument.
 // `optimize` marks a score whose systems leave out staves (@optimize): a
 // renderer hides a staff that holds only rests.
 function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
@@ -273,13 +431,20 @@ function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
     const notation = staff.notationType
       ? ` notationtype="${xmlEscape(staff.notationType)}"`
       : "";
+    const trans =
+      staff.transDiat || staff.transSemi
+        ? ` trans.diat="${staff.transDiat ?? 0}" trans.semi="${staff.transSemi ?? 0}"`
+        : "";
+    const ownKey = staffKeysig(scoreDef.keysig, staff);
+    const key =
+      ownKey === scoreDef.keysig ? "" : ` keysig="${xmlEscape(ownKey)}"`;
     // A lute tablature staff carries no clef; the TAB lettering belongs to
     // the modern (guitar) kind only.
     const clef = staff.notationType.startsWith("tab.lute.")
       ? ""
       : ` clef.shape="${xmlEscape(staff.clefShape)}" clef.line="${staff.clefLine}"${dis}`;
     const open =
-      `${indent}<staffDef n="${n}" lines="${staff.lines}"${notation}${clef} ` +
+      `${indent}<staffDef n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
       meter;
     if (!staff.label) return `${open}/>`;
     return (
@@ -288,28 +453,40 @@ function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
       `${indent}</staffDef>`
     );
   };
-  const groups = [...scoreDef.groups].sort((a, b) => a.start - b.start);
-  const base = "                     ";
+  // Outer groups first, so each group is found before the groups inside it.
+  const groups = [...scoreDef.groups].sort(
+    (a, b) => a.start - b.start || b.end - a.end,
+  );
+  const count = scoreDef.staves.length;
+  const written = new Set<StaffGroupModel>();
   const rows: string[] = [];
-  let n = 1;
-  while (n <= scoreDef.staves.length) {
-    const group = groups.find((g) => g.start === n);
-    if (!group) {
-      rows.push(staffDefXml(scoreDef.staves[n - 1], n, base));
-      n++;
-      continue;
+  const emit = (from: number, to: number, indent: string) => {
+    let n = from;
+    while (n <= to) {
+      const group = groups.find(
+        (g) => !written.has(g) && g.start === n && Math.min(g.end, count) <= to,
+      );
+      if (!group) {
+        rows.push(staffDefXml(scoreDef.staves[n - 1], n, indent));
+        n++;
+        continue;
+      }
+      written.add(group);
+      const end = Math.min(group.end, count);
+      const thru = group.barThru ? ' bar.thru="true"' : "";
+      rows.push(
+        `${indent}<staffGrp symbol="${xmlEscape(group.symbol)}"${thru}>`,
+      );
+      if (group.label)
+        rows.push(`${indent}   <label>${xmlEscape(group.label)}</label>`);
+      if (group.symbol === "brace" && group.oneInstrument)
+        rows.push(`${indent}   <instrDef/>`);
+      emit(n, end, `${indent}   `);
+      rows.push(`${indent}</staffGrp>`);
+      n = end + 1;
     }
-    const end = Math.min(group.end, scoreDef.staves.length);
-    const thru = group.symbol === "brace" ? ' bar.thru="true"' : "";
-    rows.push(`${base}<staffGrp symbol="${xmlEscape(group.symbol)}"${thru}>`);
-    if (group.label)
-      rows.push(`${base}   <label>${xmlEscape(group.label)}</label>`);
-    while (n <= end) {
-      rows.push(staffDefXml(scoreDef.staves[n - 1], n, `${base}   `));
-      n++;
-    }
-    rows.push(`${base}</staffGrp>`);
-  }
+  };
+  emit(1, count, "                     ");
   return (
     `               <scoreDef${keysig}${optimize ? ' optimize="true"' : ""}>\n` +
     `                  <staffGrp>\n` +
@@ -397,6 +574,15 @@ export function buildFacsimileMei(
   // System breaks are numbered in document order; a page break's @n records its
   // page number (the surface ordinal), per the MEI guidelines for <pb>.
   let sbNo = 0;
+  const beats = meterBeats(scoreDef);
+  // The ending the measures being written belong to, and the endings so far.
+  let openEnding: string | null = null;
+  let endingNo = 0;
+  const closeEnding = () => {
+    if (openEnding === null) return;
+    mdivParts[mdivParts.length - 1].push(`               </ending>`);
+    openEnding = null;
+  };
 
   model.pages.forEach((page, pi) => {
     const p = pi + 1;
@@ -416,6 +602,10 @@ export function buildFacsimileMei(
           `lrx="${Math.round(m.lrx)}" lry="${Math.round(m.lry)}"/>`,
       );
       if (!withMeasures) return;
+      // An ending closes before another ending, a measure of none, or a new
+      // movement; a break at the boundary stands outside both endings.
+      const ending = zone.ending || null;
+      if (ending !== openEnding || (zone.mdiv && measureNo > 1)) closeEnding();
       // A flagged measure opens the next movement (the first one is implicit).
       if (zone.mdiv && measureNo > 1) mdivParts.push([]);
       const parts = mdivParts[mdivParts.length - 1];
@@ -432,9 +622,16 @@ export function buildFacsimileMei(
           `               <sb xml:id="sb-${p}-${zi + 1}" n="${++sbNo}"/>`,
         );
       }
+      if (ending !== null && openEnding === null) {
+        parts.push(
+          `               <ending xml:id="ending-${++endingNo}" n="${xmlEscape(ending)}" label="${xmlEscape(ending)}.">`,
+        );
+        openEnding = ending;
+      }
       parts.push(
-        `               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}" facs="#${zoneId}">\n` +
+        `               <measure xml:id="measure-${measureNo}" n="${xmlEscape(zone.label)}"${zone.pickup ? ' metcon="false"' : ""}${zone.rptStart ? ' left="rptstart"' : ""}${zone.rptBoth ? ' right="rptboth"' : zone.rptEnd ? ' right="rptend"' : ""} facs="#${zoneId}">\n` +
           body +
+          signsXml(zone.signs, measureNo, beats) +
           `               </measure>`,
       );
     });
@@ -447,6 +644,7 @@ export function buildFacsimileMei(
       );
     }
 
+    if (pi === model.pages.length - 1) closeEnding();
     surfaces.push(
       `         <surface xml:id="${surfaceId}" n="${p}" ulx="0" uly="0" ` +
         `lrx="${page.width}" lry="${page.height}">\n` +
@@ -538,12 +736,16 @@ export function buildBlankScoreMei(
  * discard.
  */
 export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
-  const optimize = /<scoreDef\b[^>]*\boptimize="true"/.test(mei);
+  const scoreDefs = [...elementsNamed(mei, "scoreDef", true)];
+  const optimize = scoreDefs.some((el) => /\boptimize="true"/.test(el.tag));
   const block = buildScoreDefXml(scoreDef, optimize).trim();
-  return mei.replace(
-    /<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/g,
-    () => block,
-  );
+  let out = "";
+  let last = 0;
+  for (const el of scoreDefs) {
+    out += mei.slice(last, el.start) + block;
+    last = el.end;
+  }
+  return out + mei.slice(last);
 }
 
 // One attribute's value from an XML tag string, unescaped; null if absent.
@@ -560,21 +762,19 @@ function attr(tag: string, name: string): string | null {
  * scoreDef has no staffDef, yields the default.
  */
 export function parseScoreDef(text: string): ScoreDefModel {
-  const block =
-    /<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/.exec(text)?.[0];
-  if (!block) return defaultScoreDef();
-  const open = /<scoreDef\b[^>]*>/.exec(block)![0];
+  const scoreDefAt = firstElementNamed(text, "scoreDef", true);
+  if (!scoreDefAt) return defaultScoreDef();
+  const block = text.slice(scoreDefAt.start, scoreDefAt.end);
+  const open = scoreDefAt.tag;
   const staves: StaffModel[] = [];
-  for (const match of block.matchAll(
-    /<staffDef\b[^>]*\/>|<staffDef\b[^>]*>([\s\S]*?)<\/staffDef>/g,
-  )) {
-    const tag = /<staffDef\b[^>]*>/.exec(match[0])![0];
-    const label = /<label\b[^>]*>([\s\S]*?)<\/label>/.exec(match[1] ?? "")?.[1];
+  for (const staffDefAt of elementsNamed(block, "staffDef", true)) {
+    const tag = staffDefAt.tag;
+    const label = firstElementNamed(staffDefAt.inner, "label")?.inner;
     // A tablature staffDef may carry no clef attributes; its shape is the
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
     const tab = notationType.startsWith("tab");
-    staves.push({
+    const staff: StaffModel = {
       clefShape: attr(tag, "clef\\.shape") ?? (tab ? "TAB" : "G"),
       clefLine: Number(attr(tag, "clef\\.line") ?? (tab ? 3 : 2)),
       clefDis: attr(tag, "clef\\.dis") ?? "",
@@ -582,47 +782,59 @@ export function parseScoreDef(text: string): ScoreDefModel {
       lines: Number(attr(tag, "lines") ?? 5),
       notationType,
       label: label ? xmlUnescape(label.trim()) : "",
-    });
+    };
+    const diat = Number(attr(tag, "trans\\.diat") ?? 0);
+    const semi = Number(attr(tag, "trans\\.semi") ?? 0);
+    if (diat || semi) {
+      staff.transDiat = diat;
+      staff.transSemi = semi;
+    }
+    // A staffDef without a key signature has the scoreDef's; the model keeps
+    // a key only where it differs from the one the transposition gives.
+    const scoreKeysig = attr(open, "keysig") ?? "0";
+    const ownKey = attr(tag, "keysig") ?? scoreKeysig;
+    if (ownKey !== staffKeysig(scoreKeysig, staff)) staff.keysig = ownKey;
+    staves.push(staff);
   }
   if (!staves.length) return defaultScoreDef();
   // Nested <staffGrp> elements (below the root one) are the staff groups,
-  // each spanning the staffDefs it wraps, in document order.
+  // each spanning the staffDefs it wraps, outer groups before inner ones.
   const groups: StaffGroupModel[] = [];
   let staffNo = 0;
+  const pending: Omit<StaffGroupModel, "end">[] = [];
   let depth = 0;
-  let inner: { start: number; symbol: string; label: string } | null = null;
   const tokenRe = /<staffGrp\b[^>]*>|<\/staffGrp>|<staffDef\b/g;
   let token: RegExpExecArray | null;
   while ((token = tokenRe.exec(block))) {
     if (token[0] === "<staffDef") {
       staffNo++;
     } else if (token[0].startsWith("</")) {
-      if (depth === 2 && inner && staffNo >= inner.start) {
-        groups.push({
-          start: inner.start,
-          end: staffNo,
-          symbol: inner.symbol,
-          label: inner.label,
-        });
+      if (depth >= 2) {
+        const group = pending.pop()!;
+        if (staffNo >= group.start) groups.push({ ...group, end: staffNo });
       }
-      if (depth === 2) inner = null;
       depth--;
     } else {
       depth++;
-      if (depth === 2) {
+      if (depth >= 2) {
         // A label directly after the open tag names the group (a staff's
-        // own label sits inside its staffDef instead).
-        const label = /^\s*<label\b[^>]*>([\s\S]*?)<\/label>/.exec(
-          block.slice(tokenRe.lastIndex),
-        )?.[1];
-        inner = {
+        // own label sits inside its staffDef instead); an <instrDef> after
+        // it makes the staves one instrument.
+        const head =
+          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(<instrDef\b)?/.exec(
+            block.slice(tokenRe.lastIndex),
+          )!;
+        pending.push({
           start: staffNo + 1,
           symbol: attr(token[0], "symbol") ?? "bracket",
-          label: label ? xmlUnescape(label.trim()) : "",
-        };
+          label: head[1] ? xmlUnescape(head[1].trim()) : "",
+          barThru: attr(token[0], "bar\\.thru") === "true",
+          oneInstrument: !!head[2],
+        });
       }
     }
   }
+  groups.sort((a, b) => a.start - b.start || b.end - a.end);
   const firstStaff = /<staffDef\b[^>]*>/.exec(block)?.[0] ?? "";
   // A symbol signature implies its numeric meter — common time is 4/4, cut
   // time 2/2 — so the model stays complete either way.
@@ -660,12 +872,15 @@ export interface ParsedFacsimile extends FacsimileModel {
 
 /** The xml:ids of the score's surfaces that hold a measure zone, in document order. */
 export function measuredSurfaceIds(text: string): string[] {
-  return [...text.matchAll(/<surface\b([^>]*)>([\s\S]*?)<\/surface>/g)].flatMap(
-    (match) => {
-      const id = attr(`<surface${match[1]}>`, "xml:id");
-      return id && /<zone\b[^>]*\btype="measure"/.test(match[2]) ? [id] : [];
-    },
-  );
+  return [...elementsNamed(text, "surface")].flatMap((surface) => {
+    const id = attr(surface.tag, "xml:id");
+    return id &&
+      [...startTags(surface.inner, "zone")].some(({ tag }) =>
+        /\btype="measure"/.test(tag),
+      )
+      ? [id]
+      : [];
+  });
 }
 
 /**
@@ -675,24 +890,77 @@ export function measuredSurfaceIds(text: string): string[] {
  * <sb/>/<pb/> tokens where present, else from the row grouping.
  */
 export function parseFacsimileMei(text: string): ParsedFacsimile {
-  const headXml = /[ \t]*<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(text)?.[0];
-  if (!headXml) throw new Error("Not a facsimile score: no <meiHead> found.");
+  const headAt = firstElementNamed(text, "meiHead");
+  if (!headAt) throw new Error("Not a facsimile score: no <meiHead> found.");
+  // The header with the indentation in front of its start tag.
+  let headStart = headAt.start;
+  while (headStart > 0 && /[ \t]/.test(text[headStart - 1])) headStart--;
+  const headXml = text.slice(headStart, headAt.end);
 
-  // Which zones the body marks as system/page starts and as movement starts
-  // (stage C), keyed by zone id via each measure's facs link. A second or
-  // later <mdiv> flags its first measure; the first <mdiv> is implicit.
-  const body = /<body\b[^>]*>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? "";
+  // Which zones the body marks as system/page starts and as movement starts,
+  // and which measures it marks as pickups (stage C), keyed by zone id via
+  // each measure's facs link. A second or later <mdiv> flags its first
+  // measure; the first <mdiv> is implicit.
+  const body = firstElementNamed(text, "body")?.inner ?? "";
   const pbZones = new Set<string>();
   const sbZones = new Set<string>();
   const mdivZones = new Set<string>();
+  const pickupZones = new Set<string>();
+  const rptStartZones = new Set<string>();
+  const rptEndZones = new Set<string>();
+  const rptBothZones = new Set<string>();
+  const endingOf = new Map<string, string>();
+  const signsOf = new Map<string, MeasureSign[]>();
+  // The ending being read, and the measure the control events after it belong to.
+  let ending: string | null = null;
+  let lastZone: string | null = null;
   let hasMeasures = false;
   let hasBreaks = false;
   let pendingPb = false;
   let pendingSb = false;
   let pendingMdiv = false;
   let seenMdiv = false;
-  for (const token of body.match(/<(mdiv|pb|sb|measure)\b[^>]*>/g) ?? []) {
-    if (token.startsWith("<mdiv")) {
+  // The body's tokens, as the pattern
+  // /<(mdiv|pb|sb|measure|ending)\b[^>]*>|<\/ending>|<repeatMark\b[^>]*>|<dir\b[^>]*>[^<]*<\/dir>/g
+  // matches them, found in linear time: a start tag ends at the next ">", and
+  // a <dir> is a token, with its text, when only text stands before </dir>.
+  const tokens: string[] = [];
+  const opener = /<(?:mdiv|pb|sb|measure|ending|repeatMark|dir)\b|<\/ending>/g;
+  for (let m = opener.exec(body); m; m = opener.exec(body)) {
+    if (m[0] === "</ending>") {
+      tokens.push(m[0]);
+      continue;
+    }
+    const tagEnd = body.indexOf(">", m.index);
+    if (tagEnd < 0) break;
+    opener.lastIndex = tagEnd + 1;
+    if (m[0] !== "<dir") {
+      tokens.push(body.slice(m.index, tagEnd + 1));
+      continue;
+    }
+    const textEnd = body.indexOf("<", tagEnd + 1);
+    if (textEnd >= 0 && body.startsWith("</dir>", textEnd)) {
+      opener.lastIndex = textEnd + "</dir>".length;
+      tokens.push(body.slice(m.index, opener.lastIndex));
+    }
+  }
+  for (const token of tokens) {
+    if (token.startsWith("<ending")) {
+      ending = attr(token, "n") ?? null;
+    } else if (token === "</ending>") {
+      ending = null;
+    } else if (token.startsWith("<repeatMark") || token.startsWith("<dir")) {
+      const sign: MeasureSign | undefined = token.startsWith("<dir")
+        ? token.replace(/<[^>]*>/g, "").trim() === SIGN_TEXT.toCoda
+          ? "toCoda"
+          : undefined
+        : MEASURE_SIGNS.find((s) => s === attr(token, "func"));
+      if (sign && lastZone) {
+        const list = signsOf.get(lastZone) ?? [];
+        if (!list.includes(sign)) list.push(sign);
+        signsOf.set(lastZone, list);
+      }
+    } else if (token.startsWith("<mdiv")) {
       if (seenMdiv) pendingMdiv = true;
       seenMdiv = true;
     } else if (token.startsWith("<pb")) {
@@ -707,6 +975,15 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         if (pendingPb) pbZones.add(facs.slice(1));
         if (pendingSb) sbZones.add(facs.slice(1));
         if (pendingMdiv) mdivZones.add(facs.slice(1));
+        if (attr(token, "metcon") === "false") pickupZones.add(facs.slice(1));
+        if (attr(token, "left") === "rptstart")
+          rptStartZones.add(facs.slice(1));
+        if (attr(token, "right") === "rptend") rptEndZones.add(facs.slice(1));
+        if (attr(token, "right") === "rptboth") rptBothZones.add(facs.slice(1));
+        if (ending !== null) endingOf.set(facs.slice(1), ending);
+        lastZone = facs.slice(1);
+      } else {
+        lastZone = null;
       }
       pendingPb = false;
       pendingSb = false;
@@ -719,16 +996,13 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   // A self-closing <surface/> is a complete (zone-less, graphic-less) element,
   // so the first alternative keeps it from swallowing text up to the next
   // </surface>.
-  for (const surfaceMatch of text.matchAll(
-    /<surface\b[^>]*\/>|<surface\b[^>]*>([\s\S]*?)<\/surface>/g,
-  )) {
-    const body = surfaceMatch[1] ?? "";
-    const graphic = /<graphic\b[^>]*>/.exec(body)?.[0];
+  for (const surfaceAt of elementsNamed(text, "surface", true)) {
+    const body = surfaceAt.inner;
+    const graphic = [...startTags(body, "graphic")][0]?.tag;
     if (!graphic) continue;
     const zones: ZoneModel[] = [];
     const boxesOnly: MeasureBox[] = [];
-    for (const zoneMatch of body.matchAll(/<zone\b[^>]*>/g)) {
-      const tag = zoneMatch[0];
+    for (const { tag } of startTags(body, "zone")) {
       if (attr(tag, "type") !== "measure") continue;
       const box = {
         ulx: Number(attr(tag, "ulx") ?? 0),
@@ -744,6 +1018,16 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         pb: pbZones.has(id),
         sb: sbZones.has(id),
         mdiv: mdivZones.has(id),
+        pickup: pickupZones.has(id),
+        ...(rptStartZones.has(id) ? { rptStart: true } : {}),
+        ...(rptEndZones.has(id) ? { rptEnd: true } : {}),
+        ...(rptBothZones.has(id) ? { rptBoth: true } : {}),
+        ...(endingOf.has(id) ? { ending: endingOf.get(id) } : {}),
+        ...(signsOf.has(id)
+          ? {
+              signs: MEASURE_SIGNS.filter((s) => signsOf.get(id)!.includes(s)),
+            }
+          : {}),
       });
       boxesOnly.push(box);
     }
@@ -800,31 +1084,35 @@ export function relinkFacsimileImages(
   images: FacsimileImage[],
 ): string {
   let index = 0;
-  // The first alternative matches a self-closing <surface/> whole, so it does
-  // not swallow text up to the next </surface>.
-  return mei.replace(
-    /<surface\b[^>]*\/>|<surface\b[^>]*>[\s\S]*?<\/surface>/g,
-    (surface) => {
-      const image = images[index++];
-      const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
-      if (!image || !graphic) return surface;
-      const width = Number(attr(graphic, "width") ?? 0);
-      const height = Number(attr(graphic, "height") ?? 0);
-      const sx = width > 0 ? image.width / width : 1;
-      const sy = height > 0 ? image.height / height : 1;
-      // The surface's own box and its zones are in the coordinate space the
-      // graphic declares, so both move with it.
-      return surface
-        .replace(/<(?:surface|zone)\b[^>]*>/g, (tag) => scaleBox(tag, sx, sy))
-        .replace(/<graphic\b[^>]*>/, () =>
-          setAttrs(graphic, {
-            target: image.target,
-            width: image.width,
-            height: image.height,
-          }),
-        );
-    },
-  );
+  // A self-closing <surface/> is an element of its own, so it does not
+  // swallow text up to the next </surface>.
+  const relinked = (surface: string) => {
+    const image = images[index++];
+    const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
+    if (!image || !graphic) return surface;
+    const width = Number(attr(graphic, "width") ?? 0);
+    const height = Number(attr(graphic, "height") ?? 0);
+    const sx = width > 0 ? image.width / width : 1;
+    const sy = height > 0 ? image.height / height : 1;
+    // The surface's own box and its zones are in the coordinate space the
+    // graphic declares, so both move with it.
+    return surface
+      .replace(/<(?:surface|zone)\b[^>]*>/g, (tag) => scaleBox(tag, sx, sy))
+      .replace(/<graphic\b[^>]*>/, () =>
+        setAttrs(graphic, {
+          target: image.target,
+          width: image.width,
+          height: image.height,
+        }),
+      );
+  };
+  let out = "";
+  let last = 0;
+  for (const el of elementsNamed(mei, "surface", true)) {
+    out += mei.slice(last, el.start) + relinked(mei.slice(el.start, el.end));
+    last = el.end;
+  }
+  return out + mei.slice(last);
 }
 
 // Scale a tag's bounding box, when it has one; a tag without stays as it is.
@@ -863,15 +1151,15 @@ function setAttrs(
  * the root element's start tag.
  */
 export function replaceMeiHead(mei: string, headXml: string): string {
-  const head = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>|<meiHead\b[^>]*\/>/.exec(
-    mei,
-  );
+  // A header with content first, else an empty <meiHead/>.
+  const head =
+    firstElementNamed(mei, "meiHead") ??
+    [...elementsNamed(mei, "meiHead", true)].find(
+      (el) => el.inner === "" && el.tag.endsWith("/>"),
+    ) ??
+    null;
   if (head)
-    return (
-      mei.slice(0, head.index) +
-      headXml.trim() +
-      mei.slice(head.index + head[0].length)
-    );
+    return mei.slice(0, head.start) + headXml.trim() + mei.slice(head.end);
   const root = /<mei\b[^>]*>/.exec(mei);
   if (!root) return mei;
   const at = root.index + root[0].length;

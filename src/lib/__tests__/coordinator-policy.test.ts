@@ -13,7 +13,9 @@ import {
   touchesCampaignPaths,
   pieceFieldForPath,
   pieceKindForPath,
+  MAX_REJECTION_DETAIL,
   priorDecision,
+  rejectionDetail,
   removedRowFromPatch,
   resolveEncodingTask,
   resolvedCommentFromPatch,
@@ -157,6 +159,12 @@ test("a comment patch is a pure append or a set of resolve flips", () => {
   );
   assert.equal(multiline?.length, 1);
   assert.equal(multiline?.[0].body, "line 1\nline 2");
+  // Inside a hunk, lines whose text starts with "++" or "--" are body lines,
+  // not file headers.
+  const ruled = appendedCommentsFromPatch(
+    '@@ -1 +1,4 @@\n c1\n+,T0001,,comment,,,,me,,,,"first\n+++ second\n+--- third"',
+  );
+  assert.equal(ruled?.[0].body, "first\n++ second\n--- third");
   // Rewriting an existing row is not an append.
   assert.equal(
     appendedCommentsFromPatch(
@@ -407,4 +415,15 @@ test("isAutomaticCommit tells the console's commits from the claimer's", () => {
   );
   assert.equal(isAutomaticCommit("Draft of T0001"), false);
   assert.equal(isAutomaticCommit("Fix the slur in m. 4"), false);
+});
+
+test("a rejection detail is one capped line of inline code", () => {
+  assert.equal(
+    rejectionDetail('x.mei: facs="#a`b"\n@someone'),
+    '`x.mei: facs="#a\'b" @someone`',
+  );
+  assert.equal(
+    rejectionDetail("é".repeat(MAX_REJECTION_DETAIL + 1)),
+    `\`${"é".repeat(MAX_REJECTION_DETAIL)}…\``,
+  );
 });

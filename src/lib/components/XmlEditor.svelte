@@ -134,7 +134,7 @@
     border: 1px solid var(--line);
     border-radius: 8px;
     overflow: hidden;
-    background: var(--bg-inset);
+    background: var(--bg);
     box-shadow: var(--shadow-inset);
   }
   .editor.fill {
@@ -150,7 +150,7 @@
     max-height: 22rem;
     font-size: 12.5px;
     line-height: 1.85;
-    background: var(--bg-inset);
+    background: var(--bg);
     color: var(--ink);
   }
   .editor.fill :global(.cm-editor) {
@@ -165,8 +165,8 @@
     min-width: 44px;
     justify-content: flex-end;
     padding-right: 6px;
-    background: var(--bg-inset);
-    color: var(--line-input);
+    background: var(--bg);
+    color: var(--ink-faint);
     border-right: none;
   }
   .editor :global(.cm-activeLine),
@@ -182,6 +182,9 @@
   .editor:not(.fill) :global(.cm-editor.cm-focused) {
     outline: 2px solid var(--accent);
     outline-offset: -1px;
+  }
+  .editor.fill:focus-within {
+    box-shadow: inset 0 0 0 2px var(--accent);
   }
   .editor :global(.cm-selectionBackground),
   .editor :global(.cm-editor .cm-selectionBackground) {

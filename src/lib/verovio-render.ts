@@ -13,13 +13,35 @@ import type { VerovioToolkit } from "verovio/esm";
 const SANITIZE_SVG = {
   USE_PROFILES: { svg: true, svgFilters: true },
   ADD_TAGS: ["use"],
+  // A rendered score links nowhere; a link's content is kept. A <style>
+  // applies to the whole page, so none is kept: Verovio's own rules are in
+  // ui.css. Verovio writes no style attributes.
+  FORBID_TAGS: ["a", "style"],
+  FORBID_ATTR: ["style"],
 };
-// <use> is off the profile because it can reference other documents; keep it
-// to same-document fragments.
+// SVG that an MEI file embeds (<fig><svg>) reaches the output as written, so
+// these rules hold for every element. Nothing may load another document: an
+// href that is not a fragment is removed, and so is any other attribute with
+// a CSS escape or a url() other than url(#id); a <use> left without an href
+// goes too. Both href attributes count: SVG 2 browsers follow href, older
+// ones xlink:href.
+const LOCAL_URL = /^url\(#[\w.:-]+\)$/;
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.nodeName.toLowerCase() !== "use") return;
-  const href = node.getAttribute("xlink:href") ?? node.getAttribute("href");
-  if (!href?.startsWith("#")) node.remove();
+  for (const attribute of [...node.attributes]) {
+    const value = attribute.value;
+    const external =
+      attribute.localName === "href"
+        ? !value.startsWith("#")
+        : value.includes("\\") ||
+          (/url\(/i.test(value) && !LOCAL_URL.test(value.trim()));
+    if (external) node.removeAttribute(attribute.name);
+  }
+  if (
+    node.nodeName.toLowerCase() === "use" &&
+    !node.hasAttribute("href") &&
+    !node.hasAttribute("xlink:href")
+  )
+    node.remove();
 });
 
 // Verovio is a ~2 MB WASM module — loaded on first preview, then reused. The
@@ -90,6 +112,8 @@ export function loadScore(
       pageWidth,
       pageHeight,
       adjustPageHeight: true,
+      adjustPageWidth: false,
+      header: "auto",
       justifyVertically: false,
       scale: SCALE,
       breaks,
@@ -108,6 +132,8 @@ export function loadScore(
     pageWidth,
     pageHeight,
     adjustPageHeight: false,
+    adjustPageWidth: false,
+    header: "auto",
     justifyVertically: encodedBreaks,
     scale: SCALE,
     breaks,
@@ -117,13 +143,16 @@ export function loadScore(
 
 /**
  * Load a snippet for a single trimmed render, such as a score setup's blank
- * first system: the page is cut to the content's height.
+ * first system: the page is cut to the content's height and width, without
+ * the title.
  */
 export function loadSnippet(tk: VerovioToolkit, mei: string): boolean {
   tk.setOptions({
     pageWidth: PAGE_WIDTH,
     pageHeight: Math.round(PAGE_WIDTH * A4_ASPECT),
     adjustPageHeight: true,
+    adjustPageWidth: true,
+    header: "none",
     justifyVertically: false,
     scale: SCALE,
     breaks: "auto",

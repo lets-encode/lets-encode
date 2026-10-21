@@ -13,6 +13,9 @@ os.environ.setdefault("GITHUB_CLIENT_ID", "test-client")
 os.environ.setdefault("GITHUB_CLIENT_SECRET", "test-client-secret")
 os.environ.setdefault("SESSION_DIR", _session_dir.name)
 os.environ.setdefault("DB_PATH", os.path.join(_session_dir.name, "import.db"))
+os.environ.setdefault(
+    "RELAY_DB_PATH", os.path.join(_session_dir.name, "relay.db")
+)
 
 from broker import app as broker  # noqa: E402
 from broker import registry, slug_validation  # noqa: E402
@@ -22,12 +25,12 @@ ADMIN_TOKEN = "test-admin-token"
 AUTH = {"Authorization": "Bearer " + ADMIN_TOKEN}
 
 
-def github_repo_response(status=200, push=True):
+def github_repo_response(status=200, push=True, name=""):
     """A GET /repositories/<id> response as /register's ownership check sees it."""
     return SimpleNamespace(
         ok=200 <= status < 300,
         status_code=status,
-        json=lambda: {"permissions": {"push": push}},
+        json=lambda: {"name": name, "permissions": {"push": push}},
     )
 
 
@@ -55,17 +58,22 @@ class RegistryTest(unittest.TestCase):
         self.addCleanup(patcher.stop)
         self.authenticate()
 
-    def authenticate(self):
+    def authenticate(self, login="alice"):
         with self.client.session_transaction() as current:
             current["githubToken"] = "server-side-token"
-            current["userLogin"] = "alice"
+            current["userLogin"] = login
 
     def log_out(self):
         with self.client.session_transaction() as current:
             current.clear()
 
-    def register(self, name, repo_id=12345, forge="github", claim_token=None):
-        """The SPA registers a name against a created repo's (forge, id)."""
+    def register(
+        self, name, repo_id=12345, forge="github", claim_token=None, github=None
+    ):
+        """The SPA registers a name against a created repo's (forge, id); the
+        repository GitHub reports is named after it unless `github` says
+        otherwise."""
+        self.github_get.return_value = github or github_repo_response(name=name)
         return self.client.post(
             "/registry/register",
             json={
@@ -134,6 +142,7 @@ class RegistryTest(unittest.TestCase):
         r = self.register("hot-name", repo_id=2)
         self.assertEqual(r.status_code, 409)
         self.assertIn("already taken", r.get_json()["error"])
+        self.assertEqual(r.get_json()["reason"], "name_taken")
 
     # ---------------------------------------------------------------- claims
 
@@ -285,8 +294,9 @@ class RegistryTest(unittest.TestCase):
         ):
             with self.subTest(label=label):
                 self.github_get.reset_mock()
-                self.github_get.return_value = github
-                r = self.register("not-mine", repo_id=666, forge=forge)
+                r = self.register(
+                    "not-mine", repo_id=666, forge=forge, github=github
+                )
                 self.assertEqual(r.status_code, status)
                 if error:
                     self.assertIn(error, r.get_json()["error"])
@@ -341,6 +351,85 @@ class RegistryTest(unittest.TestCase):
         for name in names:
             with self.subTest(name=name):
                 self.assertIsNotNone(slug_validation.registration_error(name))
+
+    # ---------------------------------------------------- names and owners
+
+    def test_register_requires_the_repository_to_carry_the_name(self):
+        r = self.register(
+            "my-campaign",
+            repo_id=5,
+            github=github_repo_response(name="something-else"),
+        )
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("something-else", r.get_json()["error"])
+        self.assertEqual(r.get_json()["reason"], "repo_name")
+        self.assertEqual(
+            self.lookup("my-campaign").get_json()["status"], "free"
+        )
+        # Case does not matter: GitHub keeps a repository name's case.
+        r = self.register(
+            "my-campaign",
+            repo_id=5,
+            github=github_repo_response(name="My-Campaign"),
+        )
+        self.assertEqual(r.status_code, 201)
+
+    def test_one_repository_is_the_campaign_of_one_name(self):
+        self.assertEqual(
+            self.register("first-name", repo_id=7).status_code, 201
+        )
+        # The repository renamed on GitHub still has its first name.
+        r = self.register("second-name", repo_id=7)
+        self.assertEqual(r.status_code, 409)
+        self.assertIn("first-name", r.get_json()["error"])
+        self.assertEqual(r.get_json()["reason"], "repo_taken")
+        token = self.claim("third-name").get_json()["claim_token"]
+        r = self.register("third-name", repo_id=7, claim_token=token)
+        self.assertEqual(r.status_code, 409)
+        self.assertEqual(
+            self.lookup("third-name").get_json()["status"], "pending"
+        )
+
+    def test_a_claim_works_only_for_the_login_that_made_it(self):
+        token = self.claim("alices-setup").get_json()["claim_token"]
+        self.authenticate("mallory")
+        r = self.client.delete(
+            "/registry/claim/alices-setup", json={"claim_token": token}
+        )
+        self.assertEqual(r.status_code, 404)
+        r = self.register("alices-setup", repo_id=11, claim_token=token)
+        self.assertEqual(r.status_code, 409)
+        self.authenticate("alice")
+        r = self.register("alices-setup", repo_id=11, claim_token=token)
+        self.assertEqual(r.status_code, 201)
+
+    def test_one_login_holds_a_limited_number_of_claims(self):
+        for i in range(registry.MAX_PENDING_CLAIMS):
+            self.assertEqual(self.claim(f"held-{i:02d}").status_code, 201)
+        r = self.claim("one-too-many")
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.get_json()["reason"], "too_many_claims")
+        # Someone else may still claim.
+        self.authenticate("bob")
+        self.assertEqual(self.claim("bobs-name").status_code, 201)
+
+    def test_admin_free_makes_a_name_available(self):
+        self.assertEqual(
+            self.client.post(
+                "/registry/admin/slugs/nobody/free", headers=AUTH
+            ).status_code,
+            404,
+        )
+        self.register("squatted", repo_id=13)
+        self.assertEqual(
+            self.client.post("/registry/admin/slugs/squatted/free").status_code,
+            401,
+        )
+        r = self.client.post(
+            "/registry/admin/slugs/squatted/free", headers=AUTH
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.lookup("squatted").get_json()["status"], "free")
 
     # ------------------------------------------------------------- tombstones
 

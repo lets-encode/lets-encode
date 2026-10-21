@@ -32,6 +32,9 @@ runs:
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         HEAD_REF: ${{ github.event.pull_request.head.ref }}
+      # A run ends after 30 minutes whatever it is doing, and fails. The
+      # schema check of a score at GitHub's 100 MB file limit takes about a
+      # minute.
       run: |
         echo "runner node: $(node --version)"
-        node "central/$CENTRAL_PATH"
+        timeout 30m node "central/$CENTRAL_PATH"

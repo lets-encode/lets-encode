@@ -10,7 +10,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { goto } from "$app/navigation";
-  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import {
     discardDraft,
     readDraft,
@@ -23,7 +23,6 @@
   let drafts = $state<WizardDraft[]>([]);
   let busy = $state<string | null>(null);
   let confirming = $state<string | null>(null);
-  let progress = $state<string | null>(null);
   let error = $state<string | null>(null);
 
   $effect(() => {
@@ -44,11 +43,7 @@
     confirming = null;
     busy = draft.handle;
     try {
-      await resumeDraft(
-        forge(),
-        draft.handle,
-        (done, total) => (progress = `Loading page ${done} of ${total}…`),
-      );
+      await resumeDraft(draft.handle);
       await goto("/new");
     } catch (err) {
       // A row whose record is gone — finished or discarded in another tab —
@@ -59,7 +54,6 @@
       error = `Could not continue “${draft.handle}”: ${(err as Error).message}`;
     }
     busy = null;
-    progress = null;
   }
 
   async function discard(draft: WizardDraft) {
@@ -96,14 +90,21 @@
         </button>
         <span class="spacer"></span>
         {#if confirming === draft.handle}
-          <span class="dnote">
-            {#if draft.repo}
+          {#if draft.repo}
+            <span class="dnote">
               Discarding frees the name but leaves the repository
               <a href={draft.repo.html_url} target="_blank" rel="noreferrer"
                 >{draft.repo.full_name}</a
               > — delete it yourself if you don't want it.
-            {/if}
-          </span>
+            </span>
+          {/if}
+          <button
+            type="button"
+            class="linkish"
+            onclick={() => (confirming = null)}
+          >
+            Keep it
+          </button>
           <button
             type="button"
             class="linkish danger"
@@ -128,9 +129,6 @@
     {#if error}
       <p class="msg-error" role="alert">{error}</p>
     {/if}
-    {#if progress}
-      <p class="msg-progress" role="status" aria-live="polite">{progress}</p>
-    {/if}
   </section>
 {/if}
 
@@ -142,8 +140,9 @@
   }
   .drow {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 12px;
+    gap: 4px 12px;
     padding: 8px 16px;
     background: color-mix(in srgb, var(--card) 70%, transparent);
     border: 1px dashed var(--line-input);
@@ -164,13 +163,13 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* The repository note is a sentence the reader needs whole: it takes its
+     own line under the row. */
   .dnote {
+    order: 1;
+    flex: 1 1 100%;
     font-size: 12px;
     color: var(--ink-soft);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
   }
   .dnote a {
     color: var(--link);

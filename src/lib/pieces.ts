@@ -8,6 +8,7 @@
 // Pure data and helpers — no DOM, forge or network access.
 
 import { emptySourceMetadata, type SourceMetadata } from "./source-metadata.ts";
+import { pieceIdLabel } from "./campaign-tables.ts";
 
 /** A rectangle on one page image, in that image's own pixel coordinates. */
 export interface PieceZone {
@@ -216,7 +217,7 @@ export function coverPages(
       if (p === index || !other.zones.some((zone) => zone.surface === surface))
         return;
       if (!blocked.includes(surface)) blocked.push(surface);
-      blockers.add(other.meta.title.trim() || other.id);
+      blockers.add(other.meta.title.trim() || pieceIdLabel(other.id));
     });
   }
   const free = surfaces.filter(

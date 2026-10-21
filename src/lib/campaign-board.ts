@@ -83,9 +83,8 @@ export function cardTitle(
   fragment: string,
   locator: string,
   names: PieceNames = {},
-  omr = false,
 ): string {
-  return `${taskName(locator, omr)} · ${fragmentPieceName(fragment, names)}`;
+  return `${taskName(locator)} · ${fragmentPieceName(fragment, names)}`;
 }
 
 /** A card's name without its piece: description, then scope. */
@@ -177,7 +176,7 @@ export interface BoardCard {
   column: ColumnKey;
   /** The one-line title: description, scope, piece (cardTitle). */
   title: string;
-  /** What the task asks for ("Encode", "Correct the OMR draft", "Measure correction", "Score setup"). */
+  /** What the task asks for ("Encode", "Measure correction", "Score setup"). */
   description: string;
   /** The part of the piece the task covers ("p. 3"); '' for the whole piece. */
   scope: string;
@@ -255,6 +254,56 @@ export function doneLabel(
   return `${card.doneLine || "done"}${when}`;
 }
 
+/** A card's one-sentence description of what the task asks for; '' for a
+    finished task. */
+export function cardSummary(
+  card: Pick<BoardCard, "column" | "locator" | "pre" | "omr" | "scope">,
+): string {
+  if (card.column === "done") return "";
+  if (card.column === "validation")
+    return card.pre
+      ? "Check the submitted work and approve it or request changes."
+      : "Compare the encoding with the scan and approve it or request changes.";
+  if (card.locator === "score-setup")
+    return "Copy the staves, clefs, key and time signature from the source's first measure.";
+  if (card.locator === "omr-layout")
+    return "Check the staff, grand staff and measure boxes on each page and correct the wrong ones.";
+  if (card.locator === "measure-zones")
+    return "Check the measure boxes on each page and correct the wrong ones.";
+  if (card.omr) return "Correct the notes read automatically from this page.";
+  return card.scope
+    ? "Encode the music of this page."
+    : "Encode the music of the piece.";
+}
+
+/** A card in review's line: the viewer's claimed reviews, other people's,
+    and the reviews still unclaimed, which may have to come from someone
+    other than the viewer ("your review in progress · waits for 1 more
+    review"). */
+export function reviewWaitLabel(
+  passes: number,
+  threshold: number,
+  mine: number,
+  others: number,
+  needsAnother = false,
+): string {
+  const waiting = threshold - passes - mine - others;
+  const plural = (n: number) => `review${n === 1 ? "" : "s"}`;
+  return [
+    mine > 0
+      ? `your ${mine === 1 ? "review" : `${mine} reviews`} in progress`
+      : "",
+    others > 0
+      ? `${others} ${plural(others)} in progress by ${others === 1 ? "someone else" : "others"}`
+      : "",
+    waiting > 0
+      ? `waits for ${waiting} more ${plural(waiting)}${needsAnother ? " from someone else" : ""}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /**
  * The one-line status pill of a card: the current stage (the task's heading
  * names its kind), the worker on a claimed task, and numeric pass progress
@@ -320,17 +369,15 @@ export function buildBoard(
     columnByKey.get(column)!.cards.push({
       task: n.task,
       column,
-      title: cardTitle(def.fragment, def.locator, names, omr),
-      description: taskDescription(def.locator, omr),
+      title: cardTitle(def.fragment, def.locator, names),
+      description: taskDescription(def.locator),
       scope: taskScope(def.locator),
       piece: fragmentPieceName(def.fragment, names),
       pre: n.kind === "pre",
       omr: omr && n.kind !== "pre",
       locator: def.locator,
       statusKey: n.statusKey,
-      waitsFor: depDef
-        ? taskName(depDef.locator, preparations[depDef.fragment] === "omr")
-        : dep,
+      waitsFor: depDef ? taskName(depDef.locator) : dep,
       claimable: viewer !== "" && column === "ready" && !lock,
       submittedByViewer:
         viewer !== "" && findRow(d.rows, n.task, "")?.encoder === viewer,

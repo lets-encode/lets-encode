@@ -33,8 +33,15 @@
   --ok-btn: #1e7a44;
   --ok-btn-hover: #196538;
 
+  /* The soft fill of a button at rest and on hover: translucent ink, so it
+     reads on paper and on tinted surfaces alike. */
+  /* The slate sections of a side panel (SidePanel): steps, records,
+     comments and the footer, beside the paper of the selected item. */
+  --band: var(--bg-alt);
+  --soft: rgba(35, 40, 56, 0.06);
+  --soft-hover: rgba(35, 40, 56, 0.11);
   /* Form control outlines, a step heavier than --line. */
-  --line-input: #9ea7bd;
+  --line-input: #8a93a9;
   /* Functional orange: XML attribute names, piece highlights. */
   --orange-deep: #ad561c;
   /* Recessed work surfaces: page grids, the XML editor, the corrector desk.
@@ -51,6 +58,10 @@
   --glow-green: rgba(118, 222, 118, 0.3);
   --shadow:
     0 1px 2px rgba(31, 36, 51, 0.06), 0 12px 30px rgba(31, 36, 51, 0.13);
+  /* A page of paper (facsimile or rendered score) lying on a work surface:
+     square-cornered, a hairline edge and this shadow, in every viewer. */
+  --shadow-paper:
+    0 1px 2px rgba(31, 36, 51, 0.08), 0 6px 18px rgba(31, 36, 51, 0.12);
   /* Recessed surfaces sink; pairs with --bg-inset / --desk. */
   --shadow-inset: inset 0 1px 4px rgba(31, 36, 51, 0.11);
 
@@ -146,6 +157,15 @@
   --zone-7: #748c50;
   --zone-8: #a08a52;
   --zone-fill-alpha: 0.18;
+
+  /* The measure-correction layers, for text and glyphs beside the paper:
+     staves, grand staves, measures, sections and systems. The same hues mark
+     the boxes on the paper. */
+  --ink-staff: rgb(128, 34, 64);
+  --ink-grand: rgb(38, 100, 60);
+  --ink-measure: rgb(14, 129, 149);
+  --ink-movement: rgb(139, 95, 191);
+  --ink-system: rgb(36, 82, 178);
 }
 
 /* Dark theme. Applied via [data-theme="dark"] on <html>, which an inline head
@@ -175,7 +195,15 @@
   --ok-btn: #26794a;
   --ok-btn-hover: #1f653d;
 
-  --line-input: #3c455e;
+  --line-input: #606a87;
+  --ink-staff: rgb(222, 120, 152);
+  --ink-grand: rgb(110, 196, 138);
+  --ink-measure: rgb(72, 196, 214);
+  --ink-movement: rgb(190, 156, 232);
+  --ink-system: rgb(128, 164, 240);
+  --band: #0f121d;
+  --soft: rgba(230, 233, 242, 0.08);
+  --soft-hover: rgba(230, 233, 242, 0.14);
   --orange-deep: #ffa76d;
   /* One step below --bg-alt; the inset shadow carries the recession. */
   --bg-inset: #101423;
@@ -185,6 +213,7 @@
 
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 12px 32px rgba(0, 0, 0, 0.5);
   --shadow-inset: inset 0 1px 5px rgba(0, 0, 0, 0.55);
+  --shadow-paper: 0 1px 2px rgba(0, 0, 0, 0.4), 0 6px 18px rgba(0, 0, 0, 0.45);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.45);
   --shade: rgba(0, 0, 0, 0.5);
@@ -201,7 +230,7 @@
   /* Solid badges darken on dark — a bright fill under white text glares. */
   --warn-solid: #a8672e;
   --warn-btn-hover: #8d5526;
-  --danger: #f2765e;
+  --danger: #f78f79;
   --danger-bg: rgba(242, 118, 94, 0.2);
   --danger-line: rgba(242, 118, 94, 0.45);
   --danger-solid: #c8452f;

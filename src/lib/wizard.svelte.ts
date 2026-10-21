@@ -2,9 +2,9 @@
 // screens but is one flow: a step index plus the values collected so far live
 // here, so a step can read what earlier steps gathered without prop-threading.
 //
-// The flow has a pre-repo and a post-repo phase — the campaign repository is
-// created at the end of the pages step, and everything after it is held in the
-// browser until the final commit. `repo` records that crossing.
+// Everything is held in the browser until the final step, which creates the
+// campaign repository and commits the campaign into it. `repo` records the
+// repository once that step has created it, so a retry reuses it.
 //
 // What is collected is also mirrored into the browser's storage as a draft, so a
 // setup that is interrupted can be continued; see wizard-draft.ts.
@@ -20,15 +20,13 @@ import type { Piece } from "./pieces.ts";
 import { DEFAULT_LICENSE } from "./licenses.ts";
 import {
   DRAFT_VERSION,
-  MissingDraftImageError,
   discardDraft,
-  fetchDraftImages,
   readDraft,
   writeDraft,
   type DraftEntries,
   type WizardDraft,
 } from "./wizard-draft.ts";
-import type { ForgeClient } from "./forge/types.ts";
+import { readDraftImages, storeDraftImages } from "./draft-images.ts";
 
 /** The wizard's steps, in order. Drives navigation and the progress header. */
 export const WIZARD_STEPS = [
@@ -62,7 +60,7 @@ export interface PageChoice extends PageCandidate {
   include: boolean;
 }
 
-/** The campaign repository, once the pages step has created it. */
+/** The campaign repository, once the final step has created it. */
 export interface WizardRepo {
   owner: string;
   name: string;
@@ -115,9 +113,9 @@ export const wizard = $state<{
   uploadKey: string;
   repo: WizardRepo | null;
   /**
-   * The page images committed by the pages step, kept with their bytes: later
-   * steps display them, and a PDF's rendered pages exist nowhere else in the
-   * browser once that step has run.
+   * The page images the pages step prepared at committing size, kept with
+   * their bytes: later steps display them, the final step commits them, and a
+   * PDF's rendered pages exist nowhere else once that step has run.
    */
   images: PageImage[];
   /**
@@ -161,10 +159,9 @@ export const stepIndex = (id: WizardStepId) =>
 /**
  * Whether a step has nothing to do for this campaign, so navigation and the
  * step rail pass over it. The pages step exists to choose between page images;
- * an upload that offers none has nothing to choose (the repository it would
- * have created is created by the upload step instead). The preparation step
+ * an upload that offers none has nothing to choose. The preparation step
  * decides how facsimile pieces get their measures; without page images —
- * committed, or still to be chosen from the upload — there are none, and the
+ * prepared, or still to be chosen from the upload — there are none, and the
  * pieces step finishes the setup.
  */
 export const isSkipped = (id: WizardStepId): boolean =>
@@ -172,6 +169,20 @@ export const isSkipped = (id: WizardStepId): boolean =>
   (id === "preparation" &&
     wizard.images.length === 0 &&
     wizard.candidates.length === 0);
+
+/**
+ * "N pieces · M pages uncovered": the pieces and, with page images, how many
+ * pages no piece has a region on yet.
+ */
+export function piecesSummary(): string {
+  const count = `${wizard.pieces.length} piece${wizard.pieces.length === 1 ? "" : "s"}`;
+  if (!wizard.images.length) return count;
+  const marked = new Set(
+    wizard.pieces.flatMap((p) => p.zones.map((z) => z.surface)),
+  );
+  const open = wizard.images.filter((_, i) => !marked.has(i)).length;
+  return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
+}
 
 /** Advance to the next step (passing over steps with nothing to do), if there is one. */
 export function nextStep(): void {
@@ -197,6 +208,7 @@ export function previousStep(): void {
 export function resetWizard(): void {
   savedHandle = null;
   draftStatus.savedAt = null;
+  draftStatus.imagesError = null;
   wizard.step = "name";
   wizard.handle = "";
   wizard.claim = null;
@@ -223,14 +235,22 @@ export function resetWizard(): void {
 /** Whether the setup's draft could be stored. Surfaced by the wizard frame. */
 export const draftStatus = $state<{
   saveError: string | null;
+  /** Why the page images could not be kept in the browser, if they could not. */
+  imagesError: string | null;
   /** When the draft was last written, as epoch milliseconds. */
   savedAt: number | null;
   /** Why a continued setup opened where it did, when that needs saying. */
   resumeNotice: string | null;
-}>({ saveError: null, savedAt: null, resumeNotice: null });
+}>({
+  saveError: null,
+  imagesError: null,
+  savedAt: null,
+  resumeNotice: null,
+});
 
 // The name the draft was last stored under. A campaign renamed before its
-// repository exists would otherwise leave its earlier draft behind.
+// repository exists would otherwise leave its earlier draft behind; its page
+// images move to the new name with it.
 let savedHandle: string | null = null;
 
 /** Everything a draft record carries, apart from the account it belongs to. */
@@ -275,7 +295,10 @@ export function draftSnapshot(): DraftSnapshot {
 export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
   const name = snapshot.handle.trim();
   if (!owner || !name || snapshot.entries.step === "name") return;
-  if (savedHandle && savedHandle !== name) discardDraft(savedHandle);
+  if (savedHandle && savedHandle !== name) {
+    discardDraft(savedHandle);
+    if (wizard.images.length) void keepDraftImages(name);
+  }
   savedHandle = name;
   draftStatus.saveError = writeDraft({
     version: DRAFT_VERSION,
@@ -290,9 +313,19 @@ export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
 }
 
 /**
+ * Keep the wizard's page images in the browser under the campaign's name, so a
+ * continued setup has them. A browser that refuses is reported through
+ * draftStatus; the setup goes on without them.
+ */
+export async function keepDraftImages(handle: string): Promise<void> {
+  const name = handle.trim();
+  if (!name) return;
+  draftStatus.imagesError = await storeDraftImages(name, wizard.images);
+}
+
+/**
  * Put a draft's entries back into the wizard and open the step it was left on.
- * The page images are passed in rather than read here: their bytes come from the
- * campaign repository, which this module does not talk to.
+ * The page images are passed in, read from the browser's image store.
  */
 export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   const entries = draft.entries;
@@ -326,7 +359,7 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   // they are uploaded again.
   const withoutImages = entries.imagePaths.length > 0 && images.length === 0;
   draftStatus.resumeNotice = withoutImages
-    ? "The page images this setup committed are no longer in its repository. Please upload the images again."
+    ? "The page images of this setup are no longer stored in this browser. Please upload the images again."
     : null;
   // Choosing pages needs the files they come from, so a setup left on that step
   // is continued from the upload step, where they are picked again.
@@ -336,34 +369,22 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
 }
 
 /**
- * Continue the setup stored under `handle`: read its record, read the page
- * images it committed back from its repository, and put it into the wizard.
- * The stored record decides what is continued, not a listing read earlier, since
- * the setup may have been finished or discarded in another tab since. Throws
- * with a message that names what went wrong.
+ * Continue the setup stored under `handle`: read its record and its page images
+ * from the browser, and put it into the wizard. The stored record decides what
+ * is continued, not a listing read earlier, since the setup may have been
+ * finished or discarded in another tab since. Throws with a message that names
+ * what went wrong.
  */
-export async function resumeDraft(
-  client: ForgeClient | null,
-  handle: string,
-  onProgress: (done: number, total: number) => void,
-): Promise<void> {
+export async function resumeDraft(handle: string): Promise<void> {
   const stored = readDraft(handle);
   if (!stored)
     throw new Error("it has since been finished or discarded in this browser");
   const paths = stored.entries.imagePaths;
-  let images: PageImage[] = [];
-  if (stored.repo && paths.length) {
-    if (!client) throw new Error("you are no longer signed in");
-    try {
-      images = await fetchDraftImages(client, stored.repo, paths, onProgress);
-    } catch (err) {
-      // Pages that are not in the repository any more cannot be read back, but
-      // they can be uploaded again: applyDraft puts a setup without its images
-      // on the upload step.
-      if (!(err instanceof MissingDraftImageError)) throw err;
-      images = [];
-    }
-  }
+  // Images that are not stored any more can be uploaded again: applyDraft puts
+  // a setup without its images on the upload step.
+  const images = paths.length
+    ? ((await readDraftImages(stored.handle, paths)) ?? [])
+    : [];
   applyDraft(stored, images);
 }
 

@@ -10,6 +10,7 @@
     readForge,
     viewerId,
     openMeiFriend,
+    takeHandOff,
   } from "$lib/command-runner.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import {
@@ -53,10 +54,12 @@
   } from "$lib/campaign-graph.ts";
   import {
     buildBoard,
+    cardSummary,
     doneLabel,
     elapsed,
     expiresIn,
     initialOf,
+    reviewWaitLabel,
   } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
@@ -75,6 +78,8 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
+  import RefreshNotice from "$lib/components/RefreshNotice.svelte";
   import PieceRail from "$lib/components/PieceRail.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
@@ -460,6 +465,12 @@
     a: MeasureAnchor | null = null,
   ) {
     anchor = a;
+    if (!scoreView)
+      scoreReturnFocus =
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+          ? document.activeElement
+          : null;
     const query = new URLSearchParams();
     if (detailTask) query.set("task", detailTask);
     query.set("score", path);
@@ -474,6 +485,28 @@
       replaceState: same,
     });
   }
+  // Focus follows the score view: to its heading when it opens or shows
+  // another piece, and on close back to the element it was opened from, or
+  // to the View score button when that element is gone.
+  let scoreReturnFocus: HTMLElement | null = null;
+  let viewScoreButton = $state<HTMLButtonElement>();
+  let focusedScore: string | null = null;
+  $effect(() => {
+    const path = scoreView?.piece.path ?? null;
+    if (path === focusedScore) return;
+    focusedScore = path;
+    void tick().then(() => {
+      if (path) {
+        scoreViewRef?.focusHeading();
+        return;
+      }
+      const target = scoreReturnFocus?.isConnected
+        ? scoreReturnFocus
+        : viewScoreButton;
+      scoreReturnFocus = null;
+      target?.focus();
+    });
+  });
   function closeScoreView() {
     goto(
       `/${campaign}${detailTask ? `?task=${encodeURIComponent(detailTask)}` : ""}`,
@@ -536,29 +569,47 @@
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
 
+  // A table read again replaces the shown one only when its content differs,
+  // so an unchanged table keeps its identity and nothing derived from it
+  // recomputes.
+  const changed = <T,>(shown: T, read: T): T =>
+    JSON.stringify(shown) === JSON.stringify(read) ? shown : read;
+
+  // The default branch's head commit the shown tables were read at; null when
+  // it could not be read.
+  let headSha: string | null = null;
+
   // Read the tracking tables (and privacy/config) for the console. Only the
   // first read shows the loading state; refreshes update the tables in place.
-  async function load() {
+  // A background poll's failed read keeps the shown tables and throws.
+  async function load(background = false) {
     const f = readForge();
     // Tables for a name the page has since navigated away from are dropped.
     const name = campaign;
     readAs = auth.user?.login ?? null;
     if (!loaded) loading = true;
-    loadError = null;
+    if (!background) loadError = null;
     try {
+      // The head is read before the tables: a commit that lands during the
+      // read moves the branch past `headSha`, and the next poll reads again.
+      const sha = await f.getRepoHead(owner, repo).then(
+        (h) => h.sha,
+        () => null,
+      );
       const tables = await invoke(commands.readTables, {}, ctx(f));
       if (name !== campaign) return;
+      headSha = sha;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
       canPush = tables.canPush;
-      taskDefs = tables.taskDefs;
-      rows = tables.rows;
-      validationColumns = tables.validationColumns;
-      tableLocks = tables.locks;
-      history = tables.history;
-      comments = tables.comments;
-      pieces = tables.pieces;
-      logins = tables.logins;
+      taskDefs = changed(taskDefs, tables.taskDefs);
+      rows = changed(rows, tables.rows);
+      validationColumns = changed(validationColumns, tables.validationColumns);
+      tableLocks = changed(tableLocks, tables.locks);
+      history = changed(history, tables.history);
+      comments = changed(comments, tables.comments);
+      pieces = changed(pieces, tables.pieces);
+      logins = changed(logins, tables.logins);
       title = tables.title;
       recordCampaignTitle(name, tables.title);
       description = tables.description;
@@ -580,11 +631,30 @@
       }
       loaded = true;
     } catch (e) {
+      if (background) throw e;
       if (name === campaign) loadError = campaignLoadFailure(e);
     } finally {
       if (name === campaign) loading = false;
     }
   }
+
+  // Other people's claims, submissions, verdicts and comments: the tables are
+  // read again whenever the default branch has moved since the last read.
+  // Logged out, every request counts against the shared per-address limit.
+  let refreshStatus = $state(REFRESH_OK);
+  $effect(() => {
+    refreshStatus = REFRESH_OK;
+    if (!owner || !repo) return;
+    return startAutoRefresh({
+      interval: () => (auth.user ? 10_000 : 300_000),
+      held: () => !loaded || loading || runner.busy || manage,
+      poll: async () => {
+        const { sha } = await readForge().getRepoHead(owner, repo);
+        if (sha !== headSha) await load(true);
+      },
+      onStatus: (status) => (refreshStatus = status),
+    });
+  });
 
   // A same-route navigation to another campaign starts over: the resolved
   // repo and the loaded tables belong to the previous name.
@@ -757,7 +827,10 @@
     task: string;
     label: string;
     text: string;
+    confirm?: { label: string; run: () => void };
   } | null>(null);
+  // The longest message from mei-friend the panel shows.
+  const MAX_EDITOR_MESSAGE = 500;
   /** The task mei-friend just reported complete, highlighted until `until`. */
   let completed = $state<{ task: string; until: number } | null>(null);
   const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
@@ -791,13 +864,21 @@
       msg,
     });
     if (status === "failed") {
-      editorError = msg
-        ? { task, label: "Message from mei-friend", text: msg }
-        : {
-            task,
-            label: "",
-            text: "mei-friend reported that the task could not be completed.",
-          };
+      // mei-friend's own message only for a hand-off this browser made: the
+      // return URL is a link anyone can build.
+      const handedOff = takeHandOff(campaign, task);
+      editorError =
+        msg && handedOff
+          ? {
+              task,
+              label: "Message from mei-friend",
+              text: msg.slice(0, MAX_EDITOR_MESSAGE),
+            }
+          : {
+              task,
+              label: "",
+              text: "mei-friend reported that the task could not be completed.",
+            };
       return;
     }
     if (status !== "complete" && status !== "abandoned") return;
@@ -812,10 +893,34 @@
       };
       return;
     }
-    if (status === "complete") {
-      completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
-      submitpr(task);
-    } else abandon(task, "");
+    // A return this browser did not hand off may come from a link someone
+    // else built, so it waits for the volunteer.
+    if (!takeHandOff(campaign, task)) {
+      editorError =
+        status === "complete"
+          ? {
+              task,
+              label: "",
+              text: "mei-friend reported the task complete, but it was not opened from this browser, so nothing was submitted yet.",
+              confirm: {
+                label: "Submit for review",
+                run: () => submitCompleted(task),
+              },
+            }
+          : {
+              task,
+              label: "",
+              text: "mei-friend reported the task abandoned, but it was not opened from this browser, so the claim was kept.",
+            };
+      return;
+    }
+    if (status === "complete") submitCompleted(task);
+    else abandon(task, "");
+  }
+  function submitCompleted(task: string) {
+    editorError = null;
+    completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
+    submitpr(task);
   }
 
   const validate = (
@@ -1036,7 +1141,11 @@
 <svelte:window
   bind:innerWidth={windowWidth}
   onkeydown={(e) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" || e.defaultPrevented) return;
+    // Escape in a text field belongs to the field; closing here would
+    // discard what was typed.
+    const target = e.target as HTMLElement | null;
+    if (target?.closest("input, textarea, select, [contenteditable]")) return;
     if (scoreView) closeScoreView();
     else if (detailTask) closeTask();
   }}
@@ -1051,8 +1160,13 @@
   />
 {/if}
 
+<!-- The last command's result: in the task box of a selected task, else at
+     the top of the side panel; above the plan editor, which has no panel. -->
 {#snippet resultBanner()}
   <RunnerBanner {runner} bar {isPrivate} />
+{/snippet}
+{#snippet resultNote()}
+  <RunnerBanner {runner} bar {isPrivate} collapsible />
 {/snippet}
 
 {#snippet slotDot(key: string, who = "")}
@@ -1076,6 +1190,7 @@
     {viewer}
     {canPush}
     {runner}
+    tools={resultNote}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
@@ -1093,13 +1208,13 @@
       task={card.task}
       zone={zoneOf(card.task)}
       review={card.column === "validation"}
+      done={card.column === "done"}
       {comments}
       {logins}
       {viewer}
       {canPush}
       {runner}
       bind:panel={sidePanel}
-      banner={resultBanner}
       ondeselect={closeTask}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
@@ -1119,6 +1234,7 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
+      banner={resultNote}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
         postComment("", kind, body, parent_id)}
@@ -1207,9 +1323,9 @@
       </div>
       <div
         class="irow"
-        title="Contributions to this campaign are published under this license."
+        title="Contributions to this campaign are published under this licence."
       >
-        <span>License</span>
+        <span>Licence</span>
         <span>{license || "—"}</span>
       </div>
       <div
@@ -1239,7 +1355,7 @@
         </span>
       </div>
     {/if}
-    {#if !detailCard}
+    {#if manage && canPush && !scoreView}
       {@render resultBanner()}
     {/if}
 
@@ -1294,12 +1410,20 @@
       </div>
     {:else}
       <div class="viewcol">
+        <RefreshNotice status={refreshStatus} />
         {#if !resolved}
           <p class="msg muted">Finding the campaign…</p>
         {:else if loading}
           <p class="msg muted">Loading campaign…</p>
         {:else if loadError}
-          <div class="banner bar err"><span>{loadError}</span></div>
+          <div class="banner bar err">
+            <span>
+              {loadError}
+              <button type="button" class="linkish" onclick={() => load()}
+                >Try again</button
+              >
+            </span>
+          </div>
         {:else if notInitialised}
           <div class="banner bar warn">
             <span>
@@ -1326,7 +1450,7 @@
                 (pieceIndexByTask.get(detailCard.task) ?? 0) ===
                   scoreView.index}
               cardZone={detailCard ? zoneOf(detailCard.task) : 0}
-              banner={resultBanner}
+              banner={detailCard ? undefined : resultNote}
               {comments}
               {logins}
               {viewer}
@@ -1344,6 +1468,7 @@
             </ScoreView>
           {/key}
         {:else if manage && canPush}
+          <h1 class="vh">{title || repo} · Manage</h1>
           <div class="crumbrow">
             <button
               type="button"
@@ -1381,7 +1506,6 @@
             {locks}
             {logins}
             {pieceNames}
-            preparations={piecePreparations}
             busy={runner.busy}
             onsave={savePlan}
             oncancel={() => (manage = false)}
@@ -1412,6 +1536,7 @@
                     <button
                       type="button"
                       class="btn scorebtn"
+                      bind:this={viewScoreButton}
                       onclick={viewContextScore}
                       title={scoreHint}>View score</button
                     >
@@ -1487,6 +1612,7 @@
                       <button
                         type="button"
                         class="btn scorebtn"
+                        bind:this={viewScoreButton}
                         onclick={viewContextScore}
                         title={scoreHint}>View score</button
                       >
@@ -1544,7 +1670,7 @@
                       >
                         <span class="attntitle">{card.title}</span>
                         <span class="attnspacer"></span>
-                        {#if card.counts.fails > 0}
+                        {#if card.counts.fails > 0 && card.column !== "done"}
                           <span class="chip chip-fail"
                             >{card.counts.fails} change request{card.counts
                               .fails === 1
@@ -1716,6 +1842,9 @@
                                     >{` · ${card.scope}`}</span
                                   >{/if}
                               </div>
+                              {#if cardSummary(card)}
+                                <p class="card-what">{cardSummary(card)}</p>
+                              {/if}
                               {#if piecesListed}
                                 <div
                                   class="card-piece"
@@ -1731,10 +1860,22 @@
                               {/if}
                               {#if card.column === "validation"}
                                 <div class="card-type">
-                                  {card.passes} of {card.threshold} review{card.threshold ===
-                                  1
-                                    ? ""
-                                    : "s"}
+                                  {reviewWaitLabel(
+                                    card.passes,
+                                    card.threshold,
+                                    card.slots.filter(
+                                      (s) =>
+                                        s.key === "review" &&
+                                        viewer !== "" &&
+                                        s.user === viewer,
+                                    ).length,
+                                    card.slots.filter(
+                                      (s) =>
+                                        s.key === "review" &&
+                                        !(viewer !== "" && s.user === viewer),
+                                    ).length,
+                                    card.slots.some((s) => s.needsAnother),
+                                  )}
                                   <span class="card-dots">
                                     {#each card.slots as slot (slot.label)}
                                       {@render slotDot(slot.key, slot.who)}
@@ -1931,7 +2072,7 @@
     padding: 12px 16px 12px 0;
     box-sizing: border-box;
   }
-  @media (orientation: portrait) and (max-width: 753px) {
+  @media (orientation: portrait) and (max-width: 1100px) {
     .volsplit.split,
     .boardview.split {
       flex-direction: column;
@@ -2150,12 +2291,10 @@
     flex-direction: column;
     gap: 12px;
   }
-  /* The title and its repository link lead; the actions follow on the same
-     line where they fit and wrap below it, right-aligned, where they do not.
-     A title longer than the line wraps rather than being cut. */
+  /* The title, its repository link and the actions share one line. A title
+     longer than the room left is cut short; the full title is its tooltip. */
   .hero-line {
     display: flex;
-    flex-wrap: wrap;
     align-items: center;
     gap: 10px 14px;
     min-width: 0;
@@ -2166,13 +2305,29 @@
     font-size: 26px;
     line-height: 1.2;
     font-weight: 600;
-    overflow-wrap: anywhere;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Below desktop width the repository link gives way; it is in the campaign
+     details in the side panel. */
+  @container (max-width: 1100px) {
+    .slug {
+      display: none;
+    }
   }
   .hero-acts {
+    flex: none;
     margin-left: auto;
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+  /* On the page's tinted background the score button sits on paper. */
+  .scorebtn {
+    --btn-bg: var(--card);
+    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   .slug {
     font-size: 13px;
@@ -2250,6 +2405,9 @@
   .stat {
     font-size: 13px;
     color: var(--ink-soft);
+  }
+  .stat b {
+    font-weight: 600;
   }
   .stat b.c-info {
     color: var(--info);
@@ -2511,7 +2669,7 @@
   .bcol-count {
     font-size: 11px;
     font-weight: 700;
-    background: rgba(255, 255, 255, 0.25);
+    background: rgba(0, 0, 0, 0.22);
     border-radius: 999px;
     line-height: 1;
     padding: 3px 8px;
@@ -2567,7 +2725,7 @@
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 10px;
-    padding: 8px 10px;
+    padding: 10px 12px;
     box-shadow: var(--shadow-sm);
     cursor: pointer;
     flex: none;
@@ -2602,7 +2760,8 @@
     background: var(--ok-wash);
   }
   .card.failtint {
-    background: var(--danger-bg);
+    background:
+      linear-gradient(var(--danger-wash), var(--danger-wash)), var(--card);
     border-color: var(--danger-line);
   }
   /* The card the side panel shows: an outline the stage and fail tints
@@ -2651,6 +2810,27 @@
   }
   .card-scope {
     color: var(--ink-soft);
+  }
+  .card-what {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    line-height: 1.35;
+    color: var(--ink-soft);
+  }
+  /* On a touch screen the cards are larger targets with larger type. */
+  @media (pointer: coarse) {
+    .well {
+      gap: 10px;
+    }
+    .card {
+      padding: 12px 14px;
+    }
+    .card-title {
+      font-size: 15px;
+    }
+    .card-what {
+      font-size: 13.5px;
+    }
   }
   /* The piece line, shown where several pieces share the board. A long
      title is cut to one line; the full title is its tooltip. */
@@ -2926,32 +3106,18 @@
   .lanetab-count {
     font-size: 11px;
   }
-  /* A narrow view column (a phone): the title takes one line over the
-     controls (the full title is its tooltip, the repository link moves to
-     the campaign details in the side panel) and the side margins shrink. */
+  /* A narrow view column (a phone): the title is smaller, the side margins
+     shrink, and Manage is its gear only. */
   @container (max-width: 700px) {
     .hero {
       padding: 10px 16px 8px;
       gap: 8px;
     }
     .hero-line {
-      flex-wrap: wrap;
       gap: 8px 10px;
     }
     .hero-line h1 {
-      flex-basis: 100%;
       font-size: 20px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .slug {
-      display: none;
-    }
-    /* The actions take their own full-width line; Manage is its gear
-       only. */
-    .hero-acts {
-      flex-basis: 100%;
     }
     .managechip {
       width: 32px;

@@ -1,9 +1,11 @@
 <!--
   The drag bar on the side panel's edge: on its left edge beside the content,
   dragging left widens the panel; on its top edge when docked below the
-  content, dragging moves the panel's top with the pointer and the host snaps
-  it to the nearest of its heights on release; a tap asks for the next one. Focused, the arrow keys move it
-  in 24px steps beside the content and one snap height docked. Size changes
+  content, dragging moves the panel's top with the pointer and the host
+  settles it on release; a tap asks for the other height. A drag towards a
+  height the panel does not have follows the pointer only STRETCH pixels.
+  Focused, the arrow keys move it in 24px steps beside the content and one
+  height step docked. Size changes
   are applied once per animation frame. The width is clamped to the viewport
   and persisted per browser when the drag or key press ends (side-panels.ts).
 -->
@@ -19,12 +21,15 @@
   let {
     label,
     panel = $bindable(),
+    min = PANEL_MIN,
     docked = false,
     drag = $bindable(null),
     dockLevel = 0,
     dockMin = 0,
     dockLevels = 0,
     dockText = "",
+    dockUp = true,
+    dockDown = true,
     ondockend,
     ondockstep,
     ondocktap,
@@ -32,6 +37,8 @@
     /** The separator's accessible name. */
     label: string;
     panel: SidePanelState;
+    /** The narrowest width a drag beside the content leaves the panel. */
+    min?: number;
     /** The panel is docked below the content: the bar drags its height. */
     docked?: boolean;
     /** Docked: the panel's height in pixels while a drag is under way. */
@@ -43,8 +50,12 @@
     dockLevels?: number;
     /** Docked: the current height step as read out. */
     dockText?: string;
-    /** Docked: the drag ended at this height. */
-    ondockend?: (height: number) => void;
+    /** Docked: the panel has a taller (dockUp) or a shorter (dockDown)
+        height to move to. */
+    dockUp?: boolean;
+    dockDown?: boolean;
+    /** Docked: the drag that started at startHeight ended at height. */
+    ondockend?: (height: number, startHeight: number) => void;
     /** Docked: a key press asks for the next height up (1) or down (-1). */
     ondockstep?: (dir: 1 | -1) => void;
     /** Docked: the bar was tapped without dragging. */
@@ -56,6 +67,7 @@
   let dragDocked = false;
   // A press that stays within TAP_SLOP pixels is a tap, not a drag.
   const TAP_SLOP = 6;
+  const STRETCH = 48;
   let moved = false;
   let start = 0;
   let startSize = 0;
@@ -89,9 +101,12 @@
     if (Math.abs((dragDocked ? e.clientY : e.clientX) - start) > TAP_SLOP)
       moved = true;
     if (!moved) return;
+    let delta = start - (dragDocked ? e.clientY : e.clientX);
+    if (dragDocked && !dockUp) delta = Math.min(delta, STRETCH);
+    if (dragDocked && !dockDown) delta = Math.max(delta, -STRETCH);
     next = dragDocked
-      ? clampPanelHeight(startSize + (start - e.clientY), window.innerHeight)
-      : clampPanelWidth(startSize + (start - e.clientX), window.innerWidth);
+      ? clampPanelHeight(startSize + delta, window.innerHeight)
+      : clampPanelWidth(startSize + delta, window.innerWidth, min);
     if (!frame) frame = requestAnimationFrame(apply);
   }
   function end() {
@@ -100,11 +115,11 @@
     cancelAnimationFrame(frame);
     frame = 0;
     if (dragDocked) {
-      if (moved) ondockend?.(next);
+      if (moved) ondockend?.(next, startSize);
       else ondocktap?.();
     } else if (moved) {
       panel.width = next;
-      writeSidePanel({ ...panel }, "width");
+      writeSidePanel({ ...panel });
     }
     drag = null;
   }
@@ -125,8 +140,8 @@
     ];
     if (delta === undefined) return;
     e.preventDefault();
-    panel.width = clampPanelWidth(panel.width + delta, window.innerWidth);
-    writeSidePanel({ ...panel }, "width");
+    panel.width = clampPanelWidth(panel.width + delta, window.innerWidth, min);
+    writeSidePanel({ ...panel });
   }
 </script>
 
@@ -142,10 +157,10 @@
   aria-orientation={docked ? "horizontal" : "vertical"}
   aria-label={label}
   aria-valuenow={docked ? dockLevel : panel.width}
-  aria-valuemin={docked ? dockMin : PANEL_MIN}
+  aria-valuemin={docked ? dockMin : min}
   aria-valuemax={docked
     ? dockLevels - 1
-    : clampPanelWidth(Infinity, window.innerWidth)}
+    : clampPanelWidth(Infinity, window.innerWidth, min)}
   aria-valuetext={docked ? dockText : `${panel.width} pixels`}
   onkeydown={key}
   onpointerdown={begin}
@@ -167,7 +182,6 @@
     background-clip: padding-box;
     border-radius: 12px;
     background-color: var(--line-input);
-    opacity: 0.65;
     cursor: col-resize;
     touch-action: none;
     position: relative;
@@ -229,7 +243,7 @@
     height: 5px;
     transform: translate(-50%, -50%);
     border-radius: 3px;
-    background: var(--line-strong);
+    background: var(--line-input);
   }
   .handle.docked::after {
     inset: -24px -40px -4px;

@@ -2,11 +2,13 @@
   The review view: a full-screen surface for validating an encoding task. The
   score fills the window, facsimile and rendered encoding side by side, and
   the side panel on the right carries the task box — the campaign page's
-  TaskBox with the verdict controls — pinned above the task's comments.
-  Clicking a measure in either pane highlights it in both and prefills the
-  fail form's anchor. Pre-tasks are reviewed in their own editors, not here.
+  TaskBox with the Approve and Request changes buttons — above the selected
+  measure and the task's comments, as two tabs. Clicking a measure in either
+  pane highlights it in both, prefills the fail form's anchor and anchors a
+  new comment. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
+  import { untrack, type Snippet } from "svelte";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
@@ -19,7 +21,13 @@
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
-  import type { CommandContext, Result, FailComment } from "$lib/commands.ts";
+  import { anchorCell } from "$lib/campaign-submit.ts";
+  import type {
+    CommandContext,
+    CommentAnchorInput,
+    Result,
+    FailComment,
+  } from "$lib/commands.ts";
   import { CampaignResolution } from "$lib/campaign-resolution.svelte.ts";
   import { campaignLoadFailure } from "$lib/campaign-resolve.ts";
   import {
@@ -38,15 +46,18 @@
     PieceRef,
   } from "$lib/campaign-tables.ts";
   import { pageOfLocator, preTaskRoute } from "$lib/campaign-graph.ts";
-  import { buildBoard } from "$lib/campaign-board.ts";
+  import { buildBoard, buildRecord } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { readSidePanel } from "$lib/side-panels.ts";
+  import { PANEL_MIN_REVIEW, readSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
+  import ReviewActions from "$lib/components/ReviewActions.svelte";
+  import Icon from "$lib/components/Icon.svelte";
+  import StepGlyph from "$lib/components/StepGlyph.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -109,6 +120,17 @@
     board.columns.flatMap((c) => c.cards).find((c) => c.task === taskId) ??
       null,
   );
+  /** The review slot the viewer holds on the task, if any. */
+  const reviewSub = $derived(
+    card ? buildRecord(card, viewer).find((r) => r.mine)?.sub : undefined,
+  );
+  // A pre-task is reviewed in its own editor; its review address leads there.
+  $effect(() => {
+    if (card?.pre)
+      goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`, {
+        replaceState: true,
+      });
+  });
   const taskDef = $derived(findRow(taskDefs, taskId, ""));
   const fragment = $derived(taskDef?.fragment ?? "");
   /** The page a per-page task opens at, 0-based; null for a whole-piece task. */
@@ -133,11 +155,25 @@
     preview?.setZones(true);
     preview?.showPage(anchor.page - 1);
   }
+  // The side panel's tab: the comments, until a measure is selected.
+  let panelTab = $state<"selection" | "comments">("comments");
+  $effect(() => {
+    if (selectedMeasure) untrack(() => (panelTab = "selection"));
+  });
+  // A new comment carries the selected measure as its anchor.
+  const selectedAnchor = (): CommentAnchorInput | undefined =>
+    selectedMeasure
+      ? {
+          page: String((preview?.pageOfMeasure(selectedMeasure) ?? 0) + 1),
+          measure_start: anchorCell(selectedMeasure),
+          measure_end: anchorCell(selectedMeasure),
+        }
+      : undefined;
   // A fresh fail form opens anchored to what the viewer is looking at.
   const prefill = () => ({
     page: String((preview?.currentPage() ?? 0) + 1),
-    m1: selectedMeasure ?? "",
-    m2: selectedMeasure ?? "",
+    m1: anchorCell(selectedMeasure ?? ""),
+    m2: anchorCell(selectedMeasure ?? ""),
   });
 
   // The side panel beside the score; the tables it reads are the ones this
@@ -289,7 +325,13 @@
     run((c) =>
       invoke(
         commands.submitComment,
-        commentInput(task_id, kind, body, parent_id),
+        commentInput(
+          task_id,
+          kind,
+          body,
+          parent_id,
+          kind === "comment" ? selectedAnchor() : undefined,
+        ),
         c,
       ),
     );
@@ -311,11 +353,12 @@
   />
 {/if}
 
+<!-- The last command's result, in the task box. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar />
+  <RunnerBanner {runner} bar collapsible />
 {/snippet}
 
-<div class="review sidehost">
+<div class="review sidehost" data-stage="review">
   {#if auth.status === "loading"}
     <p class="msg muted">Loading…</p>
   {:else if place.error}
@@ -337,7 +380,14 @@
   {:else if !place.resolved || loading}
     <p class="msg muted">Loading the task…</p>
   {:else if loadError}
-    <div class="msg banner err"><span>{loadError}</span></div>
+    <div class="msg banner err">
+      <span>
+        {loadError}
+        <button type="button" class="linkish" onclick={() => load()}
+          >Try again</button
+        >
+      </span>
+    </div>
   {:else if notInitialised}
     <div class="msg banner err">
       <span>
@@ -353,16 +403,9 @@
       </span>
     </div>
   {:else if card.pre}
-    <div class="msg banner warn">
-      <span>
-        {card.title} is reviewed in its own editor.
-        <a href={`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`}
-          >Open it</a
-        >.
-      </span>
-    </div>
+    <!-- Replaced by the pre-task's own editor (the redirect above). -->
   {:else}
-    {#snippet taskBox()}
+    {#snippet taskBox(headAction: Snippet | undefined)}
       <TaskBox
         {card}
         pieceName={card.piece}
@@ -375,6 +418,8 @@
         {runner}
         inView
         {prefill}
+        tools={resultBanner}
+        {headAction}
         onclaim={claim}
         onabandon={abandon}
         onvalidate={validate}
@@ -382,6 +427,7 @@
       />
     {/snippet}
     <div class="scorecol" bind:clientWidth={scoreW}>
+      <h1 class="vh">{card.title}</h1>
       {#if !auth.user}
         <div class="banner warn">
           <span>
@@ -414,15 +460,97 @@
         </p>
       {/if}
     </div>
+    <!-- The selected measure, in the side panel's Selection tab. -->
+    {#snippet measureSelection()}
+      {#if selectedMeasure}
+        {@const p = preview?.pageOfMeasure(selectedMeasure) ?? -1}
+        <div class="selpanel">
+          <div class="selhead">
+            <span class="selname"
+              ><StepGlyph
+                kind="measure"
+                tone="var(--ink-measure)"
+                size={20}
+              />Measure {selectedMeasure}</span
+            >
+            {#if p >= 0}<span class="selwhere">page {p + 1}</span>{/if}
+            <span class="selnav">
+              <button
+                type="button"
+                class="btn btn-icon"
+                onclick={() => preview?.stepMeasure(-1)}
+                disabled={!preview?.canStepMeasure(-1)}
+                aria-label="Previous measure"
+                title="Previous measure"><Icon name="chevron-left" /></button
+              >
+              <button
+                type="button"
+                class="btn btn-icon"
+                onclick={() => preview?.stepMeasure(1)}
+                disabled={!preview?.canStepMeasure(1)}
+                aria-label="Next measure"
+                title="Next measure"><Icon name="chevron-right" /></button
+              >
+            </span>
+          </div>
+          <div class="selactions">
+            {#if auth.user}
+              <button
+                type="button"
+                class="btn"
+                onclick={() => (panelTab = "comments")}
+                ><Icon name="comment" />Comment on measure {selectedMeasure}</button
+              >
+            {/if}
+            <button
+              type="button"
+              class="btn"
+              onclick={() => preview?.clearSelection()}
+              title="Clear the measure selection"
+              ><Icon name="close" />Deselect</button
+            >
+          </div>
+        </div>
+      {:else}
+        <p class="selnone">
+          Select a measure on the score to comment on it or to anchor a change
+          request.
+        </p>
+      {/if}
+    {/snippet}
+    <!-- The viewer's verdict and Give back task, at the panel's bottom. -->
+    {#snippet reviewFooter()}
+      {#if reviewSub !== undefined}
+        <ReviewActions
+          task={card.task}
+          sub={reviewSub}
+          {runner}
+          {prefill}
+          onvalidate={(sub, verdict, comment) =>
+            validate(card.task, sub, verdict, comment)}
+          onreviewedit={(sub, comment) => reviewEdit(card.task, sub, comment)}
+          onabandon={(sub) => abandon(card.task, sub)}
+        />
+      {/if}
+    {/snippet}
     <TaskPageSidePanel
       tables={panelTables}
       {taskId}
       {viewer}
       {runner}
       bind:panel={sidePanel}
+      minWidth={reviewSub !== undefined ? PANEL_MIN_REVIEW : undefined}
       review={card.column === "validation"}
-      banner={resultBanner}
+      done={card.column === "done"}
       {taskBox}
+      selection={measureSelection}
+      selectionLabel="Selection"
+      selectionActive={!!selectedMeasure}
+      footer={reviewSub !== undefined ? reviewFooter : undefined}
+      bind:tab={panelTab}
+      composerHint={selectedMeasure
+        ? `Comment on measure ${selectedMeasure}…`
+        : ""}
       onanchor={showAnchorFor}
       oncomment={postComment}
       onresolve={resolveCommentRow}
@@ -433,17 +561,6 @@
 <style>
   .muted {
     color: var(--ink-faint);
-  }
-  .linkish {
-    font: inherit;
-    font-size: inherit;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-    text-decoration: underline;
   }
   .msg {
     margin: 24px auto;
@@ -468,7 +585,7 @@
   /* The side panel brings no outer spacing of its own; the score view's
      host row provides it there. Docked below the score it spans the width. */
   .review > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 12px 0;
+    margin: 12px 16px 4px 0;
   }
   /* The score column: the preview's toolbar and the side panel share their
      top edge, 12px below the navigation bar. */

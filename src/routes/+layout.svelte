@@ -53,7 +53,7 @@
   const inScore = $derived(inCampaign && page.url.searchParams.has("score"));
   const campaignHref = $derived.by(() => {
     const task = page.url.searchParams.get("task");
-    return `/${page.params.campaign}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
+    return `/${encodeURIComponent(page.params.campaign ?? "")}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
   });
 
   // The back link to a campaign names it by its title once a page has read
@@ -120,7 +120,7 @@
   {:else if corrector}
     <a
       class="nav-link back"
-      href={`/${page.params.campaign}`}
+      href={`/${encodeURIComponent(page.params.campaign ?? "")}`}
       aria-label={campaignTitleShown ? undefined : page.params.campaign}
       ><Icon name="arrow-left" />
       {#if campaignTitleShown}<span class="backlabel">{campaignTitleShown}</span
@@ -229,7 +229,7 @@
   {/if}
 </main>
 
-<footer>
+<footer class:workspace={corrector}>
   <span class="flong"
     >© 2026 Let's Encode! • mdw - University of Music and Performing Arts Vienna</span
   >
@@ -352,6 +352,19 @@
       min-width: 32px;
     }
   }
+  /* Windows 500px tall or less (phones in landscape): a 44px bar. */
+  @media (max-height: 500px) {
+    header {
+      height: 44px;
+    }
+    .brand img {
+      height: 24px;
+    }
+    header .user :global(.btn) {
+      min-height: 32px;
+      padding: 4px 12px;
+    }
+  }
   .user {
     display: flex;
     align-items: center;
@@ -446,9 +459,15 @@
     }
   }
   /* A short window: the under-construction notice takes the footer's place
-     (ConstructionNotice.svelte). */
+     (ConstructionNotice.svelte). A score workspace on a phone or an upright
+     tablet (DOCKED_QUERY in side-panels.ts) leaves the height to the score. */
   @media (max-height: 500px) {
     footer {
+      display: none;
+    }
+  }
+  @media (orientation: portrait) and (max-width: 1100px) {
+    footer.workspace {
       display: none;
     }
   }

@@ -18,6 +18,7 @@ import {
   isFinalValidation,
   configNumber,
   configPieces,
+  configPieceRegions,
   passThresholdOf,
 } from "../campaign-tables.ts";
 import { buildCampaignConfig, configToYaml } from "../campaign-init.ts";
@@ -323,6 +324,66 @@ test("configPieces: reads the pieces configToYaml writes, in order", () => {
     [],
   );
   assert.deepEqual(configPieces(null), []);
+});
+
+test("configPieceRegions: maps a piece's regions to its score pages by image", () => {
+  const yaml = configToYaml(
+    buildCampaignConfig(
+      {
+        name: "campaign",
+        images: [
+          "sources/img/01.jpg",
+          "sources/img/02.jpg",
+          "sources/img/03.jpg",
+        ],
+        pieces: [
+          {
+            id: "piece-01",
+            kind: "facsimile",
+            path: "sources/piece-01/score.mei",
+            zones: [{ surface: 1, ulx: 0, uly: 0, lrx: 10, lry: 10 }],
+            header: { title: "", composer: "" },
+          },
+          {
+            id: "piece-02",
+            kind: "facsimile",
+            path: "sources/piece-02/score.mei",
+            zones: [
+              { surface: 2, ulx: 1, uly: 2, lrx: 30, lry: 40 },
+              { surface: 3, ulx: 5, uly: 6, lrx: 70, lry: 80 },
+            ],
+            header: { title: "", composer: "" },
+          },
+        ],
+      },
+      "instigator",
+      {
+        central_repository: "org/automation",
+        ref: "main",
+        path: ".github/workflows/x.yml",
+      },
+      1,
+    ),
+  );
+  assert.deepEqual(
+    configPieceRegions(yaml, "sources/piece-02/score.mei", [
+      "sources/img/02.jpg",
+      "sources/img/03.jpg",
+    ]),
+    [
+      [{ ulx: 1, uly: 2, lrx: 30, lry: 40 }],
+      [{ ulx: 5, uly: 6, lrx: 70, lry: 80 }],
+    ],
+  );
+  // A page the piece has no region on, and an unknown piece, get none.
+  assert.deepEqual(
+    configPieceRegions(yaml, "sources/piece-01/score.mei", [
+      "sources/img/01.jpg",
+      null,
+    ]),
+    [[{ ulx: 0, uly: 0, lrx: 10, lry: 10 }], []],
+  );
+  assert.deepEqual(configPieceRegions(yaml, "other/score.mei", [null]), [[]]);
 });
 
 test("passThresholdOf: reads the config value, capped by the slot count", () => {

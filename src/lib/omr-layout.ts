@@ -264,3 +264,31 @@ export function staffCountOf(
     ...pages.flatMap((page) => pageSystems(page).systems.map((s) => s.length)),
   );
 }
+
+/**
+ * The runs of a system's staves that its page's grand-staff boxes join, as
+ * 1-based positions in the system (first and last staff): a staff belongs to
+ * a grand-staff box that holds its vertical middle and overlaps it
+ * horizontally. A box holding fewer than two of the staves joins none.
+ */
+export function grandStaffSpans(
+  system: MeasureBox[],
+  grandstaves: MeasureBox[],
+): { start: number; end: number }[] {
+  const spans: { start: number; end: number }[] = [];
+  for (const box of grandstaves) {
+    const inside = system
+      .map((staff, i) => ({ staff, i }))
+      .filter(
+        ({ staff }) =>
+          (staff.uly + staff.lry) / 2 >= box.uly &&
+          (staff.uly + staff.lry) / 2 <= box.lry &&
+          staff.ulx < box.lrx &&
+          box.ulx < staff.lrx,
+      )
+      .map(({ i }) => i);
+    if (inside.length >= 2)
+      spans.push({ start: inside[0] + 1, end: inside[inside.length - 1] + 1 });
+  }
+  return spans.sort((a, b) => a.start - b.start);
+}

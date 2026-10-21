@@ -16,7 +16,14 @@
 // handling, no DOM, filesystem or network access.
 
 import { addXmlIds } from "./mei-ids.ts";
-import { indent, textOf, xmlEscape, xmlUnescape } from "./mei-xml.ts";
+import {
+  elementsNamedAny,
+  firstElementNamed,
+  indent,
+  textOf,
+  xmlEscape,
+  xmlUnescape,
+} from "./mei-xml.ts";
 
 /** One named agent in the statement of responsibility. */
 export interface SourcePerson {
@@ -81,14 +88,18 @@ export function emptySourceMetadata(): SourceMetadata {
 
 /** The first match of `tag`'s inner text, or '' when the tag is absent. */
 function tagText(xml: string, tag: string): string {
-  const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`).exec(xml);
-  return match ? textOf(match[1]) : "";
+  return textOf(tagInner(xml, tag));
 }
 
 /** The content of the first `tag` element, markup intact. */
 function tagInner(xml: string, tag: string): string {
-  const match = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`).exec(xml);
-  return match ? match[1] : "";
+  return firstElementNamed(xml, tag)?.inner ?? "";
+}
+
+/** `xml` without its first `tag` element. */
+function withoutElement(xml: string, tag: string): string {
+  const element = firstElementNamed(xml, tag);
+  return element ? xml.slice(0, element.start) + xml.slice(element.end) : xml;
 }
 
 /** Emit `<tag>text</tag>` at `depth`, or nothing when the value is empty. */
@@ -393,18 +404,23 @@ export function buildPieceHead(
  */
 export function parseSourceHead(xml: string): SourceMetadata {
   const meta = emptySourceMetadata();
-  const head = /<meiHead\b[^>]*>([\s\S]*)<\/meiHead>/.exec(xml)?.[1];
-  if (head === undefined) return meta;
+  // The header runs from the first <meiHead> to the last </meiHead>.
+  const open = /<meiHead\b/.exec(xml);
+  const tagEnd = open ? xml.indexOf(">", open.index) : -1;
+  const close = xml.lastIndexOf("</meiHead>");
+  if (tagEnd < 0 || close <= tagEnd) return meta;
+  const head = xml.slice(tagEnd + 1, close);
 
   const fileDesc = tagInner(head, "fileDesc");
   const titleStmt = tagInner(fileDesc, "titleStmt");
   meta.title = tagText(titleStmt, "title");
 
-  for (const match of tagInner(titleStmt, "respStmt").matchAll(
-    /<(persName|corpName)\b([^>]*)>([\s\S]*?)<\/\1>/g,
-  )) {
-    const role = xmlUnescape(/\brole="([^"]*)"/.exec(match[2])?.[1] ?? "");
-    const name = textOf(match[3]);
+  for (const element of elementsNamedAny(tagInner(titleStmt, "respStmt"), [
+    "persName",
+    "corpName",
+  ])) {
+    const role = xmlUnescape(/\brole="([^"]*)"/.exec(element.tag)?.[1] ?? "");
+    const name = textOf(element.inner);
     if (!name) continue;
     if (role === "composer" && !meta.composer) {
       meta.composer = name;
@@ -435,9 +451,7 @@ export function parseSourceHead(xml: string): SourceMetadata {
     "edition",
   );
   meta.editionDate = tagText(editionInner, "date");
-  meta.edition = textOf(
-    editionInner.replace(/<date\b[^>]*>[\s\S]*?<\/date>/, ""),
-  );
+  meta.edition = textOf(withoutElement(editionInner, "date"));
   const physDesc = tagInner(manifestation, "physDesc");
   meta.extent = tagText(physDesc, "extent");
   meta.condition = tagText(physDesc, "condition");
@@ -448,18 +462,17 @@ export function parseSourceHead(xml: string): SourceMetadata {
   meta.shelfmark =
     tagText(physLoc, "identifier") ||
     tagText(
-      manifestation
-        .replace(/<physLoc\b[^>]*>[\s\S]*?<\/physLoc>/, "")
-        .replace(/<pubStmt\b[^>]*>[\s\S]*?<\/pubStmt>/, ""),
+      withoutElement(withoutElement(manifestation, "physLoc"), "pubStmt"),
       "identifier",
     );
   meta.note = tagText(tagInner(manifestation, "notesStmt"), "annot");
 
   // Anything beside the blocks this module builds is markup the form does not
   // model; keep it, in the two halves the next build emits it as.
-  const stripped = head
-    .replace(/<fileDesc\b[^>]*>[\s\S]*?<\/fileDesc>/, "")
-    .replace(/<manifestationList\b[^>]*>[\s\S]*?<\/manifestationList>/, "");
+  const stripped = withoutElement(
+    withoutElement(head, "fileDesc"),
+    "manifestationList",
+  );
   meta.extraHeadXml = splitAtManifestationSlot(stripped)
     .filter(Boolean)
     .join("\n");

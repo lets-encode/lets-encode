@@ -1,8 +1,8 @@
 <!--
-  "Abandon" for a claim the viewer holds, confirmed in place: the first
+  "Give back task" for a claim the viewer holds, confirmed in place: the first
   click turns the button into a question with the two answers beside it.
-  Abandoning an edit claim deletes the viewer's unsubmitted changes; a review
-  claim (`review`) has none.
+  Giving back an edit claim deletes the viewer's unsubmitted changes, so its
+  confirming button is the danger outline; a review claim (`review`) has none.
 -->
 <script lang="ts">
   let {
@@ -22,17 +22,18 @@
   <span class="ask">
     <span class="q"
       >{review
-        ? "Abandon this review?"
-        : "Abandon this task? All your changes will be deleted."}</span
+        ? "Give back this review?"
+        : "Give back this task? All your changes will be deleted."}</span
     >
     <button
       type="button"
-      class="btn btn-soft"
+      class="btn {review ? 'btn-soft' : 'btn-danger'}"
       {disabled}
       onclick={() => {
         asking = false;
         onabandon();
-      }}>Abandon</button
+      }}
+      >{review ? "Give back task" : "Give back task and delete changes"}</button
     >
     <button type="button" class="btn" onclick={() => (asking = false)}
       >{review ? "Keep reviewing" : "Keep working"}</button
@@ -47,7 +48,7 @@
     title={review
       ? "Releases your review claim so someone else can review the task."
       : "Releases your claim and deletes your unsubmitted changes. The task is open to others again."}
-    >Abandon</button
+    >Give back task</button
   >
 {/if}
 

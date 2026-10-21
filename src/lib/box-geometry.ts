@@ -83,6 +83,54 @@ export function movedBox(
   return { ulx, uly, lrx: ulx + w, lry: uly + h };
 }
 
+/** `origs` shifted together by (dx, dy), as far as keeps every one whole on the page. */
+export function movedBoxes(
+  origs: Box[],
+  dx: number,
+  dy: number,
+  page: PageSize,
+): Box[] {
+  const around = boundingBox(origs);
+  const to = movedBox(around, dx, dy, page);
+  const sx = to.ulx - around.ulx;
+  const sy = to.uly - around.uly;
+  return origs.map((o) => ({
+    ulx: o.ulx + sx,
+    uly: o.uly + sy,
+    lrx: o.lrx + sx,
+    lry: o.lry + sy,
+  }));
+}
+
+/** The smallest box around `boxes`, of which there is at least one. */
+export function boundingBox(boxes: Box[]): Box {
+  return {
+    ulx: Math.min(...boxes.map((b) => b.ulx)),
+    uly: Math.min(...boxes.map((b) => b.uly)),
+    lrx: Math.max(...boxes.map((b) => b.lrx)),
+    lry: Math.max(...boxes.map((b) => b.lry)),
+  };
+}
+
+/**
+ * Where copies of `boxes` go: directly below them, or to their right where
+ * the page leaves more room there for their size; as far as the page allows.
+ */
+export function copyPlace(boxes: Box[], page: PageSize): Box[] {
+  const around = boundingBox(boxes);
+  const w = around.lrx - around.ulx;
+  const h = around.lry - around.uly;
+  const below = movedBoxes(boxes, 0, h, page);
+  const right = movedBoxes(boxes, w, 0, page);
+  return (below[0].uly - boxes[0].uly) / h >= (right[0].ulx - boxes[0].ulx) / w
+    ? below
+    : right;
+}
+
+/** Whether two boxes share some area; a zero-width or zero-height `a` counts its line. */
+export const boxesTouch = (a: Box, b: Box): boolean =>
+  a.ulx < b.lrx && b.ulx < a.lrx && a.uly < b.lry && b.uly < a.lry;
+
 /**
  * `orig` with the grabbed `edges` — "n", "s", "e", "w" or a corner's pair
  * ("nw", "se", …) — at the pointer, never closer than `min` to the opposite
@@ -125,6 +173,37 @@ export function nudgedEdges(
     lry: edges.includes("s")
       ? Math.min(page.height, Math.max(box.uly + min, box.lry + dy))
       : box.lry,
+  };
+}
+
+/** Whether the box's centre lies in one of `regions`; true when there are none. */
+export function centreInRegions(box: Box, regions: Box[]): boolean {
+  if (!regions.length) return true;
+  const cx = (box.ulx + box.lrx) / 2;
+  const cy = (box.uly + box.lry) / 2;
+  return regions.some(
+    (r) => cx >= r.ulx && cx <= r.lrx && cy >= r.uly && cy <= r.lry,
+  );
+}
+
+/**
+ * The part of a page to show for `regions`: their bounding box widened by
+ * `margin` of the page's width on every side and kept on the page. The whole
+ * page when there are no regions.
+ */
+export function regionsView(
+  regions: Box[],
+  page: PageSize,
+  margin: number,
+): Box {
+  if (!regions.length)
+    return { ulx: 0, uly: 0, lrx: page.width, lry: page.height };
+  const m = page.width * margin;
+  return {
+    ulx: Math.max(0, Math.min(...regions.map((r) => r.ulx)) - m),
+    uly: Math.max(0, Math.min(...regions.map((r) => r.uly)) - m),
+    lrx: Math.min(page.width, Math.max(...regions.map((r) => r.lrx)) + m),
+    lry: Math.min(page.height, Math.max(...regions.map((r) => r.lry)) + m),
   };
 }
 

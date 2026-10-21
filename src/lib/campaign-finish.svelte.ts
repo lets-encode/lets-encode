@@ -1,16 +1,20 @@
 // Finishing a campaign setup: the wizard's last step runs this from its
 // button. The pages are measured first — the measure detector for the
-// measure-detection preparation, the page sizes alone for OMR — then every
-// piece's score, the configuration and the tracking tables are built from the
-// wizard store and committed in one commit, the campaign's name is registered
-// and the listing topic stamped. Progress is reported through a ProgressLog
+// measure-detection preparation, the page sizes alone for OMR — then the
+// campaign repository is created, every piece's score, the configuration and
+// the tracking tables are built from the wizard store and committed with the
+// page images in one commit, the campaign's name is registered and the listing
+// topic stamped. Progress is reported through a ProgressLog
 // and the busy/error state here, which the step's card renders.
 
 import { goto } from "$app/navigation";
 import { auth, forge } from "./auth.svelte.ts";
 import { provider, automation, measureDetectorUrl } from "./forge/config.ts";
 import { registerCampaign } from "./campaign-resolve.ts";
-import { imageSize } from "./prepare-images.ts";
+import { blobToBase64, imageSize } from "./prepare-images.ts";
+import { ensureCampaignRepo } from "./campaign-repo.ts";
+import { licenseById } from "./licenses.ts";
+import type { ProgressUpdate } from "./run-watch.ts";
 import { startDetection, type DetectionSession } from "./measure-detection.ts";
 import {
   buildCampaignConfig,
@@ -47,7 +51,24 @@ import {
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
+  pieceIdLabel,
 } from "./campaign-tables.ts";
+
+/**
+ * What finishing does, in one line, for the step that offers it: the public
+ * repository it creates and where the campaign will be reached.
+ */
+export function finishSummary(owner: string): string {
+  const name = wizard.handle.trim();
+  const pieces = wizard.pieces.length;
+  const pages = wizard.images.length;
+  const content = [
+    `${pieces} piece${pieces === 1 ? "" : "s"}`,
+    ...(pages ? [`${pages} page${pages === 1 ? "" : "s"}`] : []),
+  ].join(" and ");
+  const licence = licenseById(wizard.license).name.split(" — ")[0];
+  return `Creates the public repository ${owner}/${name} with ${content} under ${licence}, and publishes the campaign at ${location.host}/${name}.`;
+}
 
 /** Files the campaign template carries for its own repository, removed from a campaign at init. */
 const TEMPLATE_ONLY_PATHS = ["CHANGELOG.md", "config.example.yaml"];
@@ -114,12 +135,11 @@ export class CampaignFinisher {
     return pagesOut;
   }
 
-  /** Measure, build, commit, register and list the campaign; then open it. */
+  /** Measure, create, build, commit, register and list the campaign; then open it. */
   async run(): Promise<void> {
     this.error = null;
     const user = auth.user;
     const f = forge();
-    const repo = wizard.repo;
     const claim = wizard.claim;
     if (this.busy) return;
     if (!user || !f) {
@@ -134,25 +154,31 @@ export class CampaignFinisher {
         "This campaign has no name reserved. Go back to the first step and continue from there.";
       return;
     }
-    if (!repo) {
-      // Reaching here without a repository means the upload/pages step did not
-      // complete; saying so beats a button that does nothing.
-      this.error =
-        "This campaign has no repository yet. Go back to the upload step and continue from there.";
-      return;
-    }
 
     this.busy = true;
     this.log.clear();
+    const logRepo = ({ step, detail }: ProgressUpdate) => {
+      if (step) this.log.step(step);
+      if (detail) this.log.detail(detail);
+    };
     try {
       // A campaign whose config.yaml is committed already has its tables and
       // scores, and volunteers may be working in it; a retry after a failed
       // registration or topic goes straight to those steps.
       const committed =
-        (await f.getRepoFile(repo.owner, repo.name, CONFIG_PATH)) != null;
+        wizard.repo !== null &&
+        (await f.getRepoFile(
+          wizard.repo.owner,
+          wizard.repo.name,
+          CONFIG_PATH,
+        )) != null;
+      // The pages are measured before the repository exists, so a detection
+      // that fails leaves nothing behind.
+      if (!committed && !this.detected)
+        this.detected = await this.measurePages();
+      const repo = await ensureCampaignRepo(f, user.login, logRepo);
       if (!committed) {
-        if (!this.detected) this.detected = await this.measurePages();
-        const detected = this.detected;
+        const detected = this.detected ?? [];
 
         // Every piece is published under the campaign's licence, so it is stated
         // in each piece's header as well as in the config.
@@ -169,7 +195,7 @@ export class CampaignFinisher {
         const scores: FileChange[] = [];
 
         wizard.pieces.forEach((piece, i) => {
-          const name = piece.meta.title.trim() || piece.id;
+          const name = piece.meta.title.trim() || pieceIdLabel(piece.id);
           // Building a score is a string operation: it reports what it did, not
           // how long it took.
           this.log.step(
@@ -234,7 +260,7 @@ export class CampaignFinisher {
           const model = initialFacsimileModel(split[i].pages);
           this.log.detail(
             wizard.preparation === "omr"
-              ? `${split[i].pages.length} page(s); staves and measures are found in the layout task`
+              ? `${split[i].pages.length} page(s); staves and measures are found in the measure correction task`
               : `${split[i].pages.length} page(s), ${split[i].measuredSurfaces.length} with measures`,
           );
           scores.push({
@@ -318,13 +344,24 @@ export class CampaignFinisher {
             ),
           },
         ];
+        for (const [i, image] of wizard.images.entries()) {
+          this.log.detail(`encoding page ${i + 1} of ${wizard.images.length}`);
+          files.push({
+            path: image.path,
+            contentBase64: await blobToBase64(image.blob),
+          });
+        }
         this.log.step(`Committing the campaign (${files.length} file(s))`);
         await f.commitFiles(
           repo.owner,
           repo.name,
           files,
           "Initialise campaign",
-          { deletePaths: TEMPLATE_ONLY_PATHS },
+          {
+            deletePaths: TEMPLATE_ONLY_PATHS,
+            onUpload: (done, total) =>
+              this.log.detail(`uploading ${done} of ${total}`),
+          },
         );
       }
 
@@ -344,7 +381,11 @@ export class CampaignFinisher {
         this.error =
           registration === "conflict"
             ? `The reservation of “${claim.name}” ran out and the name went to another campaign. Everything was committed to ${repo.full_name}, but it cannot be reached under that name.`
-            : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
+            : registration === "renamed"
+              ? `Everything was committed to ${repo.full_name}, but the repository has since been renamed on GitHub. Rename it back to “${claim.name}”, then try again.`
+              : registration === "repo_taken"
+                ? `Everything was committed to ${repo.full_name}, but that repository is already registered under another campaign name.`
+                : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
         this.busy = false;
         this.log.fail();
         return;

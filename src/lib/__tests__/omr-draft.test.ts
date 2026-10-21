@@ -112,6 +112,27 @@ test("each skeleton measure of the page takes the converted measure of the same 
   assert.equal((result.mei.match(/<sb /g) ?? []).length, 1);
 });
 
+test("a filled measure keeps its repeat barline and its navigation signs", () => {
+  const base = skeleton([2, 2]).replace(
+    /(<measure xml:id="measure-1" n="1") (facs="#zone-1-1">[\s\S]*?)(\s*<\/measure>)/,
+    '$1 left="rptstart" $2\n                  <repeatMark xml:id="repeatMark-1-1" func="segno" staff="1" tstamp="0" place="above"/>\n                  <dir xml:id="dir-1-2" staff="1" tstamp="5" place="above">To Coda</dir>$3',
+  );
+  const result = insertPageDraft(
+    base,
+    "surface-1",
+    converted(4),
+    [2, 2],
+    allPrinted(2),
+  );
+  const first = /<measure xml:id="measure-1"[\s\S]*?<\/measure>/.exec(
+    result.mei,
+  )![0];
+  assert.match(first, /left="rptstart"/);
+  assert.match(first, /<note xml:id="n1-1"/);
+  assert.match(first, /<repeatMark [^>]*func="segno"/);
+  assert.match(first, />To Coda<\/dir>/);
+});
+
 test("mismatched systems are filled as far as they go and reported", () => {
   // Skeleton: 3 + 1 boxes; transcribed: 2 + 2 measures.
   const result = insertPageDraft(
@@ -239,6 +260,21 @@ test("the page opening puts its clefs first in the page's first layers and its k
   );
   assert.equal((result.mei.match(/<clef /g) ?? []).length, 1);
   assert.equal((result.mei.match(/<scoreDef>/g) ?? []).length, 1);
+});
+
+test("a key change at the page opening restates the key of a staff written in another", () => {
+  const result = insertPageDraft(
+    skeleton([1]),
+    "surface-1",
+    converted(1),
+    [1],
+    allPrinted(1),
+    { clefs: [], fifths: 4, keys: [4, 1], time: null },
+  );
+  assert.match(
+    result.mei,
+    /<scoreDef><keySig sig="4s"\/><staffGrp><staffDef n="2"><keySig sig="1s"\/><\/staffDef><\/staffGrp><\/scoreDef><measure xml:id="measure-1"/,
+  );
 });
 
 test("a key or meter change verovio writes before a measure goes before the skeleton measure it fills", () => {

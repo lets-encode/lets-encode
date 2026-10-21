@@ -45,7 +45,7 @@
       {/each}
       <button
         type="button"
-        class="btn btn-lg btn-primary"
+        class="btn btn-primary"
         onclick={() => rejected.forEach((e) => pendingVerdicts.dismiss(e.id))}
       >
         Continue

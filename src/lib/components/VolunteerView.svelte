@@ -189,7 +189,7 @@
     if (!featured) return "";
     const parts = typeOf(featured) ? [typeOf(featured)] : [];
     if (featured.column === "ready" && featured.omr)
-      parts.push("starts from an OMR draft (optical music recognition)");
+      parts.push("starts from a draft");
     const pageCount = nextPreview?.pages.length ?? 0;
     if (featured.pre && pageCount)
       parts.push(`${pageCount} page${pageCount === 1 ? "" : "s"}`);
@@ -270,7 +270,7 @@
 {/snippet}
 
 {#snippet chips(card: BoardCard)}
-  {#if card.counts.fails > 0}
+  {#if card.counts.fails > 0 && card.column !== "done"}
     <span class="chip chip-fail"
       >{card.counts.fails} change request{card.counts.fails === 1
         ? ""
@@ -342,7 +342,7 @@
               <div class="nextacts">
                 <button
                   type="button"
-                  class="btn btn-lg btn-primary {stageClass(featured)}"
+                  class="btn btn-primary {stageClass(featured)}"
                   onclick={() => (viewer === "" ? login() : onact(featured))}
                   disabled={busy ||
                     pendingVerdicts.taskProcessing(featured.task)}
@@ -466,7 +466,8 @@
       <span class="none"
         >{waitingCards.length > 0
           ? "No tasks are open for you right now."
-          : "No tasks are open right now: every task is claimed, in review, waiting for an earlier task, or done."}</span
+          : "No tasks are open right now: every task is claimed, in review, waiting for an earlier task, or done."}
+        <a href="/campaigns">Find open tasks in other campaigns</a></span
       >
     {/if}
 
@@ -896,9 +897,17 @@
     align-items: flex-start;
     margin-top: 6px;
   }
-  /* The volunteer's one main action is the only 44px button. */
-  .nextacts .btn {
-    min-height: 44px;
+  /* On a touch screen the 32px button takes a 44px press through an
+     invisible ::after. */
+  @media (pointer: coarse) {
+    .nextacts .btn {
+      position: relative;
+    }
+    .nextacts .btn::after {
+      content: "";
+      position: absolute;
+      inset: -6px;
+    }
   }
 
   /* ------------------------------------------------------- open-task list */
@@ -967,6 +976,13 @@
   .none {
     font-size: 12px;
     color: var(--ink-faint);
+  }
+  .none a {
+    display: block;
+    width: fit-content;
+    padding: 5px 0;
+    font-weight: 600;
+    color: var(--link);
   }
 
   /* --------------------------------------------------------- pieces table */
@@ -1149,8 +1165,8 @@
   }
 
   /* Narrow column: the next-task card puts its actions on a full-width line
-     under the crop and text, and every row wraps its meta and controls onto
-     a second line. */
+     under the crop and text, and a row's meta and controls wrap onto a
+     second line where they do not fit beside its title. */
   @container (max-width: 640px) {
     .nextcard {
       flex-wrap: wrap;
@@ -1175,6 +1191,10 @@
     .prow,
     .taskrow {
       flex-wrap: wrap;
+      row-gap: 4px;
+    }
+    .stype:empty {
+      display: none;
     }
     .trow .vspacer,
     .prow .vspacer {
@@ -1214,7 +1234,8 @@
       width: auto;
     }
     .tasktitle {
-      flex-basis: 100%;
+      flex: 1 1 auto;
+      min-width: 0;
     }
     .ttype {
       white-space: normal;

@@ -422,6 +422,51 @@ export function configPieces(yaml: string | null): PieceRef[] {
   return pieces;
 }
 
+/** A rectangle in a page image's own pixels. */
+export interface PageRegion {
+  ulx: number;
+  uly: number;
+  lrx: number;
+  lry: number;
+}
+
+/**
+ * The regions of the piece at `path` per page of its score, from config.yaml.
+ * `pageImages` are the repository paths of the score's page images in score
+ * order (null where unknown); a region on source page n (1-based) belongs to
+ * the score page showing `source.images[n - 1]`. A page without regions gets
+ * an empty list, as do all pages of a piece without regions.
+ */
+export function configPieceRegions(
+  yaml: string | null,
+  path: string,
+  pageImages: (string | null)[],
+): PageRegion[][] {
+  const text = yaml ?? "";
+  // source.images, one `    - "path"` line each.
+  const images = (
+    /^ {2}images:[^\S\n]*\n((?: {4}- .*\n?)*)/m.exec(text)?.[1] ?? ""
+  )
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => configString(line.replace(/^\s*- /, "v: "), "v"));
+  const block = /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(text)?.[1] ?? "";
+  const entry = block
+    .split(/^ {2}- /m)
+    .slice(1)
+    .find((e) => configString(e, "path") === path);
+  const regions = pageImages.map((): PageRegion[] => []);
+  const zone =
+    /\{\s*surface:\s*(\d+),\s*ulx:\s*(-?\d+),\s*uly:\s*(-?\d+),\s*lrx:\s*(-?\d+),\s*lry:\s*(-?\d+)\s*\}/g;
+  for (const m of (entry ?? "").matchAll(zone)) {
+    const page = pageImages.indexOf(images[Number(m[1]) - 1] ?? null);
+    if (page < 0) continue;
+    const [ulx, uly, lrx, lry] = m.slice(2).map(Number);
+    regions[page].push({ ulx, uly, lrx, lry });
+  }
+  return regions;
+}
+
 /** Fragment path → the piece's preparation, for the pieces that state one. */
 export type PiecePreparations = Record<string, string>;
 
@@ -490,6 +535,9 @@ export function commentAnchor(c: CommentRow): MeasureAnchor {
 
 /** locking.stale_after_minutes when config.yaml does not set it. */
 export const DEFAULT_STALE_MINUTES = 1440;
+
+/** locking.max_claims_per_person when config.yaml does not set it. */
+export const DEFAULT_MAX_CLAIMS = 10;
 
 /** A positive-integer scalar from config.yaml by key, or `fallback`. */
 export function configNumber(

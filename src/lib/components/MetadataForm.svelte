@@ -141,12 +141,11 @@
     <div class="views-row">{@render heading()}</div>
   {/if}
   {#if subhead}{@render subhead()}{/if}
-  <div class="views" role="tablist" aria-label="Metadata detail">
+  <div class="views" role="group" aria-label="Metadata detail">
     {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
       <button
         type="button"
-        role="tab"
-        aria-selected={view === id}
+        aria-pressed={view === id}
         class="pill"
         class:pill-sm={heading !== undefined}
         class:on={view === id}
@@ -449,12 +448,16 @@
   .field {
     margin-top: 14px;
   }
+  /* Fields in a row line up at their inputs when a label wraps. A field
+     narrower than 160px moves to the next line, so a placeholder is not cut. */
   .pair {
     display: flex;
-    gap: 12px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    column-gap: 12px;
   }
   .pair .grow {
-    flex: 1;
+    flex: 1 1 160px;
     min-width: 0;
   }
   .pair .year {
@@ -470,6 +473,7 @@
   @container (min-width: 500px) {
     .row {
       flex-direction: row;
+      align-items: flex-end;
       gap: 12px;
     }
     .row .grow {

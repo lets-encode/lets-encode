@@ -1,79 +1,46 @@
 // The side panel of the campaign views (SidePanel.svelte): its width when it
-// sits beside the content and its snap height when it is docked below it,
-// kept per browser.
-
-/** The docked panel's heights, lowest first (SNAP_CSS). */
-export const PANEL_SNAPS = ["peek", "half", "full"] as const;
-export type PanelSnap = (typeof PANEL_SNAPS)[number];
+// sits beside the content, kept per browser.
 
 export interface SidePanelState {
   width: number;
-  snap: PanelSnap;
 }
 
 const WIDTH_KEY = "lets-encode:side-panel-width";
-const SNAP_KEY = "lets-encode:side-panel-snap";
 
 export const PANEL_MIN = 280;
+/** The narrowest panel whose review footer keeps Give back task, Request
+    changes and Approve on one line: 352px of buttons plus 54px of the
+    panel's margin, border and footer padding. */
+export const PANEL_MIN_REVIEW = 410;
 /** The width beside the panel kept for the content: the campaign board's
     narrowest stacked-lanes width (420px; narrower, it shows one lane at a
     time with lane tabs) plus its row's 40px padding and 14px gap. */
 export const CONTENT_BESIDE_MIN = 474;
 
 /** Where the panel docks below the content instead of beside it: portrait
-    windows too narrow for the panel at PANEL_MIN beside CONTENT_BESIDE_MIN.
-    ui.css, ScoreView.svelte and the campaign page repeat the width in their
-    media queries. */
-export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 753px)";
+    windows up to 1100px wide, phones and tablets held upright (a 13-inch iPad
+    is 1032px). Narrower than PANEL_MIN beside CONTENT_BESIDE_MIN the panel
+    cannot sit beside the content at all; up to 1100px it would take the width
+    the page images need. ui.css, ScoreView.svelte, DraftBubble.svelte and the
+    campaign page repeat the width in their media queries. */
+export const DOCKED_QUERY = "(orientation: portrait) and (max-width: 1100px)";
 /** The widest default panel beside the content (defaultPanelWidth). */
 export const DEFAULT_PANEL_WIDTH = 400;
 const DEFAULT_WIDTH_SHARE = 0.38;
-/** The docked height a panel opens at. */
-export const DEFAULT_PANEL_SNAP: PanelSnap = "half";
-/** The window height the full snap leaves for the content above it. */
-const FULL_GAP = 160;
-const PEEK_MIN = 180;
-const PEEK_SHARE = 0.32;
-const HALF_SHARE = 0.55;
+/** The window height a docked panel leaves for the content above it. */
+const DOCKED_GAP = 160;
+/** The docked panel's highest height as CSS, following the dynamic viewport
+    so a mobile browser's address bar showing or hiding resizes it. */
+export const DOCKED_MAX_CSS = `calc(100dvh - ${DOCKED_GAP}px)`;
+/** A closed docked sheet's highest height as CSS: half the dynamic viewport,
+    so a long selection scrolls inside the sheet and leaves the other half to
+    the content above it. */
+export const SHEET_PEEK_MAX_CSS = "50dvh";
 
-/** Each snap's height as CSS, following the dynamic viewport so a mobile
-    browser's address bar showing or hiding resizes the panel with it. */
-export const SNAP_CSS: Record<PanelSnap, string> = {
-  peek: `max(${PEEK_MIN}px, ${PEEK_SHARE * 100}dvh)`,
-  half: `${HALF_SHARE * 100}dvh`,
-  full: `calc(100dvh - ${FULL_GAP}px)`,
-};
-
-/** A snap's height in pixels in a window `viewport` pixels tall. */
-export function snapHeight(snap: PanelSnap, viewport: number): number {
-  if (snap === "peek") return Math.max(PEEK_MIN, viewport * PEEK_SHARE);
-  if (snap === "half") return viewport * HALF_SHARE;
-  return viewport - FULL_GAP;
-}
-
-/** The snap nearest a dragged height. */
-export function nearestSnap(height: number, viewport: number): PanelSnap {
-  let best: PanelSnap = PANEL_SNAPS[0];
-  for (const s of PANEL_SNAPS)
-    if (
-      Math.abs(snapHeight(s, viewport) - height) <
-      Math.abs(snapHeight(best, viewport) - height)
-    )
-      best = s;
-  return best;
-}
-
-/** The snap one step higher (1) or lower (-1), held at the ends. */
-export function stepSnap(snap: PanelSnap, dir: 1 | -1): PanelSnap {
-  const i = PANEL_SNAPS.indexOf(snap) + dir;
-  return PANEL_SNAPS[Math.min(Math.max(i, 0), PANEL_SNAPS.length - 1)];
-}
-
-/** A dragged docked height, kept between 120px and the height of the full
-    snap. */
+/** A dragged docked height, kept between 120px and DOCKED_MAX_CSS. */
 export function clampPanelHeight(h: number, viewport: number): number {
   return Math.round(
-    Math.min(Math.max(h, 120), Math.max(120, viewport - FULL_GAP)),
+    Math.min(Math.max(h, 120), Math.max(120, viewport - DOCKED_GAP)),
   );
 }
 
@@ -111,7 +78,6 @@ export const defaultPanelWidth = (width: number, height: number): number =>
 /** The stored panel state, or its defaults where nothing valid is stored. */
 export function readSidePanel(): SidePanelState {
   const w = readStored(WIDTH_KEY);
-  const snap = readStored(SNAP_KEY);
   const viewport = typeof window === "undefined" ? 800 : window.innerHeight;
   const viewportWidth =
     typeof window === "undefined" ? 1280 : window.innerWidth;
@@ -120,9 +86,6 @@ export function readSidePanel(): SidePanelState {
       finite(w) && w >= PANEL_MIN
         ? Math.round(w)
         : defaultPanelWidth(viewportWidth, viewport),
-    snap: PANEL_SNAPS.includes(snap as PanelSnap)
-      ? (snap as PanelSnap)
-      : DEFAULT_PANEL_SNAP,
   };
 }
 
@@ -132,17 +95,11 @@ export const hasStoredPanelWidth = (): boolean => {
   return finite(w) && w >= PANEL_MIN;
 };
 
-/** Store the dimension the viewer set: the width beside the content, or
-    the snap docked below it. A browser refusing the write leaves it
-    unstored. */
-export function writeSidePanel(
-  state: SidePanelState,
-  dimension: "width" | "snap",
-): void {
+/** Store the width the viewer set beside the content. A browser refusing
+    the write leaves it unstored. */
+export function writeSidePanel(state: SidePanelState): void {
   try {
-    if (dimension === "width")
-      store()?.setItem(WIDTH_KEY, JSON.stringify(state.width));
-    else store()?.setItem(SNAP_KEY, JSON.stringify(state.snap));
+    store()?.setItem(WIDTH_KEY, JSON.stringify(state.width));
   } catch {
     /* full or blocked storage only costs the preference */
   }
@@ -170,9 +127,14 @@ export function writeLastTask(campaign: string, task: string | null): void {
   }
 }
 
-/** A panel width, kept between the minimum and half the viewport, and
-    leaving CONTENT_BESIDE_MIN beside it where the viewport allows. */
-export function clampPanelWidth(w: number, viewport: number): number {
+/** A panel width, kept between the minimum (PANEL_MIN unless a view sets
+    its own) and half the viewport, and leaving CONTENT_BESIDE_MIN beside it
+    where the viewport allows. */
+export function clampPanelWidth(
+  w: number,
+  viewport: number,
+  min = PANEL_MIN,
+): number {
   const max = Math.min(viewport / 2, viewport - CONTENT_BESIDE_MIN);
-  return Math.round(Math.min(Math.max(w, PANEL_MIN), Math.max(PANEL_MIN, max)));
+  return Math.round(Math.min(Math.max(w, min), Math.max(min, max)));
 }
