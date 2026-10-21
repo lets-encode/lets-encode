@@ -19,7 +19,8 @@ const execution = (
   error,
 });
 
-test("transcribeStaves: one page, every crop uploaded, one run per staff, null for a failed staff", async () => {
+/** A client whose one execution ends in `state` and writes the transcriptions of `written` (1-based staves). */
+function fakeClient(state: string, written: number[]) {
   const calls: string[] = [];
   const client = {
     async withPage<T>(work: (pageId: string) => Promise<T>) {
@@ -34,14 +35,19 @@ test("transcribeStaves: one page, every crop uploaded, one run per staff, null f
       calls.push(`upload ${pageId} ${Object.keys(files).join(",")}`);
     },
     async run(
-      pageId: string,
+      _pageId: string,
       _pipeline: unknown,
       input: string[],
     ): Promise<OmrExecution> {
-      calls.push(`run ${input[0]}`);
-      return input[0] === "Staves/2/image.jpg"
-        ? execution(input, "failed", "malformed sequence")
-        : execution(input, "completed");
+      calls.push(`run ${input.join(",")}`);
+      return execution(input, state, state === "failed" ? "all failed" : null);
+    },
+    async files() {
+      calls.push("files");
+      return written.flatMap((n) => [
+        `Staves/${n}/image.jpg`,
+        `Staves/${n}/transcription.musicxml`,
+      ]);
     },
     async download(_pageId: string, paths: string[]) {
       calls.push(`download ${paths.join(",")}`);
@@ -50,12 +56,14 @@ test("transcribeStaves: one page, every crop uploaded, one run per staff, null f
       );
     },
   } as unknown as OmrClient;
+  return { client, calls };
+}
 
-  const xmls = await transcribeStaves(client, pipeline, [
-    new Blob(["a"]),
-    new Blob(["b"]),
-    new Blob(["c"]),
-  ]);
+const crops = (n: number) => Array.from({ length: n }, () => new Blob(["x"]));
+
+test("transcribeStaves: one page, one execution over every crop, null for a staff without a transcription", async () => {
+  const { client, calls } = fakeClient("completed", [1, 3]);
+  const xmls = await transcribeStaves(client, pipeline, crops(3));
   assert.deepEqual(xmls, [
     "<xml>Staves/1/transcription.musicxml</xml>",
     null,
@@ -64,12 +72,38 @@ test("transcribeStaves: one page, every crop uploaded, one run per staff, null f
   assert.deepEqual(calls, [
     "create",
     "upload p1 Staves/1/image.jpg,Staves/2/image.jpg,Staves/3/image.jpg",
-    "run Staves/1/image.jpg",
-    "run Staves/2/image.jpg",
-    "run Staves/3/image.jpg",
+    "run Staves/1/image.jpg,Staves/2/image.jpg,Staves/3/image.jpg",
+    "files",
     "download Staves/1/transcription.musicxml,Staves/3/transcription.musicxml",
     "delete",
   ]);
+});
+
+test("transcribeStaves: a failed execution (every staff failed) yields null for every staff", async () => {
+  const { client, calls } = fakeClient("failed", []);
+  assert.deepEqual(await transcribeStaves(client, pipeline, crops(2)), [
+    null,
+    null,
+  ]);
+  assert.deepEqual(calls, [
+    "create",
+    "upload p1 Staves/1/image.jpg,Staves/2/image.jpg",
+    "run Staves/1/image.jpg,Staves/2/image.jpg",
+    "delete",
+  ]);
+});
+
+test("transcribeStaves: results stay in crop order", async () => {
+  const { client } = fakeClient(
+    "completed",
+    Array.from({ length: 40 }, (_, k) => 40 - k),
+  );
+  assert.deepEqual(
+    await transcribeStaves(client, pipeline, crops(40)),
+    crops(40).map(
+      (_, k) => `<xml>Staves/${k + 1}/transcription.musicxml</xml>`,
+    ),
+  );
 });
 
 test("transcribeStaves: no crops, no page", async () => {
@@ -79,35 +113,4 @@ test("transcribeStaves: no crops, no page", async () => {
     },
   } as unknown as OmrClient;
   assert.deepEqual(await transcribeStaves(client, pipeline, []), []);
-});
-
-test("transcribeStaves: at most 16 executions run at once, results stay in crop order", async () => {
-  let running = 0;
-  let peak = 0;
-  const client = {
-    withPage: <T>(work: (pageId: string) => Promise<T>) => work("p1"),
-    async upload() {},
-    async run(
-      _pageId: string,
-      _pipeline: unknown,
-      input: string[],
-    ): Promise<OmrExecution> {
-      running++;
-      peak = Math.max(peak, running);
-      await new Promise((r) => setTimeout(r, 1));
-      running--;
-      return execution(input, "completed");
-    },
-    async download(_pageId: string, paths: string[]) {
-      return Object.fromEntries(paths.map((path) => [path, new Blob([path])]));
-    },
-  } as unknown as OmrClient;
-
-  const crops = Array.from({ length: 40 }, () => new Blob(["x"]));
-  const xmls = await transcribeStaves(client, pipeline, crops);
-  assert.equal(peak, 16);
-  assert.deepEqual(
-    xmls,
-    crops.map((_, k) => `Staves/${k + 1}/transcription.musicxml`),
-  );
 });

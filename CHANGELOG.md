@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-21
 
+- Staff transcription runs one Musibot execution for all staves of a batch instead of one per staff.
 - Proxied writes are limited to campaigns, session tokens are encrypted and revoked on expiry, and the compromised eMudhra CAs are no longer trusted.
 - Vite and the cookie package are updated to versions without known vulnerabilities.
 

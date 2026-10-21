@@ -128,6 +128,23 @@ test("download fetches each presigned URL through the blob relay", async () => {
   assert.equal(await files["layout.json"].text(), '{"annotations":[]}');
 });
 
+test("files lists the page's file paths", async () => {
+  const { fetch } = fakeFetch({
+    [`GET ${BASE}/api/musicorpus-pages/p1/files`]: () =>
+      Response.json({
+        files: [
+          { path: "Staves/1/image.jpg", size: 10 },
+          { path: "Staves/1/transcription.musicxml", size: 20 },
+        ],
+      }),
+  });
+  const client = createOmrClient("/auth", { fetch, ...noSleep });
+  assert.deepEqual(await client.files("p1"), [
+    "Staves/1/image.jpg",
+    "Staves/1/transcription.musicxml",
+  ]);
+});
+
 test("a call the broker rate limit refused is retried after a back-off; a service 429 is not", async () => {
   const brokerLimited = () =>
     Response.json(
