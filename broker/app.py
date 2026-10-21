@@ -38,21 +38,27 @@ Config (environment variables, loaded from broker/.env if present):
                          UTC day, both directions together (default: 10 GiB)
   OMR_DAILY_RUNS         OMR pipeline runs one login may start per UTC day
                          (default: 500)
+  CAMPAIGN_TEMPLATE      the campaign template repository, owner/name; /proxy
+                         writes only to repositories generated from it and
+                         to forks of those (default:
+                         lets-encode/campaign-template)
 
 See README.md for setup, and the repository README §6 for the deployed mount.
 """
 
+import base64
 import functools
 import ipaddress
 import json
 import logging
 import re
 import socket
+import struct
 import sys
 import threading
 import time
 from datetime import timedelta
-from os import getenv, makedirs, chmod, path
+from os import getenv, makedirs, chmod, path, remove
 from pathlib import Path
 from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
@@ -60,6 +66,9 @@ import requests
 import urllib3
 from authlib.integrations.flask_client import OAuth
 from cachelib.file import FileSystemCache
+from cryptography.fernet import Fernet, InvalidToken
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, redirect, request, session
 from flask_limiter import Limiter
@@ -113,23 +122,54 @@ except OSError as e:
 class SessionFiles(FileSystemCache):
     """
     Session files without a file limit: on a write, expired files are removed
-    instead, at most every SWEEP_S seconds per process. Past cachelib's own
-    limit the live sessions that expire soonest are removed, which logs their
-    users out. A session without a GitHub token, as /login starts one, holds
-    only the OAuth round trip and is kept PRELOGIN_S at most.
+    instead, at most every SWEEP_S seconds per process, and the GitHub tokens
+    they hold are revoked. Past cachelib's own limit the live sessions that
+    expire soonest are removed, which logs their users out. A session without
+    a GitHub token, as /login starts one, holds only the OAuth round trip and
+    is kept PRELOGIN_S at most.
+
+    The GitHub token is stored encrypted with a key derived from `secret`, so
+    the files alone do not yield working tokens. A token that does not
+    decrypt with the current key is left out of the session read.
     """
 
     SWEEP_S = 600
     PRELOGIN_S = 900
 
-    def __init__(self, cache_dir):
+    def __init__(self, cache_dir, secret):
         super().__init__(cache_dir=cache_dir, threshold=0)
         self._next_sweep = 0.0
+        key = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b"lets-encode session token",
+        ).derive(secret.encode())
+        self._cipher = Fernet(base64.urlsafe_b64encode(key))
 
     def set(self, key, value, timeout=None, mgmt_element=False):
-        if isinstance(value, dict) and "githubToken" not in value:
-            timeout = min(timeout or self.PRELOGIN_S, self.PRELOGIN_S)
+        if isinstance(value, dict):
+            if "githubToken" in value:
+                sealed = self._cipher.encrypt(value["githubToken"].encode())
+                value = {**value, "githubToken": sealed.decode()}
+            else:
+                timeout = min(timeout or self.PRELOGIN_S, self.PRELOGIN_S)
         return super().set(key, value, timeout, mgmt_element)
+
+    def get(self, key):
+        return self._opened(super().get(key))
+
+    def _opened(self, value):
+        if not (isinstance(value, dict) and "githubToken" in value):
+            return value
+        opened = dict(value)
+        try:
+            opened["githubToken"] = self._cipher.decrypt(
+                str(value["githubToken"]).encode()
+            ).decode()
+        except InvalidToken:
+            del opened["githubToken"]
+        return opened
 
     def _prune(self):
         now = time.time()
@@ -137,9 +177,37 @@ class SessionFiles(FileSystemCache):
             self._next_sweep = now + self.SWEEP_S
             self._remove_expired(now)
 
+    def _remove_expired(self, now):
+        # The process that removes a file revokes its token, so two processes
+        # sweeping at once revoke it once.
+        tokens = []
+        for fname in self._list_dir():
+            try:
+                with self._safe_stream_open(fname, "rb") as f:
+                    expires = struct.unpack("I", f.read(4))[0]
+                    if expires == 0 or expires >= now:
+                        continue
+                    value = self.serializer.load(f)
+                remove(fname)
+                self._update_count(delta=-1)
+            except FileNotFoundError:
+                continue
+            except (OSError, EOFError, struct.error):
+                app.logger.warning(
+                    "Cannot read session file '%s'", fname, exc_info=True
+                )
+                continue
+            opened = self._opened(value)
+            if isinstance(opened, dict) and opened.get("githubToken"):
+                tokens.append(opened["githubToken"])
+        if tokens:
+            threading.Thread(
+                target=revoke_github_tokens, args=(tokens,), daemon=True
+            ).start()
+
 
 app.config["SESSION_TYPE"] = "cachelib"
-app.config["SESSION_CACHELIB"] = SessionFiles(session_dir)
+app.config["SESSION_CACHELIB"] = SessionFiles(session_dir, app.secret_key)
 # Session cookie hygiene. Secure requires HTTPS, so switch it off for local
 # development by setting FLASK_ENV=development.
 app.config["SESSION_COOKIE_HTTPONLY"] = True
@@ -405,6 +473,84 @@ def write_beyond_the_app(path):
         request.method == "POST"
         and not str(body.get("ref", "")).startswith("refs/heads/")
     )
+
+
+# Writes go to campaign repositories only: a repository GitHub reports as
+# generated from the campaign template, or a fork whose parent is one. The
+# template itself takes /generate only. Repositories found to be campaign
+# repositories, and those /generate created, are kept in the session as
+# "campaignRepos" (lower-case owner/name).
+CAMPAIGN_TEMPLATE = (
+    getenv("CAMPAIGN_TEMPLATE") or "lets-encode/campaign-template"
+).lower()
+_REPO_PATH = re.compile(r"/repos/([^/]+/[^/]+)(/.*)?")
+
+
+def fetch_repository(full_name):
+    """GitHub's description of a repository as the session sees it, or None."""
+    response = requests.get(
+        "{}/repos/{}".format(GITHUB_API, full_name),
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "token " + session["githubToken"],
+        },
+        timeout=(10, 30),
+    )
+    if not response.ok:
+        return None
+    body = response.json()
+    return body if isinstance(body, dict) else None
+
+
+def generated_from_template(repository):
+    template = (repository or {}).get("template_repository") or {}
+    return str(template.get("full_name", "")).lower() == CAMPAIGN_TEMPLATE
+
+
+def remember_campaign_repo(full_name):
+    known = session.get("campaignRepos", [])
+    if full_name.lower() not in known:
+        session["campaignRepos"] = [*known, full_name.lower()]
+
+
+def campaign_repository(full_name):
+    """Whether the proxy may write to `full_name`. May raise RequestException."""
+    if full_name.lower() in session.get("campaignRepos", []):
+        return True
+    repository = fetch_repository(full_name)
+    if repository is None:
+        return False
+    parent = repository.get("parent")
+    if not (
+        generated_from_template(repository)
+        or (
+            repository.get("fork")
+            and isinstance(parent, dict)
+            and parent.get("full_name")
+            and generated_from_template(
+                fetch_repository(str(parent["full_name"]))
+            )
+        )
+    ):
+        return False
+    remember_campaign_repo(full_name)
+    return True
+
+
+def write_outside_campaigns(path):
+    """
+    Whether this write goes to a repository other than a campaign repository
+    or, for /generate, to a template other than the campaign template.
+    """
+    if request.method == "GET":
+        return False
+    match = _REPO_PATH.fullmatch(path)
+    if not match:
+        return True
+    full_name, rest = match.group(1), match.group(2) or ""
+    if rest == "/generate":
+        return full_name.lower() != CAMPAIGN_TEMPLATE
+    return not campaign_repository(full_name)
 
 
 # /iiif relay limits. Campaign sources come from any institution's IIIF server,
@@ -833,6 +979,11 @@ def revoke_github_token(token):
         )
 
 
+def revoke_github_tokens(tokens):
+    for token in tokens:
+        revoke_github_token(token)
+
+
 @app.route("/logout", methods=["POST"])
 def logout():
     revoke_github_token(session.get("githubToken"))
@@ -1228,6 +1379,32 @@ def proxy(url):
         response.status_code = 403
         response.headers["X-Lets-Encode-Upstream"] = "broker"
         return response
+    try:
+        outside = write_outside_campaigns(parsed.path)
+    except requests.Timeout:
+        return jsonify(error="Upstream request timed out"), 504
+    except (requests.RequestException, ValueError):
+        return jsonify(error="Upstream request failed"), 502
+    if outside:
+        app.logger.warning(
+            "github_api %s",
+            json.dumps(
+                {
+                    "source": "broker",
+                    "event": "write_refused",
+                    "method": request.method,
+                    "endpoint": parsed.path,
+                    "user": session.get("userLogin"),
+                },
+                separators=(",", ":"),
+            ),
+        )
+        response = jsonify(
+            error="Writes go to campaign repositories only", source="broker"
+        )
+        response.status_code = 403
+        response.headers["X-Lets-Encode-Upstream"] = "broker"
+        return response
     if request.query_string:
         url += "?" + request.query_string.decode()
 
@@ -1256,6 +1433,14 @@ def proxy(url):
         return jsonify(error="Upstream request timed out"), 504
     except requests.RequestException:
         return jsonify(error="Upstream request failed"), 502
+    if (
+        request.method == "POST"
+        and parsed.path.endswith("/generate")
+        and response.status_code == 201
+    ):
+        created = json_field(response, "full_name")
+        if isinstance(created, str):
+            remember_campaign_repo(created)
 
     # 'date' and 'server' must not be passed through: our own HTTP layer adds
     # its own, and duplicate Date headers are joined by browsers into a string

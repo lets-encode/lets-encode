@@ -61,6 +61,10 @@ class BrokerTest(unittest.TestCase):
             current["githubToken"] = "server-side-token"
             current["userLogin"] = login
 
+    def known_campaigns(self, *names):
+        with self.client.session_transaction() as current:
+            current["campaignRepos"] = list(names)
+
     def test_return_path_is_same_origin_and_auth_error_preserves_query(self):
         self.assertEqual(
             broker.safe_return_path("/campaign/my-campaign?view=table"),
@@ -146,7 +150,7 @@ class BrokerTest(unittest.TestCase):
 
     def test_a_session_without_a_token_is_kept_for_the_login_only(self):
         with tempfile.TemporaryDirectory() as directory:
-            files = broker.SessionFiles(directory)
+            files = broker.SessionFiles(directory, "test-secret")
             files.set("pre", {"return_to": "/"}, timeout=43200)
             files.set("in", {"githubToken": "t"}, timeout=43200)
 
@@ -161,7 +165,7 @@ class BrokerTest(unittest.TestCase):
         self,
     ):
         with tempfile.TemporaryDirectory() as directory:
-            files = broker.SessionFiles(directory)
+            files = broker.SessionFiles(directory, "test-secret")
             with patch("cachelib.file.time", return_value=time.time() - 86400):
                 files.set("expired", {"userLogin": "a"}, timeout=3600)
             # More live files than a FileSystemCache threshold of 1000 keeps.
@@ -175,6 +179,39 @@ class BrokerTest(unittest.TestCase):
                 self.assertTrue(
                     os.path.exists(files._get_filename(f"live-{n}"))
                 )
+
+    def test_session_files_hold_the_token_encrypted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory, "test-secret")
+            files.set("in", {"githubToken": "gho_plain", "userLogin": "a"})
+            with open(files._get_filename("in"), "rb") as f:
+                self.assertNotIn(b"gho_plain", f.read())
+            self.assertEqual(
+                files.get("in"), {"githubToken": "gho_plain", "userLogin": "a"}
+            )
+            # Another key reads the session without its token.
+            other = broker.SessionFiles(directory, "other-secret")
+            self.assertEqual(other.get("in"), {"userLogin": "a"})
+
+    def test_expired_sessions_have_their_tokens_revoked(self):
+        def run_now(target, args, daemon):
+            return SimpleNamespace(start=lambda: target(*args))
+
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory, "test-secret")
+            with patch("cachelib.file.time", return_value=time.time() - 86400):
+                files.set("expired", {"githubToken": "old"}, timeout=3600)
+                files.set("no-token", {"userLogin": "a"}, timeout=3600)
+            files.set("live", {"githubToken": "current"}, timeout=3600)
+            files._next_sweep = 0
+            with patch.object(
+                broker.threading, "Thread", run_now
+            ), patch.object(broker, "revoke_github_token") as revoke:
+                files.set("next", {"userLogin": "c"}, timeout=3600)
+
+            revoke.assert_called_once_with("old")
+            self.assertFalse(os.path.exists(files._get_filename("expired")))
+            self.assertTrue(os.path.exists(files._get_filename("live")))
 
     def test_proxy_requires_authentication_and_rejects_other_hosts(self):
         self.assertEqual(
@@ -283,6 +320,7 @@ class BrokerTest(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.authenticate()
+        self.known_campaigns("o/r", "alice/r")
         upstream = SimpleNamespace(
             content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
         )
@@ -308,7 +346,7 @@ class BrokerTest(unittest.TestCase):
             ("GET", "repos/o/r/actions/runs/9"),
             ("GET", "repos/o/r/actions/runs/9/jobs"),
             ("GET", "repos/o/r/subscription"),
-            ("POST", "repos/t/template/generate"),
+            ("POST", f"repos/{broker.CAMPAIGN_TEMPLATE}/generate"),
             ("POST", "repos/o/r/forks"),
             ("POST", "repos/alice/r/merge-upstream"),
             ("POST", "repos/o/r/pulls"),
@@ -380,6 +418,99 @@ class BrokerTest(unittest.TestCase):
                     self.assertEqual(response.get_json()["source"], "broker")
             request_upstream.assert_not_called()
 
+    def test_proxy_writes_only_to_campaign_repositories(self):
+        self.authenticate()
+        template = {"full_name": broker.CAMPAIGN_TEMPLATE}
+        repositories = {
+            "o/campaign": {"template_repository": template},
+            "alice/campaign": {
+                "fork": True,
+                "parent": {"full_name": "o/campaign"},
+            },
+            "alice/project": {"template_repository": None},
+            "alice/fork-of-project": {
+                "fork": True,
+                "parent": {"full_name": "alice/project"},
+            },
+        }
+
+        def lookup(url, **_options):
+            name = url.split("/repos/", 1)[1]
+            body = repositories.get(name)
+            return SimpleNamespace(ok=body is not None, json=lambda: body)
+
+        upstream = SimpleNamespace(
+            content=b'{"full_name":"alice/new-campaign"}',
+            status_code=201,
+            raw=SimpleNamespace(headers={}),
+            json=lambda: {"full_name": "alice/new-campaign"},
+        )
+        with patch.object(
+            broker.requests, "get", side_effect=lookup
+        ) as lookups, patch.object(
+            broker.requests, "request", return_value=upstream
+        ) as request_upstream:
+            for name in ("o/campaign", "alice/campaign"):
+                response = self.client.post(
+                    f"/proxy/api.github.com/repos/{name}/git/blobs", json={}
+                )
+                self.assertEqual(response.status_code, 201, name)
+            # A repository found to be a campaign is not looked up again.
+            looked_up = lookups.call_count
+            self.client.post(
+                "/proxy/api.github.com/repos/o/campaign/git/blobs", json={}
+            )
+            self.assertEqual(lookups.call_count, looked_up)
+            # Reads need no lookup.
+            self.client.get("/proxy/api.github.com/repos/alice/project")
+            self.assertEqual(lookups.call_count, looked_up)
+            request_upstream.reset_mock()
+
+            with self.assertLogs(broker.app.logger.name, level="WARNING"):
+                for method, path in (
+                    ("POST", "repos/alice/project/git/blobs"),
+                    ("PATCH", "repos/alice/project/git/refs/heads/main"),
+                    ("POST", "repos/alice/fork-of-project/pulls"),
+                    ("POST", "repos/missing/repo/issues/1/comments"),
+                    ("POST", "repos/alice/project/generate"),
+                    ("PUT", "repos/alice/project/topics"),
+                ):
+                    response = self.client.open(
+                        f"/proxy/api.github.com/{path}",
+                        method=method,
+                        json={"sha": "a"},
+                    )
+                    self.assertEqual(response.status_code, 403, path)
+                    self.assertEqual(
+                        response.get_json()["error"],
+                        "Writes go to campaign repositories only",
+                    )
+            request_upstream.assert_not_called()
+
+            # A repository /generate created takes writes without a lookup.
+            looked_up = lookups.call_count
+            created = self.client.post(
+                f"/proxy/api.github.com/repos/{broker.CAMPAIGN_TEMPLATE}/generate",
+                json={"owner": "alice", "name": "new-campaign"},
+            )
+            self.assertEqual(created.status_code, 201)
+            response = self.client.put(
+                "/proxy/api.github.com/repos/alice/New-Campaign/topics", json={}
+            )
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(lookups.call_count, looked_up)
+
+    def test_proxy_maps_a_failed_campaign_lookup(self):
+        self.authenticate()
+        with patch.object(
+            broker.requests, "get", side_effect=broker.requests.Timeout
+        ), patch.object(broker.requests, "request") as request_upstream:
+            response = self.client.post(
+                "/proxy/api.github.com/repos/o/r/git/blobs", json={}
+            )
+        self.assertEqual(response.status_code, 504)
+        request_upstream.assert_not_called()
+
     def test_proxy_refuses_dot_segments(self):
         self.authenticate()
         with patch.object(broker.requests, "request") as upstream:
@@ -409,6 +540,7 @@ class BrokerTest(unittest.TestCase):
 
     def test_request_bodies_over_the_limit_are_rejected(self):
         self.authenticate()
+        self.known_campaigns("o/r")
         path = "/proxy/api.github.com/repos/o/r/git/blobs"
         with patch.dict(broker.app.config, {"MAX_CONTENT_LENGTH": 16}):
             with patch.object(broker.requests, "request") as request_upstream:

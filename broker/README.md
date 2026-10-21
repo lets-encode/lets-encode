@@ -15,6 +15,9 @@ mutations and notification muting.
 - `POST /logout` — revokes the token at GitHub and clears the session.
 - `/proxy/<url>` — relays the SPA's GitHub API calls (`api.github.com` only),
   attaching the session's token server-side. Login-gated and rate-limited.
+  It relays only the endpoints the app calls, and writes only to campaign
+  repositories: those GitHub reports as generated from `CAMPAIGN_TEMPLATE`
+  and forks of them. The template itself takes `/generate` only.
 - `GET /iiif?url=…` — relays IIIF manifests and canvas images for the
   onboarding wizard. Campaign sources come from arbitrary institutions, which
   rules out both a CSP host allowlist and direct browser fetches (many IIIF
@@ -79,9 +82,11 @@ at startup.
 Sessions are files under `instance/sessions` (gitignored, `0700`), shared
 between gunicorn workers on the same host; set `SESSION_DIR` to override. The
 session ID is rotated after OAuth login and server-side sessions expire 12
-hours after their last request. There is no limit on the number of session
-files: expired ones are removed on a write, at most every ten minutes per
-worker. `/login` writes a session file and is limited to 30 requests a minute
+hours after their last request. The GitHub token is stored encrypted with a
+key derived from `FLASK_SECRET`, so a changed `FLASK_SECRET` logs everyone
+out. There is no limit on the number of session files: expired ones are
+removed on a write, at most every ten minutes per worker, and their tokens
+are revoked at GitHub. `/login` writes a session file and is limited to 30 requests a minute
 per client address.
 
 ## Relay use
@@ -133,6 +138,7 @@ Environment variables:
 | `REDIRECT_URL`          | the OAuth callback as the browser reaches it, e.g. `https://your-domain.example/auth/authorize` — required outside development and must match the OAuth app's registered callback                                                                                                                        |
 | `FLASK_ENV`             | set to `development` locally to allow the cookie over plain HTTP                                                                                                                                                                                                                                         |
 | `SESSION_DIR`           | optional: session file directory                                                                                                                                                                                                                                                                         |
+| `CAMPAIGN_TEMPLATE`     | optional: the campaign template repository, `owner/name` (default `lets-encode/campaign-template`); `/proxy` writes only to repositories generated from it and their forks                                                                                                                               |
 | `DB_PATH`               | optional: the registry's SQLite file (default `instance/slugs.db`) — the registry's entire state, back it up by copying it                                                                                                                                                                               |
 | `ADMIN_TOKEN`           | bearer token for `/registry/admin/` (dev fallback and defence in depth; production gates these routes at the reverse proxy — see `README.md` §6)                                                                                                                                                         |
 | `ADMIN_ROUTES_ENABLED`  | set to `1` to serve `/registry/admin/` at all; unless both this and `ADMIN_TOKEN` are set, admin routes answer 503                                                                                                                                                                                       |

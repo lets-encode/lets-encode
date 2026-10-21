@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-21
+
+- Proxied writes are limited to campaigns, session tokens are encrypted and revoked on expiry, and the compromised eMudhra CAs are no longer trusted.
+
 ## 2026-10-20
 
 - The broker's relays and proxy are limited per login and to the requests the app makes.
