@@ -137,15 +137,6 @@ export async function ensureCampaignRepo(
 
     // The listing topic is not stamped here: it marks a campaign, and this
     // repository is not one until the final step has set it up.
-    // Give the campaign's Actions a read/write token (non-fatal for org limits).
-    try {
-      await f.setActionsWorkflowPermissions(repo.owner, repo.name);
-    } catch (err) {
-      console.warn(
-        "Could not set Actions workflow permissions:",
-        (err as Error).message,
-      );
-    }
   }
 
   // Generating from a template is asynchronous — wait until the repo has

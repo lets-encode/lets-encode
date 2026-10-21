@@ -30,6 +30,7 @@ import {
   STATE_BASE_COLUMNS,
   TASK_COLUMNS,
   csvRow,
+  DEFAULT_MAX_CLAIMS,
   DEFAULT_STALE_MINUTES,
 } from "./campaign-tables.ts";
 import { DEFAULT_LICENSE } from "./licenses.ts";
@@ -114,7 +115,7 @@ export interface CampaignConfig {
   pieces: ConfigPiece[];
   fragmentation: { strategy: string };
   validation: { required_validations: number; pass_threshold: number };
-  locking: { stale_after_minutes: number };
+  locking: { stale_after_minutes: number; max_claims_per_person: number };
 }
 
 /** Create-form fields feeding buildCampaignConfig; unset fields fall to defaults. */
@@ -138,6 +139,7 @@ export interface CampaignFields {
   required_validations?: number;
   pass_threshold?: number;
   stale_after_minutes?: number;
+  max_claims_per_person?: number;
 }
 
 // Defaults for fields the create form does not surface.
@@ -147,6 +149,7 @@ const DEFAULTS = {
   required_validations: 1,
   pass_threshold: 1,
   stale_after_minutes: DEFAULT_STALE_MINUTES,
+  max_claims_per_person: DEFAULT_MAX_CLAIMS,
 };
 
 /** The repo path a piece's MEI is committed to, and its tasks address. */
@@ -236,6 +239,8 @@ export function buildCampaignConfig(
     locking: {
       stale_after_minutes:
         fields.stale_after_minutes ?? DEFAULTS.stale_after_minutes,
+      max_claims_per_person:
+        fields.max_claims_per_person ?? DEFAULTS.max_claims_per_person,
     },
   };
 }
@@ -329,7 +334,8 @@ export function configToYaml(config: CampaignConfig): string {
     `  required_validations: ${v.required_validations}\n` +
     `  pass_threshold: ${v.pass_threshold}\n` +
     `locking:\n` +
-    `  stale_after_minutes: ${l.stale_after_minutes}\n`
+    `  stale_after_minutes: ${l.stale_after_minutes}\n` +
+    `  max_claims_per_person: ${l.max_claims_per_person}\n`
   );
 }
 

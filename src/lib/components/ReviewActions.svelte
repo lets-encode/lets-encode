@@ -12,6 +12,10 @@
   import { untrack } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
+  import {
+    MAX_ANCHOR_LENGTH,
+    MAX_COMMENT_LENGTH,
+  } from "$lib/campaign-submit.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import AbandonButton from "./AbandonButton.svelte";
 
@@ -91,9 +95,18 @@
       : s;
     return `${lead}: ${body}`;
   }
+  const uid = $props.id();
+  // The note as sent, staff in front, is what the length limit applies to.
+  const noteLength = $derived(
+    failForm ? withStaff(failForm.staff, failForm.body).length : 0,
+  );
+  const staffLength = $derived(
+    failForm ? withStaff(failForm.staff, "").length : 0,
+  );
+  const noteTooLong = $derived(noteLength > MAX_COMMENT_LENGTH);
 
   async function submitFail(edit: boolean) {
-    if (!failForm || !failForm.body.trim()) return;
+    if (!failForm || !failForm.body.trim() || noteTooLong) return;
     const form = failForm;
     const comment = {
       body: withStaff(form.staff, form.body),
@@ -140,10 +153,30 @@
       <textarea
         rows="3"
         bind:value={failForm.body}
+        aria-label="What needs to change"
         placeholder="What needs to change? (required)"
+        aria-describedby={noteLength >= MAX_COMMENT_LENGTH * 0.9
+          ? `${uid}-count`
+          : undefined}
+        maxlength={MAX_COMMENT_LENGTH - staffLength}
       ></textarea>
+      <!-- The count shows once the note nears the limit. -->
+      {#if noteLength >= MAX_COMMENT_LENGTH * 0.9}
+        <span
+          id={`${uid}-count`}
+          class="hint"
+          class:hint-err={noteTooLong}
+          aria-live="polite">{noteLength}/{MAX_COMMENT_LENGTH} characters</span
+        >
+      {/if}
       <div class="failform-anchor">
-        <label>p. <input size="3" bind:value={failForm.page} /></label>
+        <label
+          >p. <input
+            size="3"
+            maxlength={MAX_ANCHOR_LENGTH}
+            bind:value={failForm.page}
+          /></label
+        >
         {#if staffs}
           <label
             >staff <input
@@ -158,6 +191,7 @@
           <label
             >m. <input
               size="4"
+              maxlength={MAX_ANCHOR_LENGTH}
               bind:value={failForm.m1}
               placeholder="from"
             /></label
@@ -165,6 +199,7 @@
           <label
             >– <input
               size="4"
+              maxlength={MAX_ANCHOR_LENGTH}
               bind:value={failForm.m2}
               placeholder="to"
             /></label
@@ -176,7 +211,10 @@
             type="button"
             class="btn"
             onclick={() => submitFail(true)}
-            disabled={runner.busy || !failForm.body.trim() || processing}
+            disabled={runner.busy ||
+              !failForm.body.trim() ||
+              noteTooLong ||
+              processing}
             title="Requests changes with this note and gives you the task to edit. Your edit is then reviewed by someone else."
             >Edit yourself</button
           >
@@ -185,7 +223,10 @@
           type="button"
           class="btn btn-danger"
           onclick={() => submitFail(false)}
-          disabled={runner.busy || !failForm.body.trim() || processing}
+          disabled={runner.busy ||
+            !failForm.body.trim() ||
+            noteTooLong ||
+            processing}
           title="Sends the change request with this note.">Send request</button
         >
       </div>

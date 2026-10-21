@@ -1523,6 +1523,7 @@
          the setup, split by a divider that moves the boundary. A piece
          without page images has the preview alone. -->
     <div class="main">
+      <h1 class="vh">Score setup · {session.pieceName || campaign}</h1>
       <TaskRunState task={taskId} bar />
       <div class="desk" bind:this={desk}>
         {#if firstMeasure && data.imageUrls[shownPage]}

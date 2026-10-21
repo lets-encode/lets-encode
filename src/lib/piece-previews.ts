@@ -52,6 +52,10 @@ const EMPTY: PiecePreview = {
   failed: false,
 };
 
+// A preview is drawn from scores up to this size; a larger score shows none,
+// as every visitor of the campaign list would download it.
+const MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
+
 // One load per piece per page load; a failed load is dropped so the next
 // mount retries it.
 const cache = new Map<string, Promise<PiecePreview>>();
@@ -88,7 +92,13 @@ async function loadPreview(
   path: string,
   incipit: boolean,
 ): Promise<PiecePreview> {
-  const mei = await f.getRepoFile(owner, repo, path);
+  const mei = await f.getRepoFile(
+    owner,
+    repo,
+    path,
+    undefined,
+    MAX_PREVIEW_BYTES,
+  );
   if (mei == null) return EMPTY;
   const parsed = parseFacsimileMei(mei);
 

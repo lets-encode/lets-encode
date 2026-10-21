@@ -1,6 +1,10 @@
 import io
+import json
+import logging
 import os
+import struct
 import tempfile
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,21 +18,52 @@ os.environ["GITHUB_CLIENT_SECRET"] = "test-client-secret"
 os.environ["SESSION_DIR"] = _session_dir.name
 # Wrap the app in ProxyFix as the deployed broker is (one reverse proxy).
 os.environ["PROXY_FIX_X_FOR"] = "1"
-# Keep the registry's import-time store out of broker/instance/ during tests.
+# Keep the registry's and the relays' import-time stores out of
+# broker/instance/ during tests.
 os.environ.setdefault("DB_PATH", os.path.join(_session_dir.name, "slugs.db"))
+os.environ.setdefault(
+    "RELAY_DB_PATH", os.path.join(_session_dir.name, "relay.db")
+)
 
 from broker import app as broker  # noqa: E402
+from flask.testing import FlaskClient  # noqa: E402
+
+
+class ClosingClient(FlaskClient):
+    """Reads and closes each response, as the server does once it is sent,
+    which gives a relay request's slot back (in_relay_slot)."""
+
+    def open(self, *args, **kwargs):
+        kwargs.setdefault("buffered", True)
+        return super().open(*args, **kwargs)
 
 
 class BrokerTest(unittest.TestCase):
     def setUp(self):
         broker.app.config["TESTING"] = True
+        broker.app.test_client_class = ClosingClient
+        self.addCleanup(setattr, broker.app, "test_client_class", None)
         self.client = broker.app.test_client()
+        patcher = patch.object(broker, "relay_use", broker.RelayUse())
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        relay_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(relay_dir.cleanup)
+        self.relay_store = broker.RelayStore(
+            os.path.join(relay_dir.name, "relay.db")
+        )
+        patcher = patch.object(broker, "relay_store", self.relay_store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
-    def authenticate(self):
+    def authenticate(self, login="alice"):
         with self.client.session_transaction() as current:
             current["githubToken"] = "server-side-token"
-            current["userLogin"] = "alice"
+            current["userLogin"] = login
+
+    def known_campaigns(self, *names):
+        with self.client.session_transaction() as current:
+            current["campaignRepos"] = list(names)
 
     def test_return_path_is_same_origin_and_auth_error_preserves_query(self):
         self.assertEqual(
@@ -44,20 +79,25 @@ class BrokerTest(unittest.TestCase):
         ):
             self.assertEqual(broker.safe_return_path(unsafe), "/")
 
-        with self.client.session_transaction() as current:
-            current["return_to"] = "/campaign/my-campaign?view=table"
-        with patch.object(
-            broker.github,
-            "authorize_access_token",
-            side_effect=RuntimeError("denied"),
+        # A failed login comes back as a code, never as the error's text.
+        declined = RuntimeError("the user declined <b>")
+        declined.error = "access_denied"
+        for error, code in (
+            (declined, "denied"),
+            (RuntimeError("x"), "failed"),
         ):
-            response = self.client.get("/authorize")
-        location = urlsplit(response.headers["Location"])
-        self.assertEqual(location.path, "/campaign/my-campaign")
-        self.assertEqual(
-            parse_qs(location.query),
-            {"view": ["table"], "auth_error": ["denied"]},
-        )
+            with self.client.session_transaction() as current:
+                current["return_to"] = "/campaign/my-campaign?view=table"
+            with patch.object(
+                broker.github, "authorize_access_token", side_effect=error
+            ):
+                response = self.client.get("/authorize")
+            location = urlsplit(response.headers["Location"])
+            self.assertEqual(location.path, "/campaign/my-campaign")
+            self.assertEqual(
+                parse_qs(location.query),
+                {"view": ["table"], "auth_error": [code]},
+            )
 
     def test_login_uses_state_pkce_and_the_required_scopes(self):
         response = self.client.get("/login?return_to=/campaign")
@@ -67,6 +107,111 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(params["code_challenge_method"], ["S256"])
         self.assertTrue(params["code_challenge"][0])
         self.assertTrue(params["state"][0])
+
+    def test_login_is_rate_limited_per_network_and_overall(self):
+        broker.limiter.reset()
+        self.addCleanup(broker.limiter.reset)
+
+        def login(address):
+            response = self.client.get(
+                "/login?return_to=/campaigns",
+                headers={"X-Forwarded-For": address},
+            )
+            return urlsplit(response.headers["Location"])
+
+        # Addresses of one IPv6 /64 network count together; past the limit
+        # the browser is sent back to the app with a code it explains.
+        sent = [login(f"2001:db8:1:2::{n:x}") for n in range(31)]
+        self.assertEqual(
+            {location.netloc for location in sent[:30]}, {"github.com"}
+        )
+        self.assertEqual(
+            (sent[30].path, parse_qs(sent[30].query)),
+            ("/campaigns", {"auth_error": ["busy"]}),
+        )
+        # Every client together has a ceiling as well.
+        broker.limiter.reset()
+        sent = [login(f"10.0.{n // 250}.{n % 250}") for n in range(301)]
+        self.assertEqual(
+            {location.netloc for location in sent[:300]}, {"github.com"}
+        )
+        self.assertEqual(parse_qs(sent[300].query), {"auth_error": ["busy"]})
+
+    def test_rate_limits_key_ipv6_by_network(self):
+        for address, key in (
+            ("198.51.100.7", "198.51.100.7"),
+            ("::ffff:198.51.100.7", "198.51.100.7"),
+            ("2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"),
+        ):
+            with broker.app.test_request_context(
+                "/login", environ_base={"REMOTE_ADDR": address}
+            ):
+                self.assertEqual(broker.client_network(), key, address)
+
+    def test_a_session_without_a_token_is_kept_for_the_login_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory, "test-secret")
+            files.set("pre", {"return_to": "/"}, timeout=43200)
+            files.set("in", {"githubToken": "t"}, timeout=43200)
+
+            def expires(key):
+                with open(files._get_filename(key), "rb") as f:
+                    return struct.unpack("I", f.read(4))[0] - time.time()
+
+            self.assertLessEqual(expires("pre"), broker.SessionFiles.PRELOGIN_S)
+            self.assertGreater(expires("in"), 43000)
+
+    def test_session_files_are_removed_when_expired_and_not_for_their_number(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory, "test-secret")
+            with patch("cachelib.file.time", return_value=time.time() - 86400):
+                files.set("expired", {"userLogin": "a"}, timeout=3600)
+            # More live files than a FileSystemCache threshold of 1000 keeps.
+            for n in range(1001):
+                files.set(f"live-{n}", {"userLogin": "b"}, timeout=3600)
+            files._next_sweep = 0
+            files.set("next", {"userLogin": "c"}, timeout=3600)
+
+            self.assertFalse(os.path.exists(files._get_filename("expired")))
+            for n in range(1001):
+                self.assertTrue(
+                    os.path.exists(files._get_filename(f"live-{n}"))
+                )
+
+    def test_session_files_hold_the_token_encrypted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory, "test-secret")
+            files.set("in", {"githubToken": "gho_plain", "userLogin": "a"})
+            with open(files._get_filename("in"), "rb") as f:
+                self.assertNotIn(b"gho_plain", f.read())
+            self.assertEqual(
+                files.get("in"), {"githubToken": "gho_plain", "userLogin": "a"}
+            )
+            # Another key reads the session without its token.
+            other = broker.SessionFiles(directory, "other-secret")
+            self.assertEqual(other.get("in"), {"userLogin": "a"})
+
+    def test_expired_sessions_have_their_tokens_revoked(self):
+        def run_now(target, args, daemon):
+            return SimpleNamespace(start=lambda: target(*args))
+
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory, "test-secret")
+            with patch("cachelib.file.time", return_value=time.time() - 86400):
+                files.set("expired", {"githubToken": "old"}, timeout=3600)
+                files.set("no-token", {"userLogin": "a"}, timeout=3600)
+            files.set("live", {"githubToken": "current"}, timeout=3600)
+            files._next_sweep = 0
+            with patch.object(
+                broker.threading, "Thread", run_now
+            ), patch.object(broker, "revoke_github_token") as revoke:
+                files.set("next", {"userLogin": "c"}, timeout=3600)
+
+            revoke.assert_called_once_with("old")
+            self.assertFalse(os.path.exists(files._get_filename("expired")))
+            self.assertTrue(os.path.exists(files._get_filename("live")))
 
     def test_proxy_requires_authentication_and_rejects_other_hosts(self):
         self.assertEqual(
@@ -133,7 +278,9 @@ class BrokerTest(unittest.TestCase):
                     "/proxy/api.github.com/user?detail=full",
                     headers={
                         "Authorization": "Bearer browser-token",
-                        "X-Test": "kept",
+                        "If-None-Match": '"user-v0"',
+                        "X-GitHub-Api-Version": "2022-11-28",
+                        "X-HTTP-Method-Override": "DELETE",
                     },
                 )
 
@@ -145,9 +292,18 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(
             options["headers"]["Authorization"], "token server-side-token"
         )
-        self.assertNotIn("Cookie", options["headers"])
-        self.assertNotIn("Host", options["headers"])
-        self.assertEqual(options["headers"]["X-Test"], "kept")
+        # Only the headers the app's calls carry go upstream.
+        self.assertEqual(
+            {
+                k: v
+                for k, v in options["headers"].items()
+                if k != "Authorization"
+            },
+            {
+                "If-None-Match": '"user-v0"',
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
         self.assertFalse(options["allow_redirects"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(response.headers["ETag"], '"user-v1"')
@@ -157,6 +313,214 @@ class BrokerTest(unittest.TestCase):
         self.assertIn('"endpoint":"/user"', event)
         self.assertIn('"remaining":"4998"', event)
         self.assertIn('"request_id":"request-1"', event)
+
+    def test_proxy_relays_only_the_endpoints_the_app_calls(self):
+        # More requests than the proxy's rate limit admits in a second.
+        patcher = patch.object(broker.limiter, "enabled", False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.authenticate()
+        self.known_campaigns("o/r", "alice/r")
+        upstream = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        relayed = [
+            ("GET", "user"),
+            ("GET", "user/123"),
+            ("GET", "repositories/42"),
+            ("GET", "search/repositories?q=topic:t"),
+            ("GET", "repos/o/r"),
+            ("GET", "repos/o/r/contents/"),
+            ("GET", "repos/o/r/contents/sources/a%20b.mei?ref=T1"),
+            ("GET", "repos/o/r/branches/wip-T1"),
+            ("GET", "repos/o/r/compare/main...fork:T1"),
+            ("GET", "repos/o/r/commits/abc"),
+            ("GET", "repos/o/r/git/commits/abc"),
+            ("GET", "repos/o/r/git/ref/heads/main"),
+            ("GET", "repos/o/r/collaborators/alice/permission"),
+            ("GET", "repos/o/r/pulls?state=open"),
+            ("GET", "repos/o/r/pulls/7"),
+            ("GET", "repos/o/r/pulls/7/files?page=2"),
+            ("GET", "repos/o/r/issues/7/comments?per_page=100"),
+            ("GET", "repos/o/r/actions/workflows/caller.yml/runs?event=push"),
+            ("GET", "repos/o/r/actions/runs/9"),
+            ("GET", "repos/o/r/actions/runs/9/jobs"),
+            ("GET", "repos/o/r/subscription"),
+            ("POST", f"repos/{broker.CAMPAIGN_TEMPLATE}/generate"),
+            ("POST", "repos/o/r/forks"),
+            ("POST", "repos/alice/r/merge-upstream"),
+            ("POST", "repos/o/r/pulls"),
+            ("POST", "repos/o/r/issues/7/comments"),
+            ("POST", "repos/o/r/git/blobs"),
+            ("POST", "repos/o/r/git/trees"),
+            ("POST", "repos/o/r/git/commits"),
+            (
+                "POST",
+                "repos/o/r/git/refs",
+                {"ref": "refs/heads/T1", "sha": "a"},
+            ),
+            (
+                "POST",
+                "repos/o/r/actions/workflows/caller.yml/dispatches",
+                {"ref": "main"},
+            ),
+            ("PATCH", "repos/o/r/pulls/7"),
+            ("PATCH", "repos/o/r/git/refs/heads/T1", {"sha": "a"}),
+            ("PUT", "repos/o/r/topics"),
+            ("PUT", "repos/o/r/subscription"),
+            ("DELETE", "repos/o/r/git/refs/heads/wip/T1"),
+        ]
+        refused = [
+            ("DELETE", "repos/o/r"),
+            ("PATCH", "repos/o/r"),
+            ("POST", "user/repos"),
+            ("PUT", "repos/o/r/collaborators/mallory"),
+            ("POST", "repos/o/r/keys"),
+            ("POST", "repos/o/r/hooks"),
+            ("PUT", "repos/o/r/actions/permissions/workflow"),
+            ("PUT", "repos/o/r/contents/x.mei"),
+            ("DELETE", "repos/o/r/git/refs/tags/v1"),
+            ("GET", "user/emails"),
+            ("POST", "gists"),
+            # Writes whose body does more than the app's own.
+            (
+                "PATCH",
+                "repos/o/r/git/refs/heads/main",
+                {"sha": "a", "force": True},
+            ),
+            ("POST", "repos/o/r/git/refs", {"ref": "refs/tags/v1", "sha": "a"}),
+            (
+                "POST",
+                "repos/o/r/actions/workflows/caller.yml/dispatches",
+                {"ref": "main", "inputs": {"x": "1"}},
+            ),
+        ]
+        with patch.object(
+            broker.requests, "request", return_value=upstream
+        ) as request_upstream:
+            for method, path, *body in relayed:
+                response = self.client.open(
+                    f"/proxy/api.github.com/{path}",
+                    method=method,
+                    json=body[0] if body else None,
+                )
+                self.assertEqual(response.status_code, 200, (method, path))
+            self.assertEqual(request_upstream.call_count, len(relayed))
+            request_upstream.reset_mock()
+            with self.assertLogs(broker.app.logger.name, level="WARNING"):
+                for method, path, *body in refused:
+                    response = self.client.open(
+                        f"/proxy/api.github.com/{path}",
+                        method=method,
+                        json=body[0] if body else None,
+                    )
+                    self.assertEqual(response.status_code, 403, (method, path))
+                    self.assertEqual(response.get_json()["source"], "broker")
+            request_upstream.assert_not_called()
+
+    def test_proxy_writes_only_to_campaign_repositories(self):
+        self.authenticate()
+        template = {"full_name": broker.CAMPAIGN_TEMPLATE}
+        repositories = {
+            "o/campaign": {"template_repository": template},
+            "alice/campaign": {
+                "fork": True,
+                "parent": {"full_name": "o/campaign"},
+            },
+            "alice/project": {"template_repository": None},
+            "alice/fork-of-project": {
+                "fork": True,
+                "parent": {"full_name": "alice/project"},
+            },
+        }
+
+        def lookup(url, **_options):
+            name = url.split("/repos/", 1)[1]
+            body = repositories.get(name)
+            return SimpleNamespace(ok=body is not None, json=lambda: body)
+
+        upstream = SimpleNamespace(
+            content=b'{"full_name":"alice/new-campaign"}',
+            status_code=201,
+            raw=SimpleNamespace(headers={}),
+            json=lambda: {"full_name": "alice/new-campaign"},
+        )
+        with patch.object(
+            broker.requests, "get", side_effect=lookup
+        ) as lookups, patch.object(
+            broker.requests, "request", return_value=upstream
+        ) as request_upstream:
+            for name in ("o/campaign", "alice/campaign"):
+                response = self.client.post(
+                    f"/proxy/api.github.com/repos/{name}/git/blobs", json={}
+                )
+                self.assertEqual(response.status_code, 201, name)
+            # A repository found to be a campaign is not looked up again.
+            looked_up = lookups.call_count
+            self.client.post(
+                "/proxy/api.github.com/repos/o/campaign/git/blobs", json={}
+            )
+            self.assertEqual(lookups.call_count, looked_up)
+            # Reads need no lookup.
+            self.client.get("/proxy/api.github.com/repos/alice/project")
+            self.assertEqual(lookups.call_count, looked_up)
+            request_upstream.reset_mock()
+
+            with self.assertLogs(broker.app.logger.name, level="WARNING"):
+                for method, path in (
+                    ("POST", "repos/alice/project/git/blobs"),
+                    ("PATCH", "repos/alice/project/git/refs/heads/main"),
+                    ("POST", "repos/alice/fork-of-project/pulls"),
+                    ("POST", "repos/missing/repo/issues/1/comments"),
+                    ("POST", "repos/alice/project/generate"),
+                    ("PUT", "repos/alice/project/topics"),
+                ):
+                    response = self.client.open(
+                        f"/proxy/api.github.com/{path}",
+                        method=method,
+                        json={"sha": "a"},
+                    )
+                    self.assertEqual(response.status_code, 403, path)
+                    self.assertEqual(
+                        response.get_json()["error"],
+                        "Writes go to campaign repositories only",
+                    )
+            request_upstream.assert_not_called()
+
+            # A repository /generate created takes writes without a lookup.
+            looked_up = lookups.call_count
+            created = self.client.post(
+                f"/proxy/api.github.com/repos/{broker.CAMPAIGN_TEMPLATE}/generate",
+                json={"owner": "alice", "name": "new-campaign"},
+            )
+            self.assertEqual(created.status_code, 201)
+            response = self.client.put(
+                "/proxy/api.github.com/repos/alice/New-Campaign/topics", json={}
+            )
+            self.assertEqual(response.status_code, 201)
+            self.assertEqual(lookups.call_count, looked_up)
+
+    def test_proxy_maps_a_failed_campaign_lookup(self):
+        self.authenticate()
+        with patch.object(
+            broker.requests, "get", side_effect=broker.requests.Timeout
+        ), patch.object(broker.requests, "request") as request_upstream:
+            response = self.client.post(
+                "/proxy/api.github.com/repos/o/r/git/blobs", json={}
+            )
+        self.assertEqual(response.status_code, 504)
+        request_upstream.assert_not_called()
+
+    def test_proxy_refuses_dot_segments(self):
+        self.authenticate()
+        with patch.object(broker.requests, "request") as upstream:
+            for path in (
+                "repos/o/r/git/refs/heads/x/%2e%2e/%2e%2e/tags/v1",
+                "repos/o/r/contents/./a",
+            ):
+                response = self.client.delete(f"/proxy/api.github.com/{path}")
+                self.assertEqual(response.status_code, 400, path)
+            upstream.assert_not_called()
 
     def test_proxy_keeps_reserved_characters_in_the_path(self):
         self.authenticate()
@@ -176,6 +540,7 @@ class BrokerTest(unittest.TestCase):
 
     def test_request_bodies_over_the_limit_are_rejected(self):
         self.authenticate()
+        self.known_campaigns("o/r")
         path = "/proxy/api.github.com/repos/o/r/git/blobs"
         with patch.dict(broker.app.config, {"MAX_CONTENT_LENGTH": 16}):
             with patch.object(broker.requests, "request") as request_upstream:
@@ -211,14 +576,28 @@ class BrokerTest(unittest.TestCase):
 
     @staticmethod
     def iiif_response(
-        content=b"{}", content_type="application/json", status=200
+        content=b"{}",
+        content_type="application/json",
+        status=200,
+        headers=None,
+        read1=None,
     ):
+        """An upstream answer whose body arrives in one read; `read1`
+        replaces the network read."""
+        pending = [content]
         return SimpleNamespace(
             status_code=status,
             is_redirect=False,
             is_permanent_redirect=False,
-            headers={"content-type": content_type},
-            iter_content=lambda _size: [content],
+            headers={"content-type": content_type, **(headers or {})},
+            raw=SimpleNamespace(
+                read1=read1
+                or (
+                    lambda _size, decode_content=None: (
+                        pending.pop() if pending else b""
+                    )
+                )
+            ),
             close=lambda: None,
         )
 
@@ -262,7 +641,14 @@ class BrokerTest(unittest.TestCase):
 
         # Anything resolving to a private/loopback address is refused, so the
         # relay cannot be steered at the broker's own network.
-        for address in ("127.0.0.1", "169.254.169.254", "10.0.0.5", "::1"):
+        for address in (
+            "127.0.0.1",
+            "169.254.169.254",
+            "10.0.0.5",
+            "::1",
+            "100.64.0.1",
+            "64:ff9b::a9fe:a9fe",
+        ):
             with patch.object(
                 broker.socket,
                 "getaddrinfo",
@@ -272,6 +658,20 @@ class BrokerTest(unittest.TestCase):
                     response = self.client.get("/iiif?url=https://ex.test/m")
                 self.assertEqual(response.status_code, 400, address)
                 upstream.assert_not_called()
+
+    def test_relays_answer_fetch_requests_only(self):
+        self.authenticate()
+        for path in ("/iiif?url=https://ex.test/p.jpg", "/omr/blob?url=x"):
+            with patch.object(broker.requests, "get") as upstream:
+                response = self.client.get(
+                    path, headers={"Sec-Fetch-Dest": "image"}
+                )
+            self.assertEqual(response.status_code, 403, path)
+            upstream.assert_not_called()
+        response, _ = self.iiif_get(
+            "https://ex.test/p.jpg", self.iiif_response(b"x", "image/jpeg")
+        )
+        self.assertEqual(response.status_code, 200)
 
     def test_iiif_relays_without_credentials_and_caps_the_body(self):
         self.authenticate()
@@ -293,6 +693,157 @@ class BrokerTest(unittest.TestCase):
             ),
         )
         self.assertEqual(response.status_code, 413)
+
+    def test_iiif_relays_the_body_undecoded_with_its_coding(self):
+        self.authenticate()
+        response, upstream = self.iiif_get(
+            "https://ex.test/manifest",
+            self.iiif_response(
+                b"\x1f\x8b gzip bytes", headers={"content-encoding": "gzip"}
+            ),
+        )
+        self.assertEqual(response.data, b"\x1f\x8b gzip bytes")
+        self.assertEqual(response.headers["Content-Encoding"], "gzip")
+        self.assertEqual(
+            upstream.call_args.kwargs["headers"]["accept-encoding"], "identity"
+        )
+
+    def test_iiif_counts_bytes_per_login_and_refuses_past_the_allowance(self):
+        self.assertTrue(broker.app.logger.isEnabledFor(logging.INFO))
+        self.authenticate()
+        with patch.dict(
+            broker.DAILY_ALLOWANCES, {"iiif_bytes": ("IIIF downloads", 10)}
+        ):
+            with self.assertLogs(broker.app.logger.name, level="INFO") as logs:
+                for _ in range(2):
+                    response, _ = self.iiif_get(
+                        "https://ex.test/p.jpg",
+                        self.iiif_response(b"x" * 8, "image/jpeg"),
+                    )
+                    self.assertEqual(response.status_code, 200)
+            self.assertEqual(self.relay_store.used("alice", "iiif_bytes"), 16)
+            self.assertEqual(
+                json.loads(logs.output[0].split("relay_use ", 1)[1]),
+                {
+                    "source": "broker",
+                    "user": "alice",
+                    "kind": "iiif_bytes",
+                    "amount": 8,
+                    "host": "ex.test",
+                },
+            )
+
+            # The request that passed the allowance was completed; the next
+            # is refused before anything is fetched.
+            response, upstream = self.iiif_get(
+                "https://ex.test/p.jpg", self.iiif_response(b"x", "image/jpeg")
+            )
+            self.assertEqual(response.status_code, 429)
+            self.assertEqual(response.headers["X-Lets-Encode-Limit"], "daily")
+            self.assertEqual(
+                response.headers["X-Lets-Encode-Upstream"], "broker"
+            )
+            self.assertGreater(int(response.headers["Retry-After"]), 0)
+            upstream.assert_not_called()
+
+            # Another login has an allowance of its own.
+            self.authenticate("bob")
+            response, _ = self.iiif_get(
+                "https://ex.test/p.jpg", self.iiif_response(b"x", "image/jpeg")
+            )
+            self.assertEqual(response.status_code, 200)
+
+    def test_relays_cap_requests_in_flight_per_worker_and_login(self):
+        self.authenticate()
+        for held in (
+            {"alice": broker.RELAY_SLOTS_PER_LOGIN},
+            {"bob": broker.RELAY_SLOTS},
+        ):
+            with patch.dict(broker.relay_use.slots, held, clear=True):
+                response, upstream = self.iiif_get(
+                    "https://ex.test/m", self.iiif_response()
+                )
+                self.assertEqual(broker.relay_use.slots, held)
+            self.assertEqual(response.status_code, 429, held)
+            self.assertEqual(
+                response.headers["X-Lets-Encode-Upstream"], "broker"
+            )
+            upstream.assert_not_called()
+
+        # A request holds its slot while it reads and gives it back after.
+        seen = []
+
+        def read1(_size, decode_content=None):
+            seen.append(dict(broker.relay_use.slots))
+            return b""
+
+        response, _ = self.iiif_get(
+            "https://ex.test/m", self.iiif_response(read1=read1)
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(seen, [{"alice": 1}])
+        self.assertEqual(broker.relay_use.slots, {})
+
+    def test_relays_hold_their_slot_until_the_answer_is_sent(self):
+        self.authenticate()
+        with patch.object(
+            broker, "resolves_to_public_address", return_value=True
+        ):
+            with patch.object(
+                broker.requests,
+                "get",
+                return_value=self.iiif_response(b"body", "image/jpeg"),
+            ):
+                response = self.client.get(
+                    "/iiif?url=https://ex.test/p.jpg", buffered=False
+                )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(broker.relay_use.slots, {"alice": 1})
+        self.assertEqual(broker.relay_use.buffered, 4)
+        response.close()
+        self.assertEqual(broker.relay_use.slots, {})
+        self.assertEqual(broker.relay_use.buffered, 0)
+
+    def test_relays_answer_429_past_the_buffer_budget(self):
+        self.authenticate()
+        with patch.object(broker, "RELAY_BUFFER_BYTES", 3):
+            response, _ = self.iiif_get(
+                "https://ex.test/p.jpg",
+                self.iiif_response(b"body", "image/jpeg"),
+            )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "broker")
+        self.assertEqual(broker.relay_use.buffered, 0)
+
+    def test_relays_answer_504_past_their_deadline(self):
+        self.authenticate()
+        now = [0.0]
+
+        def slow_read1(_size, decode_content=None):
+            # Each read returns data, but takes longer than the whole deadline.
+            now[0] += broker.RELAY_DEADLINE_S + 1
+            return b"x"
+
+        with patch.object(broker.time, "monotonic", lambda: now[0]):
+            response, _ = self.iiif_get(
+                "https://ex.test/big.jpg",
+                self.iiif_response(content_type="image/jpeg", read1=slow_read1),
+            )
+        self.assertEqual(response.status_code, 504)
+        self.assertEqual(broker.relay_use.slots, {})
+
+        def timed_out_read1(_size, decode_content=None):
+            raise broker.urllib3.exceptions.ReadTimeoutError(
+                None, None, "timed out"
+            )
+
+        response, _ = self.iiif_get(
+            "https://ex.test/big.jpg",
+            self.iiif_response(
+                content_type="image/jpeg", read1=timed_out_read1
+            ),
+        )
+        self.assertEqual(response.status_code, 504)
 
     def test_iiif_rejects_unexpected_content_and_revalidates_redirects(self):
         self.authenticate()
@@ -342,11 +893,8 @@ class BrokerTest(unittest.TestCase):
                 )
                 upstream.assert_not_called()
 
-            relayed = SimpleNamespace(
-                status_code=201,
-                content=b'{"page_id":"p1","executions":[]}',
-                headers={"content-type": "application/json"},
-            )
+            self.relay_store.add_page("p1", "alice")
+            relayed = self.omr_response({"execution_id": 7}, 201)
             with patch.object(
                 broker.requests, "request", return_value=relayed
             ) as upstream:
@@ -356,8 +904,9 @@ class BrokerTest(unittest.TestCase):
                     content_type="application/json",
                 )
         self.assertEqual(response.status_code, 201)
-        self.assertEqual(response.get_json()["page_id"], "p1")
+        self.assertEqual(response.get_json()["execution_id"], 7)
         self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "musibot")
+        self.assert_relay_safety_headers(response)
         method, url = upstream.call_args.args
         self.assertEqual(
             (method, url),
@@ -372,6 +921,95 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(
             upstream.call_args.kwargs["data"], b'{"pipeline_name":"mzk-staff"}'
         )
+
+    @staticmethod
+    def omr_response(body, status=200):
+        """A Musibot API answer with a JSON body."""
+        return SimpleNamespace(
+            status_code=status,
+            ok=status < 400,
+            content=json.dumps(body).encode(),
+            headers={"content-type": "application/json"},
+            json=lambda: body,
+        )
+
+    def omr_call(self, method, path, body=None, status=200):
+        """One /omr/api call, the service answering `body` with `status`.
+        Returns (response, upstream_mock)."""
+        with patch.object(broker, "MUSIBOT_TOKEN", "musibot-token"):
+            with patch.object(
+                broker.requests,
+                "request",
+                return_value=self.omr_response(body or {}, status),
+            ) as upstream:
+                response = self.client.open(
+                    f"/omr/api/{path}",
+                    method=method,
+                    json={} if method == "POST" else None,
+                )
+        return response, upstream
+
+    def test_omr_pages_and_runs_are_relayed_only_to_their_creator(self):
+        self.authenticate()
+        created, _ = self.omr_call(
+            "POST", "musicorpus-pages", {"page_id": "p1"}, 201
+        )
+        self.assertEqual(created.status_code, 201)
+        started, _ = self.omr_call(
+            "POST",
+            "musicorpus-pages/p1/pipeline-executions",
+            {"execution_id": 7, "state": "running"},
+            201,
+        )
+        self.assertEqual(started.status_code, 201)
+        for method, path in (
+            ("GET", "musicorpus-pages/p1/files"),
+            ("POST", "musicorpus-pages/p1/file-urls"),
+            ("GET", "musicorpus-pages/p1/pipeline-executions/7"),
+            ("DELETE", "musicorpus-pages/p1"),
+        ):
+            response, upstream = self.omr_call(method, path)
+            self.assertEqual(response.status_code, 200, path)
+            upstream.assert_called_once()
+        self.assertEqual(self.relay_store.used("alice", "omr_runs"), 1)
+
+        # An execution not started on the page through the relay, and every
+        # call on another login's page, are refused before anything reaches
+        # the service.
+        response, upstream = self.omr_call(
+            "GET", "musicorpus-pages/p1/pipeline-executions/8"
+        )
+        self.assertEqual(response.status_code, 404)
+        upstream.assert_not_called()
+        self.authenticate("bob")
+        for method, path in (
+            ("GET", "musicorpus-pages/p1/files"),
+            ("POST", "musicorpus-pages/p1/file-urls"),
+            ("POST", "musicorpus-pages/p1/pipeline-executions"),
+            ("GET", "musicorpus-pages/p1/pipeline-executions/7"),
+            ("DELETE", "musicorpus-pages/p1"),
+        ):
+            response, upstream = self.omr_call(method, path)
+            self.assertEqual(response.status_code, 404, path)
+            upstream.assert_not_called()
+
+    def test_omr_runs_are_refused_past_the_daily_allowance(self):
+        self.authenticate()
+        self.omr_call("POST", "musicorpus-pages", {"page_id": "p1"}, 201)
+        self.relay_store.add(
+            "alice", "omr_runs", broker.DAILY_ALLOWANCES["omr_runs"][1]
+        )
+        response, upstream = self.omr_call(
+            "POST",
+            "musicorpus-pages/p1/pipeline-executions",
+            {"execution_id": 7},
+            201,
+        )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["X-Lets-Encode-Limit"], "daily")
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "broker")
+        self.assertIn("OMR runs", response.get_json()["error"])
+        upstream.assert_not_called()
 
     def test_omr_blob_is_restricted_to_the_service_host_and_capped(self):
         self.assertEqual(
@@ -427,11 +1065,27 @@ class BrokerTest(unittest.TestCase):
             response = self.client.get(f"/omr/blob?url={signed}")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data, b"<score-partwise/>")
-        self.assertEqual(response.headers["Content-Type"], "application/xml")
+        # Untyped whatever the store says, so a file never runs as a script.
+        self.assertEqual(
+            response.headers["Content-Type"], "application/octet-stream"
+        )
         self.assert_relay_safety_headers(response)
         self.assertNotIn(
             "Authorization", upstream.call_args.kwargs.get("headers", {})
         )
+        # Both directions count against the login's daily allowance.
+        self.assertEqual(
+            self.relay_store.used("alice", "omr_bytes"),
+            len(b"jpeg") + len(b"<score-partwise/>"),
+        )
+        self.relay_store.add(
+            "alice", "omr_bytes", broker.DAILY_ALLOWANCES["omr_bytes"][1]
+        )
+        with patch.object(broker.requests, "get") as upstream:
+            response = self.client.get(f"/omr/blob?url={signed}")
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["X-Lets-Encode-Limit"], "daily")
+        upstream.assert_not_called()
 
     def test_cross_origin_writes_are_rejected(self):
         # reject_cross_origin_writes runs before any route: a POST whose Origin

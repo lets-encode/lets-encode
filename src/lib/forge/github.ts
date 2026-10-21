@@ -16,14 +16,12 @@ export function createGitHubForge(token: string): ForgeClient {
     setRepoTopics: async (owner, repo, names) => {
       await gh.setRepoTopics(token, owner, repo, names);
     },
-    setActionsWorkflowPermissions: (owner, repo) =>
-      gh.setActionsWorkflowPermissions(token, owner, repo),
     waitForRepoContents: (owner, repo, path, opts) =>
       gh.waitForRepoContents(token, owner, repo, path, opts),
     commitFiles: (owner, repo, files, message, opts) =>
       gh.commitFiles(token, owner, repo, files, message, opts),
-    getRepoFile: (owner, repo, path, ref) =>
-      gh.getRepoFile(token, owner, repo, path, ref),
+    getRepoFile: (owner, repo, path, ref, maxBytes) =>
+      gh.getRepoFile(token, owner, repo, path, ref, maxBytes),
     getRepoFileBytes: (owner, repo, path, ref) =>
       gh.getRepoFileBytes(token, owner, repo, path, ref),
     getRepoFileDownloadUrl: (owner, repo, path, ref) =>

@@ -111,7 +111,8 @@ export function createOmrClient(
 
   // One relay call. Network failures and timeouts become OmrErrors with
   // status 0; a failing status carries the relay's or the service's message.
-  // A 429 from the broker's own rate limit is retried after a back-off.
+  // A 429 from the broker's own rate limit is retried after a back-off, one
+  // for the login's daily allowance is not: it holds until 00:00 UTC.
   async function call(
     method: string,
     url: string,
@@ -137,7 +138,8 @@ export function createOmrClient(
       }
       const brokerLimited =
         res.status === 429 &&
-        res.headers.get("X-Lets-Encode-Upstream") === "broker";
+        res.headers.get("X-Lets-Encode-Upstream") === "broker" &&
+        res.headers.get("X-Lets-Encode-Limit") !== "daily";
       if (!brokerLimited || attempt >= BROKER_RETRY_MS.length) break;
       await sleep(BROKER_RETRY_MS[attempt]);
     }
@@ -150,8 +152,12 @@ export function createOmrClient(
     } catch {
       // Not JSON: the status alone names the failure.
     }
+    const refusedBy =
+      res.headers.get("X-Lets-Encode-Upstream") === "broker"
+        ? "The OMR relay refused"
+        : `The OMR service returned ${res.status} for`;
     throw new OmrError(
-      `The OMR service returned ${res.status} for ${method} ${url}${detail ? `: ${detail}` : "."}`,
+      `${refusedBy} ${method} ${url}${detail ? `: ${detail}` : "."}`,
       res.status,
     );
   }

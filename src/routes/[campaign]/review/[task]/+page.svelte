@@ -21,6 +21,7 @@
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
+  import { anchorCell } from "$lib/campaign-submit.ts";
   import type {
     CommandContext,
     CommentAnchorInput,
@@ -164,15 +165,15 @@
     selectedMeasure
       ? {
           page: String((preview?.pageOfMeasure(selectedMeasure) ?? 0) + 1),
-          measure_start: selectedMeasure,
-          measure_end: selectedMeasure,
+          measure_start: anchorCell(selectedMeasure),
+          measure_end: anchorCell(selectedMeasure),
         }
       : undefined;
   // A fresh fail form opens anchored to what the viewer is looking at.
   const prefill = () => ({
     page: String((preview?.currentPage() ?? 0) + 1),
-    m1: selectedMeasure ?? "",
-    m2: selectedMeasure ?? "",
+    m1: anchorCell(selectedMeasure ?? ""),
+    m2: anchorCell(selectedMeasure ?? ""),
   });
 
   // The side panel beside the score; the tables it reads are the ones this
@@ -379,7 +380,14 @@
   {:else if !place.resolved || loading}
     <p class="msg muted">Loading the task…</p>
   {:else if loadError}
-    <div class="msg banner err"><span>{loadError}</span></div>
+    <div class="msg banner err">
+      <span>
+        {loadError}
+        <button type="button" class="linkish" onclick={() => load()}
+          >Try again</button
+        >
+      </span>
+    </div>
   {:else if notInitialised}
     <div class="msg banner err">
       <span>
@@ -419,6 +427,7 @@
       />
     {/snippet}
     <div class="scorecol" bind:clientWidth={scoreW}>
+      <h1 class="vh">{card.title}</h1>
       {#if !auth.user}
         <div class="banner warn">
           <span>

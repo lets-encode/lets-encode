@@ -2,7 +2,12 @@
 // Same conventions as mei-facsimile.ts: pure regex/string parsing, no DOM,
 // filesystem or network access.
 
-import { textOf, xmlUnescape } from "./mei-xml.ts";
+import {
+  elementsNamedAny,
+  firstElementNamed,
+  textOf,
+  xmlUnescape,
+} from "./mei-xml.ts";
 
 /** One named person from the header, with the role the header assigns them. */
 export interface HeaderPerson {
@@ -36,20 +41,16 @@ function roleRank(role: string): number {
  * first person named composer becomes the composer, the rest are contributors.
  */
 export function parseMeiHeader(mei: string): MeiHeader | null {
-  const head = /<meiHead[\s>][\s\S]*?<\/meiHead>/.exec(mei)?.[0];
-  if (!head) return null;
+  const head = firstElementNamed(mei, "meiHead")?.inner;
+  if (head === undefined) return null;
 
-  const title = textOf(
-    /<title\b[^>]*>([\s\S]*?)<\/title>/.exec(head)?.[1] ?? "",
-  );
+  const title = textOf(firstElementNamed(head, "title")?.inner ?? "");
 
   const people: HeaderPerson[] = [];
   const byName = new Map<string, HeaderPerson>();
-  for (const m of head.matchAll(
-    /<(persName|corpName)\b([^>]*)>([\s\S]*?)<\/\1>/g,
-  )) {
-    const role = xmlUnescape(/\brole="([^"]*)"/.exec(m[2])?.[1] ?? "");
-    const name = textOf(m[3]);
+  for (const element of elementsNamedAny(head, ["persName", "corpName"])) {
+    const role = xmlUnescape(/\brole="([^"]*)"/.exec(element.tag)?.[1] ?? "");
+    const name = textOf(element.inner);
     if (!name) continue;
     const known = byName.get(name);
     if (!known) {

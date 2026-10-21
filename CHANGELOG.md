@@ -3,6 +3,26 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-21
+
+- Proxied writes are limited to campaigns, session tokens are encrypted and revoked on expiry, and the compromised eMudhra CAs are no longer trusted.
+
+## 2026-10-20
+
+- The broker's relays and proxy are limited per login and to the requests the app makes.
+- The broker logs each login's relay use and no longer logs query strings.
+- Sessions are no longer ended early when many are open.
+- Campaign names are bound to their repository and to the login that reserved them.
+- The coordinator refuses oversized or malformed fork input and stops runs after 30 minutes.
+- One person may hold at most ten claims at once in a campaign.
+- Scores are read in linear time and rendered without links, outside references or embedded styles.
+- A return from mei-friend acts only on a hand-off this browser started.
+- Comments and change requests are limited to 5,000 characters.
+- Accessibility and error-state fixes on the campaign, task and score pages.
+- The campaign pages say when background updates are paused or failing.
+- Creating a campaign no longer gives the repository's workflows write access by default.
+- Dependencies are updated, pinned with hashes and installed without install scripts.
+
 ## 2026-10-19
 
 - On iOS the page no longer zooms into a focused text field, and touch screens keep each field's text size.

@@ -71,8 +71,6 @@ export interface ForgeClient {
   }): Promise<RepoData>;
   /** Replace a repo's topics. */
   setRepoTopics(owner: string, repo: string, names: string[]): Promise<void>;
-  /** Give the repo's CI token read/write access. */
-  setActionsWorkflowPermissions(owner: string, repo: string): Promise<void>;
   /** Poll until `path` appears in the repo, returning its content. */
   waitForRepoContents(
     owner: string,
@@ -97,12 +95,14 @@ export interface ForgeClient {
       onUpload?: (uploaded: number, total: number) => void;
     },
   ): Promise<string>;
-  /** A repo file's UTF-8 content, or null if absent. */
+  /** A repo file's UTF-8 content, or null if absent or, with `maxBytes`,
+      larger than that (checked before the content is downloaded). */
   getRepoFile(
     owner: string,
     repo: string,
     path: string,
     ref?: string,
+    maxBytes?: number,
   ): Promise<string | null>;
 
   getRepoFileBytes(

@@ -16,6 +16,8 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
+  MAX_ANCHOR_LENGTH,
+  MAX_COMMENT_LENGTH,
   resolveChangeRequests,
   resolveCommentThread,
 } from "../campaign-submit.ts";
@@ -61,6 +63,9 @@ const comment = (over: Partial<CommentRow>): CommentRow => ({
   fragment: "",
   ...over,
 });
+// A discussion comment as the app writes it: no subtask.
+const discussion = (over: Partial<CommentRow>): CommentRow =>
+  comment({ subtask_id: "", ...over });
 
 const NOW = "2026-06-25T10:00:00Z";
 const LOCK_HEADER = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
@@ -369,6 +374,22 @@ test("validation: a fail without its comment row is rejected", () => {
     }).reason,
     "fail_without_comment",
   );
+  // The comment row's cells are bounded like a discussion comment's.
+  const failWith = (over: Partial<CommentRow>) =>
+    val({
+      ...base,
+      changedPaths: ["tracking/state.csv", "tracking/comment.csv"],
+      failComment: comment(over),
+    }).reason;
+  assert.equal(failWith({ body: "x".repeat(MAX_COMMENT_LENGTH) }), undefined);
+  assert.equal(
+    failWith({ body: "x".repeat(MAX_COMMENT_LENGTH + 1) }),
+    "comment_too_long",
+  );
+  assert.equal(
+    failWith({ measure_end: "9".repeat(MAX_ANCHOR_LENGTH + 1) }),
+    "invalid_anchor",
+  );
 });
 
 test("validation: a pass may not carry a comment.csv change", () => {
@@ -387,7 +408,7 @@ test("validation: a pass may not carry a comment.csv change", () => {
 // --- Comments ----------------------------------------------------------------
 
 test("comments: a discussion comment is re-authored by the automation", () => {
-  const added = comment({
+  const added = discussion({
     kind: "comment",
     body: "Cue-size notes in m. 38?",
     author_id: "forged",
@@ -427,10 +448,10 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
   const cases: [string, CommentRow | null, string][] = [
     ["no row", null, "malformed_comment"],
     ["fail kind", comment({ kind: "fail" }), "invalid_kind"],
-    ["blank body", comment({ kind: "comment", body: " " }), "empty_comment"],
+    ["blank body", discussion({ kind: "comment", body: " " }), "empty_comment"],
     [
       "unknown task",
-      comment({ kind: "comment", task_id: "T9999" }),
+      discussion({ kind: "comment", task_id: "T9999" }),
       "unknown_task",
     ],
     [
@@ -439,30 +460,40 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
       "unknown_task",
     ],
     [
+      "task comment naming a subtask",
+      comment({ kind: "comment" }),
+      "unknown_task",
+    ],
+    [
       "reply to a missing parent",
-      comment({ kind: "reply", parent_id: "nope" }),
+      discussion({ kind: "reply", parent_id: "nope" }),
       "unknown_parent",
     ],
     [
       "comment with a parent",
-      comment({ kind: "comment", parent_id: "c1" }),
+      discussion({ kind: "comment", parent_id: "c1" }),
       "invalid_parent",
     ],
     // A reply to a reply has no thread to render under.
     [
       "reply to a reply",
-      comment({ kind: "reply", parent_id: "c2" }),
+      discussion({ kind: "reply", parent_id: "c2" }),
       "invalid_parent",
     ],
     [
       "reply to another task's comment",
-      comment({ kind: "reply", parent_id: "c1", task_id: "", subtask_id: "" }),
+      discussion({
+        kind: "reply",
+        parent_id: "c1",
+        task_id: "",
+        subtask_id: "",
+      }),
       "invalid_parent",
     ],
     // Fail comments live in the validation record, not the discussion threads.
     [
       "reply to a fail",
-      comment({ kind: "reply", parent_id: "c3" }),
+      discussion({ kind: "reply", parent_id: "c3" }),
       "invalid_parent",
     ],
   ];
@@ -472,14 +503,59 @@ test("comments: rejects bad kinds, empty bodies, unknown tasks and replies to an
   assert.equal(
     checkComment({
       ...base,
-      added: comment({ kind: "reply", parent_id: "c1" }),
+      added: discussion({ kind: "reply", parent_id: "c1" }),
     }).ok,
     true,
   );
 });
 
+test("comments: rejects bodies past the limit and anchors of the wrong shape", () => {
+  const reasonFor = (over: Partial<CommentRow>) =>
+    commentReason({
+      state: validationState(),
+      comments: [],
+      added: discussion({ kind: "comment", ...over }),
+      author: "carol",
+      changedPaths: ["tracking/comment.csv"],
+      now: NOW,
+      newId: "c1",
+    });
+  assert.equal(reasonFor({ body: "x".repeat(MAX_COMMENT_LENGTH) }), undefined);
+  assert.equal(
+    reasonFor({ body: "x".repeat(MAX_COMMENT_LENGTH + 1) }),
+    "comment_too_long",
+  );
+  assert.equal(reasonFor({ page: "1".repeat(MAX_ANCHOR_LENGTH) }), undefined);
+  for (const cell of ["page", "measure_start", "measure_end"]) {
+    assert.equal(
+      reasonFor({ [cell]: "1".repeat(MAX_ANCHOR_LENGTH + 1) }),
+      "invalid_anchor",
+      cell,
+    );
+  }
+  const campaignComment = (fragment: string) =>
+    reasonFor({ task_id: "", subtask_id: "", fragment });
+  for (const fragment of [
+    "sources/piece-1/score.mei",
+    "sources/Lieder für Kinder/score.mei",
+  ]) {
+    assert.equal(campaignComment(fragment), undefined, fragment);
+  }
+  for (const fragment of [
+    "../tracking/task.csv",
+    "sources/../score.mei",
+    "sources/piece-1/score.txt",
+    "/sources/piece-1/score.mei",
+    "sources//score.mei",
+    "sources/piece-1/score.mei\nx",
+    `sources/${"p".repeat(200)}/score.mei`,
+  ]) {
+    assert.equal(campaignComment(fragment), "invalid_anchor", fragment);
+  }
+});
+
 test("comments: a campaign comment has no task and keeps its measure anchor", () => {
-  const added = comment({
+  const added = discussion({
     kind: "comment",
     task_id: "",
     subtask_id: "",
@@ -505,7 +581,7 @@ test("comments: a campaign comment has no task and keeps its measure anchor", ()
     checkComment({
       state: validationState(),
       comments: [{ ...added, comment_id: "c1" }],
-      added: comment({
+      added: discussion({
         kind: "reply",
         task_id: "",
         subtask_id: "",
@@ -783,6 +859,18 @@ test("review edit: resets the task and hands the reviewer the encoding claim", (
   assert.equal(
     reason({ failComment: comment({ body: " " }) }),
     "fail_without_comment",
+  );
+  assert.equal(
+    reason({
+      failComment: comment({ body: "x".repeat(MAX_COMMENT_LENGTH + 1) }),
+    }),
+    "comment_too_long",
+  );
+  assert.equal(
+    reason({
+      failComment: comment({ page: "1".repeat(MAX_ANCHOR_LENGTH + 1) }),
+    }),
+    "invalid_anchor",
   );
   assert.equal(reason({ author: "dave" }), "not_lock_holder");
   assert.equal(reason({ locks: [], expired: validationLock }), "claim_expired");

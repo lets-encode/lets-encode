@@ -37,6 +37,11 @@ export interface CheckClaimArgs {
   allowSelfValidation?: boolean;
   /** Pass verdicts that complete a subtask; defaults to the slot count. */
   passThreshold?: number;
+  /**
+   * locking.max_claims_per_person: the claims of any kind one person may
+   * hold at once; no limit when unset.
+   */
+  maxClaims?: number;
 }
 
 export type ClaimResult =
@@ -46,6 +51,19 @@ export type ClaimResult =
 const CLAIM_KINDS = ["encoding", "validation"];
 
 const reject = (reason: string): ClaimResult => ({ ok: false, reason });
+
+/**
+ * Whether `author` holds `maxClaims` of `locks` already, the most one person
+ * may hold at once: claiming is open, and one account must not hold every
+ * task of a campaign.
+ */
+export function claimLimitReached(
+  locks: LockRow[],
+  author: string,
+  maxClaims: number,
+): boolean {
+  return locks.filter((l) => l.user_id === author).length >= maxClaims;
+}
 
 /** True if every changed path is within the allowed set (the boundary guard). */
 export function boundaryCheck(
@@ -68,6 +86,7 @@ export function checkClaim({
   staleAfterMinutes,
   allowSelfValidation,
   passThreshold,
+  maxClaims,
 }: CheckClaimArgs): ClaimResult {
   // A claim may only touch the lock table.
   if (!boundaryCheck(changedPaths, [LOCK_PATH])) return reject("out_of_bounds");
@@ -142,6 +161,8 @@ export function checkClaim({
     )
       return reject("review_in_progress");
   }
+  if (maxClaims !== undefined && claimLimitReached(locks, author, maxClaims))
+    return reject("too_many_claims");
 
   return {
     ok: true,

@@ -847,3 +847,59 @@ test("measuredSurfaceIds: only pages holding measure zones", () => {
   const mei = buildFacsimileMei(m, { withBreaks: true });
   assert.deepEqual(measuredSurfaceIds(mei), ["surface-2", "surface-3"]);
 });
+
+test("reads a score in linear time whatever its comments hold", () => {
+  // Comments the schema ignores: a long run of spaces before the header, and
+  // many start tags with no end tag after them. Each made the old patterns
+  // quadratic (128 KB of spaces took 8 s).
+  const spaces = " ".repeat(512 * 1024);
+  const openers = (name: string) => `<${name}>`.repeat(32 * 1024);
+  const score = buildFacsimileMei(model(), { withBreaks: true });
+  const crafted = score
+    .replace("<meiHead", `<!--${spaces}--><meiHead`)
+    .replace(
+      "</mei>",
+      `<!--${openers("surface")}${openers("scoreDef")}${openers("staffDef")}${openers("meiHead")}${openers("body")}${`<dir `.repeat(32 * 1024)}--></mei>`,
+    );
+  const started = performance.now();
+  assert.deepEqual(measuredSurfaceIds(crafted), measuredSurfaceIds(score));
+  assert.equal(parseFacsimileMei(crafted).pages.length, 2);
+  parseScoreDef(crafted);
+  replaceScoreDef(crafted, DEFAULT_SCORE_DEF);
+  relinkFacsimileImages(crafted, []);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("reads a score in linear time when a comment holds the end of the element around it", () => {
+  // The first </surface> and </body> sit in comments, so the start tags
+  // before them in the element's content have no ">".
+  const unclosed = (name: string, end: string) =>
+    `<!--${`<${name} `.repeat(32 * 1024)}</${end}>-->`;
+  const crafted = buildFacsimileMei(model(), { withBreaks: true })
+    .replace("<graphic", `${unclosed("zone", "surface")}<graphic`)
+    .replace("</section>", `${unclosed("dir", "body")}</section>`);
+  assert.ok(
+    crafted.includes("</surface>-->") && crafted.includes("</body>-->"),
+  );
+  const started = performance.now();
+  measuredSurfaceIds(crafted);
+  parseFacsimileMei(crafted);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("reads self-closing staff definitions after one named in a comment", () => {
+  const mei =
+    '<mei><music><body><mdiv><score><scoreDef meter.count="4" meter.unit="4"><staffGrp><!-- one <staffDef> per part -->' +
+    '<staffDef n="1" lines="5" clef.shape="F" clef.line="4"/>' +
+    '<staffDef n="2" lines="5" clef.shape="C" clef.line="3"/>' +
+    "</staffGrp></scoreDef></score></mdiv></body></music></mei>";
+  assert.deepEqual(
+    parseScoreDef(mei).staves.map((s) => [s.clefShape, s.clefLine]),
+    [
+      ["F", 4],
+      ["C", 3],
+    ],
+  );
+});

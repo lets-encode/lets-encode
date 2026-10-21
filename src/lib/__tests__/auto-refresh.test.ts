@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { startAutoRefresh, type RefreshEnv } from "../auto-refresh.ts";
+import {
+  REFRESH_OK,
+  startAutoRefresh,
+  type RefreshEnv,
+  type RefreshStatus,
+} from "../auto-refresh.ts";
 import { RateLimitError } from "../forge/github-rest.ts";
 
 // A manual clock: timers fire only when advance() passes their due time.
@@ -56,10 +61,10 @@ function fakeEnv() {
   };
 }
 
-const rateLimit = (resetAt: number | null) =>
+const rateLimit = (resetAt: number | null, anonymous = false) =>
   new RateLimitError({
     source: "github",
-    anonymous: false,
+    anonymous,
     resource: "core",
     limit: 5000,
     remaining: 0,
@@ -233,4 +238,85 @@ test("the returned function stops polling", async () => {
   await clock.advance(60_000);
   assert.equal(polls, 0);
   assert.equal(clock.pending(), 0);
+});
+
+test("reports a rate limit's pause and whose limit it was until a poll succeeds", async () => {
+  const clock = fakeEnv();
+  const statuses: RefreshStatus[] = [];
+  let polls = 0;
+  startAutoRefresh(
+    {
+      interval: () => 10_000,
+      poll: async () => {
+        if (++polls === 1) throw rateLimit(120, true);
+      },
+      onStatus: (status) => statuses.push(status),
+    },
+    clock.surface,
+  );
+  await clock.advance(10_000);
+  assert.deepEqual(statuses, [
+    {
+      pausedUntil: 120_000,
+      limit: "anonymous",
+      failingSince: null,
+      failures: 0,
+    },
+  ]);
+  await clock.advance(120_000);
+  assert.deepEqual(statuses.at(-1), REFRESH_OK);
+});
+
+test("reports failed polls in a row from the time of the first", async () => {
+  const clock = fakeEnv();
+  const statuses: RefreshStatus[] = [];
+  let polls = 0;
+  const warn = console.warn;
+  console.warn = () => {};
+  try {
+    startAutoRefresh(
+      {
+        interval: () => 10_000,
+        poll: async () => {
+          if (++polls <= 3) throw new Error("offline");
+        },
+        onStatus: (status) => statuses.push(status),
+      },
+      clock.surface,
+    );
+    await clock.advance(40_000);
+  } finally {
+    console.warn = warn;
+  }
+  assert.deepEqual(
+    statuses.map((s) => [s.failures, s.failingSince]),
+    [
+      [1, 10_000],
+      [2, 10_000],
+      [3, 10_000],
+      [0, null],
+    ],
+  );
+});
+
+test("ends a reported pause on time while polls are held", async () => {
+  const clock = fakeEnv();
+  const statuses: RefreshStatus[] = [];
+  let held = false;
+  startAutoRefresh(
+    {
+      interval: () => 10_000,
+      held: () => held,
+      poll: async () => {
+        held = true;
+        throw rateLimit(60);
+      },
+      onStatus: (status) => statuses.push(status),
+    },
+    clock.surface,
+  );
+  await clock.advance(10_000);
+  assert.equal(statuses.at(-1)?.pausedUntil, 60_000);
+  await clock.advance(50_000);
+  assert.deepEqual(statuses.at(-1), REFRESH_OK);
 });

@@ -23,7 +23,13 @@
 
 import { addXmlIds } from "./mei-ids.ts";
 import { MEI_SCHEMA_URL } from "./mei-schema.ts";
-import { xmlEscape, xmlUnescape } from "./mei-xml.ts";
+import {
+  elementsNamed,
+  firstElementNamed,
+  startTags,
+  xmlEscape,
+  xmlUnescape,
+} from "./mei-xml.ts";
 import { pageSystems } from "./omr-layout.ts";
 import { writtenKeysig } from "./transposition.ts";
 
@@ -730,12 +736,16 @@ export function buildBlankScoreMei(
  * discard.
  */
 export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
-  const optimize = /<scoreDef\b[^>]*\boptimize="true"/.test(mei);
+  const scoreDefs = [...elementsNamed(mei, "scoreDef", true)];
+  const optimize = scoreDefs.some((el) => /\boptimize="true"/.test(el.tag));
   const block = buildScoreDefXml(scoreDef, optimize).trim();
-  return mei.replace(
-    /<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/g,
-    () => block,
-  );
+  let out = "";
+  let last = 0;
+  for (const el of scoreDefs) {
+    out += mei.slice(last, el.start) + block;
+    last = el.end;
+  }
+  return out + mei.slice(last);
 }
 
 // One attribute's value from an XML tag string, unescaped; null if absent.
@@ -752,16 +762,14 @@ function attr(tag: string, name: string): string | null {
  * scoreDef has no staffDef, yields the default.
  */
 export function parseScoreDef(text: string): ScoreDefModel {
-  const block =
-    /<scoreDef\b[^>]*\/>|<scoreDef\b[^>]*>[\s\S]*?<\/scoreDef>/.exec(text)?.[0];
-  if (!block) return defaultScoreDef();
-  const open = /<scoreDef\b[^>]*>/.exec(block)![0];
+  const scoreDefAt = firstElementNamed(text, "scoreDef", true);
+  if (!scoreDefAt) return defaultScoreDef();
+  const block = text.slice(scoreDefAt.start, scoreDefAt.end);
+  const open = scoreDefAt.tag;
   const staves: StaffModel[] = [];
-  for (const match of block.matchAll(
-    /<staffDef\b[^>]*\/>|<staffDef\b[^>]*>([\s\S]*?)<\/staffDef>/g,
-  )) {
-    const tag = /<staffDef\b[^>]*>/.exec(match[0])![0];
-    const label = /<label\b[^>]*>([\s\S]*?)<\/label>/.exec(match[1] ?? "")?.[1];
+  for (const staffDefAt of elementsNamed(block, "staffDef", true)) {
+    const tag = staffDefAt.tag;
+    const label = firstElementNamed(staffDefAt.inner, "label")?.inner;
     // A tablature staffDef may carry no clef attributes; its shape is the
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
@@ -864,12 +872,15 @@ export interface ParsedFacsimile extends FacsimileModel {
 
 /** The xml:ids of the score's surfaces that hold a measure zone, in document order. */
 export function measuredSurfaceIds(text: string): string[] {
-  return [...text.matchAll(/<surface\b([^>]*)>([\s\S]*?)<\/surface>/g)].flatMap(
-    (match) => {
-      const id = attr(`<surface${match[1]}>`, "xml:id");
-      return id && /<zone\b[^>]*\btype="measure"/.test(match[2]) ? [id] : [];
-    },
-  );
+  return [...elementsNamed(text, "surface")].flatMap((surface) => {
+    const id = attr(surface.tag, "xml:id");
+    return id &&
+      [...startTags(surface.inner, "zone")].some(({ tag }) =>
+        /\btype="measure"/.test(tag),
+      )
+      ? [id]
+      : [];
+  });
 }
 
 /**
@@ -879,14 +890,18 @@ export function measuredSurfaceIds(text: string): string[] {
  * <sb/>/<pb/> tokens where present, else from the row grouping.
  */
 export function parseFacsimileMei(text: string): ParsedFacsimile {
-  const headXml = /[ \t]*<meiHead\b[^>]*>[\s\S]*?<\/meiHead>/.exec(text)?.[0];
-  if (!headXml) throw new Error("Not a facsimile score: no <meiHead> found.");
+  const headAt = firstElementNamed(text, "meiHead");
+  if (!headAt) throw new Error("Not a facsimile score: no <meiHead> found.");
+  // The header with the indentation in front of its start tag.
+  let headStart = headAt.start;
+  while (headStart > 0 && /[ \t]/.test(text[headStart - 1])) headStart--;
+  const headXml = text.slice(headStart, headAt.end);
 
   // Which zones the body marks as system/page starts and as movement starts,
   // and which measures it marks as pickups (stage C), keyed by zone id via
   // each measure's facs link. A second or later <mdiv> flags its first
   // measure; the first <mdiv> is implicit.
-  const body = /<body\b[^>]*>([\s\S]*?)<\/body>/.exec(text)?.[1] ?? "";
+  const body = firstElementNamed(text, "body")?.inner ?? "";
   const pbZones = new Set<string>();
   const sbZones = new Set<string>();
   const mdivZones = new Set<string>();
@@ -905,9 +920,31 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   let pendingSb = false;
   let pendingMdiv = false;
   let seenMdiv = false;
-  for (const token of body.match(
-    /<(mdiv|pb|sb|measure|ending)\b[^>]*>|<\/ending>|<repeatMark\b[^>]*>|<dir\b[^>]*>[^<]*<\/dir>/g,
-  ) ?? []) {
+  // The body's tokens, as the pattern
+  // /<(mdiv|pb|sb|measure|ending)\b[^>]*>|<\/ending>|<repeatMark\b[^>]*>|<dir\b[^>]*>[^<]*<\/dir>/g
+  // matches them, found in linear time: a start tag ends at the next ">", and
+  // a <dir> is a token, with its text, when only text stands before </dir>.
+  const tokens: string[] = [];
+  const opener = /<(?:mdiv|pb|sb|measure|ending|repeatMark|dir)\b|<\/ending>/g;
+  for (let m = opener.exec(body); m; m = opener.exec(body)) {
+    if (m[0] === "</ending>") {
+      tokens.push(m[0]);
+      continue;
+    }
+    const tagEnd = body.indexOf(">", m.index);
+    if (tagEnd < 0) break;
+    opener.lastIndex = tagEnd + 1;
+    if (m[0] !== "<dir") {
+      tokens.push(body.slice(m.index, tagEnd + 1));
+      continue;
+    }
+    const textEnd = body.indexOf("<", tagEnd + 1);
+    if (textEnd >= 0 && body.startsWith("</dir>", textEnd)) {
+      opener.lastIndex = textEnd + "</dir>".length;
+      tokens.push(body.slice(m.index, opener.lastIndex));
+    }
+  }
+  for (const token of tokens) {
     if (token.startsWith("<ending")) {
       ending = attr(token, "n") ?? null;
     } else if (token === "</ending>") {
@@ -959,16 +996,13 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   // A self-closing <surface/> is a complete (zone-less, graphic-less) element,
   // so the first alternative keeps it from swallowing text up to the next
   // </surface>.
-  for (const surfaceMatch of text.matchAll(
-    /<surface\b[^>]*\/>|<surface\b[^>]*>([\s\S]*?)<\/surface>/g,
-  )) {
-    const body = surfaceMatch[1] ?? "";
-    const graphic = /<graphic\b[^>]*>/.exec(body)?.[0];
+  for (const surfaceAt of elementsNamed(text, "surface", true)) {
+    const body = surfaceAt.inner;
+    const graphic = [...startTags(body, "graphic")][0]?.tag;
     if (!graphic) continue;
     const zones: ZoneModel[] = [];
     const boxesOnly: MeasureBox[] = [];
-    for (const zoneMatch of body.matchAll(/<zone\b[^>]*>/g)) {
-      const tag = zoneMatch[0];
+    for (const { tag } of startTags(body, "zone")) {
       if (attr(tag, "type") !== "measure") continue;
       const box = {
         ulx: Number(attr(tag, "ulx") ?? 0),
@@ -1050,31 +1084,35 @@ export function relinkFacsimileImages(
   images: FacsimileImage[],
 ): string {
   let index = 0;
-  // The first alternative matches a self-closing <surface/> whole, so it does
-  // not swallow text up to the next </surface>.
-  return mei.replace(
-    /<surface\b[^>]*\/>|<surface\b[^>]*>[\s\S]*?<\/surface>/g,
-    (surface) => {
-      const image = images[index++];
-      const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
-      if (!image || !graphic) return surface;
-      const width = Number(attr(graphic, "width") ?? 0);
-      const height = Number(attr(graphic, "height") ?? 0);
-      const sx = width > 0 ? image.width / width : 1;
-      const sy = height > 0 ? image.height / height : 1;
-      // The surface's own box and its zones are in the coordinate space the
-      // graphic declares, so both move with it.
-      return surface
-        .replace(/<(?:surface|zone)\b[^>]*>/g, (tag) => scaleBox(tag, sx, sy))
-        .replace(/<graphic\b[^>]*>/, () =>
-          setAttrs(graphic, {
-            target: image.target,
-            width: image.width,
-            height: image.height,
-          }),
-        );
-    },
-  );
+  // A self-closing <surface/> is an element of its own, so it does not
+  // swallow text up to the next </surface>.
+  const relinked = (surface: string) => {
+    const image = images[index++];
+    const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
+    if (!image || !graphic) return surface;
+    const width = Number(attr(graphic, "width") ?? 0);
+    const height = Number(attr(graphic, "height") ?? 0);
+    const sx = width > 0 ? image.width / width : 1;
+    const sy = height > 0 ? image.height / height : 1;
+    // The surface's own box and its zones are in the coordinate space the
+    // graphic declares, so both move with it.
+    return surface
+      .replace(/<(?:surface|zone)\b[^>]*>/g, (tag) => scaleBox(tag, sx, sy))
+      .replace(/<graphic\b[^>]*>/, () =>
+        setAttrs(graphic, {
+          target: image.target,
+          width: image.width,
+          height: image.height,
+        }),
+      );
+  };
+  let out = "";
+  let last = 0;
+  for (const el of elementsNamed(mei, "surface", true)) {
+    out += mei.slice(last, el.start) + relinked(mei.slice(el.start, el.end));
+    last = el.end;
+  }
+  return out + mei.slice(last);
 }
 
 // Scale a tag's bounding box, when it has one; a tag without stays as it is.
@@ -1113,15 +1151,15 @@ function setAttrs(
  * the root element's start tag.
  */
 export function replaceMeiHead(mei: string, headXml: string): string {
-  const head = /<meiHead\b[^>]*>[\s\S]*?<\/meiHead>|<meiHead\b[^>]*\/>/.exec(
-    mei,
-  );
+  // A header with content first, else an empty <meiHead/>.
+  const head =
+    firstElementNamed(mei, "meiHead") ??
+    [...elementsNamed(mei, "meiHead", true)].find(
+      (el) => el.inner === "" && el.tag.endsWith("/>"),
+    ) ??
+    null;
   if (head)
-    return (
-      mei.slice(0, head.index) +
-      headXml.trim() +
-      mei.slice(head.index + head[0].length)
-    );
+    return mei.slice(0, head.start) + headXml.trim() + mei.slice(head.end);
   const root = /<mei\b[^>]*>/.exec(mei);
   if (!root) return mei;
   const at = root.index + root[0].length;

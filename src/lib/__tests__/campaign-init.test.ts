@@ -88,6 +88,7 @@ test("buildCampaignConfig: instigator + repo_id come from args; defaults fill th
   assert.equal(config.fragmentation.strategy, "by-piece");
   assert.equal(config.validation.required_validations, 1);
   assert.equal(config.locking.stale_after_minutes, 1440);
+  assert.equal(config.locking.max_claims_per_person, 10);
   assert.doesNotThrow(() => assertSupported(config));
 });
 
@@ -146,7 +147,8 @@ test("configToYaml: matches the worked example", () => {
       "  required_validations: 1\n" +
       "  pass_threshold: 1\n" +
       "locking:\n" +
-      "  stale_after_minutes: 1440\n",
+      "  stale_after_minutes: 1440\n" +
+      "  max_claims_per_person: 10\n",
   );
 });
 

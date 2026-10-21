@@ -381,7 +381,11 @@ export class CampaignFinisher {
         this.error =
           registration === "conflict"
             ? `The reservation of “${claim.name}” ran out and the name went to another campaign. Everything was committed to ${repo.full_name}, but it cannot be reached under that name.`
-            : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
+            : registration === "renamed"
+              ? `Everything was committed to ${repo.full_name}, but the repository has since been renamed on GitHub. Rename it back to “${claim.name}”, then try again.`
+              : registration === "repo_taken"
+                ? `Everything was committed to ${repo.full_name}, but that repository is already registered under another campaign name.`
+                : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
         this.busy = false;
         this.log.fail();
         return;
