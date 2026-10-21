@@ -13,6 +13,9 @@ os.environ.setdefault("GITHUB_CLIENT_ID", "test-client")
 os.environ.setdefault("GITHUB_CLIENT_SECRET", "test-client-secret")
 os.environ.setdefault("SESSION_DIR", _session_dir.name)
 os.environ.setdefault("DB_PATH", os.path.join(_session_dir.name, "import.db"))
+os.environ.setdefault(
+    "RELAY_DB_PATH", os.path.join(_session_dir.name, "relay.db")
+)
 
 from broker import app as broker  # noqa: E402
 from broker import registry, slug_validation  # noqa: E402
@@ -403,7 +406,9 @@ class RegistryTest(unittest.TestCase):
     def test_one_login_holds_a_limited_number_of_claims(self):
         for i in range(registry.MAX_PENDING_CLAIMS):
             self.assertEqual(self.claim(f"held-{i:02d}").status_code, 201)
-        self.assertEqual(self.claim("one-too-many").status_code, 429)
+        r = self.claim("one-too-many")
+        self.assertEqual(r.status_code, 429)
+        self.assertEqual(r.get_json()["reason"], "too_many_claims")
         # Someone else may still claim.
         self.authenticate("bob")
         self.assertEqual(self.claim("bobs-name").status_code, 201)

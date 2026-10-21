@@ -79,13 +79,13 @@ export async function claimName(name: string): Promise<ClaimResult> {
       };
     if (res.status === 409) return { error: "taken" };
     if (res.status === 422) return { error: "invalid" };
-    // The login holds the registry's limit of claims (MAX_PENDING_CLAIMS);
-    // the broker's own rate limit marks its 429.
-    if (
-      res.status === 429 &&
-      res.headers.get("X-Lets-Encode-Upstream") !== "broker"
-    )
-      return { error: "limit" };
+    // The login holds the registry's limit of claims (MAX_PENDING_CLAIMS).
+    if (res.status === 429) {
+      const { reason } = (await res.json().catch(() => ({}))) as {
+        reason?: string;
+      };
+      if (reason === "too_many_claims") return { error: "limit" };
+    }
     return { error: "unreachable" };
   } catch {
     return { error: "unreachable" };

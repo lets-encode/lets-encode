@@ -182,3 +182,35 @@ test("records a contribution in linear time whatever the header's comments hold"
   const elapsed = performance.now() - started;
   assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
 });
+
+test("applicationNamesIn reads application names in linear time", () => {
+  // A long run of spaces in a name that never closes, and one that does.
+  const spaces = " ".repeat(200_000);
+  const open = `<mei><meiHead><encodingDesc><appInfo><application><name>${spaces}x</appInfo></encodingDesc></meiHead></mei>`;
+  const closed = `<mei><meiHead><encodingDesc><appInfo><application><name>${spaces}Musibot a 1${spaces}</name></application></appInfo></encodingDesc></meiHead></mei>`;
+  const started = performance.now();
+  assert.deepEqual(applicationNamesIn(open), []);
+  assert.deepEqual(applicationNamesIn(closed), ["Musibot a 1"]);
+  const elapsed = performance.now() - started;
+  assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("recordApplications finds an application named inside another name", () => {
+  const mei = BARE.replace(
+    "</fileDesc>",
+    "</fileDesc>\n      <encodingDesc><appInfo><application><name>Old <name>Verovio</name></name></application></appInfo></encodingDesc>",
+  );
+  assert.equal(recordApplications(mei, ["Verovio"]), mei);
+});
+
+test("recordContribution names the contributor in the title statement, not a copy of it", () => {
+  // An identical copy of the title statement, in a comment inside the header
+  // before the file description.
+  const copy = /<titleStmt>[\s\S]*?<\/titleStmt>/.exec(BARE)![0];
+  const comment = `<!-- ${copy} -->`;
+  const mei = BARE.replace("<fileDesc>", `${comment}\n      <fileDesc>`);
+  const out = recordContribution(mei, CONTRIBUTION);
+  assert.ok(out.includes(comment));
+  const fileDesc = out.slice(out.indexOf("<fileDesc>"));
+  assert.match(fileDesc, /<persName role="contributor">octocat<\/persName>/);
+});

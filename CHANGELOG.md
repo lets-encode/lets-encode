@@ -11,7 +11,7 @@ parentheses.
 - Campaign names are bound to their repository and to the login that reserved them.
 - The coordinator refuses oversized or malformed fork input and stops runs after 30 minutes.
 - One person may hold at most ten claims at once in a campaign.
-- Scores are read in linear time and rendered without links or outside references.
+- Scores are read in linear time and rendered without links, outside references or embedded styles.
 - A return from mei-friend acts only on a hand-off this browser started.
 - Comments and change requests are limited to 5,000 characters.
 - Accessibility and error-state fixes on the campaign, task and score pages.

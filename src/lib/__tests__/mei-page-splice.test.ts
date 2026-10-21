@@ -153,6 +153,51 @@ test("splicePage rejects a fork whose page duplicates another page's measure id"
   );
 });
 
+test("splicePage reads measure ids however the attribute is written", () => {
+  // Page 2's first measure renamed to page 1's measure-1, each way an
+  // attribute can be written; a decoy value may come first.
+  for (const written of [
+    "xml:id='measure-1'",
+    'xml:id = "measure-1"',
+    `label='xml:id="fresh"' xml:id="measure-1"`,
+  ]) {
+    const fork = forkAll.replace('xml:id="measure-3"', written);
+    assert.throws(
+      () => splicePage(base, fork, "surface-2"),
+      /Duplicate measure xml:id "measure-1" after splicing surface-2/,
+      written,
+    );
+  }
+});
+
+test("splicePage rejects a page break that names no surface", () => {
+  const fork = forkAll.replace(
+    '<measure xml:id="measure-4"',
+    '<pb n="9"/>\n               <measure xml:id="measure-4"',
+  );
+  assert.throws(
+    () => splicePage(base, fork, "surface-2"),
+    /introduced a page break that names no surface/,
+  );
+});
+
+test("splicePage ignores page breaks in comments and reads long ones", () => {
+  // A commented-out page break neither ends a span nor counts as a break.
+  const commented = forkAll.replace(
+    '<measure xml:id="measure-4"',
+    '<!-- <pb facs="#surface-2"/> -->\n               <measure xml:id="measure-4"',
+  );
+  assert.ok(splicePage(base, commented, "surface-2").includes("<!-- <pb"));
+  // A page break with a long attribute before facs is still page 2's.
+  const long = forkAll.replace(
+    '<pb xml:id="pb-2"',
+    `<pb label="${"x".repeat(3000)}" xml:id="pb-2"`,
+  );
+  const spliced = splicePage(base, long, "surface-2");
+  assert.equal((spliced.match(/<note /g) ?? []).length, 3);
+  assert.ok(!spliced.includes("x".repeat(3000)));
+});
+
 // A physical piece's blank score: no facsimile, one seed measure per page.
 // Its pages have no fixed measure grid, so they are joined span-wise.
 const blank = buildBlankScoreMei(HEAD, 2);

@@ -8,7 +8,8 @@ threading question. WAL mode keeps readers from blocking the odd write.
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
+import time
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
@@ -53,6 +54,18 @@ class Store:
     def __init__(self, db_path: str):
         self.db_path = db_path
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        # WAL mode stays with the file. Setting it on a new file needs a lock
+        # that a worker opening the file at the same moment can hold, and the
+        # busy timeout does not wait for it, so the change is tried again.
+        for attempt in range(50):
+            try:
+                with closing(sqlite3.connect(db_path)) as conn:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                break
+            except sqlite3.OperationalError:
+                if attempt == 49:
+                    raise
+                time.sleep(0.1)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
             # Workers start at the same time: the check and the change are
@@ -68,7 +81,6 @@ class Store:
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
         try:
             with conn:  # one transaction per operation

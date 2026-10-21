@@ -126,7 +126,8 @@ def claim():
         return (
             jsonify(
                 error="You hold {} names for setups already; give one back"
-                " first".format(MAX_PENDING_CLAIMS)
+                " first".format(MAX_PENDING_CLAIMS),
+                reason="too_many_claims",
             ),
             429,
         )

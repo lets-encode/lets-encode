@@ -1379,3 +1379,19 @@ textarea.input {
     font-size: 10.5px;
   }
 }
+
+/* Verovio's own rules for the SVG it renders, which reach the page without
+   its <style> (verovio-render.ts). The rendered page's root <svg> holds the
+   svg.definition-scale. */
+svg:has(> svg.definition-scale) :is(g.ending, g.fing, g.reh, g.tempo) {
+  font-weight: bold;
+}
+svg:has(> svg.definition-scale) :is(g.dir, g.dynam, g.mNum) {
+  font-style: italic;
+}
+svg:has(> svg.definition-scale) g.label {
+  font-weight: normal;
+}
+svg:has(> svg.definition-scale) :is(ellipse, path, polygon, polyline, rect) {
+  stroke: currentColor;
+}

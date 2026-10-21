@@ -7,6 +7,7 @@ import {
   indent,
   startTags,
   stripTags,
+  tagsIn,
   textOf,
   xmlEscape,
   xmlUnescape,
@@ -68,6 +69,31 @@ test("elementsNamedAny counts an element inside another once, with the outer one
     elementsNamedAny(xml, ["persName", "corpName"]).map((e) => e.inner),
     ["A <persName>B</persName>", "C"],
   );
+  // Each start tag takes the first end tag of its own name, as the pattern
+  // <(persName|corpName)\b[^>]*>[\s\S]*?</\1> does.
+  const nested =
+    '<persName role="composer">A <corpName>B <persName>C</persName> D <corpName role="lyricist">E</corpName> F</corpName> G</persName>';
+  assert.deepEqual(
+    elementsNamedAny(nested, ["persName", "corpName"]).map((e) => e.inner),
+    ["A <corpName>B <persName>C", "E"],
+  );
+});
+
+test("tagsIn reads tags outside comments, in either quote style", () => {
+  const xml = `<a x='1' y = "2"><!-- <b/> --><![CDATA[<c/>]]><d e=">"/></a>`;
+  assert.deepEqual(
+    [...tagsIn(xml)].map((t) => [
+      t.name,
+      t.kind,
+      Object.fromEntries(t.attributes ?? []),
+    ]),
+    [
+      ["a", "start", { x: "1", y: "2" }],
+      ["d", "empty", { e: ">" }],
+      ["a", "end", {}],
+    ],
+  );
+  assert.equal([...tagsIn("<a x=1>")][0].attributes, null);
 });
 
 test("stripTags keeps a < that no > follows", () => {

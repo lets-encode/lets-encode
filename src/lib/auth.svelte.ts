@@ -61,6 +61,7 @@ const AUTH_ERRORS: Record<string, string> = {
   denied: "the login was cancelled on GitHub.",
   state: "the login could not be matched to this browser. Try again.",
   user: "GitHub did not say which account logged in. Try again.",
+  busy: "too many logins were started from your network just now. Try again in a minute.",
 };
 
 /**

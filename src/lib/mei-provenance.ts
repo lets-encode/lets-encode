@@ -9,8 +9,10 @@
 
 import {
   elementsNamed,
+  escapeRegex,
   firstElementNamed,
   indent,
+  startTags,
   stripTags,
   xmlEscape,
   xmlUnescape,
@@ -56,14 +58,20 @@ function withContributor(head: string, name: string): string {
         "</titleStmt>",
         `${indent(4)}<respStmt>\n${entry}${indent(4)}</respStmt>\n${indent(3)}`,
       );
-  // Function replacement: `updated` carries user text, which must not be read for $-patterns.
-  return head.replace(titleStmt.text, () => updated);
+  // The title statement's own place: an identical copy may come earlier, in
+  // a comment.
+  const at = fileDesc.index + titleStmt.index;
+  return head.slice(0, at) + updated + head.slice(at + titleStmt.text.length);
 }
 
 /** The application among <appInfo>'s entries, added once (matched by name). */
 function withApplication(head: string, name: string): string {
-  if ([...elementsNamed(head, "name")].some((el) => el.inner.trim() === name))
-    return head;
+  // Present: some <name> start tag followed by the name and an end tag.
+  const recorded = new RegExp(`\\s*${escapeRegex(name)}\\s*</name>`, "y");
+  for (const { start, tag } of startTags(head, "name")) {
+    recorded.lastIndex = start + tag.length;
+    if (recorded.test(head)) return head;
+  }
 
   const id = `app-${
     name
@@ -134,11 +142,13 @@ function firstElement(
 export function applicationNamesIn(mei: string): string[] {
   const head = firstElement(mei, "meiHead")?.text ?? "";
   const appInfo = firstElement(head, "appInfo")?.text ?? "";
-  return [
-    ...appInfo.matchAll(
-      /<application\b[^>]{0,2000}>[\s\S]{0,2000}?<name\b[^>]{0,2000}>\s*([^<]*?)\s*<\/name>/g,
-    ),
-  ].map((m) => xmlUnescape(m[1]));
+  return [...elementsNamed(appInfo, "application")].flatMap((application) => {
+    // The first <name> of each application, when it holds only text.
+    const name = firstElementNamed(application.inner, "name")?.inner;
+    return name === undefined || name.includes("<")
+      ? []
+      : [xmlUnescape(name.trim())];
+  });
 }
 
 /**

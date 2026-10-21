@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import os
+import struct
 import tempfile
 import time
 import unittest
@@ -103,12 +104,58 @@ class BrokerTest(unittest.TestCase):
         self.assertTrue(params["code_challenge"][0])
         self.assertTrue(params["state"][0])
 
-    def test_login_is_rate_limited_per_address(self):
+    def test_login_is_rate_limited_per_network_and_overall(self):
         broker.limiter.reset()
         self.addCleanup(broker.limiter.reset)
-        statuses = [self.client.get("/login").status_code for _ in range(31)]
-        self.assertEqual(statuses[:30], [302] * 30)
-        self.assertEqual(statuses[30], 429)
+
+        def login(address):
+            response = self.client.get(
+                "/login?return_to=/campaigns",
+                headers={"X-Forwarded-For": address},
+            )
+            return urlsplit(response.headers["Location"])
+
+        # Addresses of one IPv6 /64 network count together; past the limit
+        # the browser is sent back to the app with a code it explains.
+        sent = [login(f"2001:db8:1:2::{n:x}") for n in range(31)]
+        self.assertEqual(
+            {location.netloc for location in sent[:30]}, {"github.com"}
+        )
+        self.assertEqual(
+            (sent[30].path, parse_qs(sent[30].query)),
+            ("/campaigns", {"auth_error": ["busy"]}),
+        )
+        # Every client together has a ceiling as well.
+        broker.limiter.reset()
+        sent = [login(f"10.0.{n // 250}.{n % 250}") for n in range(301)]
+        self.assertEqual(
+            {location.netloc for location in sent[:300]}, {"github.com"}
+        )
+        self.assertEqual(parse_qs(sent[300].query), {"auth_error": ["busy"]})
+
+    def test_rate_limits_key_ipv6_by_network(self):
+        for address, key in (
+            ("198.51.100.7", "198.51.100.7"),
+            ("::ffff:198.51.100.7", "198.51.100.7"),
+            ("2001:db8:1:2:3:4:5:6", "2001:db8:1:2::/64"),
+        ):
+            with broker.app.test_request_context(
+                "/login", environ_base={"REMOTE_ADDR": address}
+            ):
+                self.assertEqual(broker.client_network(), key, address)
+
+    def test_a_session_without_a_token_is_kept_for_the_login_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            files = broker.SessionFiles(directory)
+            files.set("pre", {"return_to": "/"}, timeout=43200)
+            files.set("in", {"githubToken": "t"}, timeout=43200)
+
+            def expires(key):
+                with open(files._get_filename(key), "rb") as f:
+                    return struct.unpack("I", f.read(4))[0] - time.time()
+
+            self.assertLessEqual(expires("pre"), broker.SessionFiles.PRELOGIN_S)
+            self.assertGreater(expires("in"), 43000)
 
     def test_session_files_are_removed_when_expired_and_not_for_their_number(
         self,
@@ -194,7 +241,9 @@ class BrokerTest(unittest.TestCase):
                     "/proxy/api.github.com/user?detail=full",
                     headers={
                         "Authorization": "Bearer browser-token",
-                        "X-Test": "kept",
+                        "If-None-Match": '"user-v0"',
+                        "X-GitHub-Api-Version": "2022-11-28",
+                        "X-HTTP-Method-Override": "DELETE",
                     },
                 )
 
@@ -206,9 +255,18 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(
             options["headers"]["Authorization"], "token server-side-token"
         )
-        self.assertNotIn("Cookie", options["headers"])
-        self.assertNotIn("Host", options["headers"])
-        self.assertEqual(options["headers"]["X-Test"], "kept")
+        # Only the headers the app's calls carry go upstream.
+        self.assertEqual(
+            {
+                k: v
+                for k, v in options["headers"].items()
+                if k != "Authorization"
+            },
+            {
+                "If-None-Match": '"user-v0"',
+                "X-GitHub-Api-Version": "2022-11-28",
+            },
+        )
         self.assertFalse(options["allow_redirects"])
         self.assertEqual(response.headers["Cache-Control"], "no-store")
         self.assertEqual(response.headers["ETag"], '"user-v1"')
@@ -230,7 +288,6 @@ class BrokerTest(unittest.TestCase):
         )
         relayed = [
             ("GET", "user"),
-            ("GET", "user/orgs?per_page=100"),
             ("GET", "user/123"),
             ("GET", "repositories/42"),
             ("GET", "search/repositories?q=topic:t"),
@@ -259,10 +316,18 @@ class BrokerTest(unittest.TestCase):
             ("POST", "repos/o/r/git/blobs"),
             ("POST", "repos/o/r/git/trees"),
             ("POST", "repos/o/r/git/commits"),
-            ("POST", "repos/o/r/git/refs"),
-            ("POST", "repos/o/r/actions/workflows/caller.yml/dispatches"),
+            (
+                "POST",
+                "repos/o/r/git/refs",
+                {"ref": "refs/heads/T1", "sha": "a"},
+            ),
+            (
+                "POST",
+                "repos/o/r/actions/workflows/caller.yml/dispatches",
+                {"ref": "main"},
+            ),
             ("PATCH", "repos/o/r/pulls/7"),
-            ("PATCH", "repos/o/r/git/refs/heads/T1"),
+            ("PATCH", "repos/o/r/git/refs/heads/T1", {"sha": "a"}),
             ("PUT", "repos/o/r/topics"),
             ("PUT", "repos/o/r/subscription"),
             ("DELETE", "repos/o/r/git/refs/heads/wip/T1"),
@@ -279,21 +344,37 @@ class BrokerTest(unittest.TestCase):
             ("DELETE", "repos/o/r/git/refs/tags/v1"),
             ("GET", "user/emails"),
             ("POST", "gists"),
+            # Writes whose body does more than the app's own.
+            (
+                "PATCH",
+                "repos/o/r/git/refs/heads/main",
+                {"sha": "a", "force": True},
+            ),
+            ("POST", "repos/o/r/git/refs", {"ref": "refs/tags/v1", "sha": "a"}),
+            (
+                "POST",
+                "repos/o/r/actions/workflows/caller.yml/dispatches",
+                {"ref": "main", "inputs": {"x": "1"}},
+            ),
         ]
         with patch.object(
             broker.requests, "request", return_value=upstream
         ) as request_upstream:
-            for method, path in relayed:
+            for method, path, *body in relayed:
                 response = self.client.open(
-                    f"/proxy/api.github.com/{path}", method=method
+                    f"/proxy/api.github.com/{path}",
+                    method=method,
+                    json=body[0] if body else None,
                 )
                 self.assertEqual(response.status_code, 200, (method, path))
             self.assertEqual(request_upstream.call_count, len(relayed))
             request_upstream.reset_mock()
             with self.assertLogs(broker.app.logger.name, level="WARNING"):
-                for method, path in refused:
+                for method, path, *body in refused:
                     response = self.client.open(
-                        f"/proxy/api.github.com/{path}", method=method
+                        f"/proxy/api.github.com/{path}",
+                        method=method,
+                        json=body[0] if body else None,
                     )
                     self.assertEqual(response.status_code, 403, (method, path))
                     self.assertEqual(response.get_json()["source"], "broker")
@@ -445,6 +526,20 @@ class BrokerTest(unittest.TestCase):
                     response = self.client.get("/iiif?url=https://ex.test/m")
                 self.assertEqual(response.status_code, 400, address)
                 upstream.assert_not_called()
+
+    def test_relays_answer_fetch_requests_only(self):
+        self.authenticate()
+        for path in ("/iiif?url=https://ex.test/p.jpg", "/omr/blob?url=x"):
+            with patch.object(broker.requests, "get") as upstream:
+                response = self.client.get(
+                    path, headers={"Sec-Fetch-Dest": "image"}
+                )
+            self.assertEqual(response.status_code, 403, path)
+            upstream.assert_not_called()
+        response, _ = self.iiif_get(
+            "https://ex.test/p.jpg", self.iiif_response(b"x", "image/jpeg")
+        )
+        self.assertEqual(response.status_code, 200)
 
     def test_iiif_relays_without_credentials_and_caps_the_body(self):
         self.authenticate()

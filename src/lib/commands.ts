@@ -669,9 +669,6 @@ async function settleWhenProcessed(
   );
 }
 
-// Open a PR that adds a lock row (the Action re-authors who/when), carrying
-// the invoking command's envelope in its body. Shared by the claim command
-// and "open in mei-friend" (where opening == claiming).
 /**
  * Why the viewer may not claim another task, when they hold the most claims
  * the campaign allows one person at once (locking.max_claims_per_person, which
@@ -692,6 +689,9 @@ function claimLimitError(
     : null;
 }
 
+// Open a PR that adds a lock row (the Action re-authors who/when), carrying
+// the invoking command's envelope in its body. Shared by the claim command
+// and "open in mei-friend" (where opening == claiming).
 async function openClaimPr(
   ctx: CommandContext,
   task_id: string,

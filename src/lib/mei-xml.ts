@@ -95,32 +95,152 @@ export function* elementsNamed(
   }
 }
 
+/** A start tag startTags found: where it is and its text. */
+export interface StartTag {
+  /** Offset of the "<". */
+  start: number;
+  /** "<name …>", up to the first ">". */
+  tag: string;
+}
+
 /**
- * The start tags of the elements called `name` in `xml`, in document order,
- * as the pattern `<name\b[^>]*>` matches them globally, found in linear time.
+ * The start tags of the elements called `name` in `xml` from offset `from`,
+ * in document order, as the pattern `<name\b[^>]*>` matches them globally,
+ * found in linear time.
  */
-export function* startTags(xml: string, name: string): Generator<string> {
+export function* startTags(
+  xml: string,
+  name: string,
+  from = 0,
+): Generator<StartTag> {
   const open = new RegExp(`<${escapeRegex(name)}\\b`, "g");
+  open.lastIndex = from;
   for (let m = open.exec(xml); m; m = open.exec(xml)) {
     const tagEnd = xml.indexOf(">", m.index);
     if (tagEnd < 0) return;
-    yield xml.slice(m.index, tagEnd + 1);
+    yield { start: m.index, tag: xml.slice(m.index, tagEnd + 1) };
     open.lastIndex = tagEnd + 1;
+  }
+}
+
+/** A tag tagsIn found: its name and kind, where it is, and its attributes. */
+export interface TagAt {
+  /** The element name as written, a prefix included. */
+  name: string;
+  /** "empty" for an empty-element tag, "<name …/>". */
+  kind: "start" | "end" | "empty";
+  /** Offset of the "<". */
+  start: number;
+  /** Offset just after the ">". */
+  end: number;
+  /**
+   * The attributes by name, values as written (entities not resolved); null
+   * when the tag holds anything but name="value" and name='value' pairs.
+   */
+  attributes: Map<string, string> | null;
+}
+
+const ATTRIBUTE = /\s*([^\s=/>"']+)\s*=\s*(?:"([^"]*)"|'([^']*)')/y;
+
+function attributesOf(text: string): Map<string, string> | null {
+  const attributes = new Map<string, string>();
+  let read = 0;
+  ATTRIBUTE.lastIndex = 0;
+  for (let m = ATTRIBUTE.exec(text); m; m = ATTRIBUTE.exec(text)) {
+    attributes.set(m[1], m[2] ?? m[3]);
+    read = ATTRIBUTE.lastIndex;
+  }
+  return text.slice(read).trim() === "" ? attributes : null;
+}
+
+/**
+ * The tags of `xml` from offset `from`, in document order, found in linear
+ * time. Comments, CDATA sections, processing instructions and declarations
+ * hold no tags; a tag ends at the first ">" outside quotes. The scan stops at
+ * a comment, section or tag that does not end.
+ */
+export function* tagsIn(xml: string, from = 0): Generator<TagAt> {
+  for (let at = xml.indexOf("<", from); at >= 0; ) {
+    const skipTo = xml.startsWith("<!--", at)
+      ? "-->"
+      : xml.startsWith("<![CDATA[", at)
+        ? "]]>"
+        : xml.startsWith("<?", at)
+          ? "?>"
+          : xml.startsWith("<!", at)
+            ? ">"
+            : null;
+    if (skipTo) {
+      const close = xml.indexOf(skipTo, at + 2);
+      if (close < 0) return;
+      at = xml.indexOf("<", close + skipTo.length);
+      continue;
+    }
+    let end = at + 1;
+    for (let quote = ""; end < xml.length; end++) {
+      const c = xml[end];
+      if (quote) {
+        if (c === quote) quote = "";
+      } else if (c === '"' || c === "'") quote = c;
+      else if (c === ">") break;
+    }
+    if (end >= xml.length) return;
+    const text = xml.slice(at + 1, end);
+    const kind = text.startsWith("/")
+      ? "end"
+      : text.endsWith("/")
+        ? "empty"
+        : "start";
+    const body =
+      kind === "end"
+        ? text.slice(1)
+        : kind === "empty"
+          ? text.slice(0, -1)
+          : text;
+    const name = /^[^\s/>]*/.exec(body)![0];
+    yield {
+      name,
+      kind,
+      start: at,
+      end: end + 1,
+      attributes:
+        kind === "end" ? new Map() : attributesOf(body.slice(name.length)),
+    };
+    at = xml.indexOf("<", end + 1);
   }
 }
 
 /**
  * The elements called any of `names`, in document order, as a global pattern
- * such as `<(a|b)\b[^>]*>[\s\S]*?</\1>` matches them: one that starts inside
- * another is not counted. Found in linear time.
+ * such as `<(a|b)\b[^>]*>[\s\S]*?</\1>` matches them: each start tag with the
+ * first end tag of its own name after it, scanning on after that end tag.
+ * Found in linear time.
  */
 export function elementsNamedAny(xml: string, names: string[]): ElementAt[] {
-  const found = names
-    .flatMap((name) => [...elementsNamed(xml, name)])
-    .sort((a, b) => a.start - b.start);
+  const open = new RegExp(`<(${names.map(escapeRegex).join("|")})\\b`, "g");
+  // A name with no end tag after some point has none after any later point.
+  const unclosed = new Set<string>();
   const elements: ElementAt[] = [];
-  for (const element of found) {
-    if (element.start >= (elements.at(-1)?.end ?? 0)) elements.push(element);
+  let tagEnd = -1;
+  for (let m = open.exec(xml); m; m = open.exec(xml)) {
+    const name = m[1];
+    if (unclosed.has(name)) continue;
+    if (tagEnd < m.index) tagEnd = xml.indexOf(">", m.index);
+    if (tagEnd < 0) break;
+    const close = `</${name}>`;
+    const closeAt = xml.indexOf(close, tagEnd + 1);
+    if (closeAt < 0) {
+      unclosed.add(name);
+      continue;
+    }
+    const end = closeAt + close.length;
+    elements.push({
+      start: m.index,
+      end,
+      tag: xml.slice(m.index, tagEnd + 1),
+      inner: xml.slice(tagEnd + 1, closeAt),
+    });
+    open.lastIndex = end;
   }
   return elements;
 }

@@ -875,7 +875,7 @@ export function measuredSurfaceIds(text: string): string[] {
   return [...elementsNamed(text, "surface")].flatMap((surface) => {
     const id = attr(surface.tag, "xml:id");
     return id &&
-      [...startTags(surface.inner, "zone")].some((tag) =>
+      [...startTags(surface.inner, "zone")].some(({ tag }) =>
         /\btype="measure"/.test(tag),
       )
       ? [id]
@@ -998,11 +998,11 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   // </surface>.
   for (const surfaceAt of elementsNamed(text, "surface", true)) {
     const body = surfaceAt.inner;
-    const [graphic] = startTags(body, "graphic");
+    const graphic = [...startTags(body, "graphic")][0]?.tag;
     if (!graphic) continue;
     const zones: ZoneModel[] = [];
     const boxesOnly: MeasureBox[] = [];
-    for (const tag of startTags(body, "zone")) {
+    for (const { tag } of startTags(body, "zone")) {
       if (attr(tag, "type") !== "measure") continue;
       const box = {
         ulx: Number(attr(tag, "ulx") ?? 0),

@@ -115,14 +115,21 @@ class SessionFiles(FileSystemCache):
     Session files without a file limit: on a write, expired files are removed
     instead, at most every SWEEP_S seconds per process. Past cachelib's own
     limit the live sessions that expire soonest are removed, which logs their
-    users out.
+    users out. A session without a GitHub token, as /login starts one, holds
+    only the OAuth round trip and is kept PRELOGIN_S at most.
     """
 
     SWEEP_S = 600
+    PRELOGIN_S = 900
 
     def __init__(self, cache_dir):
         super().__init__(cache_dir=cache_dir, threshold=0)
         self._next_sweep = 0.0
+
+    def set(self, key, value, timeout=None, mgmt_element=False):
+        if isinstance(value, dict) and "githubToken" not in value:
+            timeout = min(timeout or self.PRELOGIN_S, self.PRELOGIN_S)
+        return super().set(key, value, timeout, mgmt_element)
 
     def _prune(self):
         now = time.time()
@@ -164,12 +171,30 @@ if proxy_hops:
         app.wsgi_app, x_for=proxy_hops, x_proto=proxy_hops, x_host=proxy_hops
     )
 
+
 # Rate-limit counters live in the storage RATELIMIT_STORAGE_URI names. The
 # default memory:// keeps them in-process: with several gunicorn workers the
 # effective limit is the stated limit times the worker count, and counters
 # reset on restart. Point the URI at redis/memcached to share counters.
+def client_network():
+    """
+    The client's address as the rate limits key on it: an IPv6 address by its
+    /64 network, which one host or household usually holds whole.
+    """
+    address = get_remote_address()
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return address
+    if ip.version == 4:
+        return address
+    if ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    return str(ipaddress.IPv6Network((int(ip), 64), strict=False))
+
+
 limiter = Limiter(
-    get_remote_address,
+    client_network,
     app=app,
     default_limits=["20 per second"],
     storage_uri=getenv("RATELIMIT_STORAGE_URI") or "memory://",
@@ -191,6 +216,19 @@ def reject_cross_origin_writes():
         return None
     if urlsplit(source).netloc != request.host:
         return jsonify(error="cross-origin request rejected"), 403
+    return None
+
+
+# The relays of third-party bodies answer the app's fetch() calls only. A
+# load the browser makes for an image, font or stylesheet (a url() in a page's
+# markup) names its destination in Sec-Fetch-Dest; a browser that sends no
+# such header is let through.
+@app.before_request
+def relay_fetch_only():
+    if request.endpoint not in ("iiif_fetch", "omr_blob"):
+        return None
+    if request.headers.get("Sec-Fetch-Dest", "empty") != "empty":
+        return jsonify(error="The relay answers fetch requests only"), 403
     return None
 
 
@@ -239,6 +277,13 @@ def broker_rate_limited(_error):
             separators=(",", ":"),
         ),
     )
+    if request.endpoint == "login":
+        # The browser navigates to /login: back to the app, which says so.
+        return redirect(
+            with_auth_error(
+                safe_return_path(request.args.get("return_to")), "busy"
+            )
+        )
     response = jsonify(
         error="OAuth broker request rate limit exceeded", source="broker"
     )
@@ -286,7 +331,6 @@ PROXY_ROUTES = {
     for method, patterns in {
         "GET": (
             r"/user",
-            r"/user/orgs",
             r"/user/\d+",
             r"/repositories/\d+",
             r"/search/repositories",
@@ -327,6 +371,41 @@ PROXY_ROUTES = {
         "DELETE": (_REPO + r"/git/refs/heads/.+",),
     }.items()
 }
+
+# The request headers the app's GitHub calls carry; no other is forwarded,
+# the session cookie and a client's Authorization among them.
+PROXY_HEADERS = (
+    "Accept",
+    "Content-Type",
+    "If-None-Match",
+    "X-GitHub-Api-Version",
+)
+
+# Writes the allowlist admits whose body can do more than the app's own: the
+# app creates a ref only as a branch, moves one only without force, and
+# dispatches a workflow without inputs.
+_REF_WRITE = re.compile(_REPO + r"/git/refs(/heads/.+)?")
+_DISPATCH = re.compile(_REPO + r"/actions/workflows/[^/]+/dispatches")
+
+
+def write_beyond_the_app(path):
+    """Whether this request's body does more than the app's own writes."""
+    if request.method not in ("POST", "PATCH"):
+        return False
+    ref_write = _REF_WRITE.fullmatch(path)
+    dispatch = _DISPATCH.fullmatch(path)
+    if not (ref_write or dispatch):
+        return False
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return True
+    if dispatch:
+        return set(body) != {"ref"}
+    return bool(body.get("force")) or (
+        request.method == "POST"
+        and not str(body.get("ref", "")).startswith("refs/heads/")
+    )
+
 
 # /iiif relay limits. Campaign sources come from any institution's IIIF server,
 # so the host cannot be an allowlist; the request is constrained instead — see
@@ -435,7 +514,8 @@ OMR_ROUTES = (
     ("GET", re.compile(_PAGE + r"/files")),
     ("POST", re.compile(_PAGE + r"/file-urls")),
     ("POST", re.compile(_PAGE + r"/pipeline-executions")),
-    ("GET", re.compile(_PAGE + r"/pipeline-executions/(\d+)")),
+    # An execution id in decimal, as the service writes it and SQLite holds it.
+    ("GET", re.compile(_PAGE + r"/pipeline-executions/(0|[1-9][0-9]{0,17})")),
 )
 
 
@@ -677,8 +757,9 @@ AUTH_ERROR_CODES = {"access_denied": "denied", "mismatching_state": "state"}
 
 
 @app.route("/login")
-# Every visit writes a session file, which stays until it expires.
+# Every visit writes a session file, kept for the OAuth round trip.
 @limiter.limit("30 per minute")
+@limiter.limit("300 per minute", key_func=lambda: "all")
 def login():
     # Remember where the SPA wants the user back, then hand off to GitHub.
     # authlib generates and session-stores the OAuth `state` parameter.
@@ -767,7 +848,7 @@ def logout():
 # lowering the client's rate makes every large source fail partway.
 @limiter.limit(
     "20 per second",
-    key_func=lambda: session.get("userLogin") or get_remote_address(),
+    key_func=lambda: session.get("userLogin") or client_network(),
 )
 @in_relay_slot
 def iiif_fetch():
@@ -869,7 +950,7 @@ def iiif_fetch():
 # so a page is a burst of a few dozen calls.
 @limiter.limit(
     "100 per second",
-    key_func=lambda: session.get("userLogin") or get_remote_address(),
+    key_func=lambda: session.get("userLogin") or client_network(),
 )
 def omr_api(path):
     """
@@ -955,7 +1036,7 @@ def omr_api(path):
             relay_store.add_page(created, login)
     elif response.ok and starts_run:
         started = str(json_field(response, "execution_id"))
-        if started.isdecimal():
+        if re.fullmatch(r"0|[1-9][0-9]{0,17}", started):
             relay_store.add_execution(page_id, int(started))
         count_relay_use("omr_runs", 1, page=page_id)
     return (
@@ -976,7 +1057,7 @@ def omr_api(path):
 @app.route("/omr/blob", methods=["GET", "PUT"])
 @limiter.limit(
     "100 per second",
-    key_func=lambda: session.get("userLogin") or get_remote_address(),
+    key_func=lambda: session.get("userLogin") or client_network(),
 )
 @in_relay_slot
 def omr_blob():
@@ -1101,7 +1182,7 @@ def omr_blob():
 # other.
 @limiter.limit(
     "30 per second",
-    key_func=lambda: session.get("userLogin") or get_remote_address(),
+    key_func=lambda: session.get("userLogin") or client_network(),
 )
 def proxy(url):
     # Only logged-in users may use the proxy: it exists to attach the session's
@@ -1123,7 +1204,11 @@ def proxy(url):
     if any(segment in (".", "..") for segment in parsed.path.split("/")):
         return jsonify(error="Path not allowed"), 400
     routes = PROXY_ROUTES.get(request.method)
-    if routes is None or not routes.fullmatch(parsed.path):
+    if (
+        routes is None
+        or not routes.fullmatch(parsed.path)
+        or write_beyond_the_app(parsed.path)
+    ):
         app.logger.warning(
             "github_api %s",
             json.dumps(
@@ -1146,16 +1231,12 @@ def proxy(url):
     if request.query_string:
         url += "?" + request.query_string.decode()
 
-    # Drop hop-by-hop and identity-bearing headers: never forward our own
-    # session cookie upstream, let requests set its own Host, and ignore any
-    # client-supplied Authorization — credentials are attached server-side from
-    # the session so that the OAuth token never needs to be present in the
-    # browser.
-    excluded_request_headers = {"host", "cookie", "authorization"}
+    # The token is attached here from the session, so it never needs to be
+    # in the browser.
     headers = {
-        key: value
-        for key, value in request.headers
-        if key.lower() not in excluded_request_headers
+        name: request.headers[name]
+        for name in PROXY_HEADERS
+        if name in request.headers
     }
     headers["Authorization"] = "token " + session["githubToken"]
 

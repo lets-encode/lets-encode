@@ -13,33 +13,27 @@ import type { VerovioToolkit } from "verovio/esm";
 const SANITIZE_SVG = {
   USE_PROFILES: { svg: true, svgFilters: true },
   ADD_TAGS: ["use"],
-  // A rendered score links nowhere; a link's content is kept. Verovio writes
-  // no style attributes.
-  FORBID_TAGS: ["a"],
+  // A rendered score links nowhere; a link's content is kept. A <style>
+  // applies to the whole page, so none is kept: Verovio's own rules are in
+  // ui.css. Verovio writes no style attributes.
+  FORBID_TAGS: ["a", "style"],
   FORBID_ATTR: ["style"],
 };
 // SVG that an MEI file embeds (<fig><svg>) reaches the output as written, so
-// these rules hold for every element. A <style> applies to the whole page:
-// only Verovio's own, written as a child of its top-level <svg>, is kept.
-DOMPurify.addHook("uponSanitizeElement", (node, data) => {
-  if (data.tagName !== "style") return;
-  const parent = node.parentElement;
-  const topLevel =
-    parent?.nodeName.toLowerCase() === "svg" &&
-    parent.parentElement?.nodeName.toLowerCase() === "body";
-  if (!topLevel) parent?.removeChild(node);
-});
-// Nothing may load another document: an href that is not a fragment, and a
-// url() that is not one in any attribute, are removed, and so is a <use> left
-// without an href. Both href attributes count: SVG 2 browsers follow href,
-// older ones xlink:href.
-const EXTERNAL_URL = /url\(\s*(?!['"]?#)/i;
+// these rules hold for every element. Nothing may load another document: an
+// href that is not a fragment is removed, and so is any other attribute with
+// a CSS escape or a url() other than url(#id); a <use> left without an href
+// goes too. Both href attributes count: SVG 2 browsers follow href, older
+// ones xlink:href.
+const LOCAL_URL = /^url\(#[\w.:-]+\)$/;
 DOMPurify.addHook("afterSanitizeAttributes", (node) => {
   for (const attribute of [...node.attributes]) {
+    const value = attribute.value;
     const external =
       attribute.localName === "href"
-        ? !attribute.value.startsWith("#")
-        : EXTERNAL_URL.test(attribute.value);
+        ? !value.startsWith("#")
+        : value.includes("\\") ||
+          (/url\(/i.test(value) && !LOCAL_URL.test(value.trim()));
     if (external) node.removeAttribute(attribute.name);
   }
   if (
