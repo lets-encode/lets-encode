@@ -5,6 +5,9 @@ parentheses.
 
 ## 2026-10-21
 
+- The wizard offers OMR with instruments named during measure correction, which plans no score setup task and makes later pages wait for the first.
+- Score definitions keep the xml:ids of their staves and staff groups.
+- The corrected layout can hold the named instruments and the score staff of each staff box.
 - Staff transcription runs one Musibot execution for all staves of a batch instead of one per staff.
 - Proxied writes are limited to campaigns, session tokens are encrypted and revoked on expiry, and the compromised eMudhra CAs are no longer trusted.
 - Vite and the cookie package are updated to versions without known vulnerabilities.

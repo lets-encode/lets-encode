@@ -45,6 +45,13 @@ const twoPages: FacsimilePage[] = [
 
 const model = () => ({ ...initialFacsimileModel(twoPages), headXml: HEAD });
 
+/** A score definition without the xml:ids a parse reads back. */
+const withoutIds = (scoreDef: ScoreDefModel): ScoreDefModel => ({
+  ...scoreDef,
+  staves: scoreDef.staves.map(({ id: _id, ...staff }) => staff),
+  groups: scoreDef.groups.map(({ id: _id, ...group }) => group),
+});
+
 test("stage A: surfaces, graphics and labelled zones — no measures, no breaks", () => {
   const mei = buildFacsimileMei(model());
   assert.equal(SyntaxValidator.validate(mei), true);
@@ -543,11 +550,63 @@ test("the score definition round-trips through both builders", () => {
   const blank = buildBlankScoreMei(HEAD, 2, THREE_STAVES);
   for (const mei of [facsimile, blank]) {
     assert.equal(SyntaxValidator.validate(mei), true);
-    assert.deepEqual(parseScoreDef(mei), THREE_STAVES);
+    assert.deepEqual(withoutIds(parseScoreDef(mei)), THREE_STAVES);
   }
-  assert.deepEqual(parseFacsimileMei(facsimile).scoreDef, THREE_STAVES);
+  assert.deepEqual(
+    withoutIds(parseFacsimileMei(facsimile).scoreDef),
+    THREE_STAVES,
+  );
   // The label with markup-significant characters is escaped in the emission.
   assert.ok(facsimile.includes(">Violoncello &amp; Basso</label>"));
+});
+
+test("given staff and group ids are written once, on the first movement, and read back", () => {
+  const scoreDef: ScoreDefModel = {
+    ...THREE_STAVES,
+    staves: THREE_STAVES.staves.map((staff, i) => ({
+      ...staff,
+      id: `i${i + 1}`,
+    })),
+    groups: [
+      {
+        id: "g1",
+        start: 1,
+        end: 2,
+        symbol: "bracket",
+        label: "",
+        barThru: false,
+        oneInstrument: false,
+      },
+    ],
+  };
+  const m = { ...model(), scoreDef };
+  m.pages[1].zones[0].mdiv = true;
+  const mei = buildFacsimileMei(m, { withBreaks: true });
+  assert.equal(SyntaxValidator.validate(mei), true);
+  const ids = [...mei.matchAll(/\bxml:id="([^"]*)"/g)].map((x) => x[1]);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const id of ["i1", "i2", "i3", "g1"])
+    assert.equal(ids.filter((x) => x === id).length, 1);
+  const second = mei.slice(mei.indexOf('<mdiv xml:id="mdiv-2"'));
+  assert.ok(!second.includes('xml:id="i1"'));
+  assert.deepEqual(parseScoreDef(mei), scoreDef);
+
+  const replaced = replaceScoreDef(mei, {
+    ...scoreDef,
+    staves: scoreDef.staves.map((staff) => ({
+      ...staff,
+      clefShape: "G",
+      clefLine: 2,
+    })),
+  });
+  const replacedIds = [...replaced.matchAll(/\bxml:id="(i\d|g1)"/g)].map(
+    (x) => x[1],
+  );
+  assert.deepEqual(replacedIds, ["g1", "i1", "i2", "i3"]);
+  assert.deepEqual(
+    parseScoreDef(replaced).staves.map((staff) => staff.id),
+    ["i1", "i2", "i3"],
+  );
 });
 
 test("transposed staves round-trip with their own key signatures", () => {
@@ -590,7 +649,7 @@ test("transposed staves round-trip with their own key signatures", () => {
   );
   assert.match(mei, /<staffDef[^>]* n="3"[^>]* keysig="0" meter/);
   assert.doesNotMatch(mei, /<staffDef[^>]* n="4"[^>]* (keysig|trans)/);
-  assert.deepEqual(parseScoreDef(mei), scoreDef);
+  assert.deepEqual(withoutIds(parseScoreDef(mei)), scoreDef);
 });
 
 test("keysig 0 means no accidentals and emits no attribute", () => {
@@ -619,7 +678,7 @@ test("a symbol signature emits meter.sym instead of the numeric meter", () => {
   );
   assert.ok(mei.includes('meter.sym="cut"'));
   assert.ok(!mei.includes("meter.count"));
-  assert.deepEqual(parseScoreDef(mei), cut);
+  assert.deepEqual(withoutIds(parseScoreDef(mei)), cut);
   // Common time implies 4/4 on the parse.
   const common = parseScoreDef(
     '<scoreDef meter.sym="common"><staffGrp><staffDef n="1"/></staffGrp></scoreDef>',
@@ -674,7 +733,7 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
     mei,
     /<staffGrp xml:id="staffGrp-2" symbol="brace" bar\.thru="true">[\s\S]*?n="2"[\s\S]*?<\/staffGrp>\n\s*<staffDef[^>]*n="3"/,
   );
-  assert.deepEqual(parseScoreDef(mei), piano);
+  assert.deepEqual(withoutIds(parseScoreDef(mei)), piano);
   // A bracket without barlines through writes no bar.thru.
   const bracketed = {
     ...piano,
@@ -693,7 +752,7 @@ test("staff groups nest their staves in a symbol-carrying staffGrp and round-tri
   assert.ok(bracketMei.includes('symbol="bracket"'));
   assert.ok(!bracketMei.includes("bar.thru"));
   assert.ok(!bracketMei.includes("instrDef"));
-  assert.deepEqual(parseScoreDef(bracketMei), bracketed);
+  assert.deepEqual(withoutIds(parseScoreDef(bracketMei)), bracketed);
 });
 
 test("staff groups nest two levels deep and round-trip in document order", () => {
@@ -734,7 +793,7 @@ test("staff groups nest two levels deep and round-trip in document order", () =>
     mei,
     /<\/staffGrp>\n\s*<staffDef[^>]*n="4"[^>]*\/>\n\s*<staffGrp[^>]*symbol="bracket"/,
   );
-  assert.deepEqual(parseScoreDef(mei), orchestra);
+  assert.deepEqual(withoutIds(parseScoreDef(mei)), orchestra);
 });
 
 test("percussion, tablature and octave-displaced staves round-trip", () => {
@@ -779,7 +838,7 @@ test("percussion, tablature and octave-displaced staves round-trip", () => {
   assert.ok(
     mei.includes('lines="7" notationtype="tab.lute.german" meter.count'),
   );
-  assert.deepEqual(parseScoreDef(mei), mixed);
+  assert.deepEqual(withoutIds(parseScoreDef(mei)), mixed);
 });
 
 test("seed measures hold one resting staff per staffDef in both builders", () => {

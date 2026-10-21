@@ -67,9 +67,12 @@ export interface ConfigPiece {
   /**
    * For a facsimile piece, how its score is prepared before encoding:
    * 'measure-detection' (measure boxes detected at creation and corrected in
-   * the measure-correction pre-task) or 'omr' (staff and measure boxes from
-   * the Musibot layout model, corrected in the layout pre-task; encoding
-   * starts from its transcription). Unset means 'measure-detection'.
+   * the measure-correction pre-task), 'omr' (staff and measure boxes from
+   * the Musibot layout model, corrected in the layout pre-task; a score-setup
+   * pre-task follows; encoding starts from its transcription) or
+   * 'omr-instruments' (as 'omr', with the instrument of every staff box named
+   * in the layout pre-task and no score-setup pre-task). Unset means
+   * 'measure-detection'.
    */
   preparation?: string;
   /** For a physical piece, how many pages of the source it spans; unset = unknown. */
@@ -78,8 +81,16 @@ export interface ConfigPiece {
 }
 
 /** The ways a facsimile piece's score can be prepared before encoding. */
-export const PREPARATIONS = ["measure-detection", "omr"] as const;
+export const PREPARATIONS = [
+  "measure-detection",
+  "omr",
+  "omr-instruments",
+] as const;
 export type Preparation = (typeof PREPARATIONS)[number];
+
+/** Whether a preparation takes its staff and measure boxes from the Musibot layout model. */
+export const usesOmr = (preparation?: string | null): boolean =>
+  preparation === "omr" || preparation === "omr-instruments";
 
 /** A schema-v3 campaign config object. */
 export interface CampaignConfig {
@@ -161,7 +172,7 @@ function yamlStr(value: unknown): string {
   return JSON.stringify(String(value ?? ""));
 }
 
-// Three piece kinds and two preparations are implemented. Fail loudly rather
+// Three piece kinds and three preparations are implemented. Fail loudly rather
 // than silently mis-initialising.
 export function assertSupported(config: CampaignConfig): void {
   if (!config.pieces?.length)
@@ -182,7 +193,7 @@ export function assertSupported(config: CampaignConfig): void {
       !PREPARATIONS.includes(piece.preparation as Preparation)
     ) {
       throw new Error(
-        `Unsupported piece preparation: ${piece.preparation} (only 'measure-detection' and 'omr' are implemented).`,
+        `Unsupported piece preparation: ${piece.preparation} (only ${PREPARATIONS.map((p) => `'${p}'`).join(", ")} are implemented).`,
       );
     }
   }
@@ -386,6 +397,11 @@ export interface PlannedTask {
  * on that piece's setup task. A facsimile piece with no measured pages falls
  * back to a single whole-file encoding task.
  *
+ * A facsimile piece prepared as 'omr-instruments' has no score-setup pre-task:
+ * its layout pre-task names the instruments, and the first page task checks
+ * the score definition before encoding. That first page task depends on the
+ * layout pre-task and every later page task on the first page task.
+ *
  * An encoded piece is already notated, so it gets one whole-file task and no
  * pre-tasks.
  *
@@ -447,31 +463,35 @@ export function planTasks(
       continue;
     }
     const pre = preTaskId(++preTasks);
-    const locator =
-      piece.preparation === "omr" ? "omr-layout" : "measure-zones";
+    const locator = usesOmr(piece.preparation) ? "omr-layout" : "measure-zones";
     planned.push({ id: pre, fragment: piece.path, locator, dependsOn: "" });
-    const setup = preTaskId(++preTasks);
-    planned.push({
-      id: setup,
-      fragment: piece.path,
-      locator: "score-setup",
-      dependsOn: pre,
-    });
+    let opening = pre;
+    if (piece.preparation !== "omr-instruments") {
+      opening = preTaskId(++preTasks);
+      planned.push({
+        id: opening,
+        fragment: piece.path,
+        locator: "score-setup",
+        dependsOn: pre,
+      });
+    }
     const pages = surfacesFor(piece, surfaces);
     if (pages.length === 0) {
       planned.push({
         id: taskId(++tasks),
         fragment: piece.path,
         locator: "",
-        dependsOn: setup,
+        dependsOn: opening,
       });
     } else {
-      for (const page of pages) {
+      const first = taskId(tasks + 1);
+      for (const [i, page] of pages.entries()) {
         planned.push({
           id: taskId(++tasks),
           fragment: piece.path,
           locator: `surface-${page}`,
-          dependsOn: setup,
+          dependsOn:
+            piece.preparation === "omr-instruments" && i > 0 ? first : opening,
         });
       }
     }

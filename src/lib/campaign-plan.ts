@@ -154,7 +154,9 @@ export function nextTaskId(rows: TaskRow[]): string {
  * carry measures, in page order: the existing task ids are reused in order,
  * extra pages get the next free ids, and ids left over are dropped. A page
  * without measures gets no task. Each rebuilt task keeps the first existing
- * page task's dependency and subtask rows. Returns null — the tables stay as
+ * page task's dependency and subtask rows, except where the later page tasks
+ * depend on the first one: then every rebuilt task after the first depends on
+ * the first rebuilt task. Returns null — the tables stay as
  * they are — when the piece has no page tasks, when they already match, or
  * when the rewrite is not allowed (a page task has started, or another task
  * depends on a dropped one).
@@ -178,10 +180,15 @@ export function replanPageTasks(
 
   const template = rowsOf(current, pageTasks[0].task_id);
   const ids = pageTasks.map((t) => t.task_id);
+  const chained = pageTasks.slice(1).some((t) => t.depends_on === ids[0]);
   const rebuilt: TaskRow[] = [];
   measuredSurfaces.forEach((locator, i) => {
     const id = ids[i] ?? nextTaskId([...current, ...rebuilt]);
-    for (const row of template) rebuilt.push({ ...row, task_id: id, locator });
+    for (const row of template) {
+      const dependsOn =
+        chained && i > 0 && row.subtask_id === "" ? ids[0] : row.depends_on;
+      rebuilt.push({ ...row, task_id: id, locator, depends_on: dependsOn });
+    }
   });
 
   const first = current.findIndex((r) => r.task_id === ids[0]);
