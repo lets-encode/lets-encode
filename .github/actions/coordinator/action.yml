@@ -13,9 +13,17 @@ inputs:
 runs:
   using: composite
   steps:
-    # The runner image's own Node runs the coordinator's TypeScript directly
-    # (type stripping, Node 22.18 or later); an older Node fails the run step
-    # with an unknown-extension error. The entry point reaches the shell as an
+    # The Node version comes from the central checkout's .nvmrc. The
+    # coordinator runs without installing dependencies, so no package cache.
+    - name: Set up Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: central/.nvmrc
+        package-manager-cache: false
+
+    # Node runs the coordinator's TypeScript directly (type stripping,
+    # Node 22.18 or later); an older Node fails the run step with an
+    # unknown-extension error. The entry point reaches the shell as an
     # environment variable, quoted, never expanded into the command line.
     - name: Run the central coordinator
       shell: bash

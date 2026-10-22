@@ -5,6 +5,7 @@ import {
   correctedLayoutJson,
   grandStaffSpans,
   layoutBoxes,
+  layoutInstruments,
   layoutRecord,
   pageSystems,
   staffCountOf,
@@ -241,6 +242,47 @@ test("the corrected layout restores the tight measure boxes and the staff boxes 
   assert.deepEqual(restored[0].staves, pages[0].staves);
   assert.deepEqual(restored[0].grandstaves, pages[0].grandstaves);
   assert.deepEqual(restored[1].staves, []);
+});
+
+test("named instruments and each staff box's score staff survive the corrected layout", () => {
+  const pages: PageModel[] = [
+    {
+      image: "img/01.jpg",
+      width: 1000,
+      height: 1400,
+      zones: [],
+      staves: [
+        { ulx: 100.4, uly: 120, lrx: 900, lry: 180, staff: "i1" },
+        { ulx: 100, uly: 220, lrx: 900, lry: 280, staff: "i2-s1" },
+        { ulx: 100, uly: 320, lrx: 900, lry: 380 },
+      ],
+      grandstaves: [],
+    },
+  ];
+  const named = {
+    instruments: [
+      { id: "i1", name: "Voce", staves: [{ id: "i1", label: "" }] },
+      {
+        id: "i2",
+        name: "Pianoforte",
+        staves: [
+          { id: "i2-s1", label: "" },
+          { id: "i2-s2", label: "" },
+        ],
+      },
+    ],
+    groups: [],
+  };
+  const json = correctedLayoutJson(pages, named);
+  assert.deepEqual(layoutInstruments(json), named);
+  assert.deepEqual(withCorrectedLayout(pages, json)[0].staves, [
+    { ulx: 100, uly: 120, lrx: 900, lry: 180, staff: "i1" },
+    { ulx: 100, uly: 220, lrx: 900, lry: 280, staff: "i2-s1" },
+    { ulx: 100, uly: 320, lrx: 900, lry: 380 },
+  ]);
+  const unnamed = correctedLayoutJson(pages);
+  assert.equal(layoutInstruments(unnamed), null);
+  assert.ok(!unnamed.includes('"instruments"'));
 });
 
 test("withCorrectedLayout refuses a file that does not match the score, or a missing one for a score with zones", () => {

@@ -47,6 +47,15 @@ export interface MeasureBox {
   lry: number;
 }
 
+/** A staff box of an OMR-prepared page. */
+export interface StaffBox extends MeasureBox {
+  /**
+   * The xml:id of the score staff (staffDef) the box shows, where the layout
+   * task named the instruments; absent otherwise.
+   */
+  staff?: string;
+}
+
 /** One measure zone: its box, its measure label (@n), and its break flags. */
 export interface ZoneModel {
   box: MeasureBox;
@@ -167,7 +176,7 @@ export interface PageModel {
    * and whose transcription crops them. Not written to the score: they are
    * kept in `layout-corrected.json` (see omr-layout.ts).
    */
-  staves?: MeasureBox[];
+  staves?: StaffBox[];
   /**
    * Grand-staff boxes (staves one performer plays together) of a piece
    * prepared by OMR, whose layout task corrects them. Kept like `staves`.
@@ -177,6 +186,11 @@ export interface PageModel {
 
 /** One staff of the score definition. */
 export interface StaffModel {
+  /**
+   * The staffDef's xml:id, kept through parse and rebuild; absent gets a
+   * generated one. Written on the first movement's score definition only.
+   */
+  id?: string;
   /** MEI clef.shape: 'G', 'F', 'C', 'perc' (percussion) or 'TAB' (tablature). */
   clefShape: string;
   /** MEI clef.line: the staff line the clef sits on, counted from the bottom. */
@@ -224,6 +238,8 @@ export function staffKeysig(scoreKeysig: string, staff: StaffModel): string {
  * or a bracket (a section, like the strings). Staff numbers are 1-based and
  * inclusive. A group within another's staves nests inside it (staff-groups.ts). */
 export interface StaffGroupModel {
+  /** The staffGrp's xml:id, kept like StaffModel.id. */
+  id?: string;
   start: number;
   end: number;
   /** MEI staffGrp @symbol: 'brace' or 'bracket'. */
@@ -413,8 +429,16 @@ export function initialFacsimileModel(pages: FacsimilePage[]): FacsimileModel {
 // inside the outer one, with bar.thru where the barlines run through and an
 // <instrDef> where a brace's staves are one instrument.
 // `optimize` marks a score whose systems leave out staves (@optimize): a
-// renderer hides a staff that holds only rests.
-function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
+// renderer hides a staff that holds only rests. `withIds` writes the staves'
+// and groups' model ids as xml:id; a document has each id once, so only one
+// copy of the score definition carries them.
+function buildScoreDefXml(
+  scoreDef: ScoreDefModel,
+  optimize = false,
+  withIds = false,
+): string {
+  const idOf = (id: string | undefined) =>
+    withIds && id ? ` xml:id="${xmlEscape(id)}"` : "";
   const keysig =
     scoreDef.keysig === "0" ? "" : ` keysig="${xmlEscape(scoreDef.keysig)}"`;
   const meter = scoreDef.meterSym
@@ -444,7 +468,7 @@ function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
       ? ""
       : ` clef.shape="${xmlEscape(staff.clefShape)}" clef.line="${staff.clefLine}"${dis}`;
     const open =
-      `${indent}<staffDef n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
+      `${indent}<staffDef${idOf(staff.id)} n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
       meter;
     if (!staff.label) return `${open}/>`;
     return (
@@ -475,7 +499,7 @@ function buildScoreDefXml(scoreDef: ScoreDefModel, optimize = false): string {
       const end = Math.min(group.end, count);
       const thru = group.barThru ? ' bar.thru="true"' : "";
       rows.push(
-        `${indent}<staffGrp symbol="${xmlEscape(group.symbol)}"${thru}>`,
+        `${indent}<staffGrp${idOf(group.id)} symbol="${xmlEscape(group.symbol)}"${thru}>`,
       );
       if (group.label)
         rows.push(`${indent}   <label>${xmlEscape(group.label)}</label>`);
@@ -659,7 +683,7 @@ export function buildFacsimileMei(
     (parts, i) =>
       `         <mdiv xml:id="mdiv-${i + 1}" n="${i + 1}">\n` +
       `            <score>\n` +
-      buildScoreDefXml(scoreDef, omits) +
+      buildScoreDefXml(scoreDef, omits, i === 0) +
       `\n               <section>\n` +
       (parts.length ? parts.join("\n") + "\n" : "") +
       `               </section>\n` +
@@ -717,7 +741,7 @@ export function buildBlankScoreMei(
       `      <body>\n` +
       `         <mdiv xml:id="mdiv-1" n="1">\n` +
       `            <score>\n` +
-      buildScoreDefXml(scoreDef) +
+      buildScoreDefXml(scoreDef, false, true) +
       `\n               <section>\n` +
       parts.join("\n") +
       `\n               </section>\n` +
@@ -732,17 +756,18 @@ export function buildBlankScoreMei(
 /**
  * Swap every `<scoreDef>` block of an MEI document for one built from the
  * model, leaving the measures as they are, and keeping the document's
- * @optimize. Used for a piece whose measures hold notation a rebuild would
- * discard.
+ * @optimize. The first block carries the model's ids. Used for a piece whose
+ * measures hold notation a rebuild would discard.
  */
 export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
   const scoreDefs = [...elementsNamed(mei, "scoreDef", true)];
   const optimize = scoreDefs.some((el) => /\boptimize="true"/.test(el.tag));
-  const block = buildScoreDefXml(scoreDef, optimize).trim();
   let out = "";
   let last = 0;
-  for (const el of scoreDefs) {
-    out += mei.slice(last, el.start) + block;
+  for (const [i, el] of scoreDefs.entries()) {
+    out +=
+      mei.slice(last, el.start) +
+      buildScoreDefXml(scoreDef, optimize, i === 0).trim();
     last = el.end;
   }
   return out + mei.slice(last);
@@ -774,7 +799,9 @@ export function parseScoreDef(text: string): ScoreDefModel {
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
     const tab = notationType.startsWith("tab");
+    const id = attr(tag, "xml:id");
     const staff: StaffModel = {
+      ...(id ? { id } : {}),
       clefShape: attr(tag, "clef\\.shape") ?? (tab ? "TAB" : "G"),
       clefLine: Number(attr(tag, "clef\\.line") ?? (tab ? 3 : 2)),
       clefDis: attr(tag, "clef\\.dis") ?? "",
@@ -824,7 +851,9 @@ export function parseScoreDef(text: string): ScoreDefModel {
           /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(<instrDef\b)?/.exec(
             block.slice(tokenRe.lastIndex),
           )!;
+        const id = attr(token[0], "xml:id");
         pending.push({
+          ...(id ? { id } : {}),
           start: staffNo + 1,
           symbol: attr(token[0], "symbol") ?? "bracket",
           label: head[1] ? xmlUnescape(head[1].trim()) : "",

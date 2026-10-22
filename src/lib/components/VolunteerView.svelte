@@ -204,11 +204,16 @@
     }
     const dep = findRow(taskDefs, featured.task, "")?.depends_on;
     const depCard = dep ? cards.find((c) => c.task === dep) : undefined;
+    // A page task that depends on a page other than the one before it (the
+    // first page of an 'omr-instruments' piece) does not continue it.
+    const depPage = depCard ? startPage(depCard) : null;
+    const ownPage = startPage(featured);
     if (
       featured.column === "ready" &&
       !featured.pre &&
       depCard?.column === "done" &&
-      !depCard.pre
+      !depCard.pre &&
+      (depPage == null || ownPage == null || depPage === ownPage - 1)
     )
       parts.push("continues where the previous task ended");
     return parts.join(" · ");

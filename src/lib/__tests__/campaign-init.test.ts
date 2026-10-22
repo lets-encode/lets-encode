@@ -212,6 +212,41 @@ test("an OMR-prepared facsimile piece opens with the layout pre-task instead", (
   ]);
 });
 
+test("an omr-instruments piece has no setup task; later pages wait for the first page", () => {
+  const piece = {
+    ...facsimile("piece-01", [1, 2, 3]),
+    preparation: "omr-instruments",
+  };
+  assert.deepEqual(planTasks(build({ pieces: [piece] })).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "omr-layout", ""],
+    ["T0001", "sources/piece-01/score.mei", "surface-1", "P0001"],
+    ["T0002", "sources/piece-01/score.mei", "surface-2", "T0001"],
+    ["T0003", "sources/piece-01/score.mei", "surface-3", "T0001"],
+  ]);
+});
+
+test("omr-instruments page chains start at each piece's own first page task", () => {
+  const first = {
+    ...facsimile("piece-01", [1, 2]),
+    preparation: "omr-instruments",
+  };
+  const second = {
+    ...facsimile("piece-02", [3, 4]),
+    preparation: "omr-instruments",
+  };
+  assert.deepEqual(
+    planTasks(build({ pieces: [first, second] }))
+      .filter((task) => task.id.startsWith("T"))
+      .map((task) => [task.id, task.dependsOn]),
+    [
+      ["T0001", "P0001"],
+      ["T0002", "T0001"],
+      ["T0003", "P0002"],
+      ["T0004", "T0003"],
+    ],
+  );
+});
+
 test("an OMR piece starting after the source's first page numbers its page tasks from 1", () => {
   const piece = { ...facsimile("piece-01", [2, 3, 4]), preparation: "omr" };
   assert.deepEqual(

@@ -76,6 +76,8 @@ export interface OmrClient {
   deletePage(pageId: string): Promise<void>;
   /** Upload files by page-relative path (`image.jpg`, `Staves/3/image.jpg`). */
   upload(pageId: string, files: Record<string, Blob>): Promise<void>;
+  /** The page-relative paths of the page's files. */
+  files(pageId: string): Promise<string[]>;
   /** Download files by page-relative path. */
   download(pageId: string, paths: string[]): Promise<Record<string, Blob>>;
   /**
@@ -241,6 +243,14 @@ export function createOmrClient(
           body: files[path],
         });
       }
+    },
+
+    async files(pageId) {
+      const listing = await api<{ files?: { path: string }[] }>(
+        "GET",
+        `musicorpus-pages/${pageId}/files`,
+      );
+      return (listing.files ?? []).map((f) => f.path);
     },
 
     async download(pageId, paths) {
