@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-22
+
+- Node is pinned to the 22.23.4 security release, locally and in the coordinator action.
+
 ## 2026-10-21
 
 - The wizard offers OMR with instruments named during measure correction, which plans no score setup task and makes later pages wait for the first.
