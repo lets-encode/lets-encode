@@ -5,10 +5,15 @@ parentheses.
 
 ## 2026-10-22
 
+- The instruments step can switch from the name fields to the full pages.
+- The instruments step shows each system's opening only as large as its name fields need.
 - Node is pinned to the 22.23.4 security release, locally and in the coordinator action.
 
 ## 2026-10-21
 
+- The measure correction of an OMR piece with named instruments has a fourth step that confirms the first page's instruments with their parts and groups, then assigns them on the other pages.
+- Score definitions keep short staff names and the players of a shared staff.
+- The instrument names are prefilled from the names printed in front of the staves and from the systems before them, also after each name entered.
 - The wizard offers OMR with instruments named during measure correction, which plans no score setup task and makes later pages wait for the first.
 - Score definitions keep the xml:ids of their staves and staff groups.
 - The corrected layout can hold the named instruments and the score staff of each staff box.

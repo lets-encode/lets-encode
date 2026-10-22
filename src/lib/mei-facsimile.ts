@@ -209,6 +209,13 @@ export interface StaffModel {
   notationType: string;
   /** Instrument label, written as a <label> child; '' emits none. */
   label: string;
+  /** Short label for the systems after the first, written as a <labelAbbr> child; absent or '' emits none. */
+  labelAbbr?: string;
+  /**
+   * The players the staff carries, one layer each in order, written as
+   * <layerDef> children labelled with their names; absent or empty emits none.
+   */
+  layers?: string[];
   /**
    * MEI staffDef @trans.diat and @trans.semi: the interval from written to
    * sounding pitch of a transposing instrument (a clarinet in B♭: -1, -2).
@@ -246,12 +253,16 @@ export interface StaffGroupModel {
   symbol: string;
   /** Group label, written as a <label> child; '' emits none. */
   label: string;
+  /** Short group label, written as a <labelAbbr> child; absent or '' emits none. */
+  labelAbbr?: string;
   /** MEI staffGrp @bar.thru: the barlines run through the group's staves. */
   barThru: boolean;
   /**
    * The staves are one instrument (a piano, a harp: one part over several
    * staves), written as an <instrDef> in the <staffGrp>; false for staves of
-   * separate instruments (Horn 1, 2). Braces only.
+   * separate instruments (Horn 1, 2). The score setup sets it on braces
+   * only; an instrument of several players on several staves is a bracket
+   * of one instrument.
    */
   oneInstrument: boolean;
 }
@@ -470,12 +481,20 @@ function buildScoreDefXml(
     const open =
       `${indent}<staffDef${idOf(staff.id)} n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
       meter;
-    if (!staff.label) return `${open}/>`;
-    return (
-      `${open}>\n` +
-      `${indent}   <label>${xmlEscape(staff.label)}</label>\n` +
-      `${indent}</staffDef>`
-    );
+    const children = [
+      ...(staff.label
+        ? [`${indent}   <label>${xmlEscape(staff.label)}</label>`]
+        : []),
+      ...(staff.labelAbbr
+        ? [`${indent}   <labelAbbr>${xmlEscape(staff.labelAbbr)}</labelAbbr>`]
+        : []),
+      ...(staff.layers ?? []).map(
+        (name, i) =>
+          `${indent}   <layerDef n="${i + 1}"><label>${xmlEscape(name)}</label></layerDef>`,
+      ),
+    ];
+    if (!children.length) return `${open}/>`;
+    return `${open}>\n${children.join("\n")}\n${indent}</staffDef>`;
   };
   // Outer groups first, so each group is found before the groups inside it.
   const groups = [...scoreDef.groups].sort(
@@ -503,8 +522,11 @@ function buildScoreDefXml(
       );
       if (group.label)
         rows.push(`${indent}   <label>${xmlEscape(group.label)}</label>`);
-      if (group.symbol === "brace" && group.oneInstrument)
-        rows.push(`${indent}   <instrDef/>`);
+      if (group.labelAbbr)
+        rows.push(
+          `${indent}   <labelAbbr>${xmlEscape(group.labelAbbr)}</labelAbbr>`,
+        );
+      if (group.oneInstrument) rows.push(`${indent}   <instrDef/>`);
       emit(n, end, `${indent}   `);
       rows.push(`${indent}</staffGrp>`);
       n = end + 1;
@@ -794,7 +816,18 @@ export function parseScoreDef(text: string): ScoreDefModel {
   const staves: StaffModel[] = [];
   for (const staffDefAt of elementsNamed(block, "staffDef", true)) {
     const tag = staffDefAt.tag;
-    const label = firstElementNamed(staffDefAt.inner, "label")?.inner;
+    // The staff's own label and short label; its layers' labels sit inside
+    // their <layerDef> elements.
+    const layerDefs = [...elementsNamed(staffDefAt.inner, "layerDef", true)];
+    const own = layerDefs.reduceRight(
+      (text, el) => text.slice(0, el.start) + text.slice(el.end),
+      staffDefAt.inner,
+    );
+    const label = firstElementNamed(own, "label")?.inner;
+    const labelAbbr = firstElementNamed(own, "labelAbbr")?.inner;
+    const layers = layerDefs.map((el) =>
+      xmlUnescape((firstElementNamed(el.inner, "label")?.inner ?? "").trim()),
+    );
     // A tablature staffDef may carry no clef attributes; its shape is the
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
@@ -809,6 +842,8 @@ export function parseScoreDef(text: string): ScoreDefModel {
       lines: Number(attr(tag, "lines") ?? 5),
       notationType,
       label: label ? xmlUnescape(label.trim()) : "",
+      ...(labelAbbr ? { labelAbbr: xmlUnescape(labelAbbr.trim()) } : {}),
+      ...(layers.length ? { layers } : {}),
     };
     const diat = Number(attr(tag, "trans\\.diat") ?? 0);
     const semi = Number(attr(tag, "trans\\.semi") ?? 0);
@@ -845,10 +880,11 @@ export function parseScoreDef(text: string): ScoreDefModel {
       depth++;
       if (depth >= 2) {
         // A label directly after the open tag names the group (a staff's
-        // own label sits inside its staffDef instead); an <instrDef> after
-        // it makes the staves one instrument.
+        // own label sits inside its staffDef instead), a <labelAbbr> after it
+        // gives its short name, and an <instrDef> after those makes the
+        // staves one instrument.
         const head =
-          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(<instrDef\b)?/.exec(
+          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(?:<labelAbbr\b[^>]*>([\s\S]*?)<\/labelAbbr>)?\s*(<instrDef\b)?/.exec(
             block.slice(tokenRe.lastIndex),
           )!;
         const id = attr(token[0], "xml:id");
@@ -857,8 +893,9 @@ export function parseScoreDef(text: string): ScoreDefModel {
           start: staffNo + 1,
           symbol: attr(token[0], "symbol") ?? "bracket",
           label: head[1] ? xmlUnescape(head[1].trim()) : "",
+          ...(head[2] ? { labelAbbr: xmlUnescape(head[2].trim()) } : {}),
           barThru: attr(token[0], "bar\\.thru") === "true",
-          oneInstrument: !!head[2],
+          oneInstrument: !!head[3],
         });
       }
     }

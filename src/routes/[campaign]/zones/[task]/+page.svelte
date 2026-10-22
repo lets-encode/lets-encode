@@ -53,12 +53,30 @@
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
   import FitIcon from "$lib/components/FitIcon.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
+  import InstrumentNaming from "$lib/components/InstrumentNaming.svelte";
+  import {
+    assignUnit,
+    firstNamingPage,
+    nameUnit,
+    namingProblem,
+    namingUnits,
+    NO_INSTRUMENTS,
+    pruneInstruments,
+    suggestFirstPage,
+    suggestFromList,
+    unitBoxes,
+    unitName,
+    type NamingUnit,
+  } from "$lib/instrument-naming.ts";
+  import { readStaffLabels } from "$lib/ocr.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
   import {
     layoutBoxes,
     layoutRecord,
     LAYOUT_PARAMETERS,
     type CocoLayout,
+    type LayoutGroup,
+    type LayoutInstruments,
   } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import {
@@ -107,8 +125,10 @@
     ending?: string;
     signs?: MeasureSign[];
   };
-  // A staff or grand-staff box of an OMR-prepared piece: geometry only.
-  type EditStaff = { box: MeasureBox };
+  // A staff or grand-staff box of an OMR-prepared piece. A staff box of an
+  // 'omr-instruments' piece carries the score staff (staffDef xml:id) the
+  // instruments step named for it.
+  type EditStaff = { box: MeasureBox; staff?: string };
   type EditPage = {
     image: string;
     width: number;
@@ -137,6 +157,7 @@
         anchor = { page: 0, frac: 0 };
         rawLayouts = {};
         seen = { staves: [], grandstaves: [], measures: [] };
+        named = d.instruments ?? NO_INSTRUMENTS;
         // Boxes outside the piece's regions on a page are dropped.
         let droppedMeasures = false;
         pages = d.model.pages.map((pg, i) => {
@@ -166,7 +187,7 @@
             })),
             staves: (pg.staves ?? [])
               .filter(inPiece)
-              .map((box) => ({ box: { ...box } })),
+              .map(({ staff, ...box }) => (staff ? { box, staff } : { box })),
             grandstaves: (pg.grandstaves ?? [])
               .filter(inPiece)
               .map((box) => ({ box: { ...box } })),
@@ -229,14 +250,42 @@
   // (omr-layout) also corrects the staff and grand-staff boxes.
   const taskTitle = $derived(taskDescription(data?.locator ?? "measure-zones"));
   const omr = $derived(data?.locator === "omr-layout");
-  // A layout task's three steps: the staff boxes, the grand-staff boxes, the measures.
-  let layoutStep = $state<1 | 2 | 3>(1);
+  // A layout task of an 'omr-instruments' piece also names the instruments,
+  // in a fourth step.
+  const naming = $derived(omr && data?.preparation === "omr-instruments");
+  // A layout task's steps: the staff boxes, the grand-staff boxes, the
+  // measures, and for naming the instruments.
+  type LayoutStep = 1 | 2 | 3 | 4;
+  let layoutStep = $state<LayoutStep>(1);
   const STEP_LAYERS: Layer[] = ["staves", "grandstaves", "measures"];
   // The layer the pointer edits; in a layout task the others are not drawn.
-  const tool = $derived<Layer>(omr ? STEP_LAYERS[layoutStep - 1] : "measures");
+  // The instruments step edits no boxes and shows its own view of the staves.
+  const tool = $derived<Layer>(
+    omr ? (STEP_LAYERS[layoutStep - 1] ?? "staves") : "measures",
+  );
+  const step4 = $derived(naming && layoutStep === 4);
+  // The instruments step shows the name fields or, read-only, the pages.
+  // Each view keeps its place: the names their scroll position, the pages
+  // the page in view.
+  let step4Pages = $state(false);
+  let namesTop = 0;
+  let pagesAt = 0;
+  async function showStep4Pages(on: boolean) {
+    if (on === step4Pages || !desk) return;
+    if (on) namesTop = desk.scrollTop;
+    else pagesAt = spreads[rowIndex]?.pages[0] ?? 0;
+    step4Pages = on;
+    await tick();
+    if (on) showPage(pagesAt);
+    else desk.scrollTo({ top: namesTop });
+  }
   // Each step starts at the top of the first page.
-  function setLayoutStep(step: 1 | 2 | 3) {
+  function setLayoutStep(step: LayoutStep) {
+    if (step === 4) selected = null;
     layoutStep = step;
+    step4Pages = false;
+    namesTop = 0;
+    pagesAt = 0;
     leaveDrawMode();
     showPage(0);
   }
@@ -248,6 +297,9 @@
         ? pages[p].grandstaves
         : pages[p].zones;
   let pages = $state<EditPage[]>([]);
+  // The instruments the instruments step named, in score order; each staff
+  // box names its score staff (EditStaff.staff).
+  let named = $state<LayoutInstruments>(NO_INSTRUMENTS);
   // The layout model's raw output per page index, kept from a detection run
   // in this session for the submission; outside the edit history.
   let rawLayouts = $state<Record<number, CocoLayout>>({});
@@ -534,6 +586,7 @@
   $effect(() => {
     const shown = shownPages;
     const layer = tool;
+    if (step4) return;
     untrack(() => {
       const added = shown.filter((p) => !seen[layer].includes(p));
       if (added.length) seen[layer] = [...seen[layer], ...added];
@@ -566,7 +619,10 @@
     if (noMeasures.length) {
       return `${noMeasures.length === 1 ? "Page" : "Pages"} ${pageList(noMeasures)} ${noMeasures.length === 1 ? "has" : "have"} staff boxes but no measures.`;
     }
-    return null;
+    if (!naming) return null;
+    if (!named.fixed)
+      return `Confirm the instruments of page ${firstPage + 1} in step 4 before submitting.`;
+    return namingProblem(shownNamed, namingModels);
   });
 
   // One row on. Back from partway down a row returns to that row's top first.
@@ -839,11 +895,185 @@
       })),
       ...(omr
         ? {
-            staves: pg.staves.map((s) => ({ ...s.box })),
+            staves: pg.staves.map((s) =>
+              s.staff ? { ...s.box, staff: s.staff } : { ...s.box },
+            ),
             grandstaves: pg.grandstaves.map((g) => ({ ...g.box })),
           }
         : {}),
     }));
+  }
+
+  // The pages as the instruments step reads them; empty outside it.
+  const namingModels = $derived(naming ? toPageModels() : []);
+  // The instruments with only those some staff box shows. `named` keeps
+  // every instrument named in the session, so an undo can return to one.
+  const shownInstruments = (): LayoutInstruments =>
+    pruneInstruments(named, toPageModels());
+  const shownNamed = $derived(
+    naming ? pruneInstruments(named, namingModels) : named,
+  );
+
+  // The first page with staves, where the instruments are defined.
+  const firstPage = $derived(naming ? firstNamingPage(namingModels) : -1);
+  // Why the first page's instruments cannot be confirmed yet.
+  const firstBlock = $derived(
+    naming ? namingProblem(shownNamed, namingModels, [firstPage]) : null,
+  );
+
+  // Give a unit's boxes the score staves a naming returned.
+  function setStaves(unit: NamingUnit, staves: (string | undefined)[]) {
+    unit.staves.forEach((k, j) => {
+      const staff = pages[unit.page].staves[k];
+      if (staves[j]) staff.staff = staves[j];
+      else delete staff.staff;
+    });
+  }
+
+  // Name a unit by instrument name and parts; an instrument added after the
+  // first page's instruments were confirmed carries its page.
+  function applyName(
+    unit: NamingUnit,
+    name: string,
+    parts: string,
+    added?: number,
+  ) {
+    const r = nameUnit(named, unit.staves.length, name, parts, added);
+    setStaves(unit, r.staves);
+    named = r.named;
+  }
+
+  // Show an instrument of the list on a unit.
+  function applyAssign(unit: NamingUnit, instrument: string, parts: number[]) {
+    const r = assignUnit(named, unit.staves.length, instrument, parts);
+    setStaves(unit, r.staves);
+    named = r.named;
+  }
+
+  // The printed labels OCR read in this session, by page (unitBoxes order).
+  let printedLabels = $state<string[][][]>([]);
+
+  // Name the staves nobody named on the part's pages from the instruments
+  // named so far and the systems before them (suggestFromList): on the first
+  // page its later systems, after its confirmation the other pages; with
+  // `below`, only in the systems after that unit's. Returns how many units
+  // were named.
+  function followSystems(below?: NamingUnit): number {
+    const models = toPageModels();
+    const first = firstNamingPage(models);
+    const after = (u: NamingUnit) =>
+      !below ||
+      u.page > below.page ||
+      (u.page === below.page && u.system > below.system);
+    const suggestions = suggestFromList(models, named, printedLabels, (p) =>
+      named.fixed ? p !== first : p === first,
+    ).filter((s) => after(s.unit));
+    for (const s of suggestions) applyAssign(s.unit, s.instrument, s.parts);
+    return suggestions.length;
+  }
+
+  // The instruments step's edits, each recorded as one step with the staves
+  // it lets the systems below follow.
+  const naming4 = {
+    define(unit: NamingUnit, name: string, parts: string, added?: number) {
+      applyName(unit, name, parts, added);
+      followSystems(unit);
+      commit();
+    },
+    assign(unit: NamingUnit, instrument: string, parts: number[]) {
+      applyAssign(unit, instrument, parts);
+      followSystems(unit);
+      commit();
+    },
+    abbr(id: string, abbr: string) {
+      named = {
+        ...named,
+        instruments: named.instruments.map((i) =>
+          i.id === id ? { ...i, abbr: abbr.trim() } : i,
+        ),
+      };
+    },
+    groups(groups: LayoutGroup[]) {
+      named = { ...named, groups };
+    },
+    fix(fixed: boolean) {
+      named = { ...named, fixed };
+    },
+  };
+
+  // When a part of the instruments step first opens for the claim holder, its
+  // staves nobody has named yet are named from what is printed in front of
+  // them (OCR, in the browser): on the first page as new instruments with
+  // their parts (suggestFirstPage), then from the instruments so far and the
+  // systems before them (followSystems). One undoable step.
+  let prefilledFor = $state<string | null>(null);
+  $effect(() => {
+    const key = `${taskId}:${named.fixed}`;
+    if (
+      naming &&
+      layoutStep === 4 &&
+      canEdit &&
+      !runner.busy &&
+      prefilledFor !== key
+    ) {
+      prefilledFor = key;
+      prefillNames();
+    }
+  });
+  async function prefillNames() {
+    const f = forge();
+    if (!f || !data) return;
+    const fragment = data.fragment;
+    const models = toPageModels();
+    const first = firstNamingPage(models);
+    const open = [
+      ...new Set(
+        namingUnits(models)
+          .filter((u) => (named.fixed ? u.page !== first : u.page === first))
+          .filter((u) => !unitName(named, models[u.page], u))
+          .map((u) => u.page),
+      ),
+    ];
+    if (!open.length) return;
+    await runner.run(async () => {
+      try {
+        const labels: string[][][] = models.map(() => []);
+        for (const p of open) {
+          runner.log.step(
+            `Reading the instrument names on page ${p + 1} of ${pages.length}`,
+          );
+          const path = resolveRepoRelativeTarget(fragment, pages[p].image);
+          const image = path
+            ? await f.getRepoFileBytes(owner, repo, path)
+            : null;
+          if (!image) {
+            runner.log.detail("The page image could not be read.");
+            continue;
+          }
+          labels[p] = await readStaffLabels(image, unitBoxes(models)[p]);
+        }
+        printedLabels = models.map((_, p) =>
+          labels[p].length ? labels[p] : (printedLabels[p] ?? []),
+        );
+        let count = 0;
+        if (!named.fixed) {
+          for (const s of suggestFirstPage(models, named, printedLabels)) {
+            applyName(s.unit, s.name, s.parts);
+            count++;
+          }
+        }
+        count += followSystems();
+        if (count) commit();
+        return {
+          ok: true,
+          message: `${count} of the unnamed staves and grand staves were named from the printed names and the systems before them. Check every name.`,
+        };
+      } catch (e) {
+        return {
+          error: `Reading the instrument names failed: ${(e as Error).message}`,
+        };
+      }
+    });
   }
 
   // The raw layouts go with the submission when this session detected every page.
@@ -862,7 +1092,12 @@
     if (dragging || !session.canEdit || pages.length === 0) return;
     session.draft(
       omr
-        ? { pages: toPageModels(), layout: true, rawLayout: rawLayoutRecord() }
+        ? {
+            pages: toPageModels(),
+            layout: true,
+            rawLayout: rawLayoutRecord(),
+            ...(naming ? { instruments: shownInstruments() } : {}),
+          }
         : { pages: toPageModels() },
     );
   });
@@ -877,6 +1112,7 @@
                 task_id: taskId,
                 pages: toPageModels(),
                 layout: rawLayoutRecord(),
+                ...(naming ? { instruments: shownInstruments() } : {}),
               },
               c,
             )
@@ -1050,7 +1286,7 @@
     return src.map((pg) => ({
       ...pg,
       zones: pg.zones.map((z) => ({ ...z, box: { ...z.box } })),
-      staves: pg.staves.map((s) => ({ box: { ...s.box } })),
+      staves: pg.staves.map((s) => ({ ...s, box: { ...s.box } })),
       grandstaves: pg.grandstaves.map((g) => ({ box: { ...g.box } })),
     }));
   }
@@ -1956,10 +2192,12 @@
 
   let showOverlaps = $state(true);
   // Hidden, the layer's boxes are not drawn, cannot be selected and no new
-  // box is drawn; a finger on the page scrolls it.
-  let showBoxes = $state(true);
+  // box is drawn; a finger on the page scrolls it. The instruments step's
+  // pages show no boxes.
+  let boxesOn = $state(true);
+  const showBoxes = $derived(boxesOn && !step4);
   function toggleBoxes() {
-    showBoxes = !showBoxes;
+    boxesOn = !boxesOn;
     selected = null;
     corner = null;
     armed = null;
@@ -2313,24 +2551,26 @@
           >
             {#if !narrow}{@render viewOptions()}{/if}
             {#if viewCompact}
-              <button
-                type="button"
-                class="chip-switch"
-                class:on={!showBoxes}
-                aria-pressed={!showBoxes}
-                title="Hide the boxes to see the page underneath"
-                onclick={toggleBoxes}>Hide the boxes</button
-              >
-              <button
-                type="button"
-                class="chip-switch"
-                class:on={showOverlaps}
-                aria-pressed={showOverlaps}
-                disabled={!showBoxes}
-                title="Show or hide the colour on areas where two boxes overlap"
-                onclick={() => (showOverlaps = !showOverlaps)}
-                >Show overlaps</button
-              >
+              {#if !step4}
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={!showBoxes}
+                  aria-pressed={!showBoxes}
+                  title="Hide the boxes to see the page underneath"
+                  onclick={toggleBoxes}>Hide the boxes</button
+                >
+                <button
+                  type="button"
+                  class="chip-switch"
+                  class:on={showOverlaps}
+                  aria-pressed={showOverlaps}
+                  disabled={!showBoxes}
+                  title="Show or hide the colour on areas where two boxes overlap"
+                  onclick={() => (showOverlaps = !showOverlaps)}
+                  >Show overlaps</button
+                >
+              {/if}
               {#if hasPartPages}
                 <button
                   type="button"
@@ -2374,8 +2614,21 @@
           onpinchstart: cancelDrag,
         })}
       >
+        {#if step4 && !step4Pages}
+          <InstrumentNaming
+            pages={namingModels}
+            urls={pages.map((pg) => (pg.failed ? "" : pg.url))}
+            named={shownNamed}
+            {canEdit}
+            ondefine={naming4.define}
+            onassign={naming4.assign}
+            onabbr={naming4.abbr}
+            ongroups={naming4.groups}
+          />
+        {/if}
         <div
           class="pages"
+          style:display={step4 && !step4Pages ? "none" : undefined}
           class:double={shownView === "double"}
           style={`--zoom:${zoom}; --stroke-scale:${damp}`}
         >
@@ -2791,8 +3044,25 @@
       {/if}
       {#if canEdit && coarse}{@render drawToggle()}{@render pickButton()}{/if}
       {#if canEdit}<span class="vline"></span>{/if}
+      {#if step4}
+        <div class="seg" title="Show the name fields or the full pages">
+          <button
+            type="button"
+            class:on={!step4Pages}
+            aria-pressed={!step4Pages}
+            onclick={() => showStep4Pages(false)}>Names</button
+          >
+          <button
+            type="button"
+            class:on={step4Pages}
+            aria-pressed={step4Pages}
+            onclick={() => showStep4Pages(true)}>Pages</button
+          >
+        </div>
+        <span class="vline"></span>
+      {/if}
       {#if !medium}{@render viewOptions()}{/if}
-      {#if !viewCompact}{@render boxesButton()}{@render overlapButton()}{@render wholePageButton()}<span
+      {#if !viewCompact}{#if !step4}{@render boxesButton()}{@render overlapButton()}{/if}{@render wholePageButton()}<span
           class="vline viewline"
         ></span>{/if}
       <span class="zoomset">
@@ -2993,18 +3263,18 @@
             class="steps"
             role="group"
             aria-label="Steps"
-            title="The three steps of the measure correction. Each step shows only its own boxes."
+            title={`The ${naming ? "four" : "three"} steps of the measure correction. Each step shows only its own boxes.`}
           >
-            {#each [{ step: 1, glyph: "staff", tone: "var(--ink-staff)", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, glyph: "grand", tone: "var(--ink-grand)", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, glyph: "measure", tone: "var(--ink-measure)", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }] as s (s.step)}
+            {#each [{ step: 1, glyph: "staff", tone: "var(--ink-staff)", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, glyph: "grand", tone: "var(--ink-grand)", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, glyph: "measure", tone: "var(--ink-measure)", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }, ...(naming ? [{ step: 4, glyph: "staves", tone: "var(--ink)", long: "Instruments", short: "Instr.", count: `${shownNamed.instruments.length}`, n: shownNamed.instruments.length }] : [])] as s (s.step)}
               <button
                 type="button"
                 class="step"
                 class:on={layoutStep === s.step}
                 aria-pressed={layoutStep === s.step}
-                onclick={() => setLayoutStep(s.step as 1 | 2 | 3)}
+                onclick={() => setLayoutStep(s.step as LayoutStep)}
                 aria-label={`${s.step} · ${s.long}, ${s.count}`}
                 ><span class="stepno">{s.step}</span><StepGlyph
-                  kind={s.glyph as "staff" | "grand" | "measure"}
+                  kind={s.glyph as "staff" | "grand" | "measure" | "staves"}
                   tone={s.tone}
                 /><span class="steplong">{s.long}</span><span class="stepshort"
                   >{s.short}</span
@@ -3394,7 +3664,11 @@
     {#snippet footer()}
       <div class="wfoot">
         <!-- Why Submit is not available yet, while it is the step's button. -->
-        {#if submitBlock && canEdit && !(omr && layoutStep < 3)}
+        {#if naming && layoutStep === 4 && !named.fixed}
+          {#if firstBlock && canEdit}
+            <p class="blockline">{firstBlock}</p>
+          {/if}
+        {:else if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
           <p class="blockline">{submitBlock}</p>
         {/if}
         <PreTaskStatus {session} />
@@ -3403,7 +3677,7 @@
             type="button"
             class="btn btn-secondary"
             onclick={() => setLayoutStep(2)}
-            title="Go on to step 2: the grand staves, one box around the staves one performer plays together. Submission is in step 3."
+            title={`Go on to step 2: the grand staves, one box around the staves one performer plays together. Submission is in step ${naming ? 4 : 3}.`}
           >
             Next: grand staves
           </button>
@@ -3412,20 +3686,51 @@
             type="button"
             class="btn btn-secondary"
             onclick={() => setLayoutStep(3)}
-            title="Go on to step 3: the measures, their numbers and breaks. Submission is in step 3."
+            title={`Go on to step 3: the measures, their numbers and breaks. Submission is in step ${naming ? 4 : 3}.`}
           >
             Next: measures
           </button>
+        {:else if naming && layoutStep === 3}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onclick={() => setLayoutStep(4)}
+            title="Go on to step 4: the instrument of every staff. Submission is in step 4."
+          >
+            Next: instruments
+          </button>
+        {:else if naming && layoutStep === 4 && !named.fixed}
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onclick={() => naming4.fix(true)}
+            disabled={!canEdit || firstBlock !== null}
+            title={firstBlock ??
+              `The other pages then choose from the instruments of page ${firstPage + 1}.`}
+          >
+            Confirm the instruments of page {firstPage + 1}
+          </button>
         {:else}
+          {#if naming && layoutStep === 4 && canEdit}
+            <button
+              type="button"
+              class="linkish"
+              onclick={() => naming4.fix(false)}
+              title={`Change the instruments of page ${firstPage + 1}. The other pages keep their choices.`}
+              >Change the instruments of page {firstPage + 1}</button
+            >
+          {/if}
           <button
             type="button"
             class="btn btn-primary btn-pre"
             onclick={() => submit()}
             disabled={busy || !canEdit || submitBlock !== null}
             title={submitBlock ??
-              (omr
-                ? "Submit the corrected staves, grand staves, measures, breaks and sections for review"
-                : "Submit the corrected measures, breaks and sections for review")}
+              (naming
+                ? "Submit the corrected staves, grand staves, measures, breaks, sections and instruments for review"
+                : omr
+                  ? "Submit the corrected staves, grand staves, measures, breaks and sections for review"
+                  : "Submit the corrected measures, breaks and sections for review")}
           >
             Submit corrections
           </button>

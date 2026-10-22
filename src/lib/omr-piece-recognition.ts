@@ -1,7 +1,8 @@
-// Recognition of every staff box of an OMR-prepared piece, run by the score
-// setup's claim holder: each staff is transcribed by the staff pipeline and
-// its instrument label read (OCR) in front of it, and the results form the
-// piece's recognition record (`omr.xml`). A staff the record at the head
+// Recognition of every staff box of an OMR-prepared piece, run by the claim
+// holder of the score setup or of the layout task that names the
+// instruments: each staff is transcribed by the staff pipeline and, unless
+// turned off, its instrument label read (OCR) in front of it, and the results
+// form the piece's recognition record (`omr.xml`). A staff the record at the head
 // already holds for the same box and pipeline, or this browser kept from an
 // earlier run, is not transcribed again; a failed staff always is. Pages are
 // transcribed two at a time, on one Musibot page. Browser only: canvas crops,
@@ -39,6 +40,8 @@ export interface PieceRecognitionOptions {
   existing: OmrRecord | null;
   pipeline: OmrPipeline;
   progress: (step: string) => void;
+  /** Whether the labels in front of the staves are read; default true. */
+  readLabels?: boolean;
 }
 
 export interface PieceRecognition {
@@ -157,18 +160,19 @@ export async function recognisePiece(
       const results = xmls.slice(at, (at += w.crops.length));
       // Labels for the whole page; a failed reading leaves them blank.
       let labels = new Map<number, string>();
-      try {
-        const { systems } = pageSystems(w.pg);
-        const read = await readStaffLabels(w.image, systems);
-        systems.forEach((system, s) =>
-          system.forEach((box, i) =>
-            labels.set(w.pg.staves!.indexOf(box), read[s][i]),
-          ),
-        );
-      } catch (e) {
-        labels = new Map();
-        labelErrors.push({ page: w.p + 1, error: (e as Error).message });
-      }
+      if (o.readLabels !== false)
+        try {
+          const { systems } = pageSystems(w.pg);
+          const read = await readStaffLabels(w.image, systems);
+          systems.forEach((system, s) =>
+            system.forEach((box, i) =>
+              labels.set(w.pg.staves!.indexOf(box), read[s][i]),
+            ),
+          );
+        } catch (e) {
+          labels = new Map();
+          labelErrors.push({ page: w.p + 1, error: (e as Error).message });
+        }
       w.missing.forEach((k, j) => {
         const musicxml = results[j];
         const label = labels.get(k) ?? "";

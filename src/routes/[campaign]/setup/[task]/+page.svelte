@@ -2803,7 +2803,7 @@
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
   }
-  .ctl,
+  /* The glyph select takes the look of the shared compact control (.ctl). */
   .setup :global(.gsel) {
     font: inherit;
     font-size: 13px;
@@ -2816,11 +2816,6 @@
     color: var(--ink);
     text-overflow: ellipsis;
   }
-  /* The select's arrow brings its own space on the right. */
-  select.ctl {
-    padding: 4px 2px 4px 6px;
-  }
-  .ctl:disabled,
   .setup :global(.gsel:disabled) {
     color: var(--ink-faint);
     background: var(--bg-tint);

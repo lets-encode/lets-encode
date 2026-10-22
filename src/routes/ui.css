@@ -622,6 +622,29 @@ textarea.input {
   resize: vertical;
 }
 
+/* A compact text field or select, 32px high, for controls set in rows. */
+.ctl {
+  font: inherit;
+  font-size: 13px;
+  box-sizing: border-box;
+  height: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-input);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  text-overflow: ellipsis;
+}
+/* The select's arrow brings its own space on the right. */
+select.ctl {
+  padding: 4px 2px 4px 6px;
+}
+.ctl:disabled {
+  color: var(--ink-faint);
+  background: var(--bg-tint);
+  cursor: not-allowed;
+}
+
 /* Label text above a control. The control's own top margin sets the gap. */
 .field {
   display: block;

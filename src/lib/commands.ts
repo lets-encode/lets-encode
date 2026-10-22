@@ -91,11 +91,13 @@ import type { OmrModels } from "./omr-page-draft.ts";
 import {
   correctedLayoutJson,
   correctedLayoutPath,
+  layoutInstruments,
   layoutRecordPath,
   withCorrectedLayout,
 } from "./omr-layout.ts";
-import type { LayoutRecord } from "./omr-layout.ts";
+import type { LayoutInstruments, LayoutRecord } from "./omr-layout.ts";
 import { omrRecordPath } from "./omr-record.ts";
+import { instrumentScoreDef } from "./instrument-naming.ts";
 
 const MAX_LOG_ATTEMPTS = 3;
 
@@ -1865,6 +1867,8 @@ export interface FacsimileTaskData {
   workSource: FileSource | null;
   /** The incomplete task this one waits for (task.csv depends_on); '' when none. */
   blockedBy: string;
+  /** The instruments a layout task named (layout-corrected.json); null when none. */
+  instruments: LayoutInstruments | null;
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -1914,6 +1918,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     const model = parseFacsimileMei(mei);
     if (usesOmr(preparation))
       model.pages = withCorrectedLayout(model.pages, corrected);
+    const instruments = corrected ? layoutInstruments(corrected) : null;
     const imageUrls = await resolveFacsimileImageUrls(
       f,
       owner,
@@ -1946,6 +1951,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       encodingLockExpires: encodingLock?.expires ?? "",
       workSource: source,
       blockedBy,
+      instruments,
     };
   },
 };
@@ -1984,12 +1990,14 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // only those boxes changed.
 // The score a measure or layout correction's pages amount to, built on the
 // campaign's current score (`current`), and for a layout correction its
-// corrected boxes.
+// corrected boxes. A layout correction that names the instruments also gives
+// the score its staves (instrumentScoreDef).
 async function facsimileScore(
   ctx: CommandContext,
   task: TaskRow,
   pages: PageModel[],
   layout: boolean,
+  instruments?: LayoutInstruments,
 ): Promise<{ current: string; content: string; corrected: string | null }> {
   const { forge: f, owner, repo } = ctx;
   const current = await f.getRepoFile(owner, repo, task.fragment);
@@ -1998,10 +2006,16 @@ async function facsimileScore(
   return {
     current,
     content: buildFacsimileMei(
-      { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
+      {
+        headXml: parsed.headXml,
+        scoreDef: instruments
+          ? instrumentScoreDef(instruments, parsed.scoreDef)
+          : parsed.scoreDef,
+        pages,
+      },
       { withBreaks: true, emptyMeasures: layout, padZones: layout },
     ),
-    corrected: layout ? correctedLayoutJson(pages) : null,
+    corrected: layout ? correctedLayoutJson(pages, instruments) : null,
   };
 }
 
@@ -2029,6 +2043,8 @@ async function submitFacsimile(
   envelope: CommandEnvelope | null,
   layout = false,
   rawLayout?: LayoutRecord,
+  instruments?: LayoutInstruments,
+  omr?: string,
 ): Promise<Result> {
   const { forge: f, owner, repo } = ctx;
   try {
@@ -2042,6 +2058,7 @@ async function submitFacsimile(
       task,
       pages,
       layout,
+      instruments,
     );
     // The layout model's raw output from an earlier session of the claim
     // was saved with the work.
@@ -2054,9 +2071,17 @@ async function submitFacsimile(
       corrected !== null &&
       corrected !==
         (await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)));
+    // A recognition record from an earlier session of the claim was saved
+    // with the work.
+    const recordPath = omrRecordPath(fragment);
+    const record =
+      omr ?? (instruments ? await savedSideFile(ctx, task, recordPath) : null);
+    const recordChanged =
+      record != null &&
+      record !== (await f.getRepoFile(owner, repo, recordPath));
     // A no-op would open an empty PR the path-filtered caller never runs;
     // guard against that rather than leaving the console polling forever.
-    if (content === current && !correctedChanged) {
+    if (content === current && !correctedChanged && !recordChanged) {
       return {
         ok: true,
         warn: true,
@@ -2073,9 +2098,9 @@ async function submitFacsimile(
       : `Correct measure zones (${task_id})`;
     const body = `${title}. Opened from the zone editor.`;
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
-    // The corrected boxes and the layout model's raw output go next to the
-    // score, one file each per piece: the campaign workflow runs a pull
-    // request of at most three files.
+    // The corrected boxes, the layout model's raw output and the recognition
+    // record go next to the score, one file each per piece: the campaign
+    // workflow runs a pull request of at most four files.
     const files: FileChange[] =
       content === current ? [] : [{ path: fragment, content }];
     if (correctedChanged) {
@@ -2084,6 +2109,7 @@ async function submitFacsimile(
     if (rawLayoutJson) {
       files.push({ path: layoutRecordPath(fragment), content: rawLayoutJson });
     }
+    if (recordChanged) files.push({ path: recordPath, content: record! });
     return openAndFinishInBackground(
       ctx,
       label,
@@ -2135,9 +2161,17 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 // `layout-corrected.json` alongside. The validation subtask reviews the
 // boxes. `layout` is the model's raw output for every page, present when
 // detection ran in the editor session; it is committed as `layout.json` next
-// to the score.
+// to the score. `instruments` are the instruments the layout task named, for
+// a piece prepared as 'omr-instruments'; `omr` is that piece's recognition
+// record, committed as `omr.xml` next to the score for the page drafts.
 const submitOmrLayout: CommandDef<
-  { task_id: string; pages: PageModel[]; layout?: LayoutRecord },
+  {
+    task_id: string;
+    pages: PageModel[];
+    layout?: LayoutRecord;
+    instruments?: LayoutInstruments;
+    omr?: string;
+  },
   Result
 > = {
   id: "campaign.submitOmrLayout",
@@ -2153,8 +2187,17 @@ const submitOmrLayout: CommandDef<
     movements:
       1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0),
   }),
-  run: ({ task_id, pages, layout }, ctx, envelope) =>
-    submitFacsimile(ctx, task_id, pages, envelope, true, layout),
+  run: ({ task_id, pages, layout, instruments, omr }, ctx, envelope) =>
+    submitFacsimile(
+      ctx,
+      task_id,
+      pages,
+      envelope,
+      true,
+      layout,
+      instruments,
+      omr,
+    ),
 };
 
 // The score a score setup's definition amounts to, built on the campaign's
@@ -2300,9 +2343,11 @@ export type DraftInput = {
   layout?: boolean;
   /** The layout model's raw output, when detection ran in this session. */
   rawLayout?: LayoutRecord;
+  /** The instruments a layout correction named. */
+  instruments?: LayoutInstruments;
   /** A score setup's definition. */
   scoreDef?: ScoreDefModel;
-  /** A score setup's recognition record, when recognition ran in this session. */
+  /** A score setup's or a naming layout correction's recognition record, when recognition ran in this session. */
   omr?: string;
 };
 
@@ -2339,6 +2384,7 @@ const saveDraft: CommandDef<DraftInput, Result> = {
           task,
           input.pages,
           Boolean(input.layout),
+          input.instruments,
         );
         files.push({ path: task.fragment, content });
         if (corrected)
@@ -2350,6 +2396,11 @@ const saveDraft: CommandDef<DraftInput, Result> = {
           files.push({
             path: layoutRecordPath(task.fragment),
             content: JSON.stringify(input.rawLayout, null, "\t") + "\n",
+          });
+        if (input.omr)
+          files.push({
+            path: omrRecordPath(task.fragment),
+            content: input.omr,
           });
       } else return { error: "Nothing to save." };
       const workRepo = await workRepoOf(ctx);
