@@ -19,6 +19,7 @@ import type {
 } from "./campaign-graph.ts";
 import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
 import { keptWorkSince } from "./coordinator-policy.ts";
+import { usesOmr } from "./campaign-init.ts";
 import type {
   CommentRow,
   HistoryRow,
@@ -365,7 +366,7 @@ export function buildBoard(
     const dep = blockedBy(d, n.task);
     const depDef = dep ? findRow(d.taskDefs, dep, "") : undefined;
     const counts = taskCounts(comments, n.task);
-    const omr = preparations[def.fragment] === "omr";
+    const omr = usesOmr(preparations[def.fragment]);
     columnByKey.get(column)!.cards.push({
       task: n.task,
       column,

@@ -228,6 +228,50 @@ test("replanPageTasks: an extra measured page gets the next free id", () => {
   ]);
 });
 
+test("replanPageTasks: page tasks chained to the first page task stay chained", () => {
+  const chained = parseTaskCsv(
+    TASK_HEADER +
+      "P0001,,sources/score.mei,omr-layout,,,\n" +
+      "P0001,S0001,sources/score.mei,omr-layout,,,\n" +
+      "T0001,,sources/score.mei,surface-1,,,P0001\n" +
+      "T0001,S0001,sources/score.mei,surface-1,,,\n" +
+      "T0002,,sources/score.mei,surface-2,,,T0001\n" +
+      "T0002,S0001,sources/score.mei,surface-2,,,\n" +
+      "T0003,,sources/score.mei,surface-3,,,T0001\n" +
+      "T0003,S0001,sources/score.mei,surface-3,,,\n",
+  );
+  const state = parseStateCsv(
+    STATE_HEADER +
+      "P0001,,validation_required,42,2026-07-01T09:00:00Z,\n" +
+      "P0001,S0001,validation_required,,,\n" +
+      ["T0001", "T0002", "T0003"]
+        .map((t) => `${t},,encoding_required,,,\n${t},S0001,pending,,,\n`)
+        .join(""),
+  );
+  const r = replanPageTasks(chained, state, [], "sources/score.mei", [
+    "surface-2",
+    "surface-3",
+    "surface-4",
+  ]);
+  assert.ok(r);
+  assert.deepEqual(
+    r.tasks
+      .filter((t) => t.subtask_id === "")
+      .map((t) => `${t.task_id}:${t.locator}:${t.depends_on}`),
+    [
+      "P0001:omr-layout:",
+      "T0001:surface-2:P0001",
+      "T0002:surface-3:T0001",
+      "T0003:surface-4:T0001",
+    ],
+  );
+  assert.ok(
+    r.tasks
+      .filter((t) => t.subtask_id !== "")
+      .every((t) => t.depends_on === ""),
+  );
+});
+
 test("replanPageTasks: matching or started page tasks are left as they are", () => {
   const same = ["surface-1", "surface-2", "surface-3"];
   assert.equal(

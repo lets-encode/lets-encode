@@ -2,10 +2,9 @@
   Wizard step 7: whether the facsimile pieces go through optical music
   recognition, which decides how they get their measures and whether encoding
   starts from a draft, and the button that finishes the setup. Measure detection contacts
-  the edirom detector for every page when Create campaign is pressed; optical music
-  recognition leaves the pages as they are — their staves and measures are
-  found in each piece's measure correction task, and every page is transcribed when its
-  encoding task is claimed.
+  the edirom detector for every page when Create campaign is pressed; both optical music
+  recognition options leave the pages as they are — their staves and measures
+  are found in each piece's measure correction task.
 
   Finishing creates the repository, builds the scores, the configuration and
   the tables and commits them with the pages (campaign-finish.svelte.ts). The step is skipped when the campaign has
@@ -35,10 +34,19 @@
     },
     {
       id: "omr",
-      name: "Optical music recognition",
+      name: "Optical music recognition with a score setup task",
       info:
         "Staves and measures are detected and corrected in a measure correction task. The staves are then " +
         "transcribed in the score setup, and each page's encoding starts from that draft. " +
+        "Page images are sent to the Musibot service (Charles University) for recognition.",
+    },
+    {
+      id: "omr-instruments",
+      name: "Optical music recognition with instruments named during measure correction",
+      info:
+        "Staves and measures are detected and corrected in a measure correction task, which also names the " +
+        "instrument of every staff and transcribes the staves. The first page's encoding task starts with a " +
+        "check of the clefs, key and meter, and each page's encoding starts from the draft. " +
         "Page images are sent to the Musibot service (Charles University) for recognition.",
     },
   ];

@@ -43,6 +43,7 @@ import {
   configPieceRegions,
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
+import { usesOmr } from "./campaign-init.ts";
 import { claimLimitReached } from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
@@ -1138,7 +1139,7 @@ const openEditor: CommandDef<
       if (
         fresh &&
         pageNo &&
-        pieceFieldForPath(configYaml, fragment, "preparation") === "omr"
+        usesOmr(pieceFieldForPath(configYaml, fragment, "preparation"))
       ) {
         ctx.progress({ step: "Preparing the transcription draft…" });
         try {
@@ -1845,7 +1846,7 @@ export interface FacsimileTaskData {
   imageUrls: string[];
   fragment: string;
   locator: string;
-  /** The piece's preparation from config.yaml: 'measure-detection' or 'omr'. */
+  /** The piece's preparation from config.yaml, one of PREPARATIONS. */
   preparation: string;
   /** Per page (same order as model.pages), the piece's regions on it from
       config.yaml, in image pixels; empty where the config gives none. */
@@ -1900,7 +1901,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     const from = source ?? { owner, repo, ref: undefined };
     const [mei, corrected] = await Promise.all([
       f.getRepoFile(from.owner, from.repo, task.fragment, from.ref),
-      preparation === "omr"
+      usesOmr(preparation)
         ? f.getRepoFile(
             from.owner,
             from.repo,
@@ -1911,7 +1912,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     ]);
     if (mei == null) throw new Error(`Could not read ${task.fragment}.`);
     const model = parseFacsimileMei(mei);
-    if (preparation === "omr")
+    if (usesOmr(preparation))
       model.pages = withCorrectedLayout(model.pages, corrected);
     const imageUrls = await resolveFacsimileImageUrls(
       f,
@@ -2171,7 +2172,7 @@ async function setupScore(
   ]);
   if (current == null) throw new Error(`Could not read ${fragment}.`);
   const parsed = parseFacsimileMei(current);
-  const omr = pieceFieldForPath(configYaml, fragment, "preparation") === "omr";
+  const omr = usesOmr(pieceFieldForPath(configYaml, fragment, "preparation"));
   const content =
     omr && hasNotation(current)
       ? replaceScoreDef(current, scoreDef)

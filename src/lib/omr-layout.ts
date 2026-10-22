@@ -3,7 +3,12 @@
 // measure boxes, `staff` and `grandstaff` boxes the staff and grand-staff
 // boxes. Pure functions, no DOM.
 
-import type { MeasureBox, PageModel, ZoneModel } from "./mei-facsimile.ts";
+import type {
+  MeasureBox,
+  PageModel,
+  StaffBox,
+  ZoneModel,
+} from "./mei-facsimile.ts";
 import type { OmrPipeline } from "./omr-client.ts";
 
 /** The parts of a COCO layout document that are read. */
@@ -47,19 +52,57 @@ export function layoutRecord(
 }
 
 /**
+ * An instrument named in the layout task of an 'omr-instruments' piece, with
+ * its score staves top to bottom: one, two for a grand staff, more with
+ * divisi staves.
+ */
+export interface LayoutInstrument {
+  /**
+   * Opaque id, written as the xml:id of the instrument's staffGrp, or of its
+   * staffDef when it has one staff.
+   */
+  id: string;
+  name: string;
+  /** Each staff's staffDef xml:id and its own label ('' for none, "div. 1" for a divisi staff). */
+  staves: { id: string; label: string }[];
+}
+
+/** A bracket or brace over consecutive instruments, in score order. */
+export interface LayoutGroup {
+  /** Written as the group's staffGrp xml:id. */
+  id: string;
+  /** Ids of the first and last instrument the group spans. */
+  first: string;
+  last: string;
+  /** MEI staffGrp @symbol: 'brace' or 'bracket'. */
+  symbol: string;
+  label: string;
+  barThru: boolean;
+}
+
+/** A piece's named instruments in score order, and their groups. */
+export interface LayoutInstruments {
+  instruments: LayoutInstrument[];
+  groups: LayoutGroup[];
+}
+
+/**
  * The corrected boxes of a piece prepared by OMR, committed as
  * `layout-corrected.json` next to the score by the layout correction. The
  * measure boxes are the score's measure zones in order, without the margin
  * the score writes around them; the staff and grand-staff boxes are not in
- * the score.
+ * the score. A piece whose layout task names the instruments also holds them
+ * here, and each staff box names the score staff it shows.
  */
 export interface CorrectedLayout {
   note: string;
+  instruments?: LayoutInstrument[];
+  groups?: LayoutGroup[];
   /** One entry per page in surface order, `image` as the score's graphic target. */
   pages: {
     image: string;
     measures: MeasureBox[];
-    staves: MeasureBox[];
+    staves: StaffBox[];
     grandstaves: MeasureBox[];
   }[];
 }
@@ -78,18 +121,37 @@ const roundedBox = (box: MeasureBox): MeasureBox => ({
   lry: Math.round(box.lry),
 });
 
-/** The pages' corrected boxes, as `layout-corrected.json` is written. */
-export function correctedLayoutJson(pages: PageModel[]): string {
+const roundedStaff = (box: StaffBox): StaffBox => ({
+  ...roundedBox(box),
+  ...(box.staff ? { staff: box.staff } : {}),
+});
+
+/**
+ * The pages' corrected boxes, as `layout-corrected.json` is written, with the
+ * named instruments where the layout task names them.
+ */
+export function correctedLayoutJson(
+  pages: PageModel[],
+  named?: LayoutInstruments,
+): string {
   const layout: CorrectedLayout = {
     note: CORRECTED_LAYOUT_NOTE,
+    ...(named ? { instruments: named.instruments, groups: named.groups } : {}),
     pages: pages.map((pg) => ({
       image: pg.image,
       measures: pg.zones.map((zone) => roundedBox(zone.box)),
-      staves: (pg.staves ?? []).map(roundedBox),
+      staves: (pg.staves ?? []).map(roundedStaff),
       grandstaves: (pg.grandstaves ?? []).map(roundedBox),
     })),
   };
   return JSON.stringify(layout, null, "\t") + "\n";
+}
+
+/** The named instruments of a corrected layout; null when it names none. */
+export function layoutInstruments(json: string): LayoutInstruments | null {
+  const layout = JSON.parse(json) as CorrectedLayout;
+  if (!layout.instruments) return null;
+  return { instruments: layout.instruments, groups: layout.groups ?? [] };
 }
 
 /**

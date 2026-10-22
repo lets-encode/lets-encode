@@ -26,6 +26,7 @@ import {
   buildCommentCsv,
   buildCampaignReadme,
   piecePath,
+  usesOmr,
   type PieceSurfaces,
 } from "./campaign-init.ts";
 import { buildPieceHead } from "./source-metadata.ts";
@@ -103,7 +104,7 @@ export class CampaignFinisher {
     const pagesOut: DetectedPage[] = [];
     const name = (i: number) =>
       wizard.images[i].path.split("/").pop() ?? `${i + 1}.jpg`;
-    if (wizard.preparation === "omr") {
+    if (usesOmr(wizard.preparation)) {
       this.log.step("Reading the page sizes", { timed: false });
       for (const [i, image] of wizard.images.entries()) {
         const { width, height } = await imageSize(image.blob);
@@ -259,7 +260,7 @@ export class CampaignFinisher {
           // page tasks are planned from the pages it covers.
           const model = initialFacsimileModel(split[i].pages);
           this.log.detail(
-            wizard.preparation === "omr"
+            usesOmr(wizard.preparation)
               ? `${split[i].pages.length} page(s); staves and measures are found in the measure correction task`
               : `${split[i].pages.length} page(s), ${split[i].measuredSurfaces.length} with measures`,
           );
@@ -267,7 +268,7 @@ export class CampaignFinisher {
             path: piecePath(piece.id),
             content: buildFacsimileMei({ ...model, headXml: head }),
           });
-          if (wizard.preparation !== "omr")
+          if (!usesOmr(wizard.preparation))
             surfaces[piece.id] = split[i].measuredSurfaces;
         });
 
