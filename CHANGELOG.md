@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-22
 
+- A script points a test campaign's automation at a branch, and the dev server creates campaigns on the checked-out branch.
 - The instruments step transcribes the staves in the background and submits the transcription with the layout.
 - The campaign workflow accepts pull requests of up to four files.
 - The instruments step can switch from the name fields to the full pages.

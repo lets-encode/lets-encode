@@ -119,6 +119,22 @@ Open <http://localhost:5173>. The routes:
   `/<campaign>/setup/<task>` — the zone editor, the review view and the score
   setup view for one task.
 
+**Testing a branch's automation.** The dev server writes the branch checked
+out when it starts as `automation.ref` into the campaigns it creates, so they
+run the coordinator from that branch as pushed. The workflow around the
+coordinator (`campaign.yml`) comes from the ref in each campaign's
+`caller.yml`, `main` for every campaign the app creates; the app cannot
+change workflow files. To run a test campaign entirely on the checked-out
+branch, push the branch and point the campaign at it, with a token that has
+the `workflow` scope:
+
+```bash
+GH_TOKEN=$(gh auth token -u <account>) node scripts/use-branch.ts <owner>/<repo>
+```
+
+`... <owner>/<repo> develop main` returns a campaign to the development
+instance.
+
 ## 5. Build / preview / test
 
 ```bash
