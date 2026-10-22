@@ -71,6 +71,15 @@
   import { readStaffLabels } from "$lib/ocr.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
   import {
+    recognisePiece,
+    type PieceRecognition,
+  } from "$lib/omr-piece-recognition.ts";
+  import {
+    omrRecordPath,
+    parseOmrRecord,
+    serializeOmrRecord,
+  } from "$lib/omr-record.ts";
+  import {
     layoutBoxes,
     layoutRecord,
     LAYOUT_PARAMETERS,
@@ -622,7 +631,13 @@
     if (!naming) return null;
     if (!named.fixed)
       return `Confirm the instruments of page ${firstPage + 1} in step 4 before submitting.`;
-    return namingProblem(shownNamed, namingModels);
+    const problem = namingProblem(shownNamed, namingModels);
+    if (problem) return problem;
+    if (runningKey !== null)
+      return "Wait until the staves are transcribed before submitting.";
+    if (recognisedKey !== staffKey)
+      return "The staves have to be transcribed before submitting.";
+    return null;
   });
 
   // One row on. Back from partway down a row returns to that row's top first.
@@ -1076,6 +1091,117 @@
     });
   }
 
+  // ------------------------------------------------------------------------
+  // Transcription (pieces whose layout task names the instruments)
+  //
+  // While the claim holder is in the instruments step, every staff box is
+  // transcribed in the background (recognisePiece, without reading labels:
+  // the step reads them for the names). The record goes with the draft and
+  // the submission as `omr.xml`, which the page drafts are made from. A staff
+  // that the saved work's record, this session's record or this browser
+  // already holds for the same box is not transcribed again, so a later run
+  // transcribes only the boxes changed since. Submission waits for a record
+  // of the current boxes.
+  let recognition = $state.raw<PieceRecognition | null>(null);
+  // The staff boxes, page by page in order, as one string: the boxes the
+  // record describes, those a run was last started for, and those of a run
+  // in progress.
+  const staffKey = $derived(
+    naming
+      ? JSON.stringify(
+          pages.map((pg) =>
+            pg.staves.map((s) => [s.box.ulx, s.box.uly, s.box.lrx, s.box.lry]),
+          ),
+        )
+      : "",
+  );
+  let recognisedKey = $state("");
+  let triedKey = $state("");
+  let runningKey = $state<string | null>(null);
+  let transcription = $state<{ text: string; error: boolean } | null>(null);
+  $effect(() => {
+    void taskId;
+    recognition = null;
+    recognisedKey = "";
+    triedKey = "";
+    transcription = null;
+  });
+  // A run starts once per set of boxes; after a failure, on request.
+  $effect(() => {
+    if (
+      step4 &&
+      canEdit &&
+      data &&
+      runningKey === null &&
+      staffKey !== recognisedKey &&
+      staffKey !== triedKey
+    )
+      untrack(() => transcribe());
+  });
+  async function transcribe() {
+    const f = forge();
+    const d = data;
+    if (!f || !d || runningKey !== null) return;
+    const key = staffKey;
+    const task = taskId;
+    triedKey = key;
+    runningKey = key;
+    transcription = { text: "Starting the transcription", error: false };
+    try {
+      // A record saved with the work, or kept from an expired claim, comes
+      // before the campaign's.
+      const from = d.workSource ?? { owner, repo, ref: undefined };
+      const existing =
+        recognition?.record ??
+        parseOmrRecord(
+          await f.getRepoFile(
+            from.owner,
+            from.repo,
+            omrRecordPath(d.fragment),
+            from.ref,
+          ),
+        );
+      const result = await recognisePiece({
+        forge: f,
+        client: createOmrClient(provider.brokerUrl),
+        owner,
+        repo,
+        repoId,
+        fragment: d.fragment,
+        pages: toPageModels(),
+        existing,
+        pipeline: omrModels.staffPipeline,
+        progress: (step) => {
+          if (task === taskId) transcription = { text: step, error: false };
+        },
+        readLabels: false,
+      });
+      if (task !== taskId) return;
+      recognition = result;
+      recognisedKey = key;
+      const total = result.record.pages.reduce(
+        (n, pg) => n + pg.staves.length,
+        0,
+      );
+      transcription = result.failed.length
+        ? {
+            text: `${result.failed.length} of ${total} staves could not be transcribed (${result.failed
+              .map((s) => `page ${s.page}, staff ${s.staff}`)
+              .join("; ")}).`,
+            error: true,
+          }
+        : { text: `All ${total} staves are transcribed.`, error: false };
+    } catch (e) {
+      if (task === taskId)
+        transcription = {
+          text: `The transcription failed: ${(e as Error).message}`,
+          error: true,
+        };
+    } finally {
+      runningKey = null;
+    }
+  }
+
   // The raw layouts go with the submission when this session detected every page.
   const rawLayoutRecord = () =>
     pages.every((_, p) => rawLayouts[p])
@@ -1097,6 +1223,9 @@
             layout: true,
             rawLayout: rawLayoutRecord(),
             ...(naming ? { instruments: shownInstruments() } : {}),
+            ...(naming && recognition
+              ? { omr: serializeOmrRecord(recognition.record) }
+              : {}),
           }
         : { pages: toPageModels() },
     );
@@ -1113,6 +1242,9 @@
                 pages: toPageModels(),
                 layout: rawLayoutRecord(),
                 ...(naming ? { instruments: shownInstruments() } : {}),
+                ...(naming && recognition
+                  ? { omr: serializeOmrRecord(recognition.record) }
+                  : {}),
               },
               c,
             )
@@ -3671,6 +3803,23 @@
         {:else if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
           <p class="blockline">{submitBlock}</p>
         {/if}
+        {#if step4 && canEdit && transcription}
+          <p
+            class="blockline"
+            class:err={transcription.error}
+            role="status"
+            title="The staves are transcribed while the instruments are named. The transcription is submitted with the corrections."
+          >
+            {transcription.text}
+            {#if transcription.error && runningKey === null}
+              <button type="button" class="linkish" onclick={() => transcribe()}
+                >{recognisedKey === staffKey
+                  ? "Transcribe the failed staves again"
+                  : "Try again"}</button
+              >
+            {/if}
+          </p>
+        {/if}
         <PreTaskStatus {session} />
         {#if omr && layoutStep === 1}
           <button
@@ -3966,6 +4115,9 @@
     font-size: 12px;
     line-height: 1.4;
     color: var(--ink-soft);
+  }
+  .blockline.err {
+    color: var(--danger);
   }
   .wfoot :global(.btn) {
     white-space: nowrap;

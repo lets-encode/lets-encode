@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-10-22
 
+- The instruments step transcribes the staves in the background and submits the transcription with the layout.
+- The campaign workflow accepts pull requests of up to four files.
 - The instruments step can switch from the name fields to the full pages.
 - The instruments step shows each system's opening only as large as its name fields need.
 - Node is pinned to the 22.23.4 security release, locally and in the coordinator action.

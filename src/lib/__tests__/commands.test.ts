@@ -246,7 +246,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
 
   assert.match(
     result.error ?? "",
-    /did not run for submission #22: a submission must change at most three files/,
+    /did not run for submission #22: a submission must change at most four files/,
   );
   assert.match(result.error ?? "", /was closed/);
   assert.equal(closed, 1);

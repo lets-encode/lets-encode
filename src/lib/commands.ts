@@ -270,7 +270,7 @@ type PrProcessingResult =
 // (the job-level guard in campaign.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
-  "a submission must change at most three files, must not be a draft, and must come from a user account";
+  "a submission must change at most four files, must not be a draft, and must come from a user account";
 
 // Wait until the campaign automation has processed a PR (it closes the PR
 // when done) and return its verdict comment. A timeout means the run is still
