@@ -56,16 +56,19 @@
   import InstrumentNaming from "$lib/components/InstrumentNaming.svelte";
   import {
     assignUnit,
-    firstNamingPage,
+    mergeInstrument,
+    firstNamingSystem,
+    inSystem,
     nameUnit,
     namingProblem,
     namingUnits,
     NO_INSTRUMENTS,
     pruneInstruments,
-    suggestFirstPage,
+    suggestFirstSystem,
     suggestFromList,
     unitBoxes,
     unitName,
+    type DoubleNaming,
     type NamingUnit,
   } from "$lib/instrument-naming.ts";
   import { readStaffLabels } from "$lib/ocr.ts";
@@ -273,28 +276,55 @@
     omr ? (STEP_LAYERS[layoutStep - 1] ?? "staves") : "measures",
   );
   const step4 = $derived(naming && layoutStep === 4);
-  // The instruments step shows the name fields or, read-only, the pages.
-  // Each view keeps its place: the names their scroll position, the pages
-  // the page in view.
+  const lastStep = $derived<LayoutStep>(naming ? 4 : 3);
+  // A layout task's review is approved once every step has been opened.
+  const STEP_NAMES = ["staff boxes", "grand staves", "measures", "instruments"];
+  let stepsSeen = $state<number[]>([1]);
+  $effect(() => {
+    void taskId;
+    untrack(() => (stepsSeen = [layoutStep]));
+  });
+  $effect(() => {
+    const step = layoutStep;
+    untrack(() => {
+      if (!stepsSeen.includes(step)) stepsSeen = [...stepsSeen, step];
+    });
+  });
+  // The steps not opened yet; the next of them after the one in view.
+  const stepsMissing = $derived(
+    omr
+      ? Array.from({ length: lastStep }, (_, i) => i + 1).filter(
+          (n) => !stepsSeen.includes(n),
+        )
+      : [],
+  );
+  const nextMissing = $derived(
+    stepsMissing.find((n) => n > layoutStep) ?? stepsMissing[0],
+  );
+  const approveBlock = $derived(
+    stepsMissing.length
+      ? `Open ${stepsMissing.map((n) => `step ${n} (${STEP_NAMES[n - 1]})`).join(", ")} before approving.`
+      : null,
+  );
+  // The instruments step shows the name fields beside each system's
+  // opening or beside the whole pages (InstrumentNaming's `whole`), not the
+  // page view of the other steps; its controls (pages, zoom, page count)
+  // stay out of the toolbar. Each view keeps its scroll position.
   let step4Pages = $state(false);
-  let namesTop = 0;
-  let pagesAt = 0;
+  const step4Top = { names: 0, pages: 0 };
   async function showStep4Pages(on: boolean) {
     if (on === step4Pages || !desk) return;
-    if (on) namesTop = desk.scrollTop;
-    else pagesAt = spreads[rowIndex]?.pages[0] ?? 0;
+    step4Top[step4Pages ? "pages" : "names"] = desk.scrollTop;
     step4Pages = on;
     await tick();
-    if (on) showPage(pagesAt);
-    else desk.scrollTo({ top: namesTop });
+    desk.scrollTo({ top: step4Top[on ? "pages" : "names"] });
   }
   // Each step starts at the top of the first page.
   function setLayoutStep(step: LayoutStep) {
     if (step === 4) selected = null;
     layoutStep = step;
     step4Pages = false;
-    namesTop = 0;
-    pagesAt = 0;
+    step4Top.names = step4Top.pages = 0;
     leaveDrawMode();
     showPage(0);
   }
@@ -630,7 +660,7 @@
     }
     if (!naming) return null;
     if (!named.fixed)
-      return `Confirm the instruments of page ${firstPage + 1} in step 4 before submitting.`;
+      return "Name the other systems in step 4 (Other systems) before submitting.";
     const problem = namingProblem(shownNamed, namingModels);
     if (problem) return problem;
     if (runningKey !== null)
@@ -929,11 +959,13 @@
     naming ? pruneInstruments(named, namingModels) : named,
   );
 
-  // The first page with staves, where the instruments are defined.
-  const firstPage = $derived(naming ? firstNamingPage(namingModels) : -1);
-  // Why the first page's instruments cannot be confirmed yet.
+  // The first system with staves, where the instruments are defined.
+  const firstSystem = $derived(naming ? firstNamingSystem(namingModels) : null);
+  // Why the first system's instruments cannot be confirmed yet.
   const firstBlock = $derived(
-    naming ? namingProblem(shownNamed, namingModels, [firstPage]) : null,
+    naming
+      ? namingProblem(shownNamed, namingModels, (u) => inSystem(firstSystem, u))
+      : null,
   );
 
   // Give a unit's boxes the score staves a naming returned.
@@ -946,7 +978,7 @@
   }
 
   // Name a unit by instrument name and parts; an instrument added after the
-  // first page's instruments were confirmed carries its page.
+  // first system's instruments were confirmed carries its page.
   function applyName(
     unit: NamingUnit,
     name: string,
@@ -968,21 +1000,20 @@
   // The printed labels OCR read in this session, by page (unitBoxes order).
   let printedLabels = $state<string[][][]>([]);
 
-  // Name the staves nobody named on the part's pages from the instruments
-  // named so far and the systems before them (suggestFromList): on the first
-  // page its later systems, after its confirmation the other pages; with
-  // `below`, only in the systems after that unit's. Returns how many units
-  // were named.
+  // Name the staves nobody named in the systems after the first from the
+  // instruments named so far and the systems before them (suggestFromList),
+  // once the first system's instruments are confirmed; with `below`, only in
+  // the systems after that unit's. Returns how many units were named.
   function followSystems(below?: NamingUnit): number {
+    if (!named.fixed) return 0;
     const models = toPageModels();
-    const first = firstNamingPage(models);
     const after = (u: NamingUnit) =>
       !below ||
       u.page > below.page ||
       (u.page === below.page && u.system > below.system);
-    const suggestions = suggestFromList(models, named, printedLabels, (p) =>
-      named.fixed ? p !== first : p === first,
-    ).filter((s) => after(s.unit));
+    const suggestions = suggestFromList(models, named, printedLabels).filter(
+      (s) => after(s.unit),
+    );
     for (const s of suggestions) applyAssign(s.unit, s.instrument, s.parts);
     return suggestions.length;
   }
@@ -1014,13 +1045,28 @@
     fix(fixed: boolean) {
       named = { ...named, fixed };
     },
+    // An instrument named a second time becomes a part of the one it looks
+    // like: every box showing one of its staves shows the staff that
+    // replaces it. One undoable step.
+    merge(double: DoubleNaming) {
+      const r = mergeInstrument(named, double);
+      if (!r) return;
+      for (const pg of pages)
+        for (const box of pg.staves) {
+          const to = box.staff ? r.staves.get(box.staff) : undefined;
+          if (to) box.staff = to;
+        }
+      named = r.named;
+      commit();
+    },
   };
 
   // When a part of the instruments step first opens for the claim holder, its
   // staves nobody has named yet are named from what is printed in front of
-  // them (OCR, in the browser): on the first page as new instruments with
-  // their parts (suggestFirstPage), then from the instruments so far and the
-  // systems before them (followSystems). One undoable step.
+  // them (OCR, in the browser): in the first system as new instruments with
+  // their parts (suggestFirstSystem), in the other systems from the
+  // instruments so far and the systems before them (followSystems). One
+  // undoable step.
   let prefilledFor = $state<string | null>(null);
   $effect(() => {
     const key = `${taskId}:${named.fixed}`;
@@ -1040,11 +1086,11 @@
     if (!f || !data) return;
     const fragment = data.fragment;
     const models = toPageModels();
-    const first = firstNamingPage(models);
+    const first = firstNamingSystem(models);
     const open = [
       ...new Set(
         namingUnits(models)
-          .filter((u) => (named.fixed ? u.page !== first : u.page === first))
+          .filter((u) => named.fixed !== inSystem(first, u))
           .filter((u) => !unitName(named, models[u.page], u))
           .map((u) => u.page),
       ),
@@ -1072,7 +1118,7 @@
         );
         let count = 0;
         if (!named.fixed) {
-          for (const s of suggestFirstPage(models, named, printedLabels)) {
+          for (const s of suggestFirstSystem(models, named, printedLabels)) {
             applyName(s.unit, s.name, s.parts);
             count++;
           }
@@ -2474,62 +2520,117 @@
   const SHIFT = mac ? "⇧" : "Shift+";
   // A help line is text with colour words, each set in the colour it names.
   type HelpPart = string | { text: string; tone: string };
-  const helpLines = $derived<HelpPart[][]>([
-    ...(canEdit && coarse
+  // The instruments step edits no boxes. The side panel says in short why
+  // it is done and how; the help (?) says it in full.
+  const NAMING_WHY =
+    "The automatic recognition reads each staff on its own and cannot tell which instrument the staff belongs to. The names put every staff on the right staff of the score.";
+  const namingSteps = $derived<string[]>(
+    canEdit
+      ? [
+          "First system: check or enter the name of each staff as printed, with its short name and its parts.",
+          "One instrument on several staves gets one name with different parts: Flöte, parts I and II, not Flöte I and Flöte II.",
+          "Other systems: choose each staff's instrument and parts from the list.",
+          "If one instrument ends up with two names, such as Flöte and Flöte I, a warning appears. Its button “Make it Flöte, part I” joins them.",
+        ]
+      : [
+          "Check that every staff has the right instrument and part.",
+          "If a warning says an instrument is possibly named twice, such as Flöte and Flöte I, request changes: Flöte I should be Flöte with the part I.",
+        ],
+  );
+  const namingHelp = $derived<HelpPart[][]>([
+    [
+      `${NAMING_WHY} Later systems often leave instruments out or print only short names, so the first system defines the instruments and the others choose from them. The names also make the score's list of instruments, with its brackets, braces and groups.`,
+    ],
+    ...(canEdit
       ? [
           [
-            `With draw mode on (the box with a finger in the toolbar) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. With draw mode off a finger drag scrolls the pages, and a double tap on a box selects it and turns draw mode on; in draw mode a double tap on a box or on the page outside a box turns it off. Pinch to zoom.`,
+            "First system: for every staff the instrument's full and short name and the parts it carries as printed (I, II; 1.2.3 for three players on one staff). The same name on several staves makes one instrument. A grand staff gets a part only where several players have one each (Harfe 1, Harfe 2: Harfe, parts 1 and 2). Groups join instruments printed together, such as the woodwinds.",
           ],
           [
-            "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
+            "Parts, not instruments: Fl. I and Fl. II on two staves are Flöte with the parts I and II, a staff both play is I.II. Named Flöte I and Flöte II they become two instruments in the score.",
           ],
           [
-            `To select several boxes, choose Select several (the squares with a tick) and tap them; tap a selected box to take it out. Drag one of them to move them all; Duplicate copies them below or beside them.`,
+            "Other systems opens once the first system is named. Each staff gets an instrument of the list and its parts; New instrument… adds one (marked for the reviewer). The first system can still be changed; the other systems keep their choices.",
+          ],
+          [
+            "“Possibly named twice”: an instrument named like another with more after it (Flöte I beside Flöte), the same, or like a part of another (Kontrabass beside Violoncello und Kontrabass). Also when there are more instruments than staves in the first system. “Make it Flöte, part I” fixes it on every page; undo restores it.",
+          ],
+          [
+            "The names are filled in from the printed names and the systems before; check every one. The staves are transcribed meanwhile; Submit waits for it.",
           ],
         ]
-      : canEdit
-        ? [
-            [
-              `Drag on the page to draw a ${boxName}. Or click one corner, which leaves a cross, then the opposite corner. Drag a box to move it; its edges and corners resize it, or click a corner and then where it should go. ${MOD}drag a box to copy it.`,
-            ],
-            [
-              `Arrow keys move the selected box (${SHIFT}arrow moves 5 times as far). Esc removes the cross, then deselects the box.`,
-            ],
-            [
-              `${SHIFT}click a box to add it to the selection or take it out, or ${SHIFT}drag on the page to select every box the rectangle touches. Drag one of the selected boxes to move them all, ${MOD}drag to copy them all.`,
-            ],
-          ]
-        : []),
-    ...(coarse
-      ? []
       : [
           [
-            `${canEdit ? `${MOD}Z undo · ${MOD}${SHIFT}Z redo · ${mac ? "⌫" : "Delete"} removes the selected box · N adds a box beside it · ` : ""}Tab reaches a page's boxes, A D the previous and next box · ← → change pages${canEdit ? " when no box is selected" : ""} · ${MOD}scroll or a pinch zooms`,
+            "Beside every staff its instrument and, in grey, its parts; the column beside each system shows the brackets, braces and groups the names make (hover for the name).",
+          ],
+          [
+            "“Possibly named twice” marks instruments that look like parts of another named on their own (Flöte I beside Flöte).",
           ],
         ]),
     [
-      ...(omr
-        ? [
-            { text: "Wine red", tone: "staff" },
-            ": staff · ",
-            { text: "dark green", tone: "grand" },
-            ": grand staff (staves one performer plays together, often joined by a brace) · ",
-          ]
-        : []),
-      { text: "teal", tone: "measure" },
-      ": measure · ",
-      { text: "thick purple", tone: "movement" },
-      ": section start · ",
-      { text: "blue bracket before the number", tone: "system" },
-      ": system start",
-    ],
-    [
-      "Measure labels: the measure number, after a double bar where the measure starts a section.",
-    ],
-    [
-      "A repeat start shows in the measure's label, a repeat end or double repeat in a label at the box's top right, an ending as a bracket with its number over its measures, and segno, coda, D.C., D.S., Fine and To Coda as tags at the box's bottom right.",
+      `The page button shows the whole pages instead of each system's beginning.${canEdit && !coarse ? ` ${MOD}Z undo, ${MOD}${SHIFT}Z redo.` : ""}`,
     ],
   ]);
+  const helpLines = $derived<HelpPart[][]>(
+    step4
+      ? namingHelp
+      : [
+          ...(canEdit && coarse
+            ? [
+                [
+                  `With draw mode on (the box with a finger in the toolbar) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. With draw mode off a finger drag scrolls the pages, and a double tap on a box selects it and turns draw mode on; in draw mode a double tap on a box or on the page outside a box turns it off. Pinch to zoom.`,
+                ],
+                [
+                  "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
+                ],
+                [
+                  `To select several boxes, choose Select several (the squares with a tick) and tap them; tap a selected box to take it out. Drag one of them to move them all; Duplicate copies them below or beside them.`,
+                ],
+              ]
+            : canEdit
+              ? [
+                  [
+                    `Drag on the page to draw a ${boxName}. Or click one corner, which leaves a cross, then the opposite corner. Drag a box to move it; its edges and corners resize it, or click a corner and then where it should go. ${MOD}drag a box to copy it.`,
+                  ],
+                  [
+                    `Arrow keys move the selected box (${SHIFT}arrow moves 5 times as far). Esc removes the cross, then deselects the box.`,
+                  ],
+                  [
+                    `${SHIFT}click a box to add it to the selection or take it out, or ${SHIFT}drag on the page to select every box the rectangle touches. Drag one of the selected boxes to move them all, ${MOD}drag to copy them all.`,
+                  ],
+                ]
+              : []),
+          ...(coarse
+            ? []
+            : [
+                [
+                  `${canEdit ? `${MOD}Z undo · ${MOD}${SHIFT}Z redo · ${mac ? "⌫" : "Delete"} removes the selected box · N adds a box beside it · ` : ""}Tab reaches a page's boxes, A D the previous and next box · ← → change pages${canEdit ? " when no box is selected" : ""} · ${MOD}scroll or a pinch zooms`,
+                ],
+              ]),
+          [
+            ...(omr
+              ? [
+                  { text: "Wine red", tone: "staff" },
+                  ": staff · ",
+                  { text: "dark green", tone: "grand" },
+                  ": grand staff (staves one performer plays together, often joined by a brace) · ",
+                ]
+              : []),
+            { text: "teal", tone: "measure" },
+            ": measure · ",
+            { text: "thick purple", tone: "movement" },
+            ": section start · ",
+            { text: "blue bracket before the number", tone: "system" },
+            ": system start",
+          ],
+          [
+            "Measure labels: the measure number, after a double bar where the measure starts a section.",
+          ],
+          [
+            "A repeat start shows in the measure's label, a repeat end or double repeat in a label at the box's top right, an ending as a bracket with its number over its measures, and segno, coda, D.C., D.S., Fine and To Coda as tags at the box's bottom right.",
+          ],
+        ],
+  );
   let helpOpen = $state(false);
   // The View options behind the toolbar's ⋯ button: the page-count switch
   // below MEDIUM_TOOL, and on a phone sheet (inSheet) the help.
@@ -2681,28 +2782,26 @@
             role="group"
             aria-label={inSheet ? "View options and help" : "View options"}
           >
-            {#if !narrow}{@render viewOptions()}{/if}
-            {#if viewCompact}
-              {#if !step4}
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={!showBoxes}
-                  aria-pressed={!showBoxes}
-                  title="Hide the boxes to see the page underneath"
-                  onclick={toggleBoxes}>Hide the boxes</button
-                >
-                <button
-                  type="button"
-                  class="chip-switch"
-                  class:on={showOverlaps}
-                  aria-pressed={showOverlaps}
-                  disabled={!showBoxes}
-                  title="Show or hide the colour on areas where two boxes overlap"
-                  onclick={() => (showOverlaps = !showOverlaps)}
-                  >Show overlaps</button
-                >
-              {/if}
+            {#if !narrow && !step4}{@render viewOptions()}{/if}
+            {#if viewCompact && !step4}
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={!showBoxes}
+                aria-pressed={!showBoxes}
+                title="Hide the boxes to see the page underneath"
+                onclick={toggleBoxes}>Hide the boxes</button
+              >
+              <button
+                type="button"
+                class="chip-switch"
+                class:on={showOverlaps}
+                aria-pressed={showOverlaps}
+                disabled={!showBoxes}
+                title="Show or hide the colour on areas where two boxes overlap"
+                onclick={() => (showOverlaps = !showOverlaps)}
+                >Show overlaps</button
+              >
               {#if hasPartPages}
                 <button
                   type="button"
@@ -2746,8 +2845,9 @@
           onpinchstart: cancelDrag,
         })}
       >
-        {#if step4 && !step4Pages}
+        {#if step4}
           <InstrumentNaming
+            whole={step4Pages}
             pages={namingModels}
             urls={pages.map((pg) => (pg.failed ? "" : pg.url))}
             named={shownNamed}
@@ -2756,11 +2856,14 @@
             onassign={naming4.assign}
             onabbr={naming4.abbr}
             ongroups={naming4.groups}
+            onfix={naming4.fix}
+            onmerge={naming4.merge}
+            fixBlock={firstBlock}
           />
         {/if}
         <div
           class="pages"
-          style:display={step4 && !step4Pages ? "none" : undefined}
+          style:display={step4 ? "none" : undefined}
           class:double={shownView === "double"}
           style={`--zoom:${zoom}; --stroke-scale:${damp}`}
         >
@@ -3177,85 +3280,83 @@
       {#if canEdit && coarse}{@render drawToggle()}{@render pickButton()}{/if}
       {#if canEdit}<span class="vline"></span>{/if}
       {#if step4}
-        <div class="seg" title="Show the name fields or the full pages">
-          <button
-            type="button"
-            class:on={!step4Pages}
-            aria-pressed={!step4Pages}
-            onclick={() => showStep4Pages(false)}>Names</button
-          >
-          <button
-            type="button"
-            class:on={step4Pages}
-            aria-pressed={step4Pages}
-            onclick={() => showStep4Pages(true)}>Pages</button
-          >
-        </div>
+        <button
+          type="button"
+          class="tbtn tbtn-icon"
+          class:on={step4Pages}
+          aria-pressed={step4Pages}
+          aria-label="Show the whole pages"
+          title={step4Pages
+            ? "Show only the beginning of each system"
+            : "Show the whole pages beside the names"}
+          onclick={() => showStep4Pages(!step4Pages)}
+          ><Icon name="facsimile" size={16} /></button
+        >
         <span class="vline"></span>
       {/if}
-      {#if !medium}{@render viewOptions()}{/if}
-      {#if !viewCompact}{#if !step4}{@render boxesButton()}{@render overlapButton()}{/if}{@render wholePageButton()}<span
+      {#if !medium && !step4}{@render viewOptions()}{/if}
+      {#if !viewCompact && !step4}{@render boxesButton()}{@render overlapButton()}{@render wholePageButton()}<span
           class="vline viewline"
         ></span>{/if}
-      <span class="zoomset">
-        <button
-          type="button"
-          class="tbtn tbtn-icon zoomstep"
-          onclick={() => {
-            setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
-            fit = null;
-          }}
-          disabled={zoomPos <= 0}
-          aria-label="Zoom out"
-          title="Zoom out"><Icon name="zoom-out" /></button
-        >
-        <input
-          class="zoomslider"
-          type="range"
-          aria-label="Zoom"
-          aria-valuetext={`${Math.round(zoom * 100)}%`}
-          min={0}
-          max={ZOOM_STOPS}
-          step={1}
-          value={zoomPos}
-          oninput={(e) => {
-            setZoomPos(Number((e.target as HTMLInputElement).value));
-            fit = null;
-          }}
-        />
-        <span class="zval">{Math.round(zoom * 100)}%</span>
-        <button
-          type="button"
-          class="tbtn tbtn-icon zoomstep zoomin"
-          onclick={() => {
-            setZoomPos(Math.min(ZOOM_STOPS, zoomPos + ZOOM_STEP));
-            fit = null;
-          }}
-          disabled={zoomPos >= ZOOM_STOPS}
-          aria-label="Zoom in"
-          title="Zoom in"><Icon name="zoom-in" /></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon fitwidth"
-          class:on={fit === "width"}
-          aria-pressed={fit === "width"}
-          onclick={() => (fit = "width")}
-          aria-label="Fit the page width"
-          title="Fit the page width to the view"
-          ><FitIcon kind="width" /></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon fitpage"
-          class:on={fit === "page"}
-          aria-pressed={fit === "page"}
-          onclick={fitWholePage}
-          aria-label="Fit the whole page"
-          title="Fit the whole page in the view, top to bottom"
-          ><FitIcon kind="page" /></button
-        >
-      </span>
+      {#if !step4}<span class="zoomset">
+          <button
+            type="button"
+            class="tbtn tbtn-icon zoomstep"
+            onclick={() => {
+              setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
+              fit = null;
+            }}
+            disabled={zoomPos <= 0}
+            aria-label="Zoom out"
+            title="Zoom out"><Icon name="zoom-out" /></button
+          >
+          <input
+            class="zoomslider"
+            type="range"
+            aria-label="Zoom"
+            aria-valuetext={`${Math.round(zoom * 100)}%`}
+            min={0}
+            max={ZOOM_STOPS}
+            step={1}
+            value={zoomPos}
+            oninput={(e) => {
+              setZoomPos(Number((e.target as HTMLInputElement).value));
+              fit = null;
+            }}
+          />
+          <span class="zval">{Math.round(zoom * 100)}%</span>
+          <button
+            type="button"
+            class="tbtn tbtn-icon zoomstep zoomin"
+            onclick={() => {
+              setZoomPos(Math.min(ZOOM_STOPS, zoomPos + ZOOM_STEP));
+              fit = null;
+            }}
+            disabled={zoomPos >= ZOOM_STOPS}
+            aria-label="Zoom in"
+            title="Zoom in"><Icon name="zoom-in" /></button
+          >
+          <button
+            type="button"
+            class="tbtn tbtn-icon fitwidth"
+            class:on={fit === "width"}
+            aria-pressed={fit === "width"}
+            onclick={() => (fit = "width")}
+            aria-label="Fit the page width"
+            title="Fit the page width to the view"
+            ><FitIcon kind="width" /></button
+          >
+          <button
+            type="button"
+            class="tbtn tbtn-icon fitpage"
+            class:on={fit === "page"}
+            aria-pressed={fit === "page"}
+            onclick={fitWholePage}
+            aria-label="Fit the whole page"
+            title="Fit the whole page in the view, top to bottom"
+            ><FitIcon kind="page" /></button
+          >
+        </span>{/if}
       <span class="tspacer"></span>
       <span class="vh" role="status"
         >{armed
@@ -3268,30 +3369,31 @@
       >
       <!-- Last in the toolbar, next to the side panel on the right. -->
       <div class="pgnav">
-        <button
-          type="button"
-          class="btn btn-icon pgbtn"
-          onclick={() => go(-1)}
-          disabled={atTop}
-          aria-label="Previous page"
-          title="Previous page"><Icon name="chevron-left" /></button
-        >
-        <!-- A phone or tablet row has room for the numbers only ("1–2 of 4"). -->
-        <span
-          class="pglabel"
-          style={`min-width:${pagesLabelCh(pages.length) - (medium ? "Pages ".length : 0)}ch`}
-          title={medium ? spreadLabel : undefined}
-          >{medium ? spreadLabel.replace(/^Pages? /, "") : spreadLabel}</span
-        >
-        <button
-          type="button"
-          class="btn btn-icon pgbtn"
-          onclick={() => go(1)}
-          disabled={atEnd}
-          aria-label="Next page"
-          title="Next page"><Icon name="chevron-right" /></button
-        >
-        <span class="vline helpline" class:hidden={inSheet && !viewMenu}></span>
+        {#if !step4}<button
+            type="button"
+            class="btn btn-icon pgbtn"
+            onclick={() => go(-1)}
+            disabled={atTop}
+            aria-label="Previous page"
+            title="Previous page"><Icon name="chevron-left" /></button
+          >
+          <!-- A phone or tablet row has room for the numbers only ("1–2 of 4"). -->
+          <span
+            class="pglabel"
+            style={`min-width:${pagesLabelCh(pages.length) - (medium ? "Pages ".length : 0)}ch`}
+            title={medium ? spreadLabel : undefined}
+            >{medium ? spreadLabel.replace(/^Pages? /, "") : spreadLabel}</span
+          >
+          <button
+            type="button"
+            class="btn btn-icon pgbtn"
+            onclick={() => go(1)}
+            disabled={atEnd}
+            aria-label="Next page"
+            title="Next page"><Icon name="chevron-right" /></button
+          >
+          <span class="vline helpline" class:hidden={inSheet && !viewMenu}
+          ></span>{/if}
         <button
           type="button"
           class="btn btn-icon helpbtn"
@@ -3305,7 +3407,7 @@
             viewOpen = false;
           }}><Icon name="help" size={18} /></button
         >
-        {#if viewMenu}
+        {#if viewMenu && (inSheet || !step4)}
           <button
             type="button"
             class="btn btn-icon viewbtn"
@@ -3769,6 +3871,17 @@
             {/if}
           {/if}
         </div>
+      {:else if step4}
+        <!-- The instruments step selects no boxes: why and how in short;
+             the help (?) has the full text. -->
+        <div class="namehelp">
+          <p class="namewhy">{NAMING_WHY}</p>
+          <ol>
+            {#each namingSteps as line, i (i)}
+              <li>{line}</li>
+            {/each}
+          </ol>
+        </div>
       {:else}
         <p class="selnone">
           {#if coarse && canEdit && pickMode}
@@ -3796,11 +3909,7 @@
     {#snippet footer()}
       <div class="wfoot">
         <!-- Why Submit is not available yet, while it is the step's button. -->
-        {#if naming && layoutStep === 4 && !named.fixed}
-          {#if firstBlock && canEdit}
-            <p class="blockline">{firstBlock}</p>
-          {/if}
-        {:else if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
+        {#if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
           <p class="blockline">{submitBlock}</p>
         {/if}
         {#if step4 && canEdit && transcription}
@@ -3821,54 +3930,9 @@
           </p>
         {/if}
         <PreTaskStatus {session} />
-        {#if omr && layoutStep === 1}
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => setLayoutStep(2)}
-            title={`Go on to step 2: the grand staves, one box around the staves one performer plays together. Submission is in step ${naming ? 4 : 3}.`}
-          >
-            Next: grand staves
-          </button>
-        {:else if omr && layoutStep === 2}
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => setLayoutStep(3)}
-            title={`Go on to step 3: the measures, their numbers and breaks. Submission is in step ${naming ? 4 : 3}.`}
-          >
-            Next: measures
-          </button>
-        {:else if naming && layoutStep === 3}
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => setLayoutStep(4)}
-            title="Go on to step 4: the instrument of every staff. Submission is in step 4."
-          >
-            Next: instruments
-          </button>
-        {:else if naming && layoutStep === 4 && !named.fixed}
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() => naming4.fix(true)}
-            disabled={!canEdit || firstBlock !== null}
-            title={firstBlock ??
-              `The other pages then choose from the instruments of page ${firstPage + 1}.`}
-          >
-            Confirm the instruments of page {firstPage + 1}
-          </button>
+        {#if omr && layoutStep < lastStep}
+          {@render nextStep()}
         {:else}
-          {#if naming && layoutStep === 4 && canEdit}
-            <button
-              type="button"
-              class="linkish"
-              onclick={() => naming4.fix(false)}
-              title={`Change the instruments of page ${firstPage + 1}. The other pages keep their choices.`}
-              >Change the instruments of page {firstPage + 1}</button
-            >
-          {/if}
           <button
             type="button"
             class="btn btn-primary btn-pre"
@@ -3887,10 +3951,58 @@
       </div>
     {/snippet}
 
+    <!-- The button to the next step of a layout task, for the editor and the
+         reviewer. -->
+    {#snippet nextStep()}
+      {#if layoutStep === 1}
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={() => setLayoutStep(2)}
+          title={`Go on to step 2: the grand staves, one box around the staves one performer plays together.${canEdit ? ` Submission is in step ${lastStep}.` : ""}`}
+        >
+          Next: grand staves
+        </button>
+      {:else if layoutStep === 2}
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={() => setLayoutStep(3)}
+          title={`Go on to step 3: the measures, their numbers and breaks.${canEdit ? ` Submission is in step ${lastStep}.` : ""}`}
+        >
+          Next: measures
+        </button>
+      {:else if naming && layoutStep === 3}
+        <button
+          type="button"
+          class="btn btn-secondary"
+          onclick={() => setLayoutStep(4)}
+          title={`Go on to step 4: the instrument of every staff.${canEdit ? " Submission is in step 4." : ""}`}
+        >
+          Next: instruments
+        </button>
+      {/if}
+    {/snippet}
+
+    <!-- In a layout review, Approve's place until every step was opened: the
+         next step not opened yet. -->
+    {#snippet reviewNext()}
+      <button
+        type="button"
+        class="btn btn-secondary"
+        onclick={() => setLayoutStep(nextMissing as LayoutStep)}
+        title={`Go on to step ${nextMissing}. Approve is available once every step has been opened.`}
+      >
+        Next: {STEP_NAMES[nextMissing - 1]}
+      </button>
+    {/snippet}
+
     <!-- The viewer's verdict and Give back task, at the panel's bottom. -->
     {#snippet reviewFooter()}
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
+          {approveBlock}
+          instead={reviewNext}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
@@ -4108,6 +4220,23 @@
   }
   .wfoot > .btn {
     margin-left: auto;
+  }
+  .namehelp {
+    padding: 12px 16px;
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--ink-soft);
+  }
+  .namewhy {
+    margin: 0 0 8px;
+    color: var(--ink);
+  }
+  .namehelp ol {
+    margin: 0;
+    padding-left: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
   .blockline {
     flex-basis: 100%;

@@ -9,7 +9,7 @@
   Commands run through callbacks the host passes in.
 -->
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { FailComment, Result } from "$lib/commands.ts";
   import {
@@ -28,6 +28,8 @@
     staffs = false,
     staffPick = null,
     asking = $bindable(false),
+    approveBlock = null,
+    instead,
     onvalidate,
     onreviewedit,
     onabandon,
@@ -47,6 +49,10 @@
     staffPick?: { text: string } | null;
     /** The note form is open. */
     asking?: boolean;
+    /** Why Approve is not available yet (the host's own condition); null when it is. */
+    approveBlock?: string | null;
+    /** Shown in Approve's place while `approveBlock` holds (the host's way there). */
+    instead?: Snippet;
     onvalidate: (
       sub: string,
       verdict: string,
@@ -130,13 +136,17 @@
     />
   {/if}
   <span class="rverdict">
-    <button
-      type="button"
-      class="btn btn-primary btn-finish approve"
-      onclick={() => onvalidate(sub, "pass")}
-      disabled={runner.busy || processing}
-      title="Approve the submitted work.">Approve</button
-    >
+    {#if approveBlock !== null && instead}
+      <span class="approve instead">{@render instead()}</span>
+    {:else}
+      <button
+        type="button"
+        class="btn btn-primary btn-finish approve"
+        onclick={() => onvalidate(sub, "pass")}
+        disabled={runner.busy || processing || approveBlock !== null}
+        title={approveBlock ?? "Approve the submitted work."}>Approve</button
+      >
+    {/if}
     <button
       type="button"
       class="btn btn-danger failbtn"
@@ -273,6 +283,10 @@
   }
   .infoot .approve {
     order: 2;
+  }
+  /* The host's button in Approve's place. */
+  .instead {
+    display: inline-flex;
   }
   .infoot .failform {
     order: -1;

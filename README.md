@@ -133,7 +133,8 @@ GH_TOKEN=$(gh auth token -u <account>) node scripts/use-branch.ts <owner>/<repo>
 ```
 
 `... <owner>/<repo> develop main` returns a campaign to the development
-instance.
+instance. While a campaign on a feature branch still calls `campaign.yml` at
+another ref, its page on the dev server shows this command.
 
 ## 5. Build / preview / test
 

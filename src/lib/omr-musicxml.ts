@@ -108,13 +108,13 @@ export function clefToken(musicxml: string | null): string | null {
  * A score definition proposed from transcriptions: the clefs from one
  * system's staves, top to bottom (`clefSystem`, null for a staff that was
  * not transcribed — the system with the most staves, so every staff of the
- * definition gets its own clef); the key and the meter from the first staff
- * that carries them, searched through `signatureSources` first (the page's
- * opening system, where signatures are printed) and then the clef system,
- * since the model reads an unprinted signature as none; a staff of the clef
- * system reading another key keeps its own (`keysig`). Groups are not
- * proposed. Missing values keep the defaults: treble clef, no accidentals,
- * 4/4.
+ * definition gets its own clef); the key from the first staff that carries
+ * one and the meter most staves read (the first of those tied), searched
+ * through `signatureSources` first (the page's opening system, where
+ * signatures are printed) and then the clef system, since the model reads an
+ * unprinted signature as none; a staff of the clef system reading another
+ * key keeps its own (`keysig`). Groups are not proposed. Missing values keep
+ * the defaults: treble clef, no accidentals, 4/4.
  */
 export function proposeScoreDef(
   clefSystem: (string | null)[],
@@ -124,10 +124,10 @@ export function proposeScoreDef(
   const staves = read.map((attributes) =>
     attributes ? staffFor(attributes) : { ...TREBLE },
   );
-  const signatures = [
-    ...signatureSources.map((xml) => (xml ? readAttributes(xml) : null)),
-    ...read,
-  ];
+  const sources = signatureSources.map((xml) =>
+    xml ? readAttributes(xml) : null,
+  );
+  const signatures = [...sources, ...read];
   const fifths =
     signatures.find((a) => a?.fifths !== null && a?.fifths !== undefined)
       ?.fifths ?? 0;
@@ -140,7 +140,20 @@ export function proposeScoreDef(
       if (f !== null && f !== fifths)
         staves[i] = { ...staves[i], keysig: keysigFor(f) };
     });
-  const time = signatures.find((a) => a?.time)?.time ?? null;
+  // Every staff prints the same time signature; the model reads some of
+  // them as others.
+  const mostRead = (list: (StaffAttributes | null)[]) => {
+    const times = list.flatMap((a) => (a?.time ? [a.time] : []));
+    const key = (t: StaffAttributes["time"]) =>
+      `${t!.beats}/${t!.beatType}/${t!.symbol}`;
+    const count = (t: StaffAttributes["time"]) =>
+      times.filter((u) => key(u) === key(t)).length;
+    return times.reduce<StaffAttributes["time"]>(
+      (best, t) => (!best || count(t) > count(best) ? t : best),
+      null,
+    );
+  };
+  const time = mostRead(sources) ?? mostRead(read);
   const symbol =
     time?.symbol === "common" || time?.symbol === "cut" ? time.symbol : "";
   return {

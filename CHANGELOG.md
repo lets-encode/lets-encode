@@ -3,8 +3,19 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-23
+
+- The instruments are named in the first system and chosen from them in the other systems, switched by tabs.
+- Grand staves can carry parts, such as Harfe 1 and Harfe 2.
+- The instruments step shows braces, brackets and groups beside each system, and the whole pages on request.
+- Instruments named twice or beyond the first system's staves are flagged and can be merged into parts.
+- The instruments step explains itself in the side panel and help, lists the confirmed instruments, and shows a reviewer the names as text.
+- A layout review can be approved once every step has been opened.
+- On the dev server, a campaign whose workflow still runs from main shows the command that points it at its branch.
+
 ## 2026-10-22
 
+- The score definition of named instruments takes its clefs, key and meter from the transcription.
 - A script points a test campaign's automation at a branch, and the dev server creates campaigns on the checked-out branch.
 - The instruments step transcribes the staves in the background and submits the transcription with the layout.
 - The campaign workflow accepts pull requests of up to four files.

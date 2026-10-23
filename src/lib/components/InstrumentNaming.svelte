@@ -1,20 +1,35 @@
 <!--
   The instruments step of an 'omr-instruments' layout task, in two parts.
-  First the instruments of the piece's first page: every system of that page
-  as a strip of its opening (the printed names, clefs, key and meter up to the
-  end of its first measure) with, beside each single staff, the instrument
-  and the parts the staff carries ("I", "1.2.3"), and beside each grand staff
-  the instrument; below, the instruments with their full and short names, and
-  the groups of instruments. Once the volunteer has fixed them, the other
-  pages: each single staff and grand staff picks an instrument of the list and
-  which of its parts the staff carries. An instrument added there is marked
-  with its page for the reviewer.
+  Between the fields and each strip, a column shows the braces, brackets and
+  groups the names make.
+  First the instruments of the piece's first system: the system as a strip of
+  its opening (the printed names, clefs, key and meter up to the end of its
+  first measure) with, beside each single staff, the instrument and the parts
+  the staff carries ("I", "1.2.3"), and beside each grand staff the
+  instrument; below, the instruments with their full and short names, and the
+  groups of instruments. Once the volunteer has fixed them, the other
+  systems: each single staff and grand staff picks an instrument of the list
+  and which of its parts the staff carries. An instrument added there is
+  marked with its page for the reviewer. With the first system's instruments
+  confirmed, the editor sees a summary of the instruments and the groups
+  first. A viewer who cannot edit (the reviewer) sees every system with the
+  names as text instead of fields. With `whole`, every page is shown whole,
+  with the same fields beside its staves.
 -->
 <script lang="ts">
+  import Icon from "$lib/components/Icon.svelte";
   import type { PageModel } from "$lib/mei-facsimile.ts";
-  import type { LayoutGroup, LayoutInstruments } from "$lib/omr-layout.ts";
+  import type {
+    LayoutGroup,
+    LayoutInstrument,
+    LayoutInstruments,
+  } from "$lib/omr-layout.ts";
   import {
-    firstNamingPage,
+    doubleNamings,
+    mergeInstrument,
+    type DoubleNaming,
+    firstNamingSystem,
+    inSystem,
     namingUnits,
     partsLabel,
     unitName,
@@ -26,10 +41,14 @@
     urls,
     named,
     canEdit,
+    whole = false,
     ondefine,
     onassign,
     onabbr,
     ongroups,
+    onfix,
+    onmerge,
+    fixBlock,
   }: {
     /** The pages with their corrected boxes; staff boxes carry their named staff. */
     pages: PageModel[];
@@ -37,7 +56,9 @@
     urls: string[];
     named: LayoutInstruments;
     canEdit: boolean;
-    /** Name a unit by instrument name and parts ('' clears it); `added` is the 1-based page of an instrument added after the first page. */
+    /** Every page whole beside the fields, instead of each system's opening. */
+    whole?: boolean;
+    /** Name a unit by instrument name and parts ('' clears it); `added` is the 1-based page of an instrument added after the first system. */
     ondefine: (
       unit: NamingUnit,
       name: string,
@@ -49,7 +70,55 @@
     /** Set an instrument's short name. */
     onabbr: (instrument: string, abbr: string) => void;
     ongroups: (groups: LayoutGroup[]) => void;
+    /** Open the other systems (true) or the first system (false). */
+    onfix: (fixed: boolean) => void;
+    /** Make an instrument named a second time a part of the one it looks like. */
+    onmerge: (double: DoubleNaming) => void;
+    /** Why the other systems cannot be opened yet; null when they can. */
+    fixBlock: string | null;
   } = $props();
+
+  // Instruments that look like another one named a second time, by id.
+  const doubles = $derived(doubleNamings(named));
+  const doubleOf = $derived(new Map(doubles.map((d) => [d.instrument, d])));
+  const PARTS_HINT =
+    "Players of one instrument written on several staves (Fl. I and Fl. II, Vc. and Kb.) are one instrument with parts: choose the instrument and its part, not an instrument of their own.";
+  const doubleTitle = (id: string) => {
+    const d = doubleOf.get(id);
+    if (!d) return "";
+    const like = nameOf(d.like);
+    return `${d.how === "same" ? `The same name as ${like}` : d.how === "longer" ? `${like} with more after it` : `A part of ${like}`}: possibly ${like} named a second time. ${PARTS_HINT}`;
+  };
+
+  // What a merge makes of an instrument named a second time: the instrument
+  // it joins and the parts of its staves ("Flöte, part I"); null when it
+  // cannot be merged.
+  function mergeResult(d: DoubleNaming): string | null {
+    const r = mergeInstrument(named, d);
+    if (!r) return null;
+    const like = r.named.instruments.find((i) => i.id === d.like)!;
+    const labels = [
+      ...new Set(
+        [...r.staves.values()].map((id) =>
+          partsLabel(like, like.staves.find((s) => s.id === id)!),
+        ),
+      ),
+    ].filter((l) => l);
+    return labels.length
+      ? `${like.name}, part${labels.length > 1 || /[.]/.test(labels[0]) ? "s" : ""} ${labels.join(", ")}`
+      : like.name;
+  }
+
+  // An instrument's staves by the parts they carry: one list per
+  // combination, a grand staff's several staves together.
+  const combinations = (instrument: LayoutInstrument) => [
+    ...instrument.staves
+      .reduce((m, staff) => {
+        const key = staff.parts.join(",");
+        return m.set(key, [...(m.get(key) ?? []), staff]);
+      }, new Map<string, LayoutInstrument["staves"]>())
+      .values(),
+  ];
 
   const NEW = "new";
   const OTHER = "other";
@@ -63,14 +132,71 @@
     })),
   );
   const units = $derived(namingUnits(naming));
-  const first = $derived(firstNamingPage(naming));
-  const shownPages = $derived(
-    named.fixed
-      ? naming.map((_, p) => p).filter((p) => p !== first)
-      : first >= 0
-        ? [first]
-        : [],
+  const first = $derived(firstNamingSystem(naming));
+
+  // More instruments than the first system has staves (a grand staff
+  // counted once) means some were named again or added later; those not in
+  // the first system are listed.
+  const firstCount = $derived(units.filter((u) => inSystem(first, u)).length);
+  const outsideFirst = $derived.by(() => {
+    const inFirst = new Set(
+      units
+        .filter((u) => inSystem(first, u))
+        .flatMap((u) => {
+          const shown = shownOf(u);
+          return shown ? [shown.instrument.id] : [];
+        }),
+    );
+    return named.instruments.filter((i) => !inFirst.has(i.id));
+  });
+  // The units shown: the first system's while its instruments are named;
+  // once they are confirmed, those of the other systems, and to a viewer who
+  // cannot edit, all of them.
+  const shownUnits = $derived(
+    units.filter((u) =>
+      !named.fixed ? inSystem(first, u) : !canEdit || !inSystem(first, u),
+    ),
   );
+  // The pages of the shown units; once the instruments are confirmed, also
+  // the pages without staves.
+  const shownPages = $derived(
+    naming
+      .map((_, p) => p)
+      .filter(
+        (p) =>
+          shownUnits.some((u) => u.page === p) ||
+          (named.fixed && !units.some((u) => u.page === p)),
+      ),
+  );
+
+  // The summary: per instrument the pages it is named on, as ranges
+  // ("1–3, 5").
+  const pagesOf = $derived.by(() => {
+    const ids = new Map<string, Set<number>>();
+    naming.forEach((pg, p) =>
+      pg.staves.forEach((box) => {
+        const instrument = named.instruments.find((i) =>
+          i.staves.some((s) => s.id === box.staff),
+        );
+        if (instrument)
+          ids.set(instrument.id, (ids.get(instrument.id) ?? new Set()).add(p));
+      }),
+    );
+    return ids;
+  });
+  function ranges(pagesSet: Set<number> | undefined): string {
+    const list = [...(pagesSet ?? [])].sort((a, b) => a - b).map((p) => p + 1);
+    const out: string[] = [];
+    for (let i = 0; i < list.length; i++) {
+      let j = i;
+      while (j + 1 < list.length && list[j + 1] === list[j] + 1) j++;
+      out.push(j > i ? `${list[i]}–${list[j]}` : `${list[i]}`);
+      i = j;
+    }
+    return out.join(", ");
+  }
+  const nameOf = (id: string) =>
+    named.instruments.find((i) => i.id === id)?.name ?? "";
 
   // A strip is drawn at the smallest scale that keeps its field rows apart
   // (ROW_PX between the centres of neighbouring units) and its staves at
@@ -78,19 +204,50 @@
   const ROW_PX = 38;
   const STAFF_PX = 24;
 
+  // The scale of a strip whose rows are `list`'s units; null for none.
+  function scaleFor(list: NamingUnit[]): number | null {
+    if (!list.length) return null;
+    const pg = naming[list[0].page];
+    const boxes = list.flatMap((u) => u.staves.map((i) => pg.staves[i]));
+    const centres = list.map(centre).sort((a, b) => a - b);
+    const gap = Math.min(...centres.slice(1).map((c, k) => c - centres[k]));
+    const staffHeight = Math.min(...boxes.map((b) => b.lry - b.uly));
+    return Math.min(1, Math.max(ROW_PX / gap, STAFF_PX / staffHeight));
+  }
+
   // The strips: per page, per system, the part of the page shown, its scale
   // and the system's units. A system's strip runs from the page's left edge
   // to the end of its first measure, from a little above its top staff to a
-  // little below its bottom one.
-  const strips = $derived.by(() =>
-    shownPages.map((p) => {
+  // little below its bottom one. With `whole`, each page is one strip of the
+  // whole page, at the scale its units need (pages without staves at the
+  // largest of the others), so every page shows, its fields those shown.
+  const strips = $derived.by(() => (whole ? wholeStrips() : openingStrips()));
+  function wholeStrips() {
+    const scales = naming.map((_, p) =>
+      scaleFor(units.filter((u) => u.page === p)),
+    );
+    const fallback = Math.max(0, ...scales.map((k) => k ?? 0)) || 0.3;
+    return naming.map((_, p) => ({
+      page: p,
+      systems: [
+        {
+          system: -1,
+          units: shownUnits.filter((u) => u.page === p),
+          view: { ulx: 0, uly: 0, lrx: pages[p].width, lry: pages[p].height },
+          scale: scales[p] ?? fallback,
+        },
+      ],
+    }));
+  }
+  function openingStrips() {
+    return shownPages.map((p) => {
       const pg = naming[p];
       const firstZones: number[] = [];
       pg.zones.forEach((zone, i) => {
         if (i === 0 || zone.pb || zone.sb) firstZones.push(i);
       });
       const systems = new Map<number, NamingUnit[]>();
-      for (const unit of units.filter((u) => u.page === p)) {
+      for (const unit of shownUnits.filter((u) => u.page === p)) {
         systems.set(unit.system, [...(systems.get(unit.system) ?? []), unit]);
       }
       return {
@@ -111,25 +268,16 @@
             pages[p].width,
             (measureEnd ?? left + (right - left) * 0.3) + height * 0.3,
           );
-          const centres = list.map(centre).sort((a, b) => a - b);
-          const gap = Math.min(
-            ...centres.slice(1).map((c, k) => c - centres[k]),
-          );
-          const staffHeight = Math.min(...boxes.map((b) => b.lry - b.uly));
-          const scale = Math.min(
-            1,
-            Math.max(ROW_PX / gap, STAFF_PX / staffHeight),
-          );
           return {
             system: s,
             units: list,
             view: { ulx: 0, uly, lrx, lry },
-            scale,
+            scale: scaleFor(list) ?? 1,
           };
         }),
       };
-    }),
-  );
+    });
+  }
 
   const shownOf = (unit: NamingUnit) =>
     unitName(named, naming[unit.page], unit);
@@ -196,6 +344,98 @@
   }
   const position = (id: string) =>
     named.instruments.findIndex((i) => i.id === id);
+
+  // The structure column beside a strip: the marks of a score's left margin
+  // that the names make, system by system: a brace for a grand staff, a
+  // bracket for neighbouring staves of one instrument, a bar for a group of
+  // instruments (an outer group further left). Positions are fractions of
+  // the strip's height.
+  type Mark = {
+    kind: "brace" | "bracket" | "group";
+    top: number;
+    bottom: number;
+    depth: number;
+    title: string;
+  };
+  function marksOf(
+    list: NamingUnit[],
+    view: { uly: number; lry: number },
+  ): Mark[] {
+    const h = view.lry - view.uly;
+    const span = (run: NamingUnit[]) => {
+      const pg = naming[run[0].page];
+      const last = run[run.length - 1];
+      return {
+        top: (pg.staves[run[0].staves[0]].uly - view.uly) / h,
+        bottom:
+          (pg.staves[last.staves[last.staves.length - 1]].lry - view.uly) / h,
+      };
+    };
+    const systems = new Map<string, NamingUnit[]>();
+    for (const u of list) {
+      const k = `${u.page}/${u.system}`;
+      systems.set(k, [...(systems.get(k) ?? []), u]);
+    }
+    const marks: Mark[] = [];
+    for (const units of systems.values()) {
+      const ids = units.map((u) => shownOf(u)?.instrument.id ?? null);
+      for (let i = 0; i < units.length; i++) {
+        const shown = shownOf(units[i]);
+        if (!shown) continue;
+        const instrument = shown.instrument;
+        let j = i;
+        while (j + 1 < units.length && ids[j + 1] === instrument.id) j++;
+        // A grand staff's brace, also each of one instrument's several
+        // (Harfe 1, Harfe 2), which get no bracket.
+        for (const unit of units.slice(i, j + 1))
+          if (instrument.grand)
+            marks.push({
+              kind: "brace",
+              ...span([unit]),
+              depth: 0,
+              title: [
+                instrument.name,
+                partsLabel(instrument, shownOf(unit)!.staff),
+              ]
+                .filter((t) => t)
+                .join(" "),
+            });
+        if (j > i && !instrument.grand)
+          marks.push({
+            kind: "bracket",
+            ...span(units.slice(i, j + 1)),
+            depth: 0,
+            title: instrument.name,
+          });
+        i = j;
+      }
+      const runs = named.groups.flatMap((g, k) => {
+        const a = position(g.first);
+        const b = position(g.last);
+        const inside = units.filter((_, n) => {
+          const at = ids[n] ? position(ids[n]!) : -1;
+          return at >= a && at <= b;
+        });
+        return inside.length ? [{ k, a, b, inside, g }] : [];
+      });
+      for (const r of runs) {
+        const depth = runs.filter(
+          (o) =>
+            o !== r &&
+            o.a <= r.a &&
+            o.b >= r.b &&
+            (o.b - o.a > r.b - r.a || o.k < r.k),
+        ).length;
+        marks.push({
+          kind: "group",
+          ...span(r.inside),
+          depth,
+          title: `${r.g.label || "Group"}: ${nameOf(r.g.first)} to ${nameOf(r.g.last)}`,
+        });
+      }
+    }
+    return marks;
+  }
   function setGroup(k: number, change: Partial<LayoutGroup>) {
     const groups = named.groups.map((g, i) =>
       i === k ? { ...g, ...change } : g,
@@ -217,16 +457,190 @@
 </datalist>
 
 <div class="naming">
-  <p class="phase">
+  {#if canEdit}
+    <div class="seg systems-tabs" role="tablist" aria-label="Systems">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={!named.fixed}
+        class:on={!named.fixed}
+        title="Name the instruments of the first system, their parts and the groups. The other systems keep their choices."
+        onclick={() => named.fixed && onfix(false)}>First system</button
+      >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={named.fixed}
+        aria-disabled={!named.fixed && fixBlock !== null}
+        class:on={named.fixed}
+        class:blocked={!named.fixed && fixBlock !== null}
+        title={!named.fixed && fixBlock
+          ? fixBlock
+          : "Choose for every staff of the other systems an instrument of the first system and its parts."}
+        onclick={() => !named.fixed && fixBlock === null && onfix(true)}
+        >Other systems</button
+      >
+    </div>
+  {/if}
+  <p
+    class="phase"
+    title="The automatic recognition reads each staff on its own and cannot tell which instrument the staff belongs to. These names put every recognised staff on the right staff of the score and make its list of instruments."
+  >
     {#if named.fixed}
-      The instruments of page {first + 1} are confirmed. Choose, for every staff of
-      the other pages, the instrument and the parts it carries.
+      {#if canEdit}
+        Choose, for every staff of the other systems, the instrument and the
+        parts it carries.
+      {:else}
+        The instrument of every staff, system by system.
+      {/if}
     {:else}
-      Name the instruments of page {first + 1}, the first page: for every staff
-      its full and short name and the parts it carries, for every grand staff
-      its names.
+      Name the instruments of the first system, on page {(first?.page ?? 0) +
+        1}: for every staff its full and short name and the parts it carries,
+      for every grand staff its names.
     {/if}
   </p>
+
+  {#if firstCount > 0 && named.instruments.length > firstCount}
+    <p
+      class="doubles"
+      title={`Every instrument usually appears in the first system, so the piece has as many instruments as the first system has staves, or fewer where an instrument has several staves. ${PARTS_HINT} Instruments that enter later are added with New instrument… and marked new.`}
+    >
+      <Icon name="warning" size={14} />
+      <span>
+        {named.instruments.length} instruments are named, the first system has {firstCount}
+        {firstCount === 1 ? "staff" : "staves"}. Not in the first system:
+        {#each outsideFirst as instrument, i (instrument.id)}{i ? ", " : ""}<b
+            >{instrument.name}</b
+          >{#if instrument.added}
+            (new){/if}{/each}
+      </span>
+    </p>
+  {/if}
+  {#if doubles.length}
+    <p class="doubles" title={PARTS_HINT}>
+      <Icon name="warning" size={14} />
+      <span>
+        Possibly named twice:
+        {#each doubles as d, i (d.instrument)}
+          {@const result = canEdit ? mergeResult(d) : null}
+          {i ? ", " : ""}<span title={doubleTitle(d.instrument)}
+            ><b>{nameOf(d.instrument)}</b> ({nameOf(d.like)})</span
+          >{#if result}
+            <button
+              type="button"
+              class="linkish"
+              title={`Name its staves ${result} instead. One step, undo restores it.`}
+              onclick={() => onmerge(d)}>make it {result}</button
+            >{/if}
+        {/each}
+      </span>
+    </p>
+  {/if}
+
+  {#if named.fixed && canEdit}
+    <section class="summary" aria-label="Instruments and groups">
+      <h2 class="list-h">
+        Instruments <span class="count">{named.instruments.length}</span>
+      </h2>
+      <div class="sumcard">
+        <table>
+          <thead>
+            <tr>
+              <th>Instrument</th>
+              <th title="The short name printed from the second system on"
+                >Short</th
+              >
+              <th title="The players of the instrument">Parts</th>
+              <th
+                title="The staves of the instrument, each with the parts it carries"
+                >Staves</th
+              >
+              <th
+                class="num"
+                title="The pages on which a staff is named for the instrument"
+                >Pages</th
+              >
+            </tr>
+          </thead>
+          <tbody>
+            {#each named.instruments as instrument (instrument.id)}
+              <tr>
+                <td class="iname">
+                  {instrument.name}
+                  {#if doubleOf.has(instrument.id)}
+                    {@const d = doubleOf.get(instrument.id)!}
+                    {@const result = mergeResult(d)}
+                    <span class="dup" title={doubleTitle(instrument.id)}
+                      ><Icon name="warning" size={12} /> named twice?</span
+                    >
+                    {#if result}
+                      <button
+                        type="button"
+                        class="linkish merge"
+                        title={`Name its staves ${result} instead. One step, undo restores it.`}
+                        onclick={() => onmerge(d)}>Make it {result}</button
+                      >
+                    {/if}
+                  {/if}
+                  {#if instrument.added}
+                    <span
+                      class="added"
+                      title={`Added on page ${instrument.added}, not in the first system.`}
+                      >new</span
+                    >
+                  {/if}
+                </td>
+                <td class="faint">{instrument.abbr}</td>
+                <td class="faint">
+                  {instrument.parts.map((part) => part.name).join(", ")}
+                </td>
+                <td>
+                  <span class="staves">
+                    {#if instrument.grand}
+                      {#each combinations(instrument) as list (list[0].id)}
+                        <span
+                          class="staffpill grand"
+                          title="A grand staff: one player, the staves always together (a brace)."
+                          >{[
+                            partsLabel(instrument, list[0]),
+                            `grand staff · ${list.length}`,
+                          ]
+                            .filter((t) => t)
+                            .join(" · ")}</span
+                        >
+                      {/each}
+                    {:else if instrument.parts.length}
+                      {#each instrument.staves as staff (staff.id)}
+                        <span class="staffpill"
+                          >{partsLabel(instrument, staff) || "—"}</span
+                        >
+                      {/each}
+                    {:else}
+                      <span class="staffpill">1 staff</span>
+                    {/if}
+                  </span>
+                </td>
+                <td class="num faint">{ranges(pagesOf.get(instrument.id))}</td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+        <div class="sumgroups">
+          <span class="grouphead">Groups</span>
+          {#each named.groups as group (group.id)}
+            <span class="groupline">
+              <b>{group.label || "Without label"}</b>
+              {nameOf(group.first)} – {nameOf(
+                group.last,
+              )}{#if group.barThru}<span class="faint">, bar through</span>{/if}
+            </span>
+          {:else}
+            <span class="faint">None</span>
+          {/each}
+        </div>
+      </div>
+    </section>
+  {/if}
 
   <div class="columns">
     <div class="pages-col">
@@ -240,7 +654,7 @@
             {@const v = strip.view}
             {@const w = v.lrx - v.ulx}
             {@const h = v.lry - v.uly}
-            <div class="strip">
+            <div class="strip" class:whole class:readonly={!canEdit}>
               <div class="fields">
                 {#each strip.units as unit (unit.staves.join("-"))}
                   {@const shown = shownOf(unit)}
@@ -251,7 +665,36 @@
                     class:unnamed={!shown}
                     style:top={`${((centre(unit) - v.uly) / h) * 100}%`}
                   >
-                    {#if !named.fixed || adding[key]}
+                    {#if !canEdit}
+                      <span
+                        class="named-text"
+                        class:missing={!shown}
+                        class:double={shown &&
+                          doubleOf.has(shown.instrument.id)}
+                        title={shown
+                          ? doubleTitle(shown.instrument.id)
+                          : undefined}
+                      >
+                        {#if shown}
+                          {shown.instrument.name}
+                          {#if shown.instrument.parts.length}
+                            <span class="parts-text"
+                              >{partsLabel(shown.instrument, shown.staff) ||
+                                "—"}</span
+                            >
+                          {/if}
+                        {:else}
+                          Not named
+                        {/if}
+                      </span>
+                      {#if shown?.instrument.added}
+                        <span
+                          class="added"
+                          title={`Added on page ${shown.instrument.added}, not in the first system.`}
+                          >new</span
+                        >
+                      {/if}
+                    {:else if !named.fixed || adding[key]}
                       <input
                         class="ctl name"
                         type="text"
@@ -265,7 +708,7 @@
                         disabled={!canEdit}
                         aria-label={`${where(unit, strip.units)}: instrument`}
                         title={named.fixed
-                          ? "A new instrument, not on the first page. It is marked for the reviewer."
+                          ? "A new instrument, not in the first system. It is marked for the reviewer."
                           : "The instrument of this staff. The same name on several staves is one instrument; give each staff its parts."}
                         onchange={(e) => {
                           const name = (e.target as HTMLInputElement).value;
@@ -282,6 +725,10 @@
                             named.fixed ? p + 1 : undefined,
                           );
                           adding[key] = false;
+                        }}
+                        onkeydown={(e) => {
+                          if (e.key === "Escape" && adding[key])
+                            adding[key] = false;
                         }}
                       />
                       {#if shown && !adding[key]}
@@ -307,33 +754,44 @@
                           title="A grand staff: one player, the staves always together (a brace)."
                           >grand</span
                         >
-                      {:else}
-                        <input
-                          class="ctl parts"
-                          type="text"
-                          value={shown && !adding[key]
-                            ? partsLabel(shown.instrument, shown.staff)
-                            : ""}
-                          placeholder="Parts"
-                          disabled={!canEdit}
-                          aria-label={`${where(unit, strip.units)}: parts`}
-                          title="The players this staff carries, as printed: I, II, or 1.2.3 for three on one staff. Empty for an instrument of one player, or all its parts."
-                          onchange={(e) => {
-                            const row = (e.target as HTMLElement).closest(
-                              ".field-row",
+                      {/if}
+                      <input
+                        class="ctl parts"
+                        type="text"
+                        value={shown && !adding[key]
+                          ? partsLabel(shown.instrument, shown.staff)
+                          : ""}
+                        placeholder="Parts"
+                        disabled={!canEdit}
+                        aria-label={`${where(unit, strip.units)}: parts`}
+                        title={grand
+                          ? "The player this grand staff is for, as printed: 1 and 2 for Harfe 1 and Harfe 2. Empty for an instrument of one player."
+                          : "The players this staff carries, as printed: I, II, or 1.2.3 for three on one staff. Empty for an instrument of one player, or all its parts."}
+                        onchange={(e) => {
+                          const row = (e.target as HTMLElement).closest(
+                            ".field-row",
+                          );
+                          const name =
+                            row?.querySelector<HTMLInputElement>("input.name")
+                              ?.value ?? "";
+                          if (name)
+                            ondefine(
+                              unit,
+                              name,
+                              (e.target as HTMLInputElement).value,
+                              named.fixed ? p + 1 : undefined,
                             );
-                            const name =
-                              row?.querySelector<HTMLInputElement>("input.name")
-                                ?.value ?? "";
-                            if (name)
-                              ondefine(
-                                unit,
-                                name,
-                                (e.target as HTMLInputElement).value,
-                                named.fixed ? p + 1 : undefined,
-                              );
-                          }}
-                        />
+                        }}
+                      />
+                      {#if adding[key] && canEdit}
+                        <button
+                          type="button"
+                          class="btn btn-icon"
+                          aria-label={`${where(unit, strip.units)}: back to the list`}
+                          title="Choose an instrument of the list instead (Esc)"
+                          onclick={() => (adding[key] = false)}
+                          ><Icon name="close" size={14} /></button
+                        >
                       {/if}
                     {:else}
                       <select
@@ -341,7 +799,7 @@
                         value={shown?.instrument.id ?? ""}
                         disabled={!canEdit}
                         aria-label={`${where(unit, strip.units)}: instrument`}
-                        title="The instrument of this staff, from the instruments of the first page."
+                        title="The instrument of this staff, from the instruments of the first system."
                         onchange={(e) =>
                           pickInstrument(
                             unit,
@@ -356,7 +814,7 @@
                         {/each}
                         <option value={NEW}>New instrument…</option>
                       </select>
-                      {#if shown && !grand && shown.instrument.parts.length}
+                      {#if shown && shown.instrument.parts.length}
                         {@const instrument = shown.instrument}
                         {#if otherParts[key]}
                           <input
@@ -389,9 +847,9 @@
                                 (e.target as HTMLSelectElement).value,
                               )}
                           >
-                            {#each instrument.staves as staff (staff.id)}
-                              <option value={staff.parts.join(",")}
-                                >{partsLabel(instrument, staff)}</option
+                            {#each combinations(instrument) as list (list[0].id)}
+                              <option value={list[0].parts.join(",")}
+                                >{partsLabel(instrument, list[0])}</option
                               >
                             {/each}
                             {#each instrument.parts as part, i (i)}
@@ -406,7 +864,7 @@
                       {#if shown?.instrument.added}
                         <span
                           class="added"
-                          title={`Added on page ${shown.instrument.added}, not on the first page.`}
+                          title={`Added on page ${shown.instrument.added}, not in the first system.`}
                           >new</span
                         >
                       {/if}
@@ -414,37 +872,63 @@
                   </div>
                 {/each}
               </div>
-              <svg
-                class="crop"
-                viewBox={`${v.ulx} ${v.uly} ${w} ${h}`}
-                style:width={`${w * strip.scale}px`}
-                role="img"
-                aria-label={`Page ${p + 1}, system ${strip.system + 1}, its beginning`}
-              >
-                {#if urls[p]}
-                  <image
-                    href={urls[p]}
-                    x="0"
-                    y="0"
-                    width={pages[p].width}
-                    height={pages[p].height}
-                  />
-                {/if}
-                {#each strip.units as unit (unit.staves.join("-"))}
-                  {#each unit.staves as i (i)}
-                    {@const b = naming[p].staves[i]}
-                    <rect
-                      class="sbox"
-                      class:grand={unit.staves.length > 1}
-                      x={b.ulx}
-                      y={b.uly}
-                      width={b.lrx - b.ulx}
-                      height={b.lry - b.uly}
-                      vector-effect="non-scaling-stroke"
-                    />
-                  {/each}
+              <div class="structure" aria-hidden="true">
+                {#each marksOf(strip.units, v) as m, i (i)}
+                  <span
+                    class="mark {m.kind}"
+                    style:top={`${m.top * 100}%`}
+                    style:height={`${(m.bottom - m.top) * 100}%`}
+                    style:left={m.kind === "group"
+                      ? `${2 + m.depth * 6}px`
+                      : undefined}
+                    title={m.title}
+                  >
+                    {#if m.kind === "brace"}
+                      <svg viewBox="0 0 10 100" preserveAspectRatio="none">
+                        <path
+                          d="M9 0 Q3 0 3 8 L3 44 Q3 50 0 50 Q3 50 3 56 L3 92 Q3 100 9 100"
+                          vector-effect="non-scaling-stroke"
+                        />
+                      </svg>
+                    {/if}
+                  </span>
                 {/each}
-              </svg>
+              </div>
+              <div class="cropbox">
+                <svg
+                  class="crop"
+                  viewBox={`${v.ulx} ${v.uly} ${w} ${h}`}
+                  style:width={`${w * strip.scale}px`}
+                  role="img"
+                  aria-label={whole
+                    ? `Page ${p + 1}`
+                    : `Page ${p + 1}, system ${strip.system + 1}, its beginning`}
+                >
+                  {#if urls[p]}
+                    <image
+                      href={urls[p]}
+                      x="0"
+                      y="0"
+                      width={pages[p].width}
+                      height={pages[p].height}
+                    />
+                  {/if}
+                  {#each strip.units as unit (unit.staves.join("-"))}
+                    {#each unit.staves as i (i)}
+                      {@const b = naming[p].staves[i]}
+                      <rect
+                        class="sbox"
+                        class:grand={unit.staves.length > 1}
+                        x={b.ulx}
+                        y={b.uly}
+                        width={b.lrx - b.ulx}
+                        height={b.lry - b.uly}
+                        vector-effect="non-scaling-stroke"
+                      />
+                    {/each}
+                  {/each}
+                </svg>
+              </div>
             </div>
           {/each}
         </section>
@@ -461,6 +945,7 @@
               value={group.first}
               disabled={!canEdit || named.fixed}
               aria-label="First instrument of the group"
+              title="The top instrument of the group"
               onchange={(e) =>
                 setGroup(k, { first: (e.target as HTMLSelectElement).value })}
             >
@@ -474,6 +959,7 @@
               value={group.last}
               disabled={!canEdit || named.fixed}
               aria-label="Last instrument of the group"
+              title="The bottom instrument of the group"
               onchange={(e) =>
                 setGroup(k, { last: (e.target as HTMLSelectElement).value })}
             >
@@ -568,12 +1054,108 @@
   }
   .strip {
     display: grid;
-    grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+    grid-template-columns: minmax(280px, 340px) 32px minmax(0, 1fr);
     gap: 12px;
     align-items: stretch;
   }
+  /* The marks a score's left margin would show for the names. */
+  .structure {
+    position: relative;
+  }
+  .mark {
+    position: absolute;
+  }
+  .mark.group {
+    width: 3px;
+    border-radius: 2px;
+    background: var(--ink-faint);
+  }
+  .mark.bracket {
+    right: 6px;
+    width: 6px;
+    border: 2px solid var(--ink-soft);
+    border-right: none;
+  }
+  .mark.brace {
+    right: 4px;
+    width: 10px;
+  }
+  .mark.brace svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+  }
+  .mark.brace path {
+    fill: none;
+    stroke: var(--ink-grand);
+    stroke-width: 2;
+  }
+  .named-text {
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  .named-text.missing,
+  .named-text.double {
+    color: var(--warn);
+  }
+  /* The tab of the other systems before the first is named. */
+  .systems-tabs {
+    align-self: flex-start;
+  }
+  .systems-tabs > button.blocked {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .doubles {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    margin: 0;
+    padding: 8px 12px;
+    max-width: 760px;
+    font-size: 13px;
+    color: var(--warn);
+    background: var(--warn-wash);
+    border: 1px solid var(--warn-line);
+    border-radius: 8px;
+  }
+  .doubles :global(svg) {
+    flex: none;
+    margin-top: 2px;
+  }
+  .doubles b {
+    font-weight: 600;
+  }
+  .merge {
+    margin-left: 6px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .dup {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--warn);
+  }
+  .parts-text {
+    margin-left: 4px;
+    color: var(--ink-faint);
+  }
   .fields {
     position: relative;
+  }
+  /* Read-only names sit right beside the structure column. */
+  .strip.readonly {
+    grid-template-columns: minmax(120px, 240px) 32px minmax(0, 1fr);
+    column-gap: 6px;
+  }
+  .strip.readonly .field-row {
+    justify-content: flex-end;
+    text-align: right;
   }
   .field-row {
     position: absolute;
@@ -604,6 +1186,12 @@
     font-weight: 600;
     margin-left: 6px;
   }
+  /* A whole page keeps the size its rows need and scrolls sideways in its
+     box; a system's opening shrinks to the column. */
+  .cropbox {
+    min-width: 0;
+    overflow-x: auto;
+  }
   .crop {
     display: block;
     max-width: 100%;
@@ -612,6 +1200,9 @@
     border: 1px solid var(--line);
     border-radius: 6px;
   }
+  .strip.whole .crop {
+    max-width: none;
+  }
   .sbox {
     fill: none;
     stroke: var(--ink-staff);
@@ -619,6 +1210,90 @@
   }
   .sbox.grand {
     stroke: var(--ink-grand);
+  }
+  /* The confirmed instruments, as a card like the pieces table. */
+  .summary {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 760px;
+  }
+  .count {
+    margin-left: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .sumcard {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .sumcard table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .sumcard th {
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-faint);
+    background: var(--bg-inset);
+  }
+  .sumcard th,
+  .sumcard td {
+    padding: 7px 12px;
+    vertical-align: middle;
+  }
+  .sumcard tbody tr + tr td {
+    border-top: 1px solid var(--line);
+  }
+  .sumcard .num {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+  }
+  .iname {
+    font-weight: 600;
+  }
+  .faint {
+    color: var(--ink-faint);
+  }
+  .staves {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .staffpill {
+    font-size: 11.5px;
+    line-height: 1;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: var(--bg-inset);
+    white-space: nowrap;
+  }
+  .staffpill.grand {
+    color: var(--ink-grand);
+  }
+  .sumgroups {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 16px;
+    padding: 9px 12px;
+    font-size: 13px;
+    border-top: 1px solid var(--line);
+  }
+  .grouphead {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-faint);
+  }
+  .groupline b {
+    font-weight: 600;
+    margin-right: 4px;
   }
   .groups {
     display: flex;
@@ -651,7 +1326,10 @@
   }
   @media (max-width: 640px) {
     .strip {
-      grid-template-columns: minmax(160px, 52%) minmax(0, 1fr);
+      grid-template-columns: minmax(160px, 52%) 28px minmax(0, 1fr);
+    }
+    .strip.readonly {
+      grid-template-columns: minmax(100px, 40%) 28px minmax(0, 1fr);
     }
   }
 </style>

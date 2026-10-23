@@ -3,17 +3,22 @@ import assert from "node:assert/strict";
 
 import {
   assignUnit,
-  firstNamingPage,
+  doubleNamings,
+  mergeInstrument,
+  firstNamingSystem,
+  inSystem,
   instrumentScoreDef,
   NO_INSTRUMENTS,
   nameUnit,
   namingProblem,
   namingUnits,
+  openingTranscriptions,
   parseParts,
+  partsLabel,
   printedName,
   pruneInstruments,
   splitLabel,
-  suggestFirstPage,
+  suggestFirstSystem,
   suggestFromList,
   unitBoxes,
   unitName,
@@ -21,6 +26,7 @@ import {
   type NamingUnit,
 } from "../instrument-naming.ts";
 import type { LayoutInstruments } from "../omr-layout.ts";
+import type { OmrRecord } from "../omr-record.ts";
 import {
   buildFacsimileMei,
   DEFAULT_SCORE_DEF,
@@ -106,7 +112,11 @@ test("namingUnits and unitBoxes: single staves and a grand staff per system", ()
     lrx: 900,
     lry: 470,
   });
-  assert.equal(firstNamingPage([{ zones: [] }, ...pages]), 1);
+  assert.deepEqual(firstNamingSystem([{ zones: [] }, ...pages]), {
+    page: 1,
+    system: 0,
+  });
+  assert.equal(firstNamingSystem([{ zones: [] }]), null);
 });
 
 test("parseParts, splitLabel and printedName", () => {
@@ -175,6 +185,12 @@ test("namingProblem: unnamed staves, and a part on two staves of a system", () =
   assert.match(
     namingProblem(named, pages)!,
     /^Name every staff: 3 staves are unnamed on page 1\.$/,
+  );
+  // The first system alone is complete.
+  const first = firstNamingSystem(pages);
+  assert.equal(
+    namingProblem(named, pages, (u) => inSystem(first, u)),
+    null,
   );
   named = nameAll(
     pages,
@@ -313,12 +329,13 @@ test("instrumentScoreDef: parts as a bracket of one instrument, a grand staff as
   );
 });
 
-test("suggestFirstPage: printed names with trailing part names make one instrument with parts", () => {
+test("suggestFirstSystem: printed names with trailing part names make one instrument with parts", () => {
   const pages = [pageA()];
-  const s = suggestFirstPage(pages, NO_INSTRUMENTS, [
+  // The second system's labels are not read: it chooses from the list.
+  const s = suggestFirstSystem(pages, NO_INSTRUMENTS, [
     [
       ["Flauto I.", "Flauto II.", "Mezzosopran.) Klavier."],
-      ["", "", ""],
+      ["Fl. I", "Fl. II", "Kl."],
     ],
   ]);
   assert.deepEqual(
@@ -360,14 +377,14 @@ test("suggestFromList: a shared staff by its short name, the rest by place", () 
   );
 });
 
-test("suggestFromList: the first page's later systems follow its first one", () => {
+test("suggestFromList: the first page's later systems follow the first system", () => {
   const pages = [pageA()];
   const named = nameAll(pages, [
     [0, "Flauto", "I"],
     [1, "Flauto", "II"],
     [2, "Klavier", ""],
   ]);
-  const s = suggestFromList(pages, named, [], (p) => p === 0);
+  const s = suggestFromList(pages, named, []);
   assert.deepEqual(
     s.map((x) => [x.unit.system, x.unit.staves, x.instrument, x.parts]),
     [
@@ -375,5 +392,250 @@ test("suggestFromList: the first page's later systems follow its first one", () 
       [1, [5], "i1", [1]],
       [1, [6, 7], "i2", []],
     ],
+  );
+});
+
+test("instrumentScoreDef with opening transcriptions: clefs where each staff first appears, key and meter from the first system", () => {
+  const pages = [pageA()];
+  const named = nameAll(pages, [
+    [0, "Flauto", "I"],
+    [1, "Flauto", "II"],
+    [2, "Pianoforte", ""],
+    [3, "Flauto", "I"],
+    [4, "Flauto", "II"],
+    [5, "Pianoforte", ""],
+  ]);
+  const xml = (sign: string, line: number, fifths: number, time = "") =>
+    `<score-partwise version="3.1"><part id="P1"><measure><attributes><divisions>1</divisions><key><fifths>${fifths}</fifths></key>${time}<clef><sign>${sign}</sign><line>${line}</line></clef></attributes></measure></part></score-partwise>`;
+  const threeFour = "<time><beats>3</beats><beat-type>4</beat-type></time>";
+  // Per staff box: its transcription, null for a failed one.
+  const transcribed: (string | null)[] = [
+    null, // Fl. I, first system: failed, so the second system's box counts
+    xml("G", 2, -2),
+    xml("G", 2, -2, threeFour),
+    xml("F", 4, -2),
+    xml("G", 2, 0), // Fl. I, second system: its own key
+    xml("C", 3, -2), // Fl. II again: not its opening
+    xml("G", 2, -2),
+    xml("F", 4, -2),
+  ];
+  const staves = pages[0].staves!;
+  const record: OmrRecord = {
+    cropMargin: 0.9,
+    staffPipeline: { name: "mzk-staff", version: "1" },
+    ocr: { engine: "tesseract.js", version: "7.0.0", language: "deu+eng" },
+    pages: [
+      {
+        n: 1,
+        image: "p.jpg",
+        staves: staves.map((b, k) => ({
+          zone: `staff-zone-1-${k + 1}`,
+          // A record of other corners describes another box.
+          box: k === 7 ? { ...b, lry: b.lry + 5 } : b,
+          label: "",
+          musicxml: transcribed[k],
+          error: "",
+        })),
+      },
+    ],
+    clefs: [],
+  };
+  const opening = openingTranscriptions(pages, record);
+  assert.equal(opening.firstSystem.length, 4);
+  assert.equal(opening.firstSystem[0], null);
+  const base = {
+    ...DEFAULT_SCORE_DEF,
+    staves: [
+      {
+        ...DEFAULT_SCORE_DEF.staves[0],
+        id: "i1-2",
+        clefShape: "C",
+        clefLine: 1,
+      },
+    ],
+  };
+  const def = instrumentScoreDef(named, base, opening);
+  assert.deepEqual(
+    def.staves.map((s) => [s.id, `${s.clefShape}${s.clefLine}`, s.keysig]),
+    [
+      ["i1-1", "G2", "0"],
+      ["i1-2", "G2", undefined],
+      ["i2-1", "G2", undefined],
+      ["i2-2", "F4", undefined],
+    ],
+  );
+  assert.equal(def.keysig, "2f");
+  assert.deepEqual(
+    [def.meterCount, def.meterUnit, def.meterSym],
+    ["3", "4", ""],
+  );
+  // Without transcriptions the staves keep the score's values.
+  const unread = instrumentScoreDef(named, base, {
+    byStaff: new Map(),
+    firstSystem: [],
+  });
+  assert.equal(
+    `${unread.staves[1].clefShape}${unread.staves[1].clefLine}`,
+    "C1",
+  );
+  assert.equal(unread.keysig, DEFAULT_SCORE_DEF.keysig);
+});
+
+test("doubleNamings: parts of one instrument named as instruments of their own", () => {
+  let named = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I").named;
+  named = nameUnit(named, 1, "Flöte", "II").named;
+  named = nameUnit(named, 1, "Violoncello und Kontrabass", "Vc").named;
+  named = nameUnit(named, 1, "Violoncello und Kontrabass", "Kb").named;
+  named = nameUnit(named, 1, "Oboe I, II").named;
+  named = nameUnit(named, 1, "Flöte I").named;
+  named = nameUnit(named, 1, "Kontrabass").named;
+  named = nameUnit(named, 1, "Viola").named;
+  named = nameUnit(named, 1, "Oboe").named;
+  named = nameUnit(named, 1, "Horn in F", "I.II").named;
+  named = nameUnit(named, 1, "Horn in Es").named;
+  const nameOf = (id: string) =>
+    named.instruments.find((i) => i.id === id)!.name;
+  assert.deepEqual(
+    doubleNamings(named).map((d) => [
+      nameOf(d.instrument),
+      nameOf(d.like),
+      d.how,
+    ]),
+    [
+      ["Flöte I", "Flöte", "longer"],
+      ["Kontrabass", "Violoncello und Kontrabass", "part"],
+      ["Oboe I, II", "Oboe", "longer"],
+    ],
+  );
+});
+
+test("mergeInstrument: a part named as an instrument becomes a part again", () => {
+  let named = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I").named;
+  named = nameUnit(named, 1, "Flöte", "II").named;
+  named = nameUnit(named, 1, "Violoncello und Kontrabass", "Vc").named;
+  named = nameUnit(named, 1, "Violoncello und Kontrabass", "Kb").named;
+  named = nameUnit(named, 1, "Oboe").named;
+  let r = nameUnit(named, 1, "Flöte I");
+  named = r.named;
+  const fl1 = r.staves[0]!;
+  r = nameUnit(named, 1, "Violoncello");
+  named = r.named;
+  const vc = r.staves[0]!;
+  r = nameUnit(named, 1, "Oboe I, II");
+  named = r.named;
+  const ob = r.staves[0]!;
+  named = {
+    ...named,
+    groups: [
+      {
+        id: "g1",
+        first: named.instruments[0].id,
+        last: named.instruments.find((i) => i.name === "Violoncello")!.id,
+        symbol: "bracket",
+        label: "",
+        barThru: false,
+      },
+    ],
+  };
+  const byName = (n: LayoutInstruments, name: string) =>
+    n.instruments.find((i) => i.name === name)!;
+  for (const name of ["Flöte I", "Violoncello", "Oboe I, II"]) {
+    const d = doubleNamings(named).find(
+      (x) => x.instrument === byName(named, name).id,
+    )!;
+    const m = mergeInstrument(named, d)!;
+    const staffId = { "Flöte I": fl1, Violoncello: vc, "Oboe I, II": ob }[
+      name
+    ]!;
+    const to = m.staves.get(staffId)!;
+    const like = m.named.instruments.find((i) =>
+      i.staves.some((s) => s.id === to),
+    )!;
+    const staff = like.staves.find((s) => s.id === to)!;
+    named = m.named;
+    assert.deepEqual(
+      [name, like.name, partsLabel(like, staff)],
+      [
+        name,
+        {
+          "Flöte I": "Flöte",
+          Violoncello: "Violoncello und Kontrabass",
+          "Oboe I, II": "Oboe",
+        }[name],
+        { "Flöte I": "I", Violoncello: "Vc", "Oboe I, II": "I.II" }[name],
+      ],
+    );
+  }
+  assert.equal(named.instruments.length, 3);
+  assert.equal(doubleNamings(named).length, 0);
+  // The group that ended at Violoncello ends at the instrument it joined.
+  assert.equal(
+    named.groups[0].last,
+    byName(named, "Violoncello und Kontrabass").id,
+  );
+});
+
+test("grand-staff instruments with parts: Harfe 1 and Harfe 2", () => {
+  let r = nameUnit(NO_INSTRUMENTS, 2, "Harfe", "1");
+  let named = r.named;
+  const h1 = r.staves;
+  r = nameUnit(named, 2, "Harfe", "2");
+  named = r.named;
+  const h2 = r.staves;
+  assert.equal(named.instruments.length, 1);
+  const harfe = named.instruments[0];
+  assert.equal(harfe.grand, true);
+  assert.deepEqual(
+    harfe.parts.map((p) => p.name),
+    ["1", "2"],
+  );
+  assert.equal(new Set([...h1, ...h2]).size, 4);
+  // The same part again gives the same staves.
+  assert.deepEqual(nameUnit(named, 2, "Harfe", "1").staves, h1);
+
+  const def = instrumentScoreDef(named, DEFAULT_SCORE_DEF);
+  assert.deepEqual(
+    def.staves.map((s) => `${s.clefShape}${s.clefLine}`),
+    ["G2", "F4", "G2", "F4"],
+  );
+  assert.deepEqual(
+    def.groups.map((g) => [g.symbol, g.start, g.end, g.label]),
+    [
+      ["none", 1, 4, "Harfe"],
+      ["brace", 1, 2, "1"],
+      ["brace", 3, 4, "2"],
+    ],
+  );
+  const mei = buildFacsimileMei(
+    {
+      headXml: "<meiHead/>",
+      scoreDef: def,
+      pages: [{ image: "p.jpg", width: 10, height: 10, zones: [] }],
+    },
+    { withBreaks: true },
+  );
+  assert.deepEqual(
+    parseScoreDef(mei).groups.map((g) => [g.symbol, g.start, g.end]),
+    [
+      ["none", 1, 4],
+      ["brace", 1, 2],
+      ["brace", 3, 4],
+    ],
+  );
+
+  // A separately named "Harfe 2" grand staff merges as part 2.
+  let other = nameUnit(NO_INSTRUMENTS, 2, "Harfe", "1").named;
+  const sep = nameUnit(other, 2, "Harfe 2");
+  other = sep.named;
+  const d = doubleNamings(other)[0];
+  assert.equal(d.how, "longer");
+  const m = mergeInstrument(other, d)!;
+  assert.equal(m.named.instruments.length, 1);
+  const merged = m.named.instruments[0];
+  const to = sep.staves.map((id) => m.staves.get(id!)!);
+  assert.equal(new Set(to).size, 2);
+  assert.deepEqual(
+    to.map((id) => partsLabel(merged, merged.staves.find((s) => s.id === id)!)),
+    ["2", "2"],
   );
 });

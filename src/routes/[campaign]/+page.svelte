@@ -4,6 +4,7 @@
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
   import { tick } from "svelte";
+  import { dev } from "$app/environment";
   import { auth, login, forge } from "$lib/auth.svelte.ts";
   import {
     CommandRunner,
@@ -106,6 +107,37 @@
   const repoId = $derived(resolved?.repoId ?? 0);
   // The acting user's stable numeric id (written to the tables); login is display-only.
   const viewer = $derived(viewerId());
+
+  // On the dev server: a campaign whose coordinator runs from a branch other
+  // than an instance's, while its caller.yml still calls campaign.yml at
+  // another ref (main for every campaign the app creates), gets the command
+  // that points both at the branch (scripts/use-branch.ts). The app cannot
+  // change workflow files itself.
+  const INSTANCE_REFS = ["main", "staging", "testing", "develop"];
+  let branchHint = $state<{ ref: string; called: string } | null>(null);
+  $effect(() => {
+    branchHint = null;
+    const f = dev && owner && repo ? forge() : null;
+    if (!f) return;
+    const at = { owner, repo };
+    Promise.all([
+      f.getRepoFile(at.owner, at.repo, "config.yaml"),
+      f.getRepoFile(at.owner, at.repo, ".github/workflows/caller.yml"),
+    ])
+      .then(([config, caller]) => {
+        const ref =
+          /^automation:\n(?:[ \t].*\n)*?[ \t]+ref:\s*"?([^"\s]+)/m.exec(
+            config ?? "",
+          )?.[1];
+        const called = /campaign\.yml@(\S+)/.exec(caller ?? "")?.[1];
+        if (at.owner !== owner || at.repo !== repo) return;
+        branchHint =
+          ref && called && ref !== called && !INSTANCE_REFS.includes(ref)
+            ? { ref, called }
+            : null;
+      })
+      .catch(() => {});
+  });
 
   let loading = $state(false);
   let loaded = $state(false);
@@ -1357,6 +1389,23 @@
     {/if}
     {#if manage && canPush && !scoreView}
       {@render resultBanner()}
+    {/if}
+    {#if branchHint}
+      <div class="banner bar warn">
+        <span>
+          Dev server: this campaign runs the coordinator from <code
+            >{branchHint.ref}</code
+          >
+          but <code>campaign.yml</code> from <code>{branchHint.called}</code>,
+          so submissions can be skipped or rejected. In
+          <code>lets-encode/</code>
+          on <code>{branchHint.ref}</code>, run
+          <code
+            >GH_TOKEN=$(gh auth token -u {auth.user?.login ?? "<account>"}) node
+            scripts/use-branch.ts {owner}/{repo}</code
+          >, then reload.
+        </span>
+      </div>
     {/if}
 
     {#if resolveError}

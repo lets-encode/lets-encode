@@ -80,7 +80,7 @@ export interface LayoutInstrument {
   staves: { id: string; parts: number[] }[];
   /**
    * The page (1-based) on which the instrument was added after the first
-   * page's instruments were confirmed; absent for those.
+   * system's instruments were confirmed; absent for those.
    */
   added?: number;
 }
@@ -102,7 +102,7 @@ export interface LayoutGroup {
 export interface LayoutInstruments {
   instruments: LayoutInstrument[];
   groups: LayoutGroup[];
-  /** The first page's instruments are confirmed: the other pages choose from them. */
+  /** The first system's instruments are confirmed: the other systems choose from them. */
   fixed: boolean;
 }
 

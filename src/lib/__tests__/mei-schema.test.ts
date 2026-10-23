@@ -11,6 +11,7 @@ import assert from "node:assert/strict";
 import {
   buildBlankScoreMei,
   buildFacsimileMei,
+  DEFAULT_SCORE_DEF,
   initialFacsimileModel,
 } from "../mei-facsimile.ts";
 import type { FacsimilePage, ScoreDefModel } from "../mei-facsimile.ts";
@@ -21,6 +22,11 @@ import {
 } from "../source-metadata.ts";
 import { filledSource as source } from "./source-fixture.ts";
 import { recordContribution } from "../mei-provenance.ts";
+import {
+  instrumentScoreDef,
+  nameUnit,
+  NO_INSTRUMENTS,
+} from "../instrument-naming.ts";
 import {
   loadMeiValidator,
   validateMei,
@@ -385,4 +391,23 @@ test("a document carrying a DOCTYPE declaration is rejected outright", async () 
   );
   assert.equal(check.ok, false);
   assert.match(check.error, /DOCTYPE/);
+});
+
+test("named instruments validate: parts, layers, a brace and harps without a bracket", async () => {
+  let named = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I").named;
+  named = nameUnit(named, 1, "Flöte", "I.II").named;
+  named = nameUnit(named, 2, "Harfe", "1").named;
+  named = nameUnit(named, 2, "Harfe", "2").named;
+  named = nameUnit(named, 2, "Klavier").named;
+  const model = {
+    ...initialFacsimileModel(PAGES),
+    headXml: buildSourceHead(source()),
+  };
+  const check = await validateMei(
+    buildFacsimileMei(
+      { ...model, scoreDef: instrumentScoreDef(named, DEFAULT_SCORE_DEF) },
+      { withBreaks: true },
+    ),
+  );
+  assert.ok(check.ok, `named instruments: ${check.error}`);
 });
