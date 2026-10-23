@@ -18,6 +18,13 @@
 // page break or a duplicate measure is rejected rather than merged.
 
 import { tagsIn } from "./mei-xml.ts";
+import {
+  CHECKED_STAFF_FIELDS,
+  parseScoreDef,
+  replaceOpeningScoreDef,
+  type ScoreDefModel,
+  type StaffModel,
+} from "./mei-facsimile.ts";
 
 /**
  * The `<pb>` tags of `xml` from offset `from`, outside comments, with the
@@ -235,4 +242,81 @@ export function splicePageSpan(
   locator: string,
 ): string {
   return spliceSpan(baseMei, forkMei, locator);
+}
+
+/** A staff without the fields a check of the opening score definition may change. */
+function unchecked(staff: StaffModel): Partial<StaffModel> {
+  const rest: Partial<StaffModel> = { ...staff };
+  for (const field of CHECKED_STAFF_FIELDS) delete rest[field];
+  return rest;
+}
+
+/**
+ * Why the fork's opening score definition may not replace the base's, or
+ * null when it may: the two differ at most in the staves' clefs, own key
+ * signatures and transpositions (CHECKED_STAFF_FIELDS), the key and the
+ * meter. Staves, their ids, names and layers, and the groups stay.
+ */
+export function openingScoreDefChange(
+  base: ScoreDefModel,
+  fork: ScoreDefModel,
+): string | null {
+  if (fork.staves.length !== base.staves.length)
+    return `the score has ${base.staves.length} staves, the submission ${fork.staves.length}`;
+  const changed = base.staves.findIndex(
+    (staff, i) =>
+      JSON.stringify(unchecked(staff)) !==
+      JSON.stringify(unchecked(fork.staves[i])),
+  );
+  if (changed >= 0)
+    return `staff ${changed + 1} changes more than its clef, key signature or transposition`;
+  if (JSON.stringify(base.groups) !== JSON.stringify(fork.groups))
+    return "the staff groups change";
+  return null;
+}
+
+/**
+ * The base score with the fork's opening score definition, which may change
+ * only what openingScoreDefChange allows; a movement's copy of it follows
+ * (replaceOpeningScoreDef). Unchanged, the base is returned as it is. Throws
+ * with the reason for any other change.
+ */
+export function spliceOpeningScoreDef(
+  baseMei: string,
+  forkMei: string,
+): string {
+  const base = parseScoreDef(baseMei);
+  const fork = parseScoreDef(forkMei);
+  const reason = openingScoreDefChange(base, fork);
+  if (reason)
+    throw new Error(
+      `The score definition may change only in clefs, key signatures, meter and transpositions: ${reason}.`,
+    );
+  const same =
+    base.keysig === fork.keysig &&
+    base.meterCount === fork.meterCount &&
+    base.meterUnit === fork.meterUnit &&
+    base.meterSym === fork.meterSym &&
+    base.staves.every((staff, i) =>
+      CHECKED_STAFF_FIELDS.every(
+        (field) => staff[field] === fork.staves[i][field],
+      ),
+    );
+  if (same) return baseMei;
+  return replaceOpeningScoreDef(baseMei, {
+    ...base,
+    keysig: fork.keysig,
+    meterCount: fork.meterCount,
+    meterUnit: fork.meterUnit,
+    meterSym: fork.meterSym,
+    staves: base.staves.map((staff, i) => {
+      const checked: Record<string, unknown> = { ...staff };
+      for (const field of CHECKED_STAFF_FIELDS) {
+        const value = fork.staves[i][field];
+        if (value === undefined) delete checked[field];
+        else checked[field] = value;
+      }
+      return checked as unknown as StaffModel;
+    }),
+  });
 }

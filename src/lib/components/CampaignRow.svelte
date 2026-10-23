@@ -118,12 +118,18 @@
 
   const actLabel = (n: NextTask): string => {
     if (n.action === "review") return "Claim to review";
+    if (n.checksOpening)
+      return n.action === "continue"
+        ? "Continue in score check"
+        : "Claim & open score check";
     if (n.action === "continue") return "Open in mei-friend";
     return claimLabel(n.locator);
   };
   const claimTip = (n: NextTask): string =>
     n.action === "continue"
-      ? "Opens the task you hold in mei-friend."
+      ? n.checksOpening
+        ? "Opens the score check of the task you hold."
+        : "Opens the task you hold in mei-friend."
       : `Reserves this ${n.action === "review" ? "review" : "task"} for you for a limited time. Give back task releases it.`;
 </script>
 

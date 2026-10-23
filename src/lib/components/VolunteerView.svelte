@@ -132,7 +132,10 @@
 
   const actLabel = (c: BoardCard): string => {
     if (viewer === "") return "Log in to claim";
-    if (c.column === "ready") return claimLabel(c.locator);
+    if (c.column === "ready")
+      return c.checksOpening
+        ? "Claim & open score check"
+        : claimLabel(c.locator);
     if (c.column === "validation" && c.slots.some((s) => s.claimable))
       return "Claim to review";
     return "Open task";

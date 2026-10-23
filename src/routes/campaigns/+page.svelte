@@ -285,6 +285,10 @@
       await goto(preTaskHref(s.name, next.locator, next.task));
       return;
     }
+    if (next.checksOpening && next.action !== "review") {
+      await goto(`/${s.name}/check/${next.task}`);
+      return;
+    }
     const c = ctxOf(s);
     const refresh = async () => {
       runner.log.step("Refreshing…");

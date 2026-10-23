@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { insertPageDraft } from "../omr-draft.ts";
+import { insertPageDraft, type UnprintedStaff } from "../omr-draft.ts";
 import {
   buildFacsimileMei,
   DEFAULT_SCORE_DEF,
@@ -313,4 +313,37 @@ test("a staff the system does not print keeps the clef change verovio placed on 
     result.mei,
     /<staff n="2"><layer n="1"><mRest\/><clef shape="C" line="3"\/><\/layer><\/staff>/,
   );
+});
+
+test("an unprinted staff rests in the layers given, or holds an mSpace", () => {
+  // System 2 prints staff 3 only: staff 1 holds an mSpace, staff 2 rests in layers 2 and 3.
+  const printed = [new Set([1, 2, 3]), new Set([3])];
+  const unprinted = [
+    new Map(),
+    new Map<number, UnprintedStaff>([
+      [1, "space"],
+      [2, [2, 3]],
+    ]),
+  ];
+  const result = insertPageDraft(
+    skeleton([1, 1], 3),
+    "surface-1",
+    converted(2, 3),
+    [1, 1],
+    printed,
+    undefined,
+    unprinted,
+  );
+  const second = /<measure[^>]* n="2"[^>]*>([\s\S]*?)<\/measure>/.exec(
+    result.mei,
+  )![1];
+  assert.match(
+    second,
+    /<staff n="1"><layer n="1"><mSpace\/><\/layer><\/staff>/,
+  );
+  assert.match(
+    second,
+    /<staff n="2"><layer n="2"><mRest\/><\/layer><layer n="3"><mRest\/><\/layer><\/staff>/,
+  );
+  assert.match(second, /<staff n="3"><layer n="1"><note xml:id="n2-3"/);
 });

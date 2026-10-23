@@ -66,7 +66,11 @@ import {
   resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
-import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
+import {
+  spliceOpeningScoreDef,
+  splicePage,
+  splicePageSpan,
+} from "../src/lib/mei-page-splice.ts";
 import { measuredSurfaceIds } from "../src/lib/mei-facsimile.ts";
 import { replanPageTasks } from "../src/lib/campaign-plan.ts";
 import {
@@ -78,12 +82,14 @@ import { reapLocks } from "../src/lib/campaign-reaper.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  checksOpening,
   claimPullRequest,
   classifyPullRequest,
   isAutomaticCommit,
   isReviewEdit,
   keptWorkBranch,
   keptWorkSince,
+  pieceFieldForPath,
   pieceKindForPath,
   priorDecision,
   rejectionDetail,
@@ -869,8 +875,10 @@ async function decideEncoding(
   // fork's page into the base score, leaving other pages as they stand. A
   // facsimile piece's page is joined measure by measure (matched by xml:id —
   // its measure grid is fixed by the measure correction); a physical piece has
-  // no grid, so its page span is taken from the fork wholesale. Whole-file
-  // tasks (empty locator) and pre-tasks take the fork verbatim.
+  // no grid, so its page span is taken from the fork wholesale. The first page
+  // task of an 'omr-instruments' piece also brings the opening score
+  // definition's clefs, keys, meter and transpositions. Whole-file tasks
+  // (empty locator) and pre-tasks take the fork verbatim.
   //
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
@@ -929,6 +937,15 @@ async function decideEncoding(
         mei = physical
           ? splicePageSpan(baseMei, forkMei, task.locator)
           : splicePage(baseMei, forkMei, task.locator);
+        // The first page task of an 'omr-instruments' piece checks the
+        // opening score definition, which lies outside every page's span.
+        const preparation = pieceFieldForPath(
+          configText,
+          task.fragment,
+          "preparation",
+        );
+        if (checksOpening(task, tasks, preparation))
+          mei = spliceOpeningScoreDef(mei, forkMei);
         // The splice keeps the base header. The recognition models an OMR
         // page draft names in the fork's header are carried over; no other
         // entry is taken from a fork.

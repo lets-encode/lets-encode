@@ -25,6 +25,7 @@ import {
 import { labelScore, suggestStaffAssignment } from "./omr-staff-assign.ts";
 import { proposeScoreDef, readAttributes } from "./omr-musicxml.ts";
 import { sameBox, type OmrRecord } from "./omr-record.ts";
+import type { UnprintedStaff } from "./omr-draft.ts";
 
 /** The boxes of one page that the naming reads. */
 export interface NamingPage {
@@ -710,6 +711,67 @@ export function openingTranscriptions(
     }
   }
   return { byStaff, firstSystem: firstSystem ?? [] };
+}
+
+/**
+ * How each system writes the score staves it does not print, from the
+ * staves each prints (`printed`: per system of the piece, in order, the
+ * staff numbers; `ids`: the score staves' staffDef xml:ids, staff n at
+ * n − 1). Every part of an instrument (an instrument without parts counts as
+ * one) that a system does not show rests on the staves that carry it in
+ * force: those that last showed it, before its first showing those that
+ * first show it. Such a staff rests in the layer of each resting part (its
+ * layer by the staff's parts where it carries several, else 1). Every other
+ * staff the system does not print holds an mSpace: its parts are on other
+ * staves there. A staff of no instrument is left out (rests in layer 1).
+ */
+export function unprintedStaves(
+  named: LayoutInstruments,
+  ids: (string | undefined)[],
+  printed: Set<number>[],
+): Map<number, UnprintedStaff>[] {
+  const numberOf = new Map(ids.map((id, i) => [id, i + 1]));
+  const instruments = named.instruments.map((instrument) => {
+    const staves = instrument.staves.flatMap((s) => {
+      const n = numberOf.get(s.id);
+      return n ? [{ n, parts: s.parts.length ? s.parts : [0] }] : [];
+    });
+    const parts = Math.max(1, instrument.parts.length);
+    const carrying = (p: number, system: Set<number>) =>
+      staves.filter((s) => system.has(s.n) && s.parts.includes(p));
+    // Before its first showing, a part is in force where it first shows.
+    const inForce = Array.from({ length: parts }, (_, p) => {
+      const first = printed.find((system) => carrying(p, system).length);
+      const at = first
+        ? carrying(p, first)
+        : staves.filter((s) => s.parts.includes(p)).slice(0, 1);
+      return at;
+    });
+    return { staves, parts, carrying, inForce };
+  });
+  return printed.map((system) => {
+    const out = new Map<number, UnprintedStaff>();
+    for (const { staves, parts, carrying, inForce } of instruments) {
+      for (const s of staves) if (!system.has(s.n)) out.set(s.n, "space");
+      for (let p = 0; p < parts; p++) {
+        const shown = carrying(p, system);
+        if (shown.length) {
+          inForce[p] = shown;
+          continue;
+        }
+        for (const s of inForce[p]) {
+          const layer = s.parts.length > 1 ? s.parts.indexOf(p) + 1 : 1;
+          const held = out.get(s.n);
+          const layers = held === "space" || !held ? [] : held;
+          out.set(
+            s.n,
+            [...new Set([...layers, layer])].sort((a, b) => a - b),
+          );
+        }
+      }
+    }
+    return out;
+  });
 }
 
 // --------------------------------------------------------------- suggestions

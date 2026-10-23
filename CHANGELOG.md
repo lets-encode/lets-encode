@@ -12,6 +12,10 @@ parentheses.
 - The instruments step explains itself in the side panel and help, lists the confirmed instruments, and shows a reviewer the names as text.
 - A layout review can be approved once every step has been opened.
 - On the dev server, a campaign whose workflow still runs from main shows the command that points it at its branch.
+- Page drafts of named instruments place each staff by its instrument and write rests or spaces for the staves a system leaves out.
+- A page task whose page brings a new instrument, other staves or a clef, key or meter change is marked Check.
+- The first page task of named instruments opens a score check of every staff's clef, key and transposition before its draft.
+- The coordinator accepts the clefs, keys, meter and transpositions the first page task checked.
 
 ## 2026-10-22
 

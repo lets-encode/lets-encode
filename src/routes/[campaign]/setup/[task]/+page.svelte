@@ -44,7 +44,6 @@
     soundsText,
     toCustom,
     transpositionFromLabel,
-    writtenKeysig,
   } from "$lib/transposition.ts";
   import type { Transposition } from "$lib/transposition.ts";
   import type {
@@ -98,142 +97,28 @@
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import {
+    CLEF_OPTIONS,
+    COMMON_CLEFS,
+    KEY_SIGNATURES,
+    clefGlyph,
+    clefOption,
+    clefText,
+    followedKey as followedStaffKey,
+    linesChoices,
+    setClef as setStaffClef,
+    setTransposition as setStaffTransposition,
+    settleKey as settleStaffKey,
+    transOf,
+    transposes,
+    unpitched,
+  } from "$lib/staff-edit.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
 
-  // The clefs and staff kinds the form offers, by name. Each option carries
-  // the staff values it sets: clef shape, line, octave displacement and
-  // notation type as MEI writes them, and the staff's line count. A modern
-  // (guitar) tablature staff shows the TAB lettering as its clef; the lute
-  // kinds carry no clef.
-  const pitchedClef = (
-    value: string,
-    label: string,
-    clefShape: string,
-    clefLine: number,
-    clefDis = "",
-  ) => ({
-    value,
-    label,
-    glyph: (clefDis
-      ? "gClef8vb"
-      : clefShape === "G"
-        ? "gClef"
-        : clefShape === "F"
-          ? "fClef"
-          : "cClef") as MusicGlyphName,
-    clefShape,
-    clefDis,
-    notationType: "",
-    clefLine,
-    lines: 5,
-  });
-  const CLEF_OPTIONS = [
-    pitchedClef("G2", "Treble", "G", 2),
-    pitchedClef("G2-8", "Treble, octave lower", "G", 2, "8"),
-    pitchedClef("G1", "French violin", "G", 1),
-    pitchedClef("C1", "Soprano", "C", 1),
-    pitchedClef("C2", "Mezzo-soprano", "C", 2),
-    pitchedClef("C3", "Alto", "C", 3),
-    pitchedClef("C4", "Tenor", "C", 4),
-    pitchedClef("C5", "Baritone (C clef)", "C", 5),
-    pitchedClef("F3", "Baritone (F clef)", "F", 3),
-    pitchedClef("F4", "Bass", "F", 4),
-    pitchedClef("F5", "Sub-bass", "F", 5),
-    {
-      value: "perc",
-      label: "Percussion",
-      glyph: "percussion" as MusicGlyphName,
-      clefShape: "perc",
-      clefDis: "",
-      notationType: "",
-      clefLine: 3,
-      lines: 5,
-    },
-    {
-      value: "TAB",
-      label: "Tablature, modern",
-      glyph: "tab" as MusicGlyphName,
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.guitar",
-      clefLine: 3,
-      lines: 6,
-    },
-    {
-      value: "TABfr",
-      label: "Tablature, French",
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.lute.french",
-      clefLine: 3,
-      lines: 6,
-    },
-    {
-      value: "TABit",
-      label: "Tablature, Italian",
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.lute.italian",
-      clefLine: 3,
-      lines: 6,
-    },
-    {
-      value: "TABde",
-      label: "Tablature, German",
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.lute.german",
-      clefLine: 3,
-      lines: 6,
-    },
-  ] as const;
-  // The clefs most staves open with, listed first in the clef menu.
-  const COMMON_CLEFS = ["G2", "F4", "C3"];
-  // The option behind a staff's stored values: the one with its shape,
-  // displacement and notation type, and for a pitched clef its line too.
-  // An unlisted combination (an OMR reading, an imported file) has none.
-  const clefOption = (staff: StaffModel) =>
-    CLEF_OPTIONS.find(
-      (o) =>
-        o.clefShape === staff.clefShape &&
-        o.clefDis === staff.clefDis &&
-        o.notationType === staff.notationType &&
-        (unpitched(staff) || o.clefLine === staff.clefLine),
-    );
-  const unpitched = (staff: StaffModel): boolean =>
-    staff.clefShape === "perc" || staff.clefShape === "TAB";
-  /** The symbol of a staff's clef: its option's, else its shape's. */
-  function clefGlyph(staff: StaffModel): MusicGlyphName | undefined {
-    const option = clefOption(staff);
-    if (option) return "glyph" in option ? option.glyph : undefined;
-    return (
-      { G: "gClef", F: "fClef", C: "cClef" } as Record<string, MusicGlyphName>
-    )[staff.clefShape];
-  }
-  /** A staff's clef as text. */
-  function clefText(staff: StaffModel): string {
-    const option = clefOption(staff);
-    if (option) return option.label;
-    const octaves =
-      { "8": "an octave", "15": "two octaves", "22": "three octaves" }[
-        staff.clefDis
-      ] ?? "";
-    const octave = octaves
-      ? `, ${octaves} ${staff.clefDisPlace === "above" ? "higher" : "lower"}`
-      : "";
-    return `${staff.clefShape} clef on line ${staff.clefLine}${octave}`;
-  }
-  // A percussion staff has up to 5 lines; a tablature one line (string or
-  // course) per string, 4 to 8.
-  const linesChoices = (staff: StaffModel): number[] =>
-    staff.clefShape === "perc" ? [1, 2, 3, 4, 5] : [4, 5, 6, 7, 8];
-  const KEY_SIGNATURES = ["0", "1s", "2s", "3s", "4s", "5s", "6s", "7s"]
-    .concat(["1f", "2f", "3f", "4f", "5f", "6f", "7f"])
-    .map((value) => ({ value, label: keysigText(value) }));
   const METER_NAMES = { common: "Common time", cut: "Cut time" };
   const METER_KINDS = [
     { value: "numeric", label: "Numbers", glyph: "threeFour" },
@@ -1044,47 +929,14 @@
       groups.map((h) => (h === g ? { ...h, ...change } : h)),
       staves.length,
     );
-  function setClef(staff: StaffModel, key: string) {
-    const option = CLEF_OPTIONS.find((o) => o.value === key);
-    if (!option) return;
-    staff.clefShape = option.clefShape;
-    staff.clefDis = option.clefDis;
-    staff.clefDisPlace = option.clefDis ? "below" : "";
-    staff.notationType = option.notationType;
-    staff.clefLine = option.clefLine;
-    staff.lines = option.lines;
-    // Percussion and tablature staves do not transpose or carry a key.
-    if (unpitched(staff)) {
-      setTransposition(staff, null);
-      delete staff.keysig;
-    }
-  }
+  // The staff edits against the score's key (staff-edit.ts).
+  const setClef = (staff: StaffModel, key: string) =>
+    setStaffClef(keysig, staff, key);
+  const followedKey = (staff: StaffModel) => followedStaffKey(keysig, staff);
+  const settleKey = (staff: StaffModel) => settleStaffKey(keysig, staff);
+  const setTransposition = (staff: StaffModel, t: Transposition | null) =>
+    setStaffTransposition(keysig, staff, t);
 
-  // Transposition and key per staff. A staff's key follows the score's,
-  // moved by its transposition, unless it has its own (`keysig`); a key set
-  // equal to the one it would follow is dropped, so it keeps following.
-  const transOf = (staff: StaffModel): Transposition => ({
-    diat: staff.transDiat ?? 0,
-    semi: staff.transSemi ?? 0,
-  });
-  const transposes = (staff: StaffModel) =>
-    !!(staff.transDiat || staff.transSemi);
-  const followedKey = (staff: StaffModel) =>
-    writtenKeysig(keysig, transOf(staff));
-  function settleKey(staff: StaffModel) {
-    if (staff.keysig !== undefined && staff.keysig === followedKey(staff))
-      delete staff.keysig;
-  }
-  function setTransposition(staff: StaffModel, t: Transposition | null) {
-    if (t && (t.diat || t.semi)) {
-      staff.transDiat = t.diat;
-      staff.transSemi = t.semi;
-    } else {
-      delete staff.transDiat;
-      delete staff.transSemi;
-    }
-    settleKey(staff);
-  }
   // Staves whose transposition the volunteer chose, which a label no longer
   // fills, and those showing the pitch fields although a listed
   // transposition matches.

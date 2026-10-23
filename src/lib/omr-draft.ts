@@ -7,8 +7,9 @@
 // tags (xml:id, @n, @facs), its page and system breaks and everything outside
 // the page stay as they are. Each system's staves are written as `printed`
 // gives them: a printed staff takes the converted staff of its number; a
-// staff the system leaves out rests, keeping any clef change verovio placed
-// on it. Key and meter changes verovio writes
+// staff the system leaves out rests (an mRest in each layer `unprinted`
+// gives, else in layer 1) or, where `unprinted` says so, holds an mSpace,
+// keeping any clef change verovio placed on it. Key and meter changes verovio writes
 // as a `<scoreDef>` before a measure go before the skeleton measure it fills.
 // What the page's first system changes against the page start (`opening`,
 // from the stitching) is written by the insertion itself: a clef as the first
@@ -19,6 +20,12 @@ import { pageOfLocator } from "./campaign-graph.ts";
 import { parseScoreDef } from "./mei-facsimile.ts";
 import { keysigFor } from "./omr-musicxml.ts";
 import type { PageOpening } from "./omr-stitch.ts";
+
+/**
+ * How a staff a system does not print is written: the layers (1-based) that
+ * hold an mRest, or 'space' for an mSpace in layer 1.
+ */
+export type UnprintedStaff = number[] | "space";
 
 export interface DraftInsertion {
   mei: string;
@@ -130,13 +137,16 @@ function clefsOutOfTremolos(content: string): string {
  * A measure's staves 1…staffCount from converted content: a staff in
  * `printed` (staff numbers) takes the converted staff's content, with
  * `leadingClefs` (staff n → MEI clef) put first in its layer; the others
- * rest, followed by the clefs their converted content holds. The converted control events follow.
+ * are written as `unprinted` gives (an mRest in layer 1 where it gives
+ * nothing), followed in their first layer by the clefs their converted
+ * content holds. The converted control events follow.
  */
 function measureStaves(
   content: string,
   staffCount: number,
   printed: Set<number>,
   leadingClefs: Map<number, string> = new Map(),
+  unprinted: Map<number, UnprintedStaff> = new Map(),
 ): string {
   const convertedStaves = content.match(STAFF) ?? [];
   const byN = new Map(
@@ -150,7 +160,17 @@ function measureStaves(
     const converted = byN.get(n);
     if (!printed.has(n)) {
       const clefs = converted?.match(/<clef\b[^>]*\/>/g)?.join("") ?? "";
-      return `<staff n="${n}"><layer n="1"><mRest/>${clefs}</layer></staff>`;
+      const how = unprinted.get(n) ?? [1];
+      const layers =
+        how === "space"
+          ? `<layer n="1"><mSpace/>${clefs}</layer>`
+          : how
+              .map(
+                (l, k) =>
+                  `<layer n="${l}"><mRest/>${k === 0 ? clefs : ""}</layer>`,
+              )
+              .join("");
+      return `<staff n="${n}">${layers}</staff>`;
     }
     const inner =
       !converted || /\/>$/.test(converted)
@@ -188,8 +208,9 @@ function withContent(measure: string, content: string): string {
  * opened by a `<pb>` or `<sb>`; the converted document's systems are given by
  * `measuresPerSystem` (what the stitching produced), one entry per skeleton
  * system, and a different system count is refused. `printed` gives, per
- * system, the staff numbers it prints. `opening` is what
- * the page's first system changes against the page start.
+ * system, the staff numbers it prints, and `unprinted`, per system, how the
+ * staves it does not print are written. `opening` is what the page's first
+ * system changes against the page start.
  */
 export function insertPageDraft(
   skeleton: string,
@@ -198,6 +219,7 @@ export function insertPageDraft(
   measuresPerSystem: number[],
   printed: Set<number>[],
   opening: PageOpening = { clefs: [], fifths: null, time: null },
+  unprinted: Map<number, UnprintedStaff>[] = [],
 ): DraftInsertion {
   const warnings: string[] = [];
   const page = pageOfLocator(locator);
@@ -264,6 +286,7 @@ export function insertPageDraft(
         staffCount,
         printed[s] ?? new Set(),
         first ? leadingClefs : undefined,
+        unprinted[s],
       );
       const before = (first ? startScoreDef : "") + measure.before;
       result = result.replace(

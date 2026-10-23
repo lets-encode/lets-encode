@@ -423,6 +423,34 @@
   const detailCard = $derived(
     detailTask ? (allCards.find((c) => c.task === detailTask) ?? null) : null,
   );
+  // Why each page of the selected task's piece is to be checked against the
+  // scan (omr-page-checks.ts), read once per piece whose layout task names
+  // its instruments; keyed by campaign repo and piece.
+  let pageChecksBy = $state<Record<string, string[][] | null>>({});
+  const checksKey = (fragment: string) => `${owner}/${repo}/${fragment}`;
+  $effect(() => {
+    const fragment = detailCard
+      ? (findRow(taskDefs, detailCard.task, "")?.fragment ?? "")
+      : "";
+    const key = checksKey(fragment);
+    if (
+      !detailCard?.omr ||
+      piecePreparations[fragment] !== "omr-instruments" ||
+      key in pageChecksBy
+    )
+      return;
+    pageChecksBy[key] = null;
+    const at = { owner, repo };
+    import("$lib/omr-page-checks.ts")
+      .then((m) => m.loadPageChecks(readForge(), at.owner, at.repo, fragment))
+      .then((checks) => (pageChecksBy[key] = checks))
+      .catch(() => {});
+  });
+  const checksOf = (card: BoardCard): string[] => {
+    const fragment = findRow(taskDefs, card.task, "")?.fragment ?? "";
+    const n = pageOfLocator(card.locator);
+    return (n && pageChecksBy[checksKey(fragment)]?.[n - 1]) || [];
+  };
   // The selected task's card is scrolled into the board's visible part, in
   // its lane and above a docked panel.
   $effect(() => {
@@ -1078,6 +1106,7 @@
   function claimCard(card: BoardCard) {
     actedOn(card.task);
     if (card.pre) goto(preTaskHref(campaign, card.locator, card.task));
+    else if (card.checksOpening) goto(`/${campaign}/check/${card.task}`);
     else editor(card.task);
   }
   // Act on a card the viewer can work on: claim it when it is open, claim its
@@ -1223,6 +1252,7 @@
     {canPush}
     {runner}
     tools={resultNote}
+    checks={checksOf(card)}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}

@@ -795,6 +795,52 @@ export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
   return out + mei.slice(last);
 }
 
+/** The staff fields a page task's check of the opening score definition may change. */
+export const CHECKED_STAFF_FIELDS = [
+  "clefShape",
+  "clefLine",
+  "clefDis",
+  "clefDisPlace",
+  "keysig",
+  "transDiat",
+  "transSemi",
+] as const;
+
+/** A score definition without the xml:ids of its staves and groups. */
+const withoutIds = (def: ScoreDefModel): ScoreDefModel => ({
+  ...def,
+  staves: def.staves.map(({ id: _, ...staff }) => staff),
+  groups: def.groups.map(({ id: _, ...group }) => group),
+});
+
+/**
+ * `mei` with its opening score definition (its first `<scoreDef>`) and every
+ * later block that repeats it (a movement's copy) built from the model; the
+ * other blocks (a key or meter change) stay as they are, and so does the
+ * document's @optimize. The opening block carries the model's ids.
+ */
+export function replaceOpeningScoreDef(
+  mei: string,
+  scoreDef: ScoreDefModel,
+): string {
+  const blocks = [...elementsNamed(mei, "scoreDef", true)];
+  if (!blocks.length) return mei;
+  const plain = (el: (typeof blocks)[number]) =>
+    JSON.stringify(withoutIds(parseScoreDef(mei.slice(el.start, el.end))));
+  const opening = plain(blocks[0]);
+  const optimize = blocks.some((el) => /\boptimize="true"/.test(el.tag));
+  let out = "";
+  let last = 0;
+  for (const [i, el] of blocks.entries()) {
+    if (i > 0 && plain(el) !== opening) continue;
+    out +=
+      mei.slice(last, el.start) +
+      buildScoreDefXml(scoreDef, optimize, i === 0).trim();
+    last = el.end;
+  }
+  return out + mei.slice(last);
+}
+
 // One attribute's value from an XML tag string, unescaped; null if absent.
 function attr(tag: string, name: string): string | null {
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(tag);

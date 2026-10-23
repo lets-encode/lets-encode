@@ -18,7 +18,7 @@ import type {
   StatusKey,
 } from "./campaign-graph.ts";
 import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
-import { keptWorkSince } from "./coordinator-policy.ts";
+import { checksOpening, keptWorkSince } from "./coordinator-policy.ts";
 import { usesOmr } from "./campaign-init.ts";
 import type {
   CommentRow,
@@ -186,6 +186,9 @@ export interface BoardCard {
   pre: boolean;
   /** A page task of an OMR-prepared piece: it starts from the OMR draft. */
   omr: boolean;
+  /** The task checks the piece's opening score definition in the app's
+      check view before its draft (checksOpening). */
+  checksOpening: boolean;
   /** The task's locator, for routing a pre-task to its own editor. */
   locator: string;
   statusKey: StatusKey;
@@ -376,6 +379,7 @@ export function buildBoard(
       piece: fragmentPieceName(def.fragment, names),
       pre: n.kind === "pre",
       omr: omr && n.kind !== "pre",
+      checksOpening: checksOpening(def, d.taskDefs, preparations[def.fragment]),
       locator: def.locator,
       statusKey: n.statusKey,
       waitsFor: depDef ? taskName(depDef.locator) : dep,

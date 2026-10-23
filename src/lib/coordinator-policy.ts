@@ -40,6 +40,29 @@ export function pieceFieldForPath(
 }
 
 /**
+ * Whether a task of a piece prepared as `preparation` checks the piece's
+ * opening score definition before its draft, and may change it (mei-page-splice spliceOpeningScoreDef): the
+ * first page task of an 'omr-instruments' piece, the page task that depends
+ * on the piece's layout task (planTasks).
+ */
+export function checksOpening(
+  task: TaskRow,
+  tasks: TaskRow[],
+  preparation: string | null | undefined,
+): boolean {
+  return (
+    task.locator.startsWith("surface-") &&
+    preparation === "omr-instruments" &&
+    tasks.some(
+      (t) =>
+        t.task_id === task.depends_on &&
+        t.subtask_id === "" &&
+        t.locator === "omr-layout",
+    )
+  );
+}
+
+/**
  * The kind of the piece at `path`: a physical piece's page spans are joined
  * wholesale, a facsimile piece's measures are matched by id.
  */

@@ -87,6 +87,7 @@ const stats: CampaignStats = {
   createdAt: "",
   allowSelfValidation: false,
   pieceNames: {},
+  piecePreparations: {},
   taskDefs,
   rows: state.rows,
   validationColumns: state.validationColumns,

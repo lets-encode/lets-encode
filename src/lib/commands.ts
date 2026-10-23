@@ -71,6 +71,7 @@ import type {
   ScoreDefModel,
 } from "./mei-facsimile.ts";
 import {
+  checksOpening,
   keptWorkBranch,
   pieceFieldForPath,
   pieceKindForPath,
@@ -963,16 +964,24 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
 // for editing first claims the task (unless the user already holds the lock).
 // The caller decides when to navigate — never on a rejected or still-pending
 // claim. `campaign` and `base` tell mei-friend where to return the volunteer:
-// <base>/<campaign>?task=<task_id>&mf_status=….
+// <base>/<campaign>?task=<task_id>&mf_status=…. A task that checks its
+// piece's opening score definition (checksOpening) is claimed in the app's
+// check view, which passes the checked definition as `scoreDef`: the draft is
+// made with it.
 const openEditor: CommandDef<
-  { task_id: string; campaign: string; base: string },
+  {
+    task_id: string;
+    campaign: string;
+    base: string;
+    scoreDef?: ScoreDefModel;
+  },
   Result
 > = {
   id: "campaign.openEditor",
   version: 1,
   log: "pr",
   envelopeInput: ({ task_id }) => ({ task_id }),
-  async run({ task_id, campaign, base }, ctx, envelope) {
+  async run({ task_id, campaign, base, scoreDef }, ctx, envelope) {
     const { forge: f, owner, repo, viewer, meiFriendUrl } = ctx;
     if (!meiFriendUrl)
       return {
@@ -986,7 +995,8 @@ const openEditor: CommandDef<
         f.getRepoFile(owner, repo, CONFIG_PATH),
         f.getRepoFile(owner, repo, LOCK_PATH),
       ]);
-      const taskDef = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+      const taskDefs = parseTaskCsv(taskCsv ?? "");
+      const taskDef = findRow(taskDefs, task_id, "");
       const fragment = taskDef?.fragment;
       const task = findRow(parseStateCsv(stateCsv ?? "").rows, task_id, "");
       if (!taskDef || !fragment || !task)
@@ -1001,6 +1011,17 @@ const openEditor: CommandDef<
           l.user_id === viewer,
       );
       const claiming = task.status === "encoding_required" && !mine;
+      if (
+        claiming &&
+        checksOpening(
+          taskDef,
+          taskDefs,
+          pieceFieldForPath(configYaml, fragment, "preparation"),
+        )
+      )
+        return {
+          error: `${task_id} starts with a check of the score definition: open the task and claim it there.`,
+        };
       if (claiming) {
         // Someone else's active claim would reject this one; stop before the
         // task branch, which may hold their work, is touched.
@@ -1158,6 +1179,7 @@ const openEditor: CommandDef<
             branch: ref,
             fragment,
             page: pageNo,
+            scoreDef,
             models: ctx.omr,
             progress: (detail) => ctx.progress({ detail }),
           });

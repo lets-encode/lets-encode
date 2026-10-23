@@ -65,6 +65,15 @@ export interface PageOpening {
   time: Meter | null;
 }
 
+/** A change the stitching keeps: a key or meter change, or a clef differing from the one in force at a system start. */
+export interface StitchChange {
+  /** System index on the page. */
+  system: number;
+  kind: "clef" | "key" | "meter";
+  /** For a clef, the part (0-based). */
+  part?: number;
+}
+
 export interface StitchedPage {
   musicxml: string;
   /** Measures per system after padding, in system order. */
@@ -72,6 +81,8 @@ export interface StitchedPage {
   /** How many parts (staves per system) the page has. */
   parts: number;
   opening: PageOpening;
+  /** The changes against what is in force, in system order; the page opening's included. */
+  changes: StitchChange[];
   /** The clef per part, key and meter in force at the end of the page: the next page's start. */
   end: { clefs: string[]; keys: number[] } & PageSignatures;
 }
@@ -248,6 +259,7 @@ export function stitchPage(
     fifths: null,
     time: null,
   };
+  const changes: StitchChange[] = [];
   // The page opens at the first system with measures: its measures hold each
   // part's opening attributes, and its changes are the page's opening.
   let opened = false;
@@ -297,8 +309,14 @@ export function stitchPage(
       !sameMeter(times[0], time)
         ? times[0]
         : null;
-    if (newFifths !== null) fifths = newFifths;
-    if (newTime) time = newTime;
+    if (newFifths !== null) {
+      fifths = newFifths;
+      changes.push({ system: s, kind: "key" });
+    }
+    if (newTime) {
+      time = newTime;
+      changes.push({ system: s, kind: "meter" });
+    }
     if (opens) {
       opening.fifths = newFifths;
       if (newFifths !== null) opening.keys = [...keys];
@@ -316,6 +334,8 @@ export function stitchPage(
         : null;
       const token = read ? clefTokenOf(read) : null;
       let clef: string | null | undefined;
+      if (token && token !== inForce)
+        changes.push({ system: s, kind: "clef", part: k });
       if (opens) {
         if (token && token !== inForce) opening.clefs[k] = token;
         clef = token ? read : clefXml(inForce);
@@ -379,6 +399,7 @@ export function stitchPage(
     measuresPerSystem,
     parts,
     opening,
+    changes,
     end: { clefs, fifths, keys, time },
   };
 }

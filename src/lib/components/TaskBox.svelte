@@ -54,6 +54,7 @@
     headAction,
     prefill,
     measures = true,
+    checks = [],
     onclaim,
     oneditor,
     onabandon,
@@ -98,6 +99,9 @@
     prefill?: () => { page: string; m1: string; m2: string };
     /** The fail form asks for a measure range besides the page. */
     measures?: boolean;
+    /** Why the task's page is to be checked against the scan
+        (omr-page-checks.ts); none shows no mark. */
+    checks?: string[];
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     /** Claim or open the task in mei-friend; not used in the review view. */
     oneditor?: (task_id: string) => Promise<void>;
@@ -153,6 +157,9 @@
   const compact = new MediaQuery(DOCKED_QUERY, false);
   const foldRecord = $derived(compact.current && hasRecord && !myReview);
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
+  // The first page task of a piece whose instruments were named is claimed
+  // and continued in the app's score check, which makes its draft.
+  const checkRoute = $derived(`/${campaign}/check/${card.task}`);
   const editorName = $derived(workPlace(card.locator));
 
   // The submitted encoding behind the card, for the Submission section.
@@ -254,6 +261,13 @@
               ? `Your claim ends ${new Date(myEncodingLock.expires).toLocaleString()}. Submit before then; afterwards the task is open to others.`
               : undefined}>{cardPill(card, viewer)}</span
     >
+    {#if checks.length && card.column !== "done"}
+      <span
+        class="chip chip-note"
+        title={`Check the clefs, key, meter and staves of this page against the scan. ${checks.join(" ")}`}
+        >Check</span
+      >
+    {/if}
     {#if help}
       <p class="help">{help}</p>
     {/if}
@@ -317,6 +331,15 @@
           title={`Claims the task for you and opens the ${editorName}.`}
           >{claimLabel(card.locator)}</a
         >
+      {:else if card.checksOpening}
+        <a
+          class="btn btn-enc"
+          class:btn-primary={primary}
+          href={processing ? undefined : checkRoute}
+          aria-disabled={processing}
+          title="Claims the task for you and opens the score check: the clefs, key signatures, meter and transpositions of the score's staves, before the draft opens in mei-friend."
+          >Claim & open score check</a
+        >
       {:else}
         <button
           type="button"
@@ -341,6 +364,21 @@
           aria-disabled={processing}
           title={`Continue your work in the ${editorName}.`}
           >Continue in {editorName}</a
+        >
+        <AbandonButton
+          disabled={runner.busy || processing}
+          onabandon={() => onabandon(card.task, "")}
+        />
+      </div>
+    {:else if mineEncoding && card.checksOpening}
+      <div class="tspfoot">
+        <a
+          class="btn"
+          class:btn-primary={primary}
+          href={processing ? undefined : checkRoute}
+          aria-disabled={processing}
+          title="Continue in the score check, which opens the draft in mei-friend."
+          >Continue in score check</a
         >
         <AbandonButton
           disabled={runner.busy || processing}

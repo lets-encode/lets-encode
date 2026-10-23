@@ -5,6 +5,7 @@ import { type TaskRow } from "../campaign-tables.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  checksOpening,
   claimPullRequest,
   classifyPullRequest,
   isAutomaticCommit,
@@ -426,4 +427,25 @@ test("a rejection detail is one capped line of inline code", () => {
     rejectionDetail("é".repeat(MAX_REJECTION_DETAIL + 1)),
     `\`${"é".repeat(MAX_REJECTION_DETAIL)}…\``,
   );
+});
+
+test("checksOpening: the page task of an omr-instruments piece that waits for its layout task", () => {
+  const row = (task_id: string, locator: string, depends_on = ""): TaskRow => ({
+    task_id,
+    subtask_id: "",
+    fragment: "sources/piece-01/score.mei",
+    locator,
+    allowlist: "",
+    blocklist: "",
+    depends_on,
+  });
+  const tasks = [
+    row("P0001", "omr-layout"),
+    row("T0001", "surface-1", "P0001"),
+    row("T0002", "surface-2", "T0001"),
+  ];
+  assert.equal(checksOpening(tasks[1], tasks, "omr-instruments"), true);
+  assert.equal(checksOpening(tasks[2], tasks, "omr-instruments"), false);
+  assert.equal(checksOpening(tasks[1], tasks, "omr"), false);
+  assert.equal(checksOpening(tasks[0], tasks, "omr-instruments"), false);
 });

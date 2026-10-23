@@ -22,6 +22,7 @@ import {
   suggestFromList,
   unitBoxes,
   unitName,
+  unprintedStaves,
   type NamingPage,
   type NamingUnit,
 } from "../instrument-naming.ts";
@@ -638,4 +639,60 @@ test("grand-staff instruments with parts: Harfe 1 and Harfe 2", () => {
     to.map((id) => partsLabel(merged, merged.staves.find((s) => s.id === id)!)),
     ["2", "2"],
   );
+});
+
+test("unprintedStaves: a resting part rests on the staff in force, other unprinted staves hold an mSpace", () => {
+  // Posaune with parts 1, 2, 3 on staves "1.2.3", "1" and "2.3"; Violine;
+  // Harfe on a grand staff.
+  const named: LayoutInstruments = {
+    instruments: [
+      {
+        id: "i1",
+        name: "Posaune",
+        abbr: "",
+        grand: false,
+        parts: [{ name: "1" }, { name: "2" }, { name: "3" }],
+        staves: [
+          { id: "i1-1", parts: [0, 1, 2] },
+          { id: "i1-2", parts: [0] },
+          { id: "i1-3", parts: [1, 2] },
+        ],
+      },
+      {
+        id: "i2",
+        name: "Violine",
+        abbr: "",
+        grand: false,
+        parts: [],
+        staves: [{ id: "i2-1", parts: [] }],
+      },
+      {
+        id: "i3",
+        name: "Harfe",
+        abbr: "",
+        grand: true,
+        parts: [],
+        staves: [
+          { id: "i3-1", parts: [] },
+          { id: "i3-2", parts: [] },
+        ],
+      },
+    ],
+    groups: [],
+    fixed: true,
+  };
+  const ids = ["i1-1", "i1-2", "i1-3", "i2-1", "i3-1", "i3-2"];
+  // Violine alone; "1.2.3" with harp; "1" and "2.3"; Violine alone.
+  const printed = [[4], [1, 4, 5, 6], [2, 3, 4], [4]].map((s) => new Set(s));
+  const out = unprintedStaves(named, ids, printed).map((m) =>
+    Object.fromEntries([...m].sort(([a], [b]) => a - b)),
+  );
+  assert.deepEqual(out, [
+    // Before its first showing, Posaune rests where it first shows.
+    { 1: [1, 2, 3], 2: "space", 3: "space", 5: [1], 6: [1] },
+    { 2: "space", 3: "space" },
+    { 1: "space", 5: [1], 6: [1] },
+    // Parts 2 and 3 rest in their layers of "2.3".
+    { 1: "space", 2: [1], 3: [1, 2], 5: [1], 6: [1] },
+  ]);
 });
