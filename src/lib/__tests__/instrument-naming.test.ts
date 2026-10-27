@@ -510,6 +510,20 @@ test("doubleNamings: parts of one instrument named as instruments of their own",
   );
 });
 
+test("doubleNamings: an instrument named like parts of several instruments is listed once", () => {
+  let named = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I").named;
+  named = nameUnit(named, 1, "Flöte", "II").named;
+  named = nameUnit(named, 1, "II").named;
+  named = nameUnit(named, 1, "Trompete", "II").named;
+  named = nameUnit(named, 1, "Posaune", "II").named;
+  const nameOf = (id: string) =>
+    named.instruments.find((i) => i.id === id)!.name;
+  assert.deepEqual(
+    doubleNamings(named).map((d) => [nameOf(d.instrument), nameOf(d.like)]),
+    [["II", "Flöte"]],
+  );
+});
+
 test("mergeInstrument: a part named as an instrument becomes a part again", () => {
   let named = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I").named;
   named = nameUnit(named, 1, "Flöte", "II").named;

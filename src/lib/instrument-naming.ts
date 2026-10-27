@@ -373,9 +373,10 @@ const plainName = (s: string): string =>
  * followed by more ("Flöte I", "Oboe I, II" beside "Flöte", "Oboe"); or,
  * for an instrument with parts, the name or short name of one of its parts
  * or a whole word of its name ("Kontrabass" with short name "Kb" beside
- * "Violoncello und Kontrabass" with the parts Vc and Kb). Each pair once:
- * `instrument` is the one with the longer name or the part's name, or for
- * the same name the one named later.
+ * "Violoncello und Kontrabass" with the parts Vc and Kb). Each instrument
+ * once, with the first instrument it looks like: `instrument` is the one with
+ * the longer name or the part's name, or for the same name the one named
+ * later.
  */
 export function doubleNamings(named: LayoutInstruments): DoubleNaming[] {
   const match = (
@@ -403,7 +404,8 @@ export function doubleNamings(named: LayoutInstruments): DoubleNaming[] {
   named.instruments.forEach((b, j) => {
     for (const a of named.instruments.slice(0, j)) {
       const how = match(a, b);
-      const back = how ? null : match(b, a);
+      const back =
+        how || found.some((d) => d.instrument === a.id) ? null : match(b, a);
       if (how) {
         found.push({ instrument: b.id, like: a.id, how });
         return;

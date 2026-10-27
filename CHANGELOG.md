@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-27
+
+- The instruments step no longer breaks when one instrument looks like a part of several others.
+
 ## 2026-10-23
 
 - The instruments are named in the first system and chosen from them in the other systems, switched by tabs.
