@@ -199,8 +199,11 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     layoutModel: o.models.layoutModel,
     staffPipeline: record.staffPipeline,
   };
+  // Drafts of other pages start from the same score; the page prefix keeps
+  // their new ids apart when both are spliced in.
   const content = addXmlIds(
     recordApplications(draft.mei, applicationNames(models)),
+    `p${page}-`,
   );
   const meiError = await checkMei(content);
   if (meiError)

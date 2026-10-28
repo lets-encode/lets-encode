@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-28
 
+- Page drafts made in parallel no longer share xml:ids, so the second accepted page passes the check.
 - Page drafts keep the transcriptions of staff boxes moved in the layout correction.
 - Accepting the first page task keeps the xml:ids of the opening score definition.
 - The next-task card of an OMR page no longer shows the score's staff count.

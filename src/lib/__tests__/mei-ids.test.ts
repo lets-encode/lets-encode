@@ -35,6 +35,16 @@ test("addXmlIds keeps existing ids and skips their values when numbering", () =>
   assert.ok(out.includes('<b xml:id="b-1"/>'));
 });
 
+test("addXmlIds with different prefixes gives one base no shared new ids", () => {
+  const base = '<a xml:id="a-1"><b/></a>';
+  const ids = (xml: string) =>
+    [...xml.matchAll(/xml:id="([^"]+)"/g)].map((m) => m[1]);
+  const p2 = ids(addXmlIds(base, "p2-"));
+  const p3 = ids(addXmlIds(base, "p3-"));
+  assert.deepEqual(p2, ["a-1", "p2-b-1"]);
+  assert.deepEqual(p3, ["a-1", "p3-b-1"]);
+});
+
 test("addXmlIds leaves comments, processing instructions and closing tags alone", () => {
   const xml = '<?xml version="1.0"?><!-- <fake/> --><a>text</a>';
   const out = addXmlIds(xml);
