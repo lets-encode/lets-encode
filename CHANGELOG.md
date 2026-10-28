@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-28
+
+- Generated scores no longer get the subordinate title "electronic transcription".
+
 ## 2026-10-27
 
 - The instruments step no longer breaks when one instrument looks like a part of several others.
