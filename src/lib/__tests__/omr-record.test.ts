@@ -84,6 +84,10 @@ test("an entry is reused only for the same zone, box, pipeline and crop margin",
     'Vl. I & "II"',
   );
   assert.equal(
+    entryFor(r, "staff-zone-3-1", { ...box, lry: 452.4 }, PIPELINE, 0.9)?.label,
+    'Vl. I & "II"',
+  );
+  assert.equal(
     entryFor(r, "staff-zone-3-1", { ...box, lry: 453 }, PIPELINE, 0.9),
     null,
   );

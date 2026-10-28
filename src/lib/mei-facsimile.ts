@@ -240,6 +240,11 @@ export interface LayerModel {
   n: number;
   label: string;
   printed: boolean;
+  /** The player is an instrument of its own, written as an <instrDef> child of the layerDef. */
+  instrument?: boolean;
+  /** The layer's own transposition (MEI layerDef @trans.diat, @trans.semi); absent or both 0 is none. */
+  transDiat?: number;
+  transSemi?: number;
 }
 
 /** The key signature a staff is written in: its own, else the score's moved by its transposition. */
@@ -502,11 +507,18 @@ function buildScoreDefXml(
         ? [`${indent}   <labelAbbr>${xmlEscape(staff.labelAbbr)}</labelAbbr>`]
         : []),
       ...(staff.instrument ? [`${indent}   <instrDef/>`] : []),
-      ...(staff.layers ?? []).map((layer) =>
-        layer.printed
-          ? `${indent}   <layerDef n="${layer.n}"><label>${xmlEscape(layer.label)}</label></layerDef>`
-          : `${indent}   <layerDef n="${layer.n}" label="${xmlEscape(layer.label)}"/>`,
-      ),
+      ...(staff.layers ?? []).map((layer) => {
+        const layerTrans =
+          layer.transDiat || layer.transSemi
+            ? ` trans.diat="${layer.transDiat ?? 0}" trans.semi="${layer.transSemi ?? 0}"`
+            : "";
+        const inner =
+          (layer.printed ? `<label>${xmlEscape(layer.label)}</label>` : "") +
+          (layer.instrument ? "<instrDef/>" : "");
+        const label = layer.printed ? "" : ` label="${xmlEscape(layer.label)}"`;
+        const open = `${indent}   <layerDef n="${layer.n}"${label}${layerTrans}`;
+        return inner ? `${open}>${inner}</layerDef>` : `${open}/>`;
+      }),
     ];
     if (!children.length) return `${open}/>`;
     return `${open}>\n${children.join("\n")}\n${indent}</staffDef>`;
@@ -888,6 +900,8 @@ export function parseScoreDef(text: string): ScoreDefModel {
     const labelAbbr = firstElementNamed(own, "labelAbbr")?.inner;
     const layers = layerDefs.map((el, i): LayerModel => {
       const child = firstElementNamed(el.inner, "label")?.inner;
+      const diat = Number(attr(el.tag, "trans\\.diat") ?? 0);
+      const semi = Number(attr(el.tag, "trans\\.semi") ?? 0);
       return {
         n: Number(attr(el.tag, "n") ?? i + 1),
         label:
@@ -895,6 +909,8 @@ export function parseScoreDef(text: string): ScoreDefModel {
             ? xmlUnescape(child.trim())
             : (attr(el.tag, "label") ?? ""),
         printed: child !== undefined,
+        ...(/<instrDef\b/.test(el.inner) ? { instrument: true } : {}),
+        ...(diat || semi ? { transDiat: diat, transSemi: semi } : {}),
       };
     });
     const instrument = /<instrDef\b/.test(own);

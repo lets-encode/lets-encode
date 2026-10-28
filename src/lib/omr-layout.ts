@@ -53,8 +53,10 @@ export function layoutRecord(
 
 /** One player of an instrument with several (Flauto I, Posaune 2). */
 export interface LayoutPart {
-  /** As printed: "I", "2", "Vc.". */
+  /** As printed: "I", "2", "Vc."; the full name for a part that is an instrument ("Kontrabass"). */
   name: string;
+  /** Short name of a part that is an instrument ("Kb."), printed from the second system on; absent or '' for none. */
+  abbr?: string;
 }
 
 /**
@@ -73,6 +75,12 @@ export interface LayoutInstrument {
   abbr: string;
   grand: boolean;
   parts: LayoutPart[];
+  /**
+   * Each part is an instrument of its own (Violoncello and Kontrabass, which
+   * share a staff in some systems): a staff of one part is named after the
+   * part, and each part has its own <instrDef> and transposition.
+   */
+  partsAreInstruments?: boolean;
   /**
    * Each score staff's staffDef xml:id and the indices of the parts it
    * carries, in `parts` order; [] for an instrument without parts.

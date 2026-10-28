@@ -205,7 +205,9 @@
       ? (nextPreview?.pageMeasures[nextPage - 1] ?? 0)
       : 0;
     if (measures) {
-      const staves = nextPreview?.staves ?? 0;
+      // A system of an OMR-prepared piece may print fewer staves than the
+      // score has, so its page shows no staff count.
+      const staves = featured.omr ? 0 : (nextPreview?.staves ?? 0);
       parts.push(
         `≈ ${measures} measures${staves ? `, ${staves} ${staves === 1 ? "staff" : "staves"}` : ""}`,
       );

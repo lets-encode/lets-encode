@@ -22,7 +22,12 @@
     ScoreDefModel,
     StaffModel,
   } from "$lib/mei-facsimile.ts";
-  import { staffPlan, type PlannedStaff } from "$lib/instrument-naming.ts";
+  import {
+    staffInstrumentName,
+    staffPlan,
+    withLayerTranspositions,
+    type PlannedStaff,
+  } from "$lib/instrument-naming.ts";
   import {
     CLEF_OPTIONS,
     COMMON_CLEFS,
@@ -84,14 +89,15 @@
         meterUnit = def.meterUnit;
         // The layout task sets no transpositions: for the claim holder
         // before the draft, a staff without one takes the one its
-        // instrument's name gives ("Klarinette in A").
+        // instrument's name gives ("Klarinette in A", "Kontrabass").
         if (d.holdsLock && d.status === "encoding_required" && !d.workSource)
           for (const staff of staves) {
-            const name = (
+            const planned = (
               d.instruments
                 ? staffPlan(d.instruments, d.model.pages).staves
                 : []
-            ).find((s) => s.id === staff.id)?.instrument.name;
+            ).find((s) => s.id === staff.id);
+            const name = planned ? staffInstrumentName(planned) : "";
             const t = name ? transpositionFromLabel(name) : null;
             if (t && !transposes(staff) && !unpitched(staff))
               setTransposition(keysig, staff, t);
@@ -117,7 +123,7 @@
   const meterValid = $derived(
     meterType !== "numeric" || /^[1-9]\d*$/.test(meterCount.trim()),
   );
-  const scoreDef = $derived<ScoreDefModel | null>(
+  const checkedDef = $derived<ScoreDefModel | null>(
     loadedDef && {
       ...loadedDef,
       staves,
@@ -132,6 +138,16 @@
         meterType === "numeric" ? meterUnit : meterType === "cut" ? "2" : "4",
       meterSym: meterType === "numeric" ? "" : meterType,
     },
+  );
+  // The checked definition, where a layer that is an instrument of its own
+  // takes the transposition of the staff that carries its part alone.
+  const scoreDef = $derived<ScoreDefModel | null>(
+    checkedDef && data?.instruments
+      ? withLayerTranspositions(
+          checkedDef,
+          staffPlan(data.instruments, data.model.pages),
+        )
+      : checkedDef,
   );
 
   // Per score staff: its name (the instrument's, with the parts the staff
@@ -176,9 +192,12 @@
   });
 
   // A planned staff's row name: its instrument, the parts it carries in
-  // some system, and for a grand staff which of its staves it is.
+  // some system, and for a grand staff which of its staves it is; where the
+  // parts are instruments, the parts alone ("Violoncello, Kontrabass").
   function plannedName(planned: PlannedStaff): string {
     const { instrument } = planned;
+    if (instrument.partsAreInstruments && planned.parts.length)
+      return planned.parts.map((p) => instrument.parts[p].name).join(", ");
     const parts = planned.parts.map((p) => instrument.parts[p].name).join(".");
     const grand = instrument.grand ? ` (staff ${planned.position})` : "";
     return `${instrument.name}${parts ? ` ${parts}` : ""}${grand}`;

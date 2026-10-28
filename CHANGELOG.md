@@ -5,6 +5,10 @@ parentheses.
 
 ## 2026-10-28
 
+- Page drafts keep the transcriptions of staff boxes moved in the layout correction.
+- Accepting the first page task keeps the xml:ids of the opening score definition.
+- The next-task card of an OMR page no longer shows the score's staff count.
+- An instrument's parts can be instruments of their own, such as Violoncello and Kontrabass sharing a staff.
 - Generated scores no longer get the subordinate title "electronic transcription".
 
 ## 2026-10-27

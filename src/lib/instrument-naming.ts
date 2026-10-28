@@ -292,7 +292,8 @@ export function staffStates(
 
 /**
  * A staff's full and short name where it carries `parts`: the instrument's
- * names, followed by the part where it carries one ("Flöte I"); none for a
+ * names, followed by the part where it carries one ("Flöte I"), or where the
+ * parts are instruments the part's own names ("Kontrabass"); none for a
  * staff of a grand-staff instrument, whose brace carries them.
  */
 export function plannedLabels(
@@ -301,6 +302,11 @@ export function plannedLabels(
 ): { label: string; labelAbbr: string } {
   const { instrument } = staff;
   if (instrument.grand) return { label: "", labelAbbr: "" };
+  const own =
+    instrument.partsAreInstruments && parts.length === 1
+      ? instrument.parts[parts[0]]
+      : undefined;
+  if (own) return { label: own.name, labelAbbr: own.abbr ?? "" };
   const part =
     parts.length === 1 && instrument.parts[parts[0]]
       ? ` ${instrument.parts[parts[0]].name}`
@@ -308,6 +314,61 @@ export function plannedLabels(
   return {
     label: `${instrument.name}${part}`,
     labelAbbr: instrument.abbr ? `${instrument.abbr}${part}` : "",
+  };
+}
+
+/**
+ * The instrument a planned staff is played by, by name: its first part's
+ * where the parts are instruments ("Kontrabass"), else the instrument's.
+ */
+export function staffInstrumentName(staff: PlannedStaff): string {
+  const { instrument } = staff;
+  const first = instrument.partsAreInstruments
+    ? instrument.parts[staff.parts[0]]
+    : undefined;
+  return first?.name ?? instrument.name;
+}
+
+/**
+ * `def` with each layer that is an instrument of its own transposed as the
+ * score staff that carries its part alone (the Kontrabass layer of a shared
+ * staff as the Kontrabass staff); a layer whose part no staff carries alone
+ * has no transposition.
+ */
+export function withLayerTranspositions(
+  def: ScoreDefModel,
+  plan: StaffPlan,
+): ScoreDefModel {
+  const byId = new Map(
+    def.staves.flatMap((staff) => (staff.id ? [[staff.id, staff]] : [])),
+  );
+  return {
+    ...def,
+    staves: def.staves.map((staff) => {
+      const planned = plan.staves.find((s) => s.id === staff.id);
+      if (!planned || !staff.layers?.some((l) => l.instrument)) return staff;
+      return {
+        ...staff,
+        layers: staff.layers.map((layer) => {
+          if (!layer.instrument) return layer;
+          const alone = plan.staves.find(
+            (s) =>
+              s.instrument === planned.instrument &&
+              s.parts.length === 1 &&
+              s.parts[0] === layer.n - 1,
+          );
+          const source = alone ? byId.get(alone.id) : undefined;
+          const { transDiat: _d, transSemi: _s, ...rest } = layer;
+          return source?.transDiat || source?.transSemi
+            ? {
+                ...rest,
+                transDiat: source.transDiat ?? 0,
+                transSemi: source.transSemi ?? 0,
+              }
+            : rest;
+        }),
+      };
+    }),
   };
 }
 
@@ -772,6 +833,10 @@ export function mergeInstrument(
       const at = partNamed(like, other);
       if (at < 0) return null;
       common = like.parts[at].name;
+      // A part that is an instrument keeps the merged instrument's short
+      // name where it has none.
+      if (like.partsAreInstruments && !like.parts[at].abbr && other.abbr)
+        like.parts[at].abbr = other.abbr;
     }
     // The staves of one combination of parts (a grand staff's several)
     // move together.
@@ -870,7 +935,15 @@ export function instrumentScoreDef(
         ? planned.parts.map((p) => ({
             n: p + 1,
             label: instrument.parts[p].name,
-            printed: planned.sameParts && planned.parts.length > 1,
+            printed:
+              !instrument.partsAreInstruments &&
+              planned.sameParts &&
+              planned.parts.length > 1,
+            // On a staff of several parts that are instruments, each layer
+            // names its own; a staff of one part has the staff's.
+            ...(instrument.partsAreInstruments && planned.parts.length > 1
+              ? { instrument: true }
+              : {}),
           }))
         : [],
       ...(visible ? {} : { visible: false }),

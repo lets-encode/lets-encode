@@ -358,6 +358,16 @@ test("spliceOpeningScoreDef takes clefs, keys and meter from the fork, also into
   assert.equal(outside(spliced), outside(opened));
 });
 
+test("spliceOpeningScoreDef keeps the xml:ids of every element of the opening", () => {
+  const ids = (mei: string) =>
+    mei.match(/<scoreDef\b[\s\S]*?<\/scoreDef>/)![0].match(/xml:id="[^"]*"/g);
+  const fork = replaceScoreDef(opened, { ...defOf("F", 4), keysig: "2f" });
+  const spliced = spliceOpeningScoreDef(opened, fork);
+  assert.equal(parseScoreDef(spliced).keysig, "2f");
+  assert.ok(ids(opened)!.length > 4);
+  assert.deepEqual(ids(spliced), ids(opened));
+});
+
 test("spliceOpeningScoreDef refuses other changes and keeps an unchanged base", () => {
   assert.equal(spliceOpeningScoreDef(opened, opened), opened);
   const renamed = replaceScoreDef(opened, {

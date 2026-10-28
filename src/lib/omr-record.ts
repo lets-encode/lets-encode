@@ -191,9 +191,14 @@ export function parseOmrRecord(xml: string | null): OmrRecord | null {
   };
 }
 
-/** Whether two boxes have the same corners. */
+/**
+ * Whether two boxes have the same corners, rounded to whole pixels as
+ * `layout-corrected.json` stores them.
+ */
 export const sameBox = (a: MeasureBox, b: MeasureBox): boolean =>
-  a.ulx === b.ulx && a.uly === b.uly && a.lrx === b.lrx && a.lry === b.lry;
+  (["ulx", "uly", "lrx", "lry"] as const).every(
+    (k) => Math.round(a[k]) === Math.round(b[k]),
+  );
 
 /**
  * The record's entry for a staff box key, while it still describes that box and
