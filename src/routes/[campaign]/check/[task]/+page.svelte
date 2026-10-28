@@ -11,7 +11,7 @@
 -->
 <script lang="ts">
   import { page } from "$app/state";
-  import { auth, login } from "$lib/auth.svelte.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import { openMeiFriend } from "$lib/command-runner.svelte.ts";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
@@ -54,6 +54,7 @@
   } from "$lib/transposition.ts";
   import { SvelteSet } from "svelte/reactivity";
   import Icon from "$lib/components/Icon.svelte";
+  import PageState from "$lib/components/PageState.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
@@ -291,55 +292,20 @@
 
 <div class="checker sidehost" data-stage="encode">
   {#if session.campaign.error}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.campaign.error}
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => session.campaign.retry()}>Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState
+      error={session.campaign.error}
+      onretry={() => session.campaign.retry()}
+    />
   {:else if session.campaign.notFound}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          No campaign called <code>{campaign}</code> was found.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
-    </div>
+    <PageState missingCampaign={campaign} />
   {:else if auth.status === "loading" || !session.campaign.resolved}
-    <div class="deskwrap"><p class="muted">Loading…</p></div>
+    <PageState loading="the campaign" />
   {:else if !auth.user}
-    <div class="deskwrap">
-      <div class="banner warn">
-        <span>
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Please
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          >
-          to work on this task.
-        </span>
-      </div>
-    </div>
+    <PageState loggedOut />
   {:else if session.loading}
-    <div class="deskwrap"><p class="muted">Loading the score…</p></div>
+    <PageState loading="the score" />
   {:else if session.loadError}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.loadError}
-          <button type="button" class="linkish" onclick={() => session.load()}
-            >Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data}
     <div class="main">
       <h1 class="vh">Score check · {session.pieceName || campaign}</h1>
@@ -620,10 +586,6 @@
 </div>
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-    font-size: 0.9rem;
-  }
   .checker {
     flex: 1;
     min-height: 0;

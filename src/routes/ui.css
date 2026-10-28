@@ -157,6 +157,11 @@ a.btn[aria-disabled="true"] {
   border-radius: 50%;
   flex: none;
 }
+/* An icon button whose panel or menu is open, in the stage tint. */
+.btn-icon.on {
+  color: var(--st);
+  background: var(--st-tint);
+}
 
 /* ---- Stage colour -------------------------------------------------------
    A workspace takes its stage's colour as its accent: the active step, a
@@ -248,8 +253,8 @@ a.btn[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
-/* A small pill control: view switchers, inline actions. `.on` marks the active
-   one of a set. `.pill-sm` is the tighter size used inside dense cards. */
+/* A small pill control for inline actions. `.pill-sm` is the tighter size
+   used inside dense cards. */
 button.pill {
   cursor: pointer;
   font: 12px var(--font);
@@ -261,16 +266,10 @@ button.pill {
   border-radius: 999px;
 }
 @media (hover: hover) {
-  button.pill:hover:not(:disabled):not(.on) {
+  button.pill:hover:not(:disabled) {
     color: var(--accent);
     border-color: var(--accent);
   }
-}
-button.pill.on {
-  font-weight: 600;
-  color: #fff;
-  background: var(--accent-btn);
-  border-color: var(--accent-btn);
 }
 button.pill.pill-sm {
   font-size: 11.5px;
@@ -316,20 +315,27 @@ button.pill:disabled {
   line-height: 0;
 }
 
-/* A small status chip, green by default. */
+/* A small status chip: neutral for a task's state, coloured for a result
+   (.chip-ok, .chip-err) or something that needs attention (.chip-fail,
+   .chip-note). */
 .chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 11px;
   font-weight: 600;
-  color: var(--ok);
-  background: var(--ok-bg);
-  border: 1px solid var(--ok-line);
+  color: var(--ink-soft);
+  background: var(--bg-tint);
+  border: 1px solid var(--line);
   border-radius: 999px;
   line-height: 1;
   padding: 4px 10px;
   white-space: nowrap;
+}
+.chip.chip-ok {
+  color: var(--ok);
+  background: var(--ok-bg);
+  border-color: var(--ok-line);
 }
 button.chip {
   min-height: 24px;
@@ -356,6 +362,20 @@ button.chip {
   background: var(--info-bg);
   border-color: var(--info-line);
 }
+/* A count beside a heading or label, tinted from the text colour so it
+   shows on a card, a tinted header and a coloured lane alike. */
+.countpill {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  text-transform: none;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-variant-numeric: tabular-nums;
+}
 .chip .chip-dot {
   flex: none;
   width: 6px;
@@ -366,8 +386,7 @@ button.chip {
 
 /* An on/off toggle: a soft pill at rest, the stage tint with the stage's
    colour when on; aria-pressed carries the state. Markup: <button
-   class="chip-switch" class:on aria-pressed> label </button>; a leading
-   <span class="sw"></span> from older markup is not drawn. */
+   class="chip-switch" class:on aria-pressed> label </button>. */
 .chip-switch {
   cursor: pointer;
   display: inline-flex;
@@ -382,9 +401,6 @@ button.chip {
   border-radius: 999px;
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
-}
-.chip-switch .sw {
-  display: none;
 }
 @media (hover: hover) {
   .chip-switch:hover:not(:disabled):not(.on) {
@@ -417,6 +433,81 @@ button.chip {
   border: none;
   cursor: pointer;
   text-decoration: underline;
+}
+.linkish:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Spinner -----------------------------------------------------------
+   A running action: 12px inline, .spinner-lg on the full-screen overlay. */
+.spinner {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+.spinner.spinner-lg {
+  width: 34px;
+  height: 34px;
+  border-width: 3px;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2s;
+  }
+}
+
+/* ---- Drag handle -------------------------------------------------------
+   A row's handle for reordering (Icon "grip"): dragged, the row moves with
+   the pointer; clicked, the row is picked and a click on another row's
+   handle moves it there (.target); the arrow keys move it by one. */
+.grip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--ink-soft);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.grip::after {
+  content: "";
+  position: absolute;
+  inset: -6px -6px;
+}
+.grip svg {
+  width: 12px;
+  height: 18px;
+}
+.grip:active {
+  cursor: grabbing;
+}
+@media (hover: hover) {
+  .grip:hover {
+    color: var(--ink);
+    background: var(--line);
+  }
+}
+.grip.target {
+  cursor: pointer;
 }
 
 /* ---- Pane divider --------------------------------------------------------
@@ -521,27 +612,6 @@ button.chip {
   min-width: 38px;
   text-align: center;
   white-space: nowrap;
-}
-
-/* A small toggle chip in a viewer toolbar: the soft pill, the stage tint
-   when on. */
-.tchip {
-  font-size: 12px;
-  font-weight: 600;
-  font-family: inherit;
-  padding: 4px 11px;
-  min-height: 26px;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: var(--btn-bg, var(--soft));
-  color: var(--ink-soft);
-  cursor: pointer;
-  flex: none;
-  white-space: nowrap;
-}
-.tchip.on {
-  background: var(--st-tint);
-  color: var(--st);
 }
 
 /* ---- Touch screens ------------------------------------------------------
@@ -930,21 +1000,27 @@ select.ctl {
   gap: 6px;
   min-width: 0;
 }
+/* A banner's dismiss or fold button (.btn-icon), at the row's end; the
+   negative margin keeps the banner's height. */
 .banner .dismiss {
-  min-height: 24px;
-  font-size: 11px;
-  font-weight: 600;
-  background: none;
-  border: none;
-  color: inherit;
-  cursor: pointer;
-  opacity: 0.6;
   flex: none;
+  margin: -6px -8px -6px auto;
 }
-@media (hover: hover) {
-  .banner .dismiss:hover {
-    opacity: 1;
-  }
+
+/* ---- Wizard footer note --------------------------------------------
+   Why Continue is disabled, faint on the footer's row left of the buttons:
+   one line, cut short with its whole text in the tooltip, so it never
+   changes the footer's height. */
+.footnote {
+  min-width: 0;
+  min-height: 1.4em;
+  margin-right: auto;
+  align-self: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12.5px;
+  color: var(--ink-faint);
 }
 
 /* ---- Wizard option lists --------------------------------------------

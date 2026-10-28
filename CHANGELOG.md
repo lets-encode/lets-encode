@@ -10,6 +10,14 @@ parentheses.
 - Accepting the first page task keeps the xml:ids of the opening score definition.
 - The next-task card of an OMR page no longer shows the score's staff count.
 - An instrument's parts can be instruments of their own, such as Violoncello and Kontrabass sharing a staff.
+- Buttons, links, chips, counts, progress bars, spinners, errors and loading states have one look across the app.
+- Task states and button wording are the same on every screen.
+- Remove buttons show a trash icon, and the close icon only closes.
+- Zoom controls and view switches work the same in every view.
+- Measure-zone buttons show an eye, and Escape clears a measure selection.
+- The wizard's region editor gains undo and the zone editor's Draw button.
+- The plan editor reorders tasks by a grip, also by click and arrow keys.
+- The wizard shows why Continue is disabled and confirms removing a piece in place.
 - Generated scores no longer get the subordinate title "electronic transcription".
 
 ## 2026-10-27

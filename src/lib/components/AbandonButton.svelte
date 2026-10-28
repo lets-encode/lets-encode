@@ -36,7 +36,7 @@
       >{review ? "Give back task" : "Give back task and delete changes"}</button
     >
     <button type="button" class="btn" onclick={() => (asking = false)}
-      >{review ? "Keep reviewing" : "Keep working"}</button
+      >Cancel</button
     >
   </span>
 {:else}

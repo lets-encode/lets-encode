@@ -51,13 +51,14 @@
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { PANEL_MIN_REVIEW, readSidePanel } from "$lib/side-panels.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
+  import PageState from "$lib/components/PageState.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
   import ReviewActions from "$lib/components/ReviewActions.svelte";
   import Icon from "$lib/components/Icon.svelte";
-  import StepGlyph from "$lib/components/StepGlyph.svelte";
+  import MeasureSelection from "$lib/components/MeasureSelection.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -360,48 +361,19 @@
 
 <div class="review sidehost" data-stage="review">
   {#if auth.status === "loading"}
-    <p class="msg muted">Loading…</p>
+    <PageState loading="the task" />
   {:else if place.error}
-    <div class="msg banner err">
-      <span>
-        {place.error}
-        <button type="button" class="linkish" onclick={() => place.retry()}
-          >Try again</button
-        >
-      </span>
-    </div>
+    <PageState error={place.error} onretry={() => place.retry()} />
   {:else if place.notFound}
-    <div class="msg banner err">
-      <span>
-        No campaign called <code>{campaign}</code> was found.
-        <a href="/campaigns">Back to all campaigns</a>.
-      </span>
-    </div>
+    <PageState missingCampaign={campaign} />
   {:else if !place.resolved || loading}
-    <p class="msg muted">Loading the task…</p>
+    <PageState loading="the task" />
   {:else if loadError}
-    <div class="msg banner err">
-      <span>
-        {loadError}
-        <button type="button" class="linkish" onclick={() => load()}
-          >Try again</button
-        >
-      </span>
-    </div>
+    <PageState error={loadError} onretry={() => load()} />
   {:else if notInitialised}
-    <div class="msg banner err">
-      <span>
-        This repository has no tracking tables yet.
-        <a href={`/${campaign}`}>Back to the campaign</a>.
-      </span>
-    </div>
+    <PageState noTables {campaign} />
   {:else if !card || !taskDef}
-    <div class="msg banner err">
-      <span>
-        No task called <code>{taskId}</code> was found in this campaign.
-        <a href={`/${campaign}`}>Back to the campaign</a>.
-      </span>
-    </div>
+    <PageState missingTask={taskId} {campaign} />
   {:else if card.pre}
     <!-- Replaced by the pre-task's own editor (the redirect above). -->
   {:else}
@@ -459,61 +431,15 @@
     </div>
     <!-- The selected measure, in the side panel's Selection tab. -->
     {#snippet measureSelection()}
-      {#if selectedMeasure}
-        {@const p = preview?.pageOfMeasure(selectedMeasure) ?? -1}
-        <div class="selpanel">
-          <div class="selhead">
-            <span class="selname"
-              ><StepGlyph
-                kind="measure"
-                tone="var(--ink-measure)"
-                size={20}
-              />Measure {selectedMeasure}</span
-            >
-            {#if p >= 0}<span class="selwhere">page {p + 1}</span>{/if}
-            <span class="selnav">
-              <button
-                type="button"
-                class="btn btn-icon"
-                onclick={() => preview?.stepMeasure(-1)}
-                disabled={!preview?.canStepMeasure(-1)}
-                aria-label="Previous measure"
-                title="Previous measure"><Icon name="chevron-left" /></button
-              >
-              <button
-                type="button"
-                class="btn btn-icon"
-                onclick={() => preview?.stepMeasure(1)}
-                disabled={!preview?.canStepMeasure(1)}
-                aria-label="Next measure"
-                title="Next measure"><Icon name="chevron-right" /></button
-              >
-            </span>
-          </div>
-          <div class="selactions">
-            {#if auth.user}
-              <button
-                type="button"
-                class="btn"
-                onclick={() => (panelTab = "comments")}
-                ><Icon name="comment" />Comment on measure {selectedMeasure}</button
-              >
-            {/if}
-            <button
-              type="button"
-              class="btn"
-              onclick={() => preview?.clearSelection()}
-              title="Clear the measure selection"
-              ><Icon name="close" />Deselect</button
-            >
-          </div>
-        </div>
-      {:else}
-        <p class="selnone">
-          Select a measure on the score to comment on it or to anchor a change
-          request.
-        </p>
-      {/if}
+      <MeasureSelection
+        label={selectedMeasure}
+        page={selectedMeasure
+          ? (preview?.pageOfMeasure(selectedMeasure) ?? -1)
+          : -1}
+        {preview}
+        oncomment={auth.user ? () => (panelTab = "comments") : undefined}
+        empty="Select a measure on the score to comment on it or to anchor a change request."
+      />
     {/snippet}
     <!-- The viewer's verdict and Give back task, at the panel's bottom. -->
     {#snippet reviewFooter()}
@@ -556,9 +482,6 @@
 </div>
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-  }
   .msg {
     margin: 24px auto;
     max-width: 640px;

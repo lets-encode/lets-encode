@@ -149,10 +149,6 @@
   const mode = $derived(wizardLayout.materialMode);
   // The card holds the material itself.
   const shared = $derived(!!material && mode === "switch");
-  // With the material behind a tab, why Next is disabled leads the form tab:
-  // under the material it would change the material's height when it goes,
-  // which rescales pages fitted to that height while one is being edited.
-  const reasonInForm = $derived(shared && !!panes);
 
   // Whether a step is skipped follows from the upload, so steps are left out
   // only once the upload step is done; before that the whole flow is listed.
@@ -386,7 +382,7 @@
         </div>
       {/if}
 
-      <ol class="steps">
+      <ol class="rail-steps">
         {#each steps as s, i (s.id)}
           {@const done = i < current}
           {@const active = i === current}
@@ -394,7 +390,7 @@
           <li>
             <button
               type="button"
-              class="step"
+              class="rail-step"
               disabled={!done || backDisabled || navBlocked !== undefined}
               title={done ? navBlocked : undefined}
               onclick={() => (wizard.step = s.id)}
@@ -449,7 +445,7 @@
             {:else}
               <button
                 type="button"
-                class="linkbtn"
+                class="linkish"
                 onclick={() => (confirmingDiscard = true)}
               >
                 Discard this setup
@@ -459,7 +455,7 @@
           {#each otherDrafts as draft (draft.handle)}
             <button
               type="button"
-              class="linkbtn other-draft"
+              class="linkish other-draft"
               onclick={() => resumeOther(draft.handle)}
               disabled={resuming !== null}
             >
@@ -639,7 +635,7 @@
   {#if otherDrafts.length}
     <button
       type="button"
-      class="linkbtn others"
+      class="linkish others"
       data-popup
       aria-expanded={popup?.kind === "others"}
       onclick={(e) => togglePopup("others", e, 320)}
@@ -653,8 +649,7 @@
     {@const open = asPopup ? popup?.kind === "discard" : confirmingDiscard}
     <button
       type="button"
-      class="linkbtn"
-      class:danger={open}
+      class="linkish"
       data-popup
       aria-expanded={open}
       onclick={(e) =>
@@ -671,7 +666,7 @@
     <button type="button" class="btn btn-danger" onclick={discardSetup}>
       Discard for good
     </button>
-    <button type="button" class="btn" onclick={closePopups}>Keep it</button>
+    <button type="button" class="btn" onclick={closePopups}>Cancel</button>
   </span>
 {/snippet}
 
@@ -704,7 +699,7 @@
         </div>
         {#if shared && panes}
           <div
-            class="panes"
+            class="seg panes"
             role="tablist"
             aria-label="Pane"
             tabindex="-1"
@@ -746,11 +741,6 @@
             aria-labelledby="wizard-tab-form"
           >
             <div class="card-body" {@attach markHidden}>
-              {#if reasonShown}
-                <p class="msg-warn form-reason" id={reasonId} role="status">
-                  {nextReason}
-                </p>
-              {/if}
               {@render children()}
             </div>
           </div>
@@ -777,7 +767,7 @@
     <!-- Every step draws the frame, so the one place to report that this setup
          is no longer being kept for later — or why it opened where it did — is
          here. -->
-    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned || (reasonShown && !reasonInForm)}
+    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned}
       <div class="pinned">
         {#if draftStatus.resumeNotice}
           <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
@@ -789,9 +779,6 @@
           </p>
         {/if}
         {@render pinned?.()}
-        {#if reasonShown && !reasonInForm}
-          <p class="msg-warn" id={reasonId} role="status">{nextReason}</p>
-        {/if}
       </div>
     {/if}
 
@@ -799,6 +786,17 @@
       {#if footer}
         {@render footer()}
       {:else}
+        <!-- Beside pages fitted to the card's height the line is kept while
+             empty, so the reason coming and going does not rescale them. -->
+        {#if reasonShown || material}
+          <span
+            class="footnote"
+            id={reasonId}
+            role="status"
+            title={reasonShown ? nextReason : undefined}
+            >{reasonShown ? nextReason : ""}</span
+          >
+        {/if}
         {#if onBack}
           <button
             type="button"
@@ -817,8 +815,7 @@
             class:btn-finish={finish}
             onclick={onNext}
             disabled={nextDisabled || navBlocked !== undefined}
-            title={navBlocked ??
-              (reasonShown && reasonInForm ? nextReason : undefined)}
+            title={navBlocked}
             aria-describedby={reasonShown ? reasonId : undefined}
           >
             {nextLabel}{#if nextIcon}<Icon name={nextIcon} />{/if}
@@ -919,43 +916,16 @@
   .rail-unnamed {
     color: var(--ink-faint);
   }
-  .linkbtn {
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
+  .others {
     gap: 4px;
-    min-height: 24px;
-    font: 12px var(--font);
-    padding: 0;
-    color: var(--ink-faint);
-    background: none;
-    border: none;
-    text-decoration: underline;
-    text-align: left;
-  }
-  .linkbtn.danger {
-    color: var(--danger);
-  }
-  .linkbtn.others {
-    color: var(--link);
-    text-decoration: none;
-  }
-  @media (hover: hover) {
-    .linkbtn:hover {
-      color: var(--danger);
-    }
-    .linkbtn.others:hover,
-    .linkbtn.other-draft:hover {
-      color: var(--accent);
-    }
   }
   @media (pointer: coarse) {
-    .linkbtn {
+    .linkish {
       min-height: 44px;
     }
     /* In the line above the track the press area overlaps its neighbours
        rather than making the line taller. */
-    .thead .linkbtn {
+    .thead .linkish {
       margin-block: -10px;
     }
   }
@@ -1071,12 +1041,12 @@
   .rail-saved-top {
     display: none;
   }
-  .steps {
+  .rail-steps {
     list-style: none;
     margin: 0;
     padding: 0;
   }
-  .step {
+  .rail-step {
     display: flex;
     gap: 10px;
     align-items: flex-start;
@@ -1089,7 +1059,7 @@
     border: none;
     cursor: pointer;
   }
-  .step:disabled {
+  .rail-step:disabled {
     cursor: default;
   }
   .rail-chain {
@@ -1535,15 +1505,12 @@
     color: var(--ink-faint);
     cursor: pointer;
   }
-  /* The two tabs, under the heading or, in a short window, beside it. */
+  /* The two tabs (.seg, ui.css), under the heading or, in a short window,
+     beside it. */
   .panes {
     flex: 1 1 100%;
     display: flex;
-    gap: 2px;
     margin-top: 12px;
-    padding: 2px;
-    background: var(--bg-tint);
-    border-radius: 999px;
   }
   .short .panes {
     flex: 1 1 0;
@@ -1556,24 +1523,9 @@
     font-size: 18px;
     white-space: nowrap;
   }
-  .panes button {
+  .panes > button {
     flex: 1;
-    min-height: 30px;
-    border: none;
-    background: transparent;
-    border-radius: 999px;
-    font: 600 13px var(--font);
-    color: var(--ink-soft);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
     justify-content: center;
-    gap: 6px;
-  }
-  .panes button.on {
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: 0 1px 2px rgba(31, 36, 51, 0.12);
   }
   .panes .n {
     font-weight: 400;
@@ -1651,9 +1603,6 @@
   }
   .panes-body .card-body {
     padding-top: 6px;
-  }
-  .form-reason {
-    margin: 10px 0 0;
   }
   .inpane {
     display: flex;

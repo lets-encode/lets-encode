@@ -36,7 +36,7 @@
           : "GitHub's request limit is reached."}
       {#if status.limit === "anonymous" && !auth.user}
         <button type="button" class="linkish" onclick={() => login()}
-          >Log in</button
+          >Log in with GitHub</button
         >
       {/if}
     </span>

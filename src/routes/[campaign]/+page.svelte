@@ -81,6 +81,9 @@
   import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
   import PieceRail from "$lib/components/PieceRail.svelte";
+  import SlotMark from "$lib/components/SlotMark.svelte";
+  import PageState from "$lib/components/PageState.svelte";
+  import ProgressBar from "$lib/components/ProgressBar.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
@@ -1046,7 +1049,7 @@
           editorError = {
             task,
             label: "",
-            text: "Log in to record the outcome from mei-friend.",
+            text: "Log in with GitHub to record the outcome from mei-friend.",
           };
           return;
         }
@@ -1194,15 +1197,6 @@
 {/snippet}
 {#snippet resultNote()}
   <RunnerBanner {runner} bar {isPrivate} collapsible />
-{/snippet}
-
-{#snippet slotDot(key: string, who = "")}
-  <span
-    class="dot {key}"
-    role="img"
-    aria-label={who ? `${key}: ${who}` : key}
-    title={who || key}
-  ></span>
 {/snippet}
 
 {#snippet boardTaskBox(card: BoardCard)}
@@ -1367,7 +1361,7 @@
 
 <div class="console">
   {#if auth.status === "loading"}
-    <p class="msg muted">Loading…</p>
+    <PageState loading="the campaign" />
   {:else}
     {#if !auth.user}
       <div class="banner bar warn">
@@ -1436,16 +1430,7 @@
     {/if}
 
     {#if resolveError}
-      <div class="banner bar err">
-        <span>
-          {resolveError}
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => (resolveError = null)}>Try again</button
-          >
-        </span>
-      </div>
+      <PageState error={resolveError} onretry={() => (resolveError = null)} />
     {:else if notFound && !isValidHandle(campaign)}
       <div class="banner bar err">
         <span>
@@ -1455,13 +1440,7 @@
         </span>
       </div>
     {:else if notFound}
-      <div class="banner bar err">
-        <span>
-          No campaign called <code>{campaign}</code> was found. It may have been
-          removed, or the name may be misspelled.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
+      <PageState missingCampaign={campaign} />
     {:else if slugState === "pending"}
       <div class="banner bar warn">
         <span>
@@ -1487,30 +1466,12 @@
     {:else}
       <div class="viewcol">
         <RefreshNotice status={refreshStatus} />
-        {#if !resolved}
-          <p class="msg muted">Finding the campaign…</p>
-        {:else if loading}
-          <p class="msg muted">Loading campaign…</p>
+        {#if !resolved || loading}
+          <PageState loading="the campaign" />
         {:else if loadError}
-          <div class="banner bar err">
-            <span>
-              {loadError}
-              <button type="button" class="linkish" onclick={() => load()}
-                >Try again</button
-              >
-            </span>
-          </div>
+          <PageState error={loadError} onretry={() => load()} />
         {:else if notInitialised}
-          <div class="banner bar warn">
-            <span>
-              This repository has no tracking tables (<code
-                >tracking/task.csv</code
-              >,
-              <code>tracking/state.csv</code>, <code>tracking/lock.csv</code>)
-              yet — it may not have been initialised. Create it through the home
-              page to initialise it.
-            </span>
-          </div>
+          <PageState noTables />
         {:else if scoreView}
           {#key scoreView.piece.path}
             <ScoreView
@@ -1548,9 +1509,10 @@
           <div class="crumbrow">
             <button
               type="button"
-              class="backlink"
+              class="btn backlink"
+              title="Back to the board"
               onclick={() => (manage = false)}
-              ><Icon name="arrow-left" /> Back to the board</button
+              ><Icon name="arrow-left" /> Board</button
             >
             <span class="bcsep">/</span>
             <span class="crumbtitle">{title || repo}</span>
@@ -1599,14 +1561,7 @@
                     {/if}
                   </div>
                   <span class="volprogress">
-                    <span class="vbar"
-                      ><span
-                        style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
-                      ></span></span
-                    >
-                    <span class="volcount"
-                      >{board.done} of {board.total} done</span
-                    >
+                    <ProgressBar done={board.done} total={board.total} />
                   </span>
                   {#if canViewScore}
                     <button
@@ -1698,14 +1653,9 @@
                 <!-- One line: the progress first; the other counts give way
                      as the column narrows, the attention count last. -->
                 <div class="hero-stats" class:quiet={board.attention === 0}>
-                  <div class="hbar">
-                    <div
-                      style={`width:${board.total ? Math.round((board.done / board.total) * 100) : 0}%`}
-                    ></div>
-                  </div>
-                  <span class="hbarlabel"
-                    >{board.done} of {board.total} tasks done</span
-                  >
+                  <span class="heroprogress">
+                    <ProgressBar done={board.done} total={board.total} />
+                  </span>
                   <span class="sep m2">·</span>
                   <span class="stat m2"
                     ><b class="c-info">{board.inFlight}</b> in progress</span
@@ -1867,7 +1817,7 @@
                       >
                         <div class="bcol-head">
                           <h2 class="bcol-name">{col.label}</h2>
-                          <span class="bcol-count">{col.cards.length}</span>
+                          <span class="countpill">{col.cards.length}</span>
                         </div>
                         <div class="well">
                           {#if col.cards.length === 0}
@@ -1902,7 +1852,7 @@
                               data-stage={stageOf(card)}
                             >
                               {#if card.nextUp && !completedTask}
-                                <span class="nextup-badge">next task</span>
+                                <span class="nextup-badge">your next task</span>
                               {/if}
                               {#if card.task === completedTask}
                                 <span class="justmoved-badge"
@@ -1957,7 +1907,7 @@
                                   )}
                                   <span class="card-dots">
                                     {#each card.slots as slot (slot.label)}
-                                      {@render slotDot(slot.key, slot.who)}
+                                      <SlotMark key={slot.key} who={slot.who} />
                                     {/each}
                                   </span>
                                 </div>
@@ -2077,25 +2027,8 @@
   .muted {
     color: var(--ink-faint);
   }
-  .msg {
-    padding: 1rem 1.4rem;
-  }
 
   /* Banner styles are shared app-wide in ui.css. */
-  .linkish {
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-  }
-  .linkish:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
 
   /* --------------------------------------------------------------- main */
   /* The view fills the window — the rail, board and side panel share every
@@ -2236,28 +2169,8 @@
   }
   /* The campaign's progress: a bar beside the count. */
   .volprogress {
-    display: flex;
-    align-items: center;
-    gap: 8px;
     flex: none;
-  }
-  .vbar {
-    width: 140px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--track);
-    overflow: hidden;
-  }
-  .vbar span {
-    display: block;
-    height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--green));
-  }
-  .volcount {
-    font-size: 12px;
-    color: var(--ink-soft);
-    white-space: nowrap;
-    flex: none;
+    --track-w: 140px;
   }
   .volrow {
     flex: 1;
@@ -2308,8 +2221,8 @@
       grid-area: 2 / 2;
       justify-self: end;
     }
-    .vbar {
-      width: 72px;
+    .volprogress {
+      --track-w: 72px;
     }
   }
 
@@ -2464,22 +2377,10 @@
       display: none;
     }
   }
-  .hbar {
-    flex: 1;
-    min-width: 48px;
-    max-width: 420px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--track);
-    overflow: hidden;
-  }
-  .hbar div {
-    height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--green));
-  }
-  .hbarlabel {
-    font-size: 12px;
-    color: var(--ink-faint);
+  .heroprogress {
+    flex: 0 1 auto;
+    min-width: 0;
+    --track-w: 420px;
   }
   .stat {
     font-size: 13px;
@@ -2745,14 +2646,6 @@
     font-weight: 700;
     letter-spacing: 0.02em;
   }
-  .bcol-count {
-    font-size: 11px;
-    font-weight: 700;
-    background: rgba(0, 0, 0, 0.22);
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 8px;
-  }
   .bcol.c-blocked {
     --lane-solid: var(--ink-faint);
     --lane-bg: var(--bg-inset);
@@ -3004,31 +2897,6 @@
     display: flex;
     gap: 4px;
   }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    flex: none;
-    display: inline-block;
-  }
-  .dot.pass {
-    background: var(--green);
-    border-color: var(--ok);
-  }
-  :global([data-theme="dark"]) .dot.pass {
-    background: var(--ok);
-    border-color: var(--ok-line);
-  }
-  .dot.fail {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
-  }
-  .dot.review {
-    background: var(--info-bg);
-    border-color: var(--info);
-  }
   .card-chips {
     display: flex;
     gap: 6px;
@@ -3068,18 +2936,7 @@
     min-width: 0;
   }
   .backlink {
-    font: 600 13px var(--font);
-    color: var(--link);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
     flex: none;
-  }
-  @media (hover: hover) {
-    .backlink:hover {
-      text-decoration: underline;
-    }
   }
   .bcsep {
     color: var(--line-input);
@@ -3220,8 +3077,7 @@
       box-shadow: none;
     }
     .hero-stats .m2,
-    .hbar,
-    .hbarlabel {
+    .heroprogress {
       display: none;
     }
     .instrow {

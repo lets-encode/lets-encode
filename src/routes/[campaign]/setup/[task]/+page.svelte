@@ -8,6 +8,7 @@
 <script lang="ts">
   import { commentAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import PageState from "$lib/components/PageState.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import MusicGlyph, {
@@ -16,7 +17,7 @@
   import { page } from "$app/state";
   import { tick, untrack, type Snippet } from "svelte";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { auth, login, forge } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type {
@@ -1321,55 +1322,20 @@
   }}
 >
   {#if session.campaign.error}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.campaign.error}
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => session.campaign.retry()}>Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState
+      error={session.campaign.error}
+      onretry={() => session.campaign.retry()}
+    />
   {:else if session.campaign.notFound}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          No campaign called <code>{campaign}</code> was found.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
-    </div>
+    <PageState missingCampaign={campaign} />
   {:else if auth.status === "loading" || !session.campaign.resolved}
-    <div class="deskwrap"><p class="muted">Loading…</p></div>
+    <PageState loading="the campaign" />
   {:else if !auth.user}
-    <div class="deskwrap">
-      <div class="banner warn">
-        <span>
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Please
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          >
-          to work on this task.
-        </span>
-      </div>
-    </div>
+    <PageState loggedOut />
   {:else if session.loading}
-    <div class="deskwrap"><p class="muted">Loading the score…</p></div>
+    <PageState loading="the score" />
   {:else if session.loadError}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.loadError}
-          <button type="button" class="linkish" onclick={() => session.load()}
-            >Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data}
     <!-- The work area: the source's first measure beside the preview of
          the setup, split by a divider that moves the boundary. A piece
@@ -1662,7 +1628,7 @@
                     {#if canEdit && staves.length > 1}
                       <button
                         type="button"
-                        class="staffgrip"
+                        class="grip staffgrip"
                         class:target={picked !== null && picked !== i}
                         style:grid-row="2 / span {transValue(staff) ===
                           'other' && !unpitched(staff)
@@ -1861,7 +1827,8 @@
                     (omr && data?.hasNotation)}
                   title={omr && data?.hasNotation
                     ? "The staff count is fixed once the piece holds notation"
-                    : "Add a staff below the last one."}>Add staff</button
+                    : "Add a staff below the last one."}
+                  ><Icon name="plus" />Add staff</button
                 >
               {/if}
             </fieldset>
@@ -1958,7 +1925,7 @@
                     class="btn addbtn"
                     onclick={() => addGroup()}
                     title="Join two neighbouring staves with a brace. Its staves and symbol can be changed below."
-                    >Add group</button
+                    ><Icon name="plus" />Add group</button
                   >
                 {/if}
               {/if}
@@ -2021,7 +1988,11 @@
               </div>
               <label class="field narrow">
                 <span>From staff</span>
-                <select bind:value={g.start} title="The group's first staff.">
+                <select
+                  class="ctl"
+                  bind:value={g.start}
+                  title="The group's first staff."
+                >
                   {#each staves as _, n (n)}
                     <option
                       value={n + 1}
@@ -2032,7 +2003,11 @@
               </label>
               <label class="field narrow">
                 <span>To staff</span>
-                <select bind:value={g.end} title="The group's last staff.">
+                <select
+                  class="ctl"
+                  bind:value={g.end}
+                  title="The group's last staff."
+                >
                   {#each staves as _, n (n)}
                     <option
                       value={n + 1}
@@ -2054,6 +2029,7 @@
             <label class="field">
               <span>Label</span>
               <input
+                class="ctl"
                 type="text"
                 bind:value={g.label}
                 placeholder={canEdit ? "optional" : "—"}
@@ -2304,13 +2280,6 @@
      host row provides it there. Docked below the tool it spans the width. */
   .corrector > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 4px 0;
-  }
-  .deskwrap {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 1.25rem 2rem;
-    box-sizing: border-box;
   }
   .main {
     flex: 1;
@@ -2566,41 +2535,6 @@
     grid-column: 1;
     justify-self: center;
     align-self: center;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 28px;
-    padding: 0;
-    border: 0;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--line) 55%, transparent);
-    color: var(--ink-soft);
-    cursor: grab;
-    touch-action: none;
-    user-select: none;
-  }
-  .staffgrip::after {
-    content: "";
-    position: absolute;
-    inset: -6px -6px;
-  }
-  .staffgrip :global(svg) {
-    width: 12px;
-    height: 18px;
-  }
-  .staffgrip:active {
-    cursor: grabbing;
-  }
-  @media (hover: hover) {
-    .staffgrip:hover {
-      color: var(--ink);
-      background: var(--line);
-    }
-  }
-  .staffgrip.target {
-    cursor: pointer;
   }
   .staffrow.dragged {
     background: var(--accent-tint-strong);
@@ -2838,21 +2772,7 @@
   }
   .field select,
   .field input {
-    font: inherit;
-    font-size: 13px;
     width: 100%;
-    box-sizing: border-box;
-    padding: 6px 10px;
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--ink);
-  }
-  .field select:disabled,
-  .field input:disabled {
-    color: var(--ink-faint);
-    background: var(--bg-tint);
-    cursor: not-allowed;
   }
   .rowbtns {
     flex: none;

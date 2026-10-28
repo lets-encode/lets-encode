@@ -268,7 +268,7 @@
     busy
       ? "Working…"
       : failed
-        ? "Retry"
+        ? "Try again"
         : chosen.length
           ? `Use ${chosen.length} page${chosen.length === 1 ? "" : "s"}`
           : "Continue without pages",
@@ -316,7 +316,7 @@
     error = null;
     const user = auth.user;
     if (!user) {
-      error = "You are signed out. Log in with GitHub to continue.";
+      error = "You are logged out. Log in with GitHub to continue.";
       return;
     }
 

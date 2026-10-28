@@ -1,10 +1,11 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import PageState from "$lib/components/PageState.svelte";
   import { tick, untrack, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { auth, login, forge } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type {
@@ -2730,55 +2731,20 @@
   }}
 >
   {#if session.campaign.error}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.campaign.error}
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => session.campaign.retry()}>Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState
+      error={session.campaign.error}
+      onretry={() => session.campaign.retry()}
+    />
   {:else if session.campaign.notFound}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          No campaign called <code>{campaign}</code> was found.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
-    </div>
+    <PageState missingCampaign={campaign} />
   {:else if auth.status === "loading" || !session.campaign.resolved}
-    <div class="deskwrap"><p class="muted">Loading…</p></div>
+    <PageState loading="the campaign" />
   {:else if !auth.user}
-    <div class="deskwrap">
-      <div class="banner warn">
-        <span>
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Please
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          >
-          to work on this task.
-        </span>
-      </div>
-    </div>
+    <PageState loggedOut />
   {:else if session.loading}
-    <div class="deskwrap"><p class="muted">Loading the facsimile…</p></div>
+    <PageState loading="the facsimile" />
   {:else if session.loadError}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.loadError}
-          <button type="button" class="linkish" onclick={() => session.load()}
-            >Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data}
     <div class="main">
       <h1 class="vh">{taskTitle} · {session.pieceName || campaign}</h1>
@@ -2832,10 +2798,10 @@
               <button
                 type="button"
                 class="chip-switch"
-                class:on={!showBoxes}
-                aria-pressed={!showBoxes}
-                title="Hide the boxes to see the page underneath"
-                onclick={toggleBoxes}>Hide the boxes</button
+                class:on={showBoxes}
+                aria-pressed={showBoxes}
+                title="Show or hide the boxes on the page"
+                onclick={toggleBoxes}>Show the boxes</button
               >
               <button
                 type="button"
@@ -3272,7 +3238,7 @@
     <!-- How many pages a row shows: in the toolbar, or in the ⋯ menu below
          MEDIUM_TOOL. -->
     {#snippet viewOptions()}
-      <div class="seg" title="How many pages the desk shows side by side">
+      <div class="seg" title="How many pages are shown side by side">
         <button
           type="button"
           class:on={view === "single"}
@@ -3336,7 +3302,7 @@
             ? "Show only the beginning of each system"
             : "Show the whole pages beside the names"}
           onclick={() => showStep4Pages(!step4Pages)}
-          ><Icon name="facsimile" size={16} /></button
+          ><Icon name="page-whole" size={16} /></button
         >
         <span class="vline"></span>
       {/if}
@@ -3389,8 +3355,7 @@
             aria-pressed={fit === "width"}
             onclick={() => (fit = "width")}
             aria-label="Fit the page width"
-            title="Fit the page width to the view"
-            ><FitIcon kind="width" /></button
+            title="Fit the page width"><FitIcon kind="width" /></button
           >
           <button
             type="button"
@@ -3399,7 +3364,7 @@
             aria-pressed={fit === "page"}
             onclick={fitWholePage}
             aria-label="Fit the whole page"
-            title="Fit the whole page in the view, top to bottom"
+            title="Fit the whole page, top to bottom"
             ><FitIcon kind="page" /></button
           >
         </span>{/if}
@@ -3545,7 +3510,7 @@
             aria-label="Steps"
             title={`The ${naming ? "four" : "three"} steps of the measure correction. Each step shows only its own boxes.`}
           >
-            {#each [{ step: 1, glyph: "staff", tone: "var(--ink-staff)", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, glyph: "grand", tone: "var(--ink-grand)", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, glyph: "measure", tone: "var(--ink-measure)", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }, ...(naming ? [{ step: 4, glyph: "staves", tone: "var(--ink)", long: "Instruments", short: "Instr.", count: `${shownNamed.instruments.length}`, n: shownNamed.instruments.length }] : [])] as s (s.step)}
+            {#each [{ step: 1, glyph: "staff", tone: "var(--ink-staff)", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, glyph: "grand", tone: "var(--ink-grand)", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, glyph: "measure", tone: "var(--ink-measure)", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }, ...(naming ? [{ step: 4, glyph: "names", tone: "var(--ink)", long: "Instruments", short: "Instr.", count: `${shownNamed.instruments.length}`, n: shownNamed.instruments.length }] : [])] as s (s.step)}
               <button
                 type="button"
                 class="step"
@@ -3554,7 +3519,7 @@
                 onclick={() => setLayoutStep(s.step as LayoutStep)}
                 aria-label={`${s.step} · ${s.long}, ${s.count}`}
                 ><span class="stepno">{s.step}</span><StepGlyph
-                  kind={s.glyph as "staff" | "grand" | "measure" | "staves"}
+                  kind={s.glyph as "staff" | "grand" | "measure" | "names"}
                   tone={s.tone}
                 /><span class="steplong">{s.long}</span><span class="stepshort"
                   >{s.short}</span
@@ -3593,11 +3558,11 @@
       <button
         type="button"
         class="tbtn tbtn-icon"
-        class:on={!showBoxes}
-        aria-pressed={!showBoxes}
-        aria-label="Hide the boxes"
-        title="Hide the boxes to see the page underneath"
-        onclick={toggleBoxes}><Icon name="eye-off" size={16} /></button
+        class:on={showBoxes}
+        aria-pressed={showBoxes}
+        aria-label="Show the boxes"
+        title="Show or hide the boxes on the page"
+        onclick={toggleBoxes}><Icon name="eye" size={16} /></button
       >
     {/snippet}
 
@@ -3612,7 +3577,7 @@
           aria-label="Show the whole page"
           title="Show the whole page, not only the part this piece covers"
           onclick={() => (wholePage = !wholePage)}
-          ><Icon name="facsimile" size={16} /></button
+          ><Icon name="page-whole" size={16} /></button
         >
       {/if}
     {/snippet}
@@ -4170,11 +4135,6 @@
 </div>
 
 <style>
-  .muted {
-    color: var(--ink-soft);
-    font-size: 0.9rem;
-  }
-
   /* The whole tool: the desk the page sheets float on (the only scrolling
      region), with the side panel — carrying the task box — beside it.
      The app's navigation bar and footer come from the layout, as on every
@@ -4378,14 +4338,6 @@
   }
 
   /* Banner styles are shared app-wide in ui.css. */
-  /* Pre-editor states (loading, errors, login) on the desk. */
-  .deskwrap {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 1.25rem 2rem;
-    box-sizing: border-box;
-  }
   /* The desk column beside the sidebar: the paging and zoom toolbar on top,
      result banners over the desk. */
   /* The tool column: its toolbar's top edge and the side panel's are one
@@ -4531,11 +4483,6 @@
     border: 1px solid var(--line);
     border-radius: 14px;
     box-shadow: var(--shadow-md);
-  }
-  .viewbtn.on,
-  .helpbtn.on {
-    color: var(--st);
-    background: var(--st-tint);
   }
   .helpbtn.hidden,
   .helpline.hidden {

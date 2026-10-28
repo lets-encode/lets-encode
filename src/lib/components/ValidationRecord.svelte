@@ -9,6 +9,7 @@
   import type { LockRow } from "$lib/campaign-tables.ts";
   import { buildRecord, expiresIn } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
+  import SlotMark, { slotLabel } from "./SlotMark.svelte";
 
   let {
     card,
@@ -24,14 +25,6 @@
     viewer: string;
     canPush: boolean;
   } = $props();
-
-  /** How a slot's state reads in the record. */
-  const slotLabel = (key: string): string =>
-    ({
-      pass: "approved",
-      fail: "changes requested",
-      review: "in review",
-    })[key] ?? key;
 
   // With one slot in all, its rows need no slot number.
   const slotName = (slot: number) =>
@@ -55,20 +48,6 @@
   );
 </script>
 
-{#snippet slotDot(key: string)}
-  {#if key === "pass"}
-    <img
-      class="hand-pass"
-      src="/green-hand.svg"
-      alt={slotLabel(key)}
-      title={slotLabel(key)}
-    />
-  {:else}
-    <span class="dot {key}" aria-label={slotLabel(key)} title={slotLabel(key)}
-    ></span>
-  {/if}
-{/snippet}
-
 {#if rows.length > 0}
   <div class="rsec">
     {#if canPush}
@@ -76,7 +55,7 @@
     {/if}
     {#each rows as r (r.sub + "/" + r.slot)}
       <div class="rrow">
-        {@render slotDot(r.key)}
+        <SlotMark key={r.key} />
         <span class="rslot">{slotName(r.slot)}{slotLabel(r.key)}</span>
         {#if r.login}
           <span class="rwho"
@@ -100,28 +79,6 @@
   }
   .mspacer {
     flex: 1;
-  }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    flex: none;
-    display: inline-block;
-  }
-  /* The green thumbs-up hand marks a passed slot. */
-  .hand-pass {
-    height: 14px;
-    flex: none;
-  }
-  .dot.fail {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
-  }
-  .dot.review {
-    background: var(--info-bg);
-    border-color: var(--info);
   }
   .rlabel {
     font-size: 12px;

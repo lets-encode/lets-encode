@@ -336,12 +336,12 @@ export function cardPill(card: BoardCard, viewer = ""): string {
     case "encoding": {
       const w = card.worker;
       const who = w ? (w.mine ? "you" : w.login) : "";
-      return `in progress${who ? ` · ${who}` : ""}${w?.expires ? ` · ${w.expires}` : ""}`;
+      return `encoding${who ? ` · ${who}` : ""}${w?.expires ? ` · ${w.expires}` : ""}`;
     }
     case "validation": {
       const held = card.slots.filter((s) => s.key === "review");
       const reviewing = viewer !== "" && held.some((s) => s.user === viewer);
-      return `in review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : held.length ? " · being reviewed" : ""}`;
+      return `review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : held.length ? " · being reviewed" : ""}`;
     }
     case "done":
       return card.threshold > 0

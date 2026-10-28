@@ -136,7 +136,7 @@
   const lone = $derived(pieces.length === 1);
 
   const actLabel = (c: BoardCard): string => {
-    if (viewer === "") return "Log in to claim";
+    if (viewer === "") return "Log in with GitHub to claim";
     if (c.column === "ready")
       return c.checksOpening
         ? "Claim & open score check"
@@ -148,7 +148,8 @@
   // What the card's button does, for its tooltip.
   const actTitle = (c: BoardCard): string => {
     if (viewer === "") return "Log in with GitHub to claim this task.";
-    if (c.column === "validation") return "Takes a review slot on this task.";
+    if (c.column === "validation")
+      return "Claims a review of this task for you.";
     if (c.pre)
       return `Claims this task for you and opens the ${workPlace(c.locator)}.`;
     return "Claims this task for you and opens the score in mei-friend.";
@@ -314,7 +315,7 @@
         </h2>
         <!-- The title button's hit area covers the card; the action buttons
              sit above it. The badge on its top edge names the card, as the
-             board's "next task" badge does. -->
+             board's "your next task" badge does. -->
         <div
           class="nextcard stage-{kindOf(featured)}"
           data-stage={stageOf(featured)}
@@ -387,7 +388,7 @@
       <div class="vsec">
         <div class="sechead">
           <h2 class="seclabel">
-            Open tasks <span class="seccount">{openCards.length}</span>
+            Open tasks <span class="countpill">{openCards.length}</span>
           </h2>
           {#if presentKinds.size > 1}
             <span class="vspacer"></span>
@@ -399,7 +400,7 @@
                 aria-pressed={kinds[kind.key]}
                 onclick={() => (kinds[kind.key] = !kinds[kind.key])}
                 title="Show or hide {kind.label.toLowerCase()} tasks in the list"
-                ><span class="sw"></span>{kind.label}</button
+                >{kind.label}</button
               >
             {/each}
           {/if}
@@ -439,7 +440,7 @@
     {#if waitingCards.length > 0}
       <div class="vsec">
         <h2 class="seclabel">
-          Waiting for review <span class="seccount">{waitingCards.length}</span>
+          In review <span class="countpill">{waitingCards.length}</span>
         </h2>
         <div class="tlist">
           {#each waitingCards as card (card.task)}
@@ -463,9 +464,9 @@
               </span>
               <span class="vspacer"></span>
               <span
-                class="taskpill"
+                class="chip"
                 title="You submitted it; another volunteer needs to review it."
-                >waiting for review</span
+                >review</span
               >
             </div>
           {/each}
@@ -615,19 +616,19 @@
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}
-                          <span class="taskpill next">just completed</span>
+                          <span class="chip">just completed</span>
                         {:else if card.nextUp && !completedCard && !lone}
-                          <span class="taskpill next">your next task</span>
+                          <span class="chip">your next task</span>
                         {:else if card.column === "validation" && card.submittedByViewer}
                           <span
-                            class="taskpill"
+                            class="chip"
                             title="You submitted it; another volunteer needs to review it."
-                            >waiting for review</span
+                            >review</span
                           >
                         {:else if card.column === "validation"}
-                          <span class="taskpill review">review</span>
+                          <span class="chip">review</span>
                         {:else}
-                          <span class="taskpill">{cardPill(card, viewer)}</span>
+                          <span class="chip">{cardPill(card, viewer)}</span>
                         {/if}
                         <span class="tchev"><Icon name="chevron-right" /></span>
                       </div>
@@ -688,15 +689,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .seccount {
-    font-size: 11px;
-    font-weight: 600;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 7px;
-    letter-spacing: 0;
   }
 
   /* A row's title button reaches over the whole row; the row's other buttons
@@ -1152,27 +1144,6 @@
   }
   .taskrow.still .tasktitle {
     color: var(--ink-soft);
-  }
-  .taskpill {
-    font-weight: 600;
-    font-size: 11px;
-    line-height: 1;
-    padding: 3px 9px;
-    border-radius: 999px;
-    white-space: nowrap;
-    background: var(--bg-alt);
-    border: 1px solid var(--line);
-    color: var(--ink-faint);
-  }
-  .taskpill.next {
-    background: var(--info-bg);
-    border-color: var(--info-line);
-    color: var(--info);
-  }
-  .taskpill.review {
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-    color: var(--warn);
   }
   .merged {
     font-size: 12px;

@@ -72,7 +72,7 @@
         >
       {:else}
         <span class="mark" aria-hidden="true"
-          ><Icon name="close" size={12} /></span
+          ><Icon name="warning" size={12} /></span
         >
         <span
           >{entry.runFailed
@@ -125,10 +125,6 @@
     margin-top: 0;
     font-size: 13px;
   }
-  .runstate.large .spinner {
-    width: 16px;
-    height: 16px;
-  }
   .runstate a {
     color: var(--link);
   }
@@ -155,24 +151,5 @@
   }
   .mark {
     flex: none;
-  }
-  .spinner {
-    flex: none;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
   }
 </style>

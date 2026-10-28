@@ -1,11 +1,11 @@
 <!--
   The glyph of what a task step marks, drawn as notation: a staff, a grand
   staff joined by a brace, a measure between two barlines, a list of staves,
-  or staves joined by a bracket. Thin strokes in the colour passed as `tone`
+  staves joined by a bracket, or staves with names beside them. Thin strokes in the colour passed as `tone`
   (currentColor by default); decorative.
 -->
 <script lang="ts">
-  type Kind = "staff" | "grand" | "measure" | "staves" | "groups";
+  type Kind = "staff" | "grand" | "measure" | "staves" | "groups" | "names";
   let {
     kind,
     tone = "currentColor",
@@ -36,9 +36,12 @@
   {:else if kind === "staves"}
     <path d="M3 4h18M3 7h18M3 10h18M3 14h18M3 17h18M3 20h18" />
     <path d="M6 2.5v9M6 12.5v9" stroke-width="2.2" />
-  {:else}
+  {:else if kind === "groups"}
     <path d="M9 4h12M9 7h12M9 10h12M9 14h12M9 17h12M9 20h12" />
     <path d="M7 3v18M7 3h2M7 21h2" stroke-width="2.4" />
+  {:else}
+    <path d="M11 4h10M11 7h10M11 10h10M11 14h10M11 17h10M11 20h10" />
+    <path d="M3 7h5M3 17h5" stroke-width="2.4" />
   {/if}
 </svg>
 

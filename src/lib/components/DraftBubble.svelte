@@ -32,7 +32,7 @@
     <span class="chip chip-question bubble">Saving draft…</span>
   {:else if draft === "saved" && savedShown}
     <span
-      class="chip bubble"
+      class="chip chip-ok bubble"
       out:fade={{ duration: reduceMotion.current ? 0 : 300 }}>Draft saved</span
     >
   {:else if draft && draft !== "saved"}

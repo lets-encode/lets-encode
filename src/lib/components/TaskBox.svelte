@@ -230,7 +230,7 @@
     <TaskRunState task={card.task} pill />
     {#if !runState}
       <span
-        class="pill c-{card.column}"
+        class="chip"
         title={card.column === "blocked"
           ? `Waits for ${card.waitsFor}.`
           : card.column === "done"
@@ -317,8 +317,8 @@
           onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
           title={auth.user
-            ? "Claims the task for you, then opens the score in mei-friend."
-            : "Log in to claim a task."}
+            ? "Claims this task for you and opens the score in mei-friend."
+            : "Log in with GitHub to claim a task."}
           >{claimLabel(card.locator)} <Icon name="external" /></button
         >
       {/if}
@@ -380,15 +380,14 @@
           class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
-          title="Reserves this review for you for a limited time. Give back task releases it."
-          >Claim to review</button
+          title="Claims a review of this task for you.">Claim to review</button
         >
         {#if !card.pre && !inView}
           <a
             class="btn btn-soft"
             href={`/${campaign}/review/${card.task}`}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
-            >Open review view</a
+            >Open review</a
           >
         {/if}
       </div>
@@ -401,7 +400,7 @@
             href={processing ? undefined : editorRoute}
             aria-disabled={processing}
             title={`Review the submitted work in the ${editorName}.`}
-            >Open {editorName}</a
+            >Continue in {editorName}</a
           >
         {:else}
           <a
@@ -410,7 +409,7 @@
             href={processing ? undefined : `/${campaign}/review/${card.task}`}
             aria-disabled={processing}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
-            >Open review view</a
+            >Continue in review</a
           >
         {/if}
         <AbandonButton
@@ -567,27 +566,5 @@
       position: absolute;
       inset: -6px;
     }
-  }
-
-  /* ---------------------------------------------------------------- pills */
-  /* The status on paper over the wash, in the stage's colour once the task
-     is under way. */
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 600;
-    font-size: 11.5px;
-    line-height: 1;
-    padding: 5px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
-    background: var(--card);
-    color: var(--ink-soft);
-  }
-  .pill.c-encoding,
-  .pill.c-validation,
-  .pill.c-done {
-    color: var(--st);
   }
 </style>

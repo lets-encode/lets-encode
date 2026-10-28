@@ -19,6 +19,7 @@
     type="button"
     class="tbtn tbtn-icon"
     aria-label="Fewer pages per row"
+    title="Fewer pages per row"
     disabled={value <= 1}
     onclick={() => value--}
   >
@@ -31,6 +32,7 @@
     type="button"
     class="tbtn tbtn-icon"
     aria-label="More pages per row"
+    title="More pages per row"
     disabled={value >= MOST}
     onclick={() => value++}
   >

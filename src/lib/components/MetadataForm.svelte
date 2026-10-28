@@ -22,6 +22,7 @@
     parseSourceHead,
     type SourceMetadata,
   } from "$lib/source-metadata.ts";
+  import Icon from "./Icon.svelte";
   import XmlEditor from "./XmlEditor.svelte";
 
   type View = "short" | "long" | "xml";
@@ -141,13 +142,11 @@
     <div class="views-row">{@render heading()}</div>
   {/if}
   {#if subhead}{@render subhead()}{/if}
-  <div class="views" role="group" aria-label="Metadata detail">
+  <div class="seg views" role="group" aria-label="Metadata detail">
     {#each [["short", "Short"], ["long", "Detailed"], ["xml", "XML"]] as const as [id, label] (id)}
       <button
         type="button"
         aria-pressed={view === id}
-        class="pill"
-        class:pill-sm={heading !== undefined}
         class:on={view === id}
         disabled={!xmlValid && id !== "xml"}
         title={!xmlValid && id !== "xml"
@@ -398,15 +397,15 @@
               />
               <button
                 type="button"
-                class="pill pill-sm"
+                class="btn btn-icon btn-danger"
                 onclick={() => removeContributor(i)}
+                aria-label="Remove this contributor"
+                title="Remove this contributor"><Icon name="trash" /></button
               >
-                Remove
-              </button>
             </div>
           {/each}
-          <button type="button" class="pill pill-sm" onclick={addContributor}
-            >Add contributor</button
+          <button type="button" class="btn" onclick={addContributor}
+            ><Icon name="plus" />Add contributor</button
           >
         </fieldset>
 
@@ -437,8 +436,6 @@
   }
   /* The view switch sits directly above the fields it switches. */
   .views {
-    display: flex;
-    gap: 6px;
     margin-top: 14px;
   }
   .fields {

@@ -122,7 +122,7 @@
         Data on this platform can be reset at any time.
       {/if}
       <span class="banner-links">
-        <button type="button" class="link" onclick={open}>Details</button>
+        <button type="button" class="linkish" onclick={open}>Details</button>
         {#if level < 2}
           <a href={reportHref} target="_blank" rel="noopener">Report a bug</a>
         {/if}
@@ -130,10 +130,10 @@
     >
     <button
       type="button"
-      class="close"
-      aria-label="Hide this notice until the browser is closed"
-      title="Hide this notice until the browser is closed"
-      onclick={closeBanner}><Icon name="close" size={14} /></button
+      class="btn btn-icon close"
+      aria-label="Dismiss"
+      title="Dismiss this notice until the browser is closed"
+      onclick={closeBanner}><Icon name="close" /></button
     >
   </div>
 {/if}
@@ -247,25 +247,7 @@
   }
   /* 32px to tap, without growing the banner. */
   .close {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
     margin: -6px -8px -6px 0;
-    padding: 0;
-    background: none;
-    border: none;
-    border-radius: 6px;
-    color: var(--ink-soft);
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .close:hover {
-      color: var(--ink);
-      background: color-mix(in srgb, var(--warn) 12%, transparent);
-    }
   }
   .banner-links {
     display: inline-flex;
@@ -296,18 +278,13 @@
       border-top: 1px solid var(--warn-line);
     }
   }
-  .banner-links a,
-  .link {
-    font: inherit;
-    font-weight: 600;
-    color: var(--warn);
-    text-decoration: underline;
-    background: none;
-    border: none;
-    /* 24px tall to tap, without growing the banner. */
+  /* 24px tall to tap, without growing the banner. */
+  .banner-links a {
     padding: 3px 0;
     margin: -3px 0;
-    cursor: pointer;
+  }
+  .linkish {
+    margin: -3px 0;
   }
 
   dialog {

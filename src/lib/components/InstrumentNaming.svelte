@@ -546,7 +546,7 @@
   {#if named.fixed && canEdit}
     <section class="summary" aria-label="Instruments and groups">
       <h2 class="list-h">
-        Instruments <span class="count">{named.instruments.length}</span>
+        Instruments <span class="countpill">{named.instruments.length}</span>
       </h2>
       <div class="sumcard">
         <table>
@@ -842,11 +842,10 @@
                       {#if adding[key] && canEdit}
                         <button
                           type="button"
-                          class="btn btn-icon"
-                          aria-label={`${where(unit, strip.units)}: back to the list`}
+                          class="btn"
+                          aria-label={`Cancel, ${where(unit, strip.units)}: back to the list`}
                           title="Choose an instrument of the list instead (Esc)"
-                          onclick={() => (adding[key] = false)}
-                          ><Icon name="close" size={14} /></button
+                          onclick={() => (adding[key] = false)}>Cancel</button
                         >
                       {/if}
                     {:else}
@@ -1042,39 +1041,48 @@
               onchange={(e) =>
                 setGroup(k, { label: (e.target as HTMLInputElement).value })}
             />
-            <label
-              class="check"
-              title="The barlines run through the group's staves."
+            <div
+              class="seg"
+              role="group"
+              aria-label="Barlines"
+              title="Whether the barlines run through the group's staves or stop at each staff, as on the page."
             >
-              <input
-                type="checkbox"
-                checked={group.barThru}
+              <button
+                type="button"
+                class:on={group.barThru}
+                aria-pressed={group.barThru}
                 disabled={!canEdit || named.fixed}
-                onchange={(e) =>
-                  setGroup(k, {
-                    barThru: (e.target as HTMLInputElement).checked,
-                  })}
-              /> Bar through
-            </label>
+                onclick={() => setGroup(k, { barThru: true })}>Through</button
+              >
+              <button
+                type="button"
+                class:on={!group.barThru}
+                aria-pressed={!group.barThru}
+                disabled={!canEdit || named.fixed}
+                onclick={() => setGroup(k, { barThru: false })}
+                >Per staff</button
+              >
+            </div>
             {#if canEdit && !named.fixed}
               <button
                 type="button"
-                class="btn btn-secondary"
+                class="btn btn-icon btn-danger"
                 onclick={() => ongroups(named.groups.filter((_, i) => i !== k))}
-                >Remove</button
+                aria-label="Remove this group"
+                title="Remove this group"><Icon name="trash" /></button
               >
             {/if}
           </div>
         {:else}
-          <p class="muted">No group.</p>
+          <p class="muted">No groups.</p>
         {/each}
         {#if canEdit && !named.fixed}
           <button
             type="button"
-            class="btn btn-secondary"
+            class="btn"
             disabled={!named.instruments.length}
             title="Instruments shown together, such as the woodwinds or the strings."
-            onclick={addGroup}>Add a group</button
+            onclick={addGroup}><Icon name="plus" />Add group</button
           >
         {/if}
       </section>
@@ -1281,12 +1289,6 @@
     flex-direction: column;
     gap: 8px;
     max-width: 760px;
-  }
-  .count {
-    margin-left: 4px;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ink-faint);
   }
   .sumcard {
     background: var(--card);

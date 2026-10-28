@@ -174,11 +174,12 @@
             </div>
             <button
               type="button"
-              class="remove"
+              class="btn btn-icon btn-danger remove"
               onclick={() => remove(i)}
               aria-label="Remove {file.name}"
+              title="Remove this file"
             >
-              <Icon name="close" />
+              <Icon name="trash" />
             </button>
           </div>
         {/each}
@@ -459,19 +460,7 @@
   }
   .remove {
     position: relative;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     margin-left: auto;
-    cursor: pointer;
-    width: 32px;
-    height: 32px;
-    font-size: 14px;
-    color: var(--ink-faint);
-    background: none;
-    border: 1px solid var(--line);
-    border-radius: 999px;
   }
   /* Touch: a 44px press area around the 32px button. */
   @media (pointer: coarse) {
@@ -479,12 +468,6 @@
       content: "";
       position: absolute;
       inset: -6px;
-    }
-  }
-  @media (hover: hover) {
-    .remove:hover {
-      color: var(--danger);
-      border-color: var(--danger);
     }
   }
 </style>

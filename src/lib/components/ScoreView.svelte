@@ -17,7 +17,7 @@
   import { untrack, type Snippet } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import Icon from "./Icon.svelte";
-  import StepGlyph from "./StepGlyph.svelte";
+  import MeasureSelection from "./MeasureSelection.svelte";
   import type { CommentAnchorInput, Result } from "$lib/commands.ts";
   import {
     commentAnchor,
@@ -154,57 +154,15 @@
 
 <!-- The selected measure, in the side panel's Selection tab. -->
 {#snippet measureSelection()}
-  {#if selected}
-    <div class="selpanel">
-      <div class="selhead">
-        <span class="selname"
-          ><StepGlyph
-            kind="measure"
-            tone="var(--ink-measure)"
-            size={20}
-          />Measure {selected.label}</span
-        >
-        <span class="selwhere">page {selected.page + 1}</span>
-        <span class="selnav">
-          <button
-            type="button"
-            class="btn btn-icon"
-            onclick={() => preview?.stepMeasure(-1)}
-            disabled={!preview?.canStepMeasure(-1)}
-            aria-label="Previous measure"
-            title="Previous measure"><Icon name="chevron-left" /></button
-          >
-          <button
-            type="button"
-            class="btn btn-icon"
-            onclick={() => preview?.stepMeasure(1)}
-            disabled={!preview?.canStepMeasure(1)}
-            aria-label="Next measure"
-            title="Next measure"><Icon name="chevron-right" /></button
-          >
-        </span>
-      </div>
-      <div class="selactions">
-        {#if auth.user && selectionAnchor()}
-          <button
-            type="button"
-            class="btn"
-            onclick={() => (panelTab = "comments")}
-            ><Icon name="comment" />Comment on measure {selected.label}</button
-          >
-        {/if}
-        <button
-          type="button"
-          class="btn"
-          onclick={() => preview?.clearSelection()}
-          title="Clear the measure selection"
-          ><Icon name="close" />Deselect</button
-        >
-      </div>
-    </div>
-  {:else}
-    <p class="selnone">Select a measure on the score to comment on it.</p>
-  {/if}
+  <MeasureSelection
+    label={selected?.label ?? null}
+    page={selected?.page ?? -1}
+    {preview}
+    oncomment={auth.user && selectionAnchor()
+      ? () => (panelTab = "comments")
+      : undefined}
+    empty="Select a measure on the score to comment on it."
+  />
 {/snippet}
 
 <div class="scoreview">

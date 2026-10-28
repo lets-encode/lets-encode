@@ -48,12 +48,13 @@
     | "comment"
     | "more"
     | "grip"
-    | "eye-off"
+    | "eye"
     | "overlap"
     | "side-panel"
     | "touch-box"
     | "page-one"
     | "page-two"
+    | "page-whole"
     | "repeat-start"
     | "repeat-end"
     | "repeat-both"
@@ -123,12 +124,12 @@
       "M16 7c-1.5-2.5-8-2.5-8 1s8 4.5 8 8-6.5 3.5-8 1M6 18 18 6M7 11h.01M17 13h.01",
     coda: "M12 5a4.5 7 0 1 0 0 14 4.5 7 0 1 0 0-14zM12 2v20M3 12h18",
     "page-two": "M2.5 5H12v14H2.5zM12 5h9.5v14H12z",
+    "page-whole": "M5 3h14v18H5zM8 6h8v7H8z",
     overlap: "M4 4h10v10H4zM10 10h10v10H10zM10 14l4-4",
     "side-panel": "M3 5h18v14H3zM15 5v14",
     "touch-box":
       "M11 12H3V3h12v4M13 17v-6.5a1.5 1.5 0 0 1 3 0V14a1.5 1.5 0 0 1 3 0v1a1.5 1.5 0 0 1 3 0v2.5a4.5 4.5 0 0 1-4.5 4.5h-2a4.5 4.5 0 0 1-3.6-1.8l-2.4-3.2a1.4 1.4 0 0 1 2.2-1.7L13 17",
-    "eye-off":
-      "M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4.1M6.6 6.6A17 17 0 0 0 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2",
+    eye: "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0z",
   };
 </script>
 

@@ -13,6 +13,7 @@
     workPlace,
   } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import ProgressBar from "./ProgressBar.svelte";
   import { elapsed } from "$lib/campaign-board.ts";
   import { attentionCount, nextTask } from "$lib/campaign-stats.ts";
   import type { CampaignStats, NextTask } from "$lib/campaign-stats.ts";
@@ -41,9 +42,6 @@
 
   const next = $derived(nextTask(stats, viewer));
 
-  const pct = $derived(
-    stats.total ? Math.round((stats.done / stats.total) * 100) : 0,
-  );
   const activity = $derived.by(() => {
     if (stats.lastActivity) {
       const e = elapsed(stats.lastActivity);
@@ -122,7 +120,7 @@
       return n.action === "continue"
         ? "Continue in score check"
         : "Claim & open score check";
-    if (n.action === "continue") return "Open in mei-friend";
+    if (n.action === "continue") return "Continue in mei-friend";
     return claimLabel(n.locator);
   };
   const claimTip = (n: NextTask): string =>
@@ -130,7 +128,13 @@
       ? n.checksOpening
         ? "Opens the score check of the task you hold."
         : "Opens the task you hold in mei-friend."
-      : `Reserves this ${n.action === "review" ? "review" : "task"} for you for a limited time. Give back task releases it.`;
+      : n.action === "review"
+        ? "Claims a review of this task for you and opens the review."
+        : n.checksOpening
+          ? "Claims this task for you and opens the score check."
+          : n.pre
+            ? `Claims this task for you and opens the ${workPlace(n.locator)}.`
+            : "Claims this task for you and opens the score in mei-friend.";
 </script>
 
 <div class="shelfrow">
@@ -170,10 +174,7 @@
           >{" · "}{/if}{bylineRest}</span
       >
       <span class="progress">
-        <span class="bar"
-          ><span class="fill" style={`width:${pct}%`}></span></span
-        >
-        <span class="count">{stats.done} of {stats.total} tasks</span>
+        <ProgressBar done={stats.done} total={stats.total} />
       </span>
     </a>
   </div>
@@ -203,12 +204,12 @@
             ? reviewHref(stats.name, next.locator, next.task)
             : preTaskHref(stats.name, next.locator, next.task)}
           >{next.kind === "review"
-            ? "Open review"
-            : `Open ${workPlace(next.locator)}`}</a
+            ? "Continue in review"
+            : `Continue in ${workPlace(next.locator)}`}</a
         >
       {:else if !viewer}
         <button type="button" class="linkish" onclick={() => login()}
-          >Log in to claim</button
+          >Log in with GitHub to claim</button
         >
       {:else}
         <span class="wait"
@@ -363,32 +364,7 @@
     color: var(--owner);
   }
   .progress {
-    display: flex;
-    align-items: center;
-    gap: 12px;
     max-width: 560px;
-  }
-  .bar {
-    flex: 1;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-tint);
-    overflow: hidden;
-  }
-  /* The dark theme's tint sits too close to the card for an empty track. */
-  :global([data-theme="dark"]) .bar {
-    background: var(--line-strong);
-  }
-  .fill {
-    display: block;
-    height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--green));
-  }
-  .count {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
   }
   .nextcol {
     flex: none;
@@ -415,20 +391,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .linkish {
-    min-height: 24px;
-    padding: 0;
-    font: 600 12.5px var(--font);
-    color: var(--link);
-    background: none;
-    border: 0;
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .linkish:hover {
-      text-decoration: underline;
-    }
   }
   .wait {
     display: flex;
