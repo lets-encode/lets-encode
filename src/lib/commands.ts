@@ -2040,7 +2040,10 @@ async function facsimileScore(
           ? instrumentScoreDef(
               instruments,
               parsed.scoreDef,
-              record ? openingTranscriptions(pages, record) : undefined,
+              pages,
+              record
+                ? openingTranscriptions(instruments, pages, record)
+                : undefined,
             )
           : parsed.scoreDef,
         pages,

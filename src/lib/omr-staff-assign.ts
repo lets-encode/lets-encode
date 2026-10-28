@@ -161,6 +161,11 @@ function readLabel(printed: string, labels: string[]): LabelParts {
   return out;
 }
 
+/** The part numerals a printed label gives, read against the score's `labels`. */
+export function labelNumerals(printed: string, labels: string[]): string[] {
+  return readLabel(printed, labels).numerals;
+}
+
 /**
  * How well a printed label (as OCR read it) matches a staff's `label`, read
  * against all the score's `labels`: 0 for no evidence, 2 for an abbreviation

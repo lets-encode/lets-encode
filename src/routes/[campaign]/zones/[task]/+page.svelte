@@ -58,6 +58,7 @@
     assignUnit,
     mergeInstrument,
     firstNamingSystem,
+    dropParts,
     inSystem,
     nameUnit,
     namingProblem,
@@ -231,6 +232,21 @@
             if (zone.sb !== starts.has(zone.box)) zone.sbOverride = zone.sb;
           }
         });
+        // An edit switched to from a review continues at the step that was
+        // in view: the steps before it count as checked. At the instruments
+        // step it starts at the first system.
+        const from = editFrom;
+        editFrom = null;
+        if (from && d.holdsLock && d.status === "encoding_required") {
+          for (const layer of STEP_LAYERS.slice(0, from - 1))
+            seen[layer] = pages.map((_, p) => p);
+          if (from === 4) {
+            named = { ...named, fixed: false };
+            step4Pages = false;
+            step4Top.names = step4Top.pages = 0;
+            tick().then(() => desk?.scrollTo({ top: 0 }));
+          }
+        }
         resetHistory();
       },
       reset() {
@@ -279,6 +295,8 @@
   const lastStep = $derived<LayoutStep>(naming ? 4 : 3);
   // A layout task's review is approved once every step has been opened.
   const STEP_NAMES = ["staff boxes", "grand staves", "measures", "instruments"];
+  // The step in view when the viewer switched their review to editing.
+  let editFrom: LayoutStep | null = null;
   let stepsSeen = $state<number[]>([1]);
   $effect(() => {
     void taskId;
@@ -978,13 +996,28 @@
   }
 
   // Name a unit by instrument name and parts; an instrument added after the
-  // first system's instruments were confirmed carries its page.
+  // first system's instruments were confirmed carries its page. A unit of
+  // the first system named without parts takes the parts away from an
+  // instrument no other unit there shows (dropParts).
   function applyName(
     unit: NamingUnit,
     name: string,
     parts: string,
     added?: number,
   ) {
+    if (!parts.trim() && inSystem(firstSystem, unit)) {
+      const d = dropParts(named, namingModels, unit, name, (u) =>
+        inSystem(firstSystem, u),
+      );
+      if (d) {
+        for (const pg of pages)
+          for (const box of pg.staves) {
+            const to = box.staff ? d.staves.get(box.staff) : undefined;
+            if (to) box.staff = to;
+          }
+        named = d.named;
+      }
+    }
     const r = nameUnit(named, unit.staves.length, name, parts, added);
     setStaves(unit, r.staves);
     named = r.named;
@@ -2828,7 +2861,7 @@
           </div>
         {/if}
       </div>
-      <TaskRunState task={taskId} bar />
+      <div class="runrow"><TaskRunState task={taskId} pill /></div>
 
       <div
         class="desk"
@@ -4009,7 +4042,12 @@
           prefill={reviewPrefill}
           onvalidate={(sub, verdict, comment) =>
             session.validate(sub, verdict, comment)}
-          onreviewedit={(sub, comment) => session.reviewEdit(sub, comment)}
+          onreviewedit={async (sub, comment) => {
+            editFrom = layoutStep;
+            const result = await session.reviewEdit(sub, comment);
+            if (!result || result.error) editFrom = null;
+            return result;
+          }}
           onabandon={(sub) => session.abandon(sub)}
         />
       {/if}
@@ -4028,7 +4066,6 @@
           card={session.card}
           tools={resultNote}
           {headAction}
-          prefill={reviewPrefill}
         />
       {/if}
     {/snippet}
@@ -4349,6 +4386,13 @@
     padding: 12px 16px 0;
     box-sizing: border-box;
     container-type: inline-size;
+  }
+  /* The run state's pill above the work area; takes room only while shown. */
+  .runrow {
+    flex: none;
+  }
+  .runrow:has(:global(.runstate)) {
+    padding: 8px 0 0;
   }
   /* The toolbar takes the shared viewer toolbar's look (.vtoolbar, ui.css). */
   /* The zoom: the slider with its readout and the two fits; where the

@@ -417,13 +417,10 @@
         {canPush}
         {runner}
         inView
-        {prefill}
         tools={resultBanner}
         {headAction}
         onclaim={claim}
         onabandon={abandon}
-        onvalidate={validate}
-        onreviewedit={reviewEdit}
       />
     {/snippet}
     <div class="scorecol" bind:clientWidth={scoreW}>

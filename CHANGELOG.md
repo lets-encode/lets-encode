@@ -6,6 +6,17 @@ parentheses.
 ## 2026-10-27
 
 - The instruments step no longer breaks when one instrument looks like a part of several others.
+- An instrument's parts keep the order typed, numbered parts in numeric order.
+- Editing from a layout review continues at the step in view, the instruments step at the first system.
+- A staff of the other systems can carry all the instrument's parts, and gets them when no part is printed.
+- Score staves are labelled with the instrument's name and a single part; shared parts show only as layers.
+- An instrument gets only as many score staves as it prints at once, each part in its own layer, with staves hidden per system where not printed.
+- Emptying the parts of an instrument's only first-system staff takes its parts away.
+- On the dev server, a campaign created on a branch opens with a dialog giving the command that points its workflow at the branch.
+- A submission's processing state shows as a pill wherever it appears.
+- The next-task card shows the task's change requests as a pill.
+- A review task's instruction names the page and piece to compare with the scan.
+- Approve and Request changes are offered only in the task's review view, no longer in the side panel.
 
 ## 2026-10-23
 

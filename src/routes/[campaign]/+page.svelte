@@ -44,11 +44,9 @@
     CommandContext,
     CommentAnchorInput,
     Result,
-    FailComment,
   } from "$lib/commands.ts";
   import {
     handle,
-    isPreTask,
     pageOfLocator,
     preTaskHref,
     reviewHref,
@@ -61,6 +59,7 @@
     expiresIn,
     initialOf,
     reviewWaitLabel,
+    stageOf,
   } from "$lib/campaign-board.ts";
   import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
@@ -137,6 +136,25 @@
             : null;
       })
       .catch(() => {});
+  });
+  const branchCommand = $derived(
+    `GH_TOKEN=$(gh auth token -u ${auth.user?.login ?? "<account>"}) node scripts/use-branch.ts ${owner}/${repo}`,
+  );
+  // The same hint as a dialog, once per campaign and browser session: a
+  // campaign just created on a branch opens with it.
+  let branchDialog = $state<HTMLDialogElement | null>(null);
+  let branchCopied = $state(false);
+  $effect(() => {
+    if (!branchHint || !branchDialog || branchDialog.open) return;
+    const key = `branch-hint-shown:${owner}/${repo}`;
+    try {
+      if (sessionStorage.getItem(key)) return;
+      sessionStorage.setItem(key, "1");
+    } catch {
+      /* without storage the dialog opens on every visit */
+    }
+    branchCopied = false;
+    branchDialog.showModal();
   });
 
   let loading = $state(false);
@@ -983,58 +1001,6 @@
     submitpr(task);
   }
 
-  const validate = (
-    task_id: string,
-    subtask_id: string,
-    verdict: string,
-    comment?: FailComment,
-  ) => {
-    actedOn(task_id);
-    return run((c) =>
-      invoke(
-        commands.submitValidation,
-        { task_id, subtask_id, verdict, ...(comment ? { comment } : {}) },
-        c,
-      ),
-    );
-  };
-
-  // Switch a held review to editing: a pre-task opens its editor, an
-  // encoding opens in mei-friend — both only once the switch is accepted.
-  const reviewEdit = async (
-    task_id: string,
-    subtask_id: string,
-    comment: FailComment,
-  ) => {
-    actedOn(task_id);
-    const locator =
-      taskDefs.find((t) => t.task_id === task_id && t.subtask_id === "")
-        ?.locator ?? "";
-    if (isPreTask(locator)) {
-      const result = await run((c) =>
-        invoke(commands.reviewEdit, { task_id, subtask_id, comment }, c),
-      );
-      if (result?.ok && !result.warn)
-        await goto(preTaskHref(campaign, locator, task_id));
-      return result;
-    }
-    const result = await run(async (c) => {
-      const edit = await invoke(
-        commands.reviewEdit,
-        { task_id, subtask_id, comment },
-        c,
-      );
-      if (!edit.ok || edit.warn) return edit;
-      return invoke(
-        commands.openEditor,
-        { task_id, campaign, base: location.origin },
-        c,
-      );
-    });
-    openMeiFriend(result);
-    return result;
-  };
-
   const postComment = (
     task_id: string,
     kind: string,
@@ -1257,8 +1223,6 @@
     editorError={editorError?.task === card.task ? editorError : null}
     oneditor={editor}
     onabandon={abandon}
-    onvalidate={validate}
-    onreviewedit={reviewEdit}
   />
 {/snippet}
 
@@ -1430,12 +1394,45 @@
           so submissions can be skipped or rejected. In
           <code>lets-encode/</code>
           on <code>{branchHint.ref}</code>, run
-          <code
-            >GH_TOKEN=$(gh auth token -u {auth.user?.login ?? "<account>"}) node
-            scripts/use-branch.ts {owner}/{repo}</code
-          >, then reload.
+          <code>{branchCommand}</code>, then reload.
         </span>
       </div>
+      <dialog
+        bind:this={branchDialog}
+        class="branch-dialog"
+        aria-labelledby="branch-dialog-title"
+        onclick={(e) => {
+          if (e.target === branchDialog) branchDialog?.close();
+        }}
+      >
+        <h2 id="branch-dialog-title">Point the campaign at its branch</h2>
+        <p>
+          Dev server: this campaign runs the coordinator from <code
+            >{branchHint.ref}</code
+          >
+          but <code>campaign.yml</code> from <code>{branchHint.called}</code>,
+          so submissions can be skipped or rejected. In
+          <code>lets-encode/</code> on <code>{branchHint.ref}</code>, run:
+        </p>
+        <pre><code>{branchCommand}</code></pre>
+        <div class="branch-actions">
+          <button
+            type="button"
+            class="btn btn-secondary"
+            onclick={() =>
+              navigator.clipboard
+                .writeText(branchCommand)
+                .then(() => (branchCopied = true))
+                .catch(() => {})}
+            >{branchCopied ? "Copied" : "Copy command"}</button
+          >
+          <button
+            type="button"
+            class="btn btn-primary"
+            onclick={() => branchDialog?.close()}>Close</button
+          >
+        </div>
+      </dialog>
     {/if}
 
     {#if resolveError}
@@ -1902,6 +1899,7 @@
                                 }
                               }}
                               title="Open this task"
+                              data-stage={stageOf(card)}
                             >
                               {#if card.nextUp && !completedTask}
                                 <span class="nextup-badge">next task</span>
@@ -1937,7 +1935,9 @@
                                   >
                                 </div>
                               {/if}
-                              {#if card.column === "validation"}
+                              <!-- A submission's run state takes the review
+                                   count's place while it shows. -->
+                              {#if card.column === "validation" && !pendingVerdicts.forTask(card.task)}
                                 <div class="card-type">
                                   {reviewWaitLabel(
                                     card.passes,
@@ -1962,7 +1962,7 @@
                                   </span>
                                 </div>
                               {/if}
-                              <TaskRunState task={card.task} />
+                              <TaskRunState task={card.task} pill short />
                               {#if card.column === "blocked"}
                                 <div class="card-foot">
                                   waits for <strong>{card.waitsFor}</strong>
@@ -2941,6 +2941,9 @@
     color: var(--ink-soft);
   }
   /* The review count with one dot per review slot. */
+  .card > :global(.live) {
+    margin-top: 5px;
+  }
   .card-type {
     display: flex;
     align-items: center;
@@ -3224,5 +3227,36 @@
     .instrow {
       padding: 0 16px 14px;
     }
+  }
+  /* The dev server's branch hint as a dialog after the campaign opens. */
+  .branch-dialog {
+    width: 640px;
+    max-width: calc(100vw - 32px);
+    padding: 20px 24px;
+    border: none;
+    border-radius: 16px;
+    background: var(--card);
+    color: var(--ink);
+    box-shadow: var(--shadow);
+  }
+  .branch-dialog::backdrop {
+    background: rgba(35, 40, 56, 0.48);
+  }
+  .branch-dialog h2 {
+    margin: 0 0 8px;
+    font-size: 1.1rem;
+  }
+  .branch-dialog pre {
+    margin: 12px 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: var(--bg-inset);
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .branch-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
   }
 </style>

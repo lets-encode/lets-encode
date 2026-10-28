@@ -308,6 +308,18 @@ export function reviewWaitLabel(
     .join(" · ");
 }
 
+/** The stage whose colour a card's surfaces take (data-stage, ui.css). */
+export const stageOf = (
+  card: BoardCard,
+): "review" | "done" | "pre" | "encode" =>
+  card.column === "validation"
+    ? "review"
+    : card.column === "done"
+      ? "done"
+      : card.pre
+        ? "pre"
+        : "encode";
+
 /**
  * The one-line status pill of a card: the current stage (the task's heading
  * names its kind), the worker on a claimed task, and numeric pass progress

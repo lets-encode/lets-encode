@@ -1,6 +1,6 @@
 <!--
   A pre-task editor's task box: TaskBox on the editor's session, with the
-  editor's own controls below the status row and the review commands run
+  editor's own controls below the status row and the claim commands run
   through the session.
 -->
 <script lang="ts">
@@ -15,8 +15,6 @@
     card,
     tools,
     headAction,
-    prefill,
-    measures = true,
   }: {
     session: PreTaskSession;
     campaign: string;
@@ -25,10 +23,6 @@
     tools?: Snippet;
     /** A control at the heading's right end (TaskBox). */
     headAction?: Snippet;
-    /** The anchor a fresh fail form opens with. */
-    prefill: () => { page: string; m1: string; m2: string };
-    /** The fail form asks for a measure range besides the page. */
-    measures?: boolean;
   } = $props();
   const tables = $derived(session.tables!);
 </script>
@@ -46,11 +40,6 @@
   inView
   {tools}
   {headAction}
-  {prefill}
-  {measures}
   onclaim={(_, sub) => session.claimValidation(sub)}
   onabandon={(_, sub) => session.abandon(sub)}
-  onvalidate={(_, sub, verdict, comment) =>
-    session.validate(sub, verdict, comment)}
-  onreviewedit={(_, sub, comment) => session.reviewEdit(sub, comment)}
 />

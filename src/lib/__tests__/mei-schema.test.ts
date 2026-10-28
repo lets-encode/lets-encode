@@ -26,6 +26,10 @@ import {
   instrumentScoreDef,
   nameUnit,
   NO_INSTRUMENTS,
+  staffPlan,
+  staffStates,
+  systemScoreDef,
+  type NamingPage,
 } from "../instrument-naming.ts";
 import {
   loadMeiValidator,
@@ -393,21 +397,70 @@ test("a document carrying a DOCTYPE declaration is rejected outright", async () 
   assert.match(check.error, /DOCTYPE/);
 });
 
-test("named instruments validate: parts, layers, a brace and harps without a bracket", async () => {
-  let named = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I").named;
-  named = nameUnit(named, 1, "Flöte", "I.II").named;
-  named = nameUnit(named, 2, "Harfe", "1").named;
-  named = nameUnit(named, 2, "Harfe", "2").named;
-  named = nameUnit(named, 2, "Klavier").named;
+test("named instruments validate: parts, layers, a brace, harps without a bracket, hidden staves and a system's staff changes", async () => {
+  let r = nameUnit(NO_INSTRUMENTS, 1, "Flöte", "I");
+  let named = r.named;
+  const ids: (string | undefined)[] = [...r.staves];
+  for (const [size, name, parts] of [
+    [1, "Flöte", "II"],
+    [2, "Harfe", "1"],
+    [2, "Harfe", "2"],
+    [2, "Klavier", ""],
+    [1, "Flöte", "I.II"],
+    [2, "Klavier", ""],
+  ] as const) {
+    r = nameUnit(named, size, name, parts);
+    named = r.named;
+    ids.push(...r.staves);
+  }
+  // System 1: Flöte I, Flöte II, Harfe 1, Harfe 2, Klavier; system 2:
+  // Flöte I.II, Klavier.
+  const box = (uly: number) => ({ ulx: 100, uly, lrx: 900, lry: uly + 60 });
+  const ys = [100, 200, 300, 400, 500, 600, 700, 800, 1000, 1100, 1200];
+  const grand = (a: number, b: number) => ({
+    ulx: 90,
+    uly: ys[a] - 10,
+    lrx: 900,
+    lry: ys[b] + 70,
+  });
+  const page: NamingPage = {
+    zones: [
+      {
+        box: { ulx: 100, uly: 80, lrx: 900, lry: 880 },
+        label: "1",
+        pb: true,
+        sb: false,
+        mdiv: false,
+      },
+      {
+        box: { ulx: 100, uly: 980, lrx: 900, lry: 1280 },
+        label: "2",
+        pb: false,
+        sb: true,
+        mdiv: false,
+      },
+    ],
+    staves: ys.map((y, i) => ({ ...box(y), staff: ids[i] })),
+    grandstaves: [grand(2, 3), grand(4, 5), grand(6, 7), grand(9, 10)],
+  };
+  const plan = staffPlan(named, [page]);
+  const change = systemScoreDef(plan, staffStates(plan), 1);
+  assert.match(change, /visible="false"/);
   const model = {
     ...initialFacsimileModel(PAGES),
     headXml: buildSourceHead(source()),
   };
+  const mei = buildFacsimileMei(
+    {
+      ...model,
+      scoreDef: instrumentScoreDef(named, DEFAULT_SCORE_DEF, [page]),
+    },
+    { withBreaks: true },
+  );
+  // The second system's changes, before the score's second measure.
+  const second = mei.indexOf("<measure", mei.indexOf("</measure>"));
   const check = await validateMei(
-    buildFacsimileMei(
-      { ...model, scoreDef: instrumentScoreDef(named, DEFAULT_SCORE_DEF) },
-      { withBreaks: true },
-    ),
+    mei.slice(0, second) + change + mei.slice(second),
   );
   assert.ok(check.ok, `named instruments: ${check.error}`);
 });

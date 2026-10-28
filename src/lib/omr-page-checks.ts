@@ -12,7 +12,6 @@ import {
   correctedLayoutPath,
   layoutInstruments,
   withCorrectedLayout,
-  type LayoutInstruments,
 } from "./omr-layout.ts";
 import { omrRecordPath, parseOmrRecord, type OmrRecord } from "./omr-record.ts";
 import { staffClefToken } from "./omr-musicxml.ts";
@@ -23,30 +22,31 @@ import {
   scoreStaves,
   type PageStaves,
 } from "./omr-timeline.ts";
-
-/** The score staves' staffDef xml:ids, staff n at n − 1. */
-export const scoreStaffIds = (
-  parsed: Pick<ParsedFacsimile, "scoreDef">,
-): (string | undefined)[] => parsed.scoreDef.staves.map((s) => s.id);
+import {
+  plannedBoxes,
+  staffPlan,
+  type StaffPlan,
+} from "./instrument-naming.ts";
 
 const pitched = (token: string) => /^[GFC]\d/.test(token);
 
 /**
- * A piece's staves read through, each box placed by its named staff, with
- * the clef corrections the score definition gives: a staff whose clef
- * differs from the one its first transcribed box reads (both pitched) is
- * read in the definition's clef (omr-musicxml correctClef), as the score
- * setup's corrections are.
+ * A piece's staves read through, each box placed on the score staff the
+ * staff plan gives it, with the clef corrections the score definition gives:
+ * a staff whose clef differs from the one its first transcribed box reads
+ * (both pitched) is read in the definition's clef (omr-musicxml
+ * correctClef), as the score setup's corrections are.
  */
 export function namedPieceStaves(
   parsed: Pick<ParsedFacsimile, "pages" | "scoreDef">,
   record: OmrRecord,
+  plan: StaffPlan,
 ): PageStaves[] {
-  const ids = scoreStaffIds(parsed);
+  const placed = plannedBoxes(plan, parsed.pages.length);
   const parts = scoreStaves(parsed);
   const read = openingClefs(
-    pieceStaves(parsed, { ...record, clefs: [] }, parts, ids),
-    ids.length,
+    pieceStaves(parsed, { ...record, clefs: [] }, parts, placed),
+    parts.length,
   );
   const clefs = parsed.scoreDef.staves.flatMap((staff, i) => {
     const corrected = staffClefToken(staff);
@@ -55,7 +55,7 @@ export function namedPieceStaves(
       ? [{ staff: i + 1, read: r, corrected }]
       : [];
   });
-  return pieceStaves(parsed, { ...record, clefs }, parts, ids);
+  return pieceStaves(parsed, { ...record, clefs }, parts, placed);
 }
 
 const list = (names: string[]): string => [...new Set(names)].join(", ");
@@ -69,22 +69,24 @@ const list = (names: string[]): string => [...new Set(names)].join(", ");
 export function pageChecks(
   parsed: Pick<ParsedFacsimile, "scoreDef">,
   pages: PageStaves[],
-  named: LayoutInstruments,
+  plan: StaffPlan,
 ): string[][] {
-  const ids = scoreStaffIds(parsed);
-  const byStaff = new Map<number, { instrument: string; label: string }>();
-  for (const instrument of named.instruments) {
-    for (const staff of instrument.staves) {
-      const n = ids.indexOf(staff.id) + 1;
-      const parts = staff.parts.map((i) => instrument.parts[i].name).join(", ");
-      if (n > 0)
-        byStaff.set(n, {
+  const byStaff = new Map(
+    plan.staves.map((staff, i) => {
+      const { instrument } = staff;
+      const parts = staff.parts.map((p) => instrument.parts[p].name).join(", ");
+      return [
+        i + 1,
+        {
           instrument: instrument.id,
           label: parts ? `${instrument.name} ${parts}` : instrument.name,
-        });
-    }
-  }
-  const nameOf = new Map(named.instruments.map((i) => [i.id, i.name]));
+        },
+      ];
+    }),
+  );
+  const nameOf = new Map(
+    plan.staves.map((s) => [s.instrument.id, s.instrument.name]),
+  );
   const changes = pageChanges(parsed, pages);
   // Per instrument, the staves it was last printed on, as "n,n".
   const last = new Map<string, string>();
@@ -156,5 +158,6 @@ export async function loadPageChecks(
   if (!score || !named || !record) return null;
   const parsed = parseFacsimileMei(score);
   parsed.pages = withCorrectedLayout(parsed.pages, corrected);
-  return pageChecks(parsed, namedPieceStaves(parsed, record), named);
+  const plan = staffPlan(named, parsed.pages);
+  return pageChecks(parsed, namedPieceStaves(parsed, record, plan), plan);
 }

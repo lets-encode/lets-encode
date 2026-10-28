@@ -9,6 +9,7 @@ import {
 import type { LayoutInstruments } from "../omr-layout.ts";
 import type { OmrRecord } from "../omr-record.ts";
 import { namedPieceStaves, pageChecks } from "../omr-page-checks.ts";
+import { staffPlan } from "../instrument-naming.ts";
 
 const G = "<clef><sign>G</sign><line>2</line></clef>";
 const F = "<clef><sign>F</sign><line>4</line></clef>";
@@ -49,13 +50,18 @@ const named: LayoutInstruments = {
   groups: [],
   fixed: true,
 };
-const scoreDef: ScoreDefModel = {
-  ...DEFAULT_SCORE_DEF,
-  staves: ["a-1", "b-1", "v-1", "v-2", "v-3"].map((id) => ({
-    ...DEFAULT_SCORE_DEF.staves[0],
-    id,
-  })),
-};
+/** The pages' staff plan, and a score definition of its staves. */
+function planned(pages: PageModel[]) {
+  const plan = staffPlan(named, pages);
+  const scoreDef: ScoreDefModel = {
+    ...DEFAULT_SCORE_DEF,
+    staves: plan.staves.map((s) => ({
+      ...DEFAULT_SCORE_DEF.staves[0],
+      id: s.id,
+    })),
+  };
+  return { plan, scoreDef };
+}
 
 /** Pages of one system each: per page, each staff box's staff id and what it reads. */
 function piece(systems: { staff?: string; xml: string }[][]) {
@@ -102,7 +108,7 @@ function piece(systems: { staff?: string; xml: string }[][]) {
 
 const key2 = "<key><fifths>2</fifths></key>";
 
-test("each staff box is placed on the score staff its id names; a box without one on none", () => {
+test("each staff box is placed on its instrument's score staff in the system; a box without a name on none", () => {
   const { pages, record } = piece([
     [
       { staff: "a-1", xml: staffXml(G) },
@@ -114,10 +120,16 @@ test("each staff box is placed on the score staff its id names; a box without on
       { staff: "b-1", xml: staffXml(G) },
     ],
   ]);
-  const staves = namedPieceStaves({ pages, scoreDef }, record);
+  // Flöte, Horn and one violin staff: Violine prints one staff at once.
+  const { plan, scoreDef } = planned(pages);
+  assert.deepEqual(
+    plan.staves.map((s) => s.id),
+    ["a-staff1", "b-staff1", "v-staff1"],
+  );
+  const staves = namedPieceStaves({ pages, scoreDef }, record, plan);
   assert.deepEqual(
     staves.map((p) => p.assigned),
-    [[[1, 3]], [[4, 0, 2]]],
+    [[[1, 3]], [[3, 0, 2]]],
   );
 });
 
@@ -140,9 +152,10 @@ test("pageChecks: an instrument first named, one on other staves, a clef and a k
       { staff: "v-3", xml: staffXml(G, key2) },
     ],
   ]);
+  const { plan, scoreDef } = planned(pages);
   const parsed = { pages, scoreDef };
   assert.deepEqual(
-    pageChecks(parsed, namedPieceStaves(parsed, record), named),
+    pageChecks(parsed, namedPieceStaves(parsed, record, plan), plan),
     [
       [],
       [
@@ -170,19 +183,20 @@ test("a staff read in another clef than the score definition's is read in the de
     ],
   ]);
   // The definition has the shared violin staff in the bass clef.
+  const { plan, scoreDef } = planned(pages);
   const def: ScoreDefModel = {
     ...scoreDef,
     staves: scoreDef.staves.map((s) =>
-      s.id === "v-1" ? { ...s, clefShape: "F", clefLine: 4 } : s,
+      s.id === "v-staff1" ? { ...s, clefShape: "F", clefLine: 4 } : s,
     ),
   };
   const parsed = { pages, scoreDef: def };
-  const staves = namedPieceStaves(parsed, record);
+  const staves = namedPieceStaves(parsed, record, plan);
   for (const p of staves) {
     assert.match(p.transcriptions[0][1]!, /<sign>F<\/sign>/);
     // E4 on the bottom line of a treble staff is G2 in the bass clef.
     assert.match(p.transcriptions[0][1]!, /<step>G<\/step><octave>2<\/octave>/);
     assert.match(p.transcriptions[0][0]!, /<step>E<\/step><octave>4<\/octave>/);
   }
-  assert.deepEqual(pageChecks(parsed, staves, named), [[], []]);
+  assert.deepEqual(pageChecks(parsed, staves, plan), [[], []]);
 });

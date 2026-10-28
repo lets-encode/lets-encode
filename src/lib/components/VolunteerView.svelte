@@ -15,7 +15,12 @@
     pieceZone,
   } from "$lib/campaign-tables.ts";
   import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
-  import { cardName, cardPill, doneLabel } from "$lib/campaign-board.ts";
+  import {
+    cardName,
+    cardPill,
+    doneLabel,
+    stageOf,
+  } from "$lib/campaign-board.ts";
   import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview } from "$lib/piece-previews.ts";
@@ -277,7 +282,7 @@
   </span>
 {/snippet}
 
-{#snippet chips(card: BoardCard)}
+{#snippet failChip(card: BoardCard)}
   {#if card.counts.fails > 0 && card.column !== "done"}
     <span class="chip chip-fail"
       >{card.counts.fails} change request{card.counts.fails === 1
@@ -285,6 +290,10 @@
         : "s"}</span
     >
   {/if}
+{/snippet}
+
+{#snippet chips(card: BoardCard)}
+  {@render failChip(card)}
   {#if card.counts.comments > 0}
     <span class="chip chip-note"
       >{card.counts.comments} comment{card.counts.comments === 1
@@ -304,7 +313,10 @@
         <!-- The title button's hit area covers the card; the action buttons
              sit above it. The badge on its top edge names the card, as the
              board's "next task" badge does. -->
-        <div class="nextcard stage-{kindOf(featured)}">
+        <div
+          class="nextcard stage-{kindOf(featured)}"
+          data-stage={stageOf(featured)}
+        >
           <span
             class="nextbadge"
             class:done={!!completedCard}
@@ -343,7 +355,8 @@
               >{clipTitle(featured.piece)}</span
             >
             <span class="nextcontext">{nextContext}</span>
-            <TaskRunState task={featured.task} large />
+            {@render failChip(featured)}
+            <TaskRunState task={featured.task} pill large />
             <!-- A card whose action only opens the task leaves it to the task's
                  panel while that shows it. -->
             {#if !completedCard && !(featured.task === shownTask && actLabel(featured) === "Open task")}
@@ -462,9 +475,9 @@
       <div class="vsec">
         <h2 class="seclabel">Being processed</h2>
         {#each running as card (card.task)}
-          <div class="runcard">
+          <div class="runcard" data-stage={stageOf(card)}>
             <span class="runtitle">{card.title}</span>
-            <TaskRunState task={card.task} large />
+            <TaskRunState task={card.task} pill large />
           </div>
         {/each}
       </div>
@@ -562,15 +575,15 @@
                 <div class="piecetasks">
                   {#each pieceTasks(index) as card (card.task)}
                     {#if card.column === "blocked"}
-                      <div class="taskrow still">
+                      <div class="taskrow still" data-stage={stageOf(card)}>
                         <span class="tasktitle">{cardName(card)}</span>
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} />
+                        <TaskRunState task={card.task} pill short />
                         <span class="vspacer"></span>
                         <span class="waits">waits for {card.waitsFor}</span>
                       </div>
                     {:else if card.column === "done"}
-                      <div class="taskrow">
+                      <div class="taskrow" data-stage={stageOf(card)}>
                         <button
                           type="button"
                           class="tasktitle"
@@ -578,7 +591,7 @@
                           title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} />
+                        <TaskRunState task={card.task} pill short />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         <span class="merged"
@@ -588,7 +601,7 @@
                         <span class="tchev"><Icon name="chevron-right" /></span>
                       </div>
                     {:else}
-                      <div class="taskrow">
+                      <div class="taskrow" data-stage={stageOf(card)}>
                         <button
                           type="button"
                           class="tasktitle"
@@ -596,7 +609,7 @@
                           title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} />
+                        <TaskRunState task={card.task} pill short />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}
@@ -894,6 +907,9 @@
   .nextcontext {
     font-size: 13px;
     color: var(--ink-soft);
+  }
+  .nextbody .chip {
+    align-self: flex-start;
   }
   /* The action sits under the text it acts on. */
   .nextacts {

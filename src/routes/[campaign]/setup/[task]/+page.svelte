@@ -1376,7 +1376,7 @@
          without page images has the preview alone. -->
     <div class="main">
       <h1 class="vh">Score setup · {session.pieceName || campaign}</h1>
-      <TaskRunState task={taskId} bar />
+      <div class="runrow"><TaskRunState task={taskId} pill /></div>
       <div class="desk" bind:this={desk}>
         {#if firstMeasure && data.imageUrls[shownPage]}
           {@const pg = data.model.pages[shownPage]}
@@ -2249,8 +2249,6 @@
           card={session.card}
           tools={resultNote}
           {headAction}
-          prefill={reviewPrefill}
-          measures={false}
         />
       {/if}
     {/snippet}
@@ -2320,6 +2318,13 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* The run state's pill above the work area; takes room only while shown. */
+  .runrow {
+    flex: none;
+  }
+  .runrow:has(:global(.runstate)) {
+    padding: 12px 16px 0;
   }
   /* The source's first measure on the left, the preview of the setup
      beside it, both at the work area's full height, the divider (.pane-grip

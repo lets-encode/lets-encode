@@ -212,10 +212,15 @@ export interface StaffModel {
   /** Short label for the systems after the first, written as a <labelAbbr> child; absent or '' emits none. */
   labelAbbr?: string;
   /**
-   * The players the staff carries, one layer each in order, written as
-   * <layerDef> children labelled with their names; absent or empty emits none.
+   * The players the staff carries, one <layerDef> each: its layer number and
+   * name, the name as a <label> child where `printed` (drawn in front of the
+   * staff), else as @label. Absent or empty emits none.
    */
-  layers?: string[];
+  layers?: LayerModel[];
+  /** MEI staffDef @visible: false where the system does not print the staff; absent is shown. */
+  visible?: boolean;
+  /** The staff is one instrument of its own, written as an <instrDef> child. */
+  instrument?: boolean;
   /**
    * MEI staffDef @trans.diat and @trans.semi: the interval from written to
    * sounding pitch of a transposing instrument (a clarinet in B♭: -1, -2).
@@ -228,6 +233,13 @@ export interface StaffModel {
    * one its transposition gives (`staffKeysig`); absent follows it.
    */
   keysig?: string;
+}
+
+/** A player of a staff: its layer number (MEI layerDef @n) and name. */
+export interface LayerModel {
+  n: number;
+  label: string;
+  printed: boolean;
 }
 
 /** The key signature a staff is written in: its own, else the score's moved by its transposition. */
@@ -478,8 +490,9 @@ function buildScoreDefXml(
     const clef = staff.notationType.startsWith("tab.lute.")
       ? ""
       : ` clef.shape="${xmlEscape(staff.clefShape)}" clef.line="${staff.clefLine}"${dis}`;
+    const visible = staff.visible === false ? ' visible="false"' : "";
     const open =
-      `${indent}<staffDef${idOf(staff.id)} n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
+      `${indent}<staffDef${idOf(staff.id)} n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans}${visible} ` +
       meter;
     const children = [
       ...(staff.label
@@ -488,9 +501,11 @@ function buildScoreDefXml(
       ...(staff.labelAbbr
         ? [`${indent}   <labelAbbr>${xmlEscape(staff.labelAbbr)}</labelAbbr>`]
         : []),
-      ...(staff.layers ?? []).map(
-        (name, i) =>
-          `${indent}   <layerDef n="${i + 1}"><label>${xmlEscape(name)}</label></layerDef>`,
+      ...(staff.instrument ? [`${indent}   <instrDef/>`] : []),
+      ...(staff.layers ?? []).map((layer) =>
+        layer.printed
+          ? `${indent}   <layerDef n="${layer.n}"><label>${xmlEscape(layer.label)}</label></layerDef>`
+          : `${indent}   <layerDef n="${layer.n}" label="${xmlEscape(layer.label)}"/>`,
       ),
     ];
     if (!children.length) return `${open}/>`;
@@ -871,9 +886,18 @@ export function parseScoreDef(text: string): ScoreDefModel {
     );
     const label = firstElementNamed(own, "label")?.inner;
     const labelAbbr = firstElementNamed(own, "labelAbbr")?.inner;
-    const layers = layerDefs.map((el) =>
-      xmlUnescape((firstElementNamed(el.inner, "label")?.inner ?? "").trim()),
-    );
+    const layers = layerDefs.map((el, i): LayerModel => {
+      const child = firstElementNamed(el.inner, "label")?.inner;
+      return {
+        n: Number(attr(el.tag, "n") ?? i + 1),
+        label:
+          child !== undefined
+            ? xmlUnescape(child.trim())
+            : (attr(el.tag, "label") ?? ""),
+        printed: child !== undefined,
+      };
+    });
+    const instrument = /<instrDef\b/.test(own);
     // A tablature staffDef may carry no clef attributes; its shape is the
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
@@ -890,6 +914,8 @@ export function parseScoreDef(text: string): ScoreDefModel {
       label: label ? xmlUnescape(label.trim()) : "",
       ...(labelAbbr ? { labelAbbr: xmlUnescape(labelAbbr.trim()) } : {}),
       ...(layers.length ? { layers } : {}),
+      ...(attr(tag, "visible") === "false" ? { visible: false } : {}),
+      ...(instrument ? { instrument } : {}),
     };
     const diat = Number(attr(tag, "trans\\.diat") ?? 0);
     const semi = Number(attr(tag, "trans\\.semi") ?? 0);

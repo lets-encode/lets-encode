@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   assignUnit,
   doubleNamings,
+  dropParts,
   mergeInstrument,
   firstNamingSystem,
   inSystem,
@@ -14,6 +15,9 @@ import {
   namingUnits,
   openingTranscriptions,
   parseParts,
+  staffPlan,
+  staffStates,
+  systemScoreDef,
   partsLabel,
   printedName,
   pruneInstruments,
@@ -25,8 +29,9 @@ import {
   unprintedStaves,
   type NamingPage,
   type NamingUnit,
+  type StaffPlan,
 } from "../instrument-naming.ts";
-import type { LayoutInstruments } from "../omr-layout.ts";
+import type { LayoutInstrument, LayoutInstruments } from "../omr-layout.ts";
 import type { OmrRecord } from "../omr-record.ts";
 import {
   buildFacsimileMei,
@@ -250,48 +255,105 @@ test("pruneInstruments drops unused staves and instruments and moves groups inwa
   );
 });
 
-test("instrumentScoreDef: parts as a bracket of one instrument, a grand staff as a brace, names and layers", () => {
-  let named = nameUnit(NO_INSTRUMENTS, 1, "Flauto", "I").named;
-  named = nameUnit(named, 1, "Flauto", "II").named;
-  named = nameUnit(named, 1, "Flauto", "I.II").named;
-  named = nameUnit(named, 2, "Pianoforte").named;
-  named = nameUnit(named, 1, "Voce").named;
+test("staffPlan and instrumentScoreDef: as many staves as printed at once, layers by part, names as the first system prints them", () => {
+  const pages = [pageA(), pageB()];
+  let named = nameAll(pages, [
+    [0, "Flauto", "I"],
+    [1, "Flauto", "II"],
+    [2, "Pianoforte", ""],
+    [3, "Flauto", "I"],
+    [4, "Flauto", "II"],
+    [5, "Pianoforte", ""],
+    [6, "Flauto", "I.II"],
+    [7, "Pianoforte", ""],
+  ]);
   named = {
     ...named,
     instruments: named.instruments.map((i) =>
-      i.id === "i1"
-        ? { ...i, abbr: "Fl." }
-        : i.id === "i3"
-          ? { ...i, abbr: "V." }
-          : i,
+      i.id === "i1" ? { ...i, abbr: "Fl." } : i,
     ),
   };
-  const def = instrumentScoreDef(named, {
-    ...DEFAULT_SCORE_DEF,
-    staves: [
-      {
-        ...DEFAULT_SCORE_DEF.staves[0],
-        id: "i3-1",
-        clefShape: "C",
-        clefLine: 1,
-      },
+  const plan = staffPlan(named, pages);
+  // Flauto prints at most two staves at once (I, II), never three.
+  assert.deepEqual(
+    plan.staves.map((s) => [s.id, s.parts, s.sameParts]),
+    [
+      ["i1-staff1", [0, 1], false],
+      ["i1-staff2", [1], true],
+      ["i2-staff1", [], true],
+      ["i2-staff2", [], true],
     ],
-  });
+  );
+  assert.deepEqual(
+    plan.systems.map((s) => [s.page, s.system, [...s.boxes.values()]]),
+    [
+      [
+        0,
+        0,
+        [
+          { n: 1, parts: [0] },
+          { n: 2, parts: [1] },
+          { n: 3, parts: [] },
+          { n: 4, parts: [] },
+        ],
+      ],
+      [
+        0,
+        1,
+        [
+          { n: 1, parts: [0] },
+          { n: 2, parts: [1] },
+          { n: 3, parts: [] },
+          { n: 4, parts: [] },
+        ],
+      ],
+      [
+        1,
+        0,
+        [
+          { n: 1, parts: [0, 1] },
+          { n: 3, parts: [] },
+          { n: 4, parts: [] },
+        ],
+      ],
+    ],
+  );
+  // Where the flutes share a staff, staff 2 is hidden and staff 1 renamed.
+  const states = staffStates(plan);
+  assert.equal(systemScoreDef(plan, states, 1), "");
+  assert.equal(
+    systemScoreDef(plan, states, 2),
+    '<scoreDef><staffGrp><staffDef n="1" visible="true"><label>Flauto</label><labelAbbr>Fl.</labelAbbr></staffDef><staffDef n="2" visible="false"/></staffGrp></scoreDef>',
+  );
+  const def = instrumentScoreDef(
+    named,
+    {
+      ...DEFAULT_SCORE_DEF,
+      staves: [
+        {
+          ...DEFAULT_SCORE_DEF.staves[0],
+          id: "i1-staff2",
+          clefShape: "C",
+          clefLine: 1,
+        },
+      ],
+    },
+    pages,
+  );
   assert.deepEqual(
     def.staves.map((s) => [
       s.id,
       s.label,
       s.labelAbbr,
-      (s.layers ?? []).join(" "),
+      (s.layers ?? []).map((l) => `${l.n}${l.label}${l.printed ? "+" : ""}`),
       `${s.clefShape}${s.clefLine}`,
+      s.instrument ?? false,
     ]),
     [
-      ["i1-3", "I.II", "I.II", "I II", "G2"],
-      ["i1-1", "I", "I", "", "G2"],
-      ["i1-2", "II", "II", "", "G2"],
-      ["i2-1", "", "", "", "G2"],
-      ["i2-2", "", "", "", "F4"],
-      ["i3-1", "Voce", "V.", "", "C1"],
+      ["i1-staff1", "Flauto I", "Fl. I", ["1I", "2II"], "G2", true],
+      ["i1-staff2", "Flauto II", "Fl. II", ["2II"], "C1", true],
+      ["i2-staff1", "", "", [], "G2", false],
+      ["i2-staff2", "", "", [], "F4", false],
     ],
   );
   assert.deepEqual(
@@ -301,11 +363,11 @@ test("instrumentScoreDef: parts as a bracket of one instrument, a grand staff as
       g.end,
       g.symbol,
       g.label,
-      g.labelAbbr,
+      g.oneInstrument,
     ]),
     [
-      ["i1", 1, 3, "bracket", "Flauto", "Fl."],
-      ["i2", 4, 5, "brace", "Pianoforte", ""],
+      ["i1", 1, 2, "bracket", "", false],
+      ["i2", 3, 4, "brace", "Pianoforte", true],
     ],
   );
   // The definition survives the score and a parse.
@@ -318,16 +380,64 @@ test("instrumentScoreDef: parts as a bracket of one instrument, a grand staff as
     { withBreaks: true },
   );
   const parsed = parseScoreDef(mei);
-  assert.deepEqual(parsed.staves[0].layers, ["I", "II"]);
-  assert.equal(parsed.staves[0].label, "I.II");
-  assert.equal(parsed.staves[5].labelAbbr, "V.");
+  assert.deepEqual(parsed.staves[0].layers, def.staves[0].layers);
+  assert.equal(parsed.staves[0].instrument, true);
+  assert.equal(parsed.staves[2].instrument, undefined);
   assert.deepEqual(
-    parsed.groups.map((g) => [g.label, g.labelAbbr ?? "", g.oneInstrument]),
+    parsed.groups.map((g) => [g.label, g.oneInstrument]),
     [
-      ["Flauto", "Fl.", true],
-      ["Pianoforte", "", true],
+      ["", false],
+      ["Pianoforte", true],
     ],
   );
+});
+
+test("instrumentScoreDef: a staff the first system does not print is hidden, and a staff with the same parts everywhere prints them", () => {
+  const pages = [pageB(), pageA()];
+  // Page B's system: Flauto I.II, piano; page A: Flauto I, Flauto II,
+  // piano, then Oboe I.II, Flauto I.II, piano.
+  const named = nameAll(pages, [
+    [0, "Flauto", "I.II"],
+    [1, "Pianoforte", ""],
+    [2, "Flauto", "I"],
+    [3, "Flauto", "II"],
+    [4, "Pianoforte", ""],
+    [5, "Oboe", "I.II"],
+    [6, "Flauto", "I.II"],
+    [7, "Pianoforte", ""],
+  ]);
+  const def = instrumentScoreDef(named, DEFAULT_SCORE_DEF, pages);
+  assert.deepEqual(
+    def.staves.map((s) => [
+      s.id,
+      s.label,
+      s.visible ?? true,
+      (s.layers ?? []).map((l) => `${l.n}${l.printed ? "+" : ""}`),
+    ]),
+    [
+      ["i1-staff1", "Flauto", true, ["1", "2"]],
+      // Named as where it is first printed.
+      ["i1-staff2", "Flauto II", false, ["2"]],
+      ["i2-staff1", "", true, []],
+      ["i2-staff2", "", true, []],
+      ["i3-staff1", "Oboe", false, ["1+", "2+"]],
+    ],
+  );
+  const mei = buildFacsimileMei(
+    {
+      headXml: "<meiHead/>",
+      scoreDef: def,
+      pages: [{ image: "p.jpg", width: 10, height: 10, zones: [] }],
+    },
+    { withBreaks: true },
+  );
+  assert.match(mei, /<staffDef[^>]*n="2"[^>]*visible="false"/);
+  assert.match(mei, /<layerDef\b[^>]* n="2" label="II"\/>/);
+  assert.match(
+    mei,
+    /<layerDef\b[^>]* n="2"><label\b[^>]*>II<\/label><\/layerDef>/,
+  );
+  assert.equal(parseScoreDef(mei).staves[1].visible, false);
 });
 
 test("suggestFirstSystem: printed names with trailing part names make one instrument with parts", () => {
@@ -376,6 +486,28 @@ test("suggestFromList: a shared staff by its short name, the rest by place", () 
       [1, [1, 2], "i2", []],
     ],
   );
+});
+
+test("suggestFromList: an instrument's only staff in a system without a printed part carries all parts", () => {
+  const pages = [pageA(), pageB()];
+  const named = {
+    ...nameAll(pages, [
+      [0, "Flauto", "I"],
+      [1, "Flauto", "II"],
+      [2, "Klavier", ""],
+    ]),
+    fixed: true,
+  };
+  const onPage2 = (labels: string[][][]) =>
+    suggestFromList(pages, named, labels)
+      .filter((x) => x.unit.page === 1)
+      .map((x) => [x.unit.staves, x.instrument, x.parts]);
+  assert.deepEqual(onPage2([[], [["Fl.", ""]]]), [
+    [[0], "i1", [0, 1]],
+    [[1, 2], "i2", []],
+  ]);
+  // A printed part keeps that part.
+  assert.deepEqual(onPage2([[], [["Fl. II", ""]]])[0], [[0], "i1", [1]]);
 });
 
 test("suggestFromList: the first page's later systems follow the first system", () => {
@@ -441,7 +573,7 @@ test("instrumentScoreDef with opening transcriptions: clefs where each staff fir
     ],
     clefs: [],
   };
-  const opening = openingTranscriptions(pages, record);
+  const opening = openingTranscriptions(named, pages, record);
   assert.equal(opening.firstSystem.length, 4);
   assert.equal(opening.firstSystem[0], null);
   const base = {
@@ -449,20 +581,20 @@ test("instrumentScoreDef with opening transcriptions: clefs where each staff fir
     staves: [
       {
         ...DEFAULT_SCORE_DEF.staves[0],
-        id: "i1-2",
+        id: "i1-staff2",
         clefShape: "C",
         clefLine: 1,
       },
     ],
   };
-  const def = instrumentScoreDef(named, base, opening);
+  const def = instrumentScoreDef(named, base, pages, opening);
   assert.deepEqual(
     def.staves.map((s) => [s.id, `${s.clefShape}${s.clefLine}`, s.keysig]),
     [
-      ["i1-1", "G2", "0"],
-      ["i1-2", "G2", undefined],
-      ["i2-1", "G2", undefined],
-      ["i2-2", "F4", undefined],
+      ["i1-staff1", "G2", "0"],
+      ["i1-staff2", "G2", undefined],
+      ["i2-staff1", "G2", undefined],
+      ["i2-staff2", "F4", undefined],
     ],
   );
   assert.equal(def.keysig, "2f");
@@ -471,7 +603,7 @@ test("instrumentScoreDef with opening transcriptions: clefs where each staff fir
     ["3", "4", ""],
   );
   // Without transcriptions the staves keep the score's values.
-  const unread = instrumentScoreDef(named, base, {
+  const unread = instrumentScoreDef(named, base, pages, {
     byStaff: new Map(),
     firstSystem: [],
   });
@@ -508,6 +640,34 @@ test("doubleNamings: parts of one instrument named as instruments of their own",
       ["Oboe I, II", "Oboe", "longer"],
     ],
   );
+});
+
+test("nameUnit: parts stand in the order typed, numbered parts in numeric order", () => {
+  const labels = (n: LayoutInstruments, name: string) => {
+    const i = n.instruments.find((x) => x.name === name)!;
+    return [i.parts.map((p) => p.name), i.staves.map((s) => partsLabel(i, s))];
+  };
+  // A staff first named with part II, then with I.II.
+  let named = nameUnit(NO_INSTRUMENTS, 1, "Fagott", "II").named;
+  named = nameUnit(named, 1, "Fagott", "I.II").named;
+  assert.deepEqual(labels(named, "Fagott"), [
+    ["I", "II"],
+    ["II", "I.II"],
+  ]);
+  // Part II named on a staff before part I on another.
+  named = nameUnit(named, 1, "Flöte", "II").named;
+  named = nameUnit(named, 1, "Flöte", "I").named;
+  assert.deepEqual(labels(named, "Flöte"), [
+    ["I", "II"],
+    ["II", "I"],
+  ]);
+  // Named parts keep the order typed; typing them again reorders them.
+  named = nameUnit(named, 1, "Vc und Kb", "Kb").named;
+  named = nameUnit(named, 1, "Vc und Kb", "Vc.Kb").named;
+  assert.deepEqual(labels(named, "Vc und Kb"), [
+    ["Vc", "Kb"],
+    ["Kb", "Vc.Kb"],
+  ]);
 });
 
 test("doubleNamings: an instrument named like parts of several instruments is listed once", () => {
@@ -608,7 +768,17 @@ test("grand-staff instruments with parts: Harfe 1 and Harfe 2", () => {
   // The same part again gives the same staves.
   assert.deepEqual(nameUnit(named, 2, "Harfe", "1").staves, h1);
 
-  const def = instrumentScoreDef(named, DEFAULT_SCORE_DEF);
+  // One system printing both harps, each on a grand staff.
+  const page: NamingPage = {
+    zones: [zone(100, 500, true, false)],
+    staves: [box(110, 170), box(210, 270), box(310, 370), box(410, 470)],
+    grandstaves: [
+      { ulx: 90, uly: 100, lrx: 900, lry: 280 },
+      { ulx: 90, uly: 300, lrx: 900, lry: 480 },
+    ],
+  };
+  [...h1, ...h2].forEach((id, i) => (page.staves![i].staff = id));
+  const def = instrumentScoreDef(named, DEFAULT_SCORE_DEF, [page]);
   assert.deepEqual(
     def.staves.map((s) => `${s.clefShape}${s.clefLine}`),
     ["G2", "F4", "G2", "F4"],
@@ -655,58 +825,107 @@ test("grand-staff instruments with parts: Harfe 1 and Harfe 2", () => {
   );
 });
 
-test("unprintedStaves: a resting part rests on the staff in force, other unprinted staves hold an mSpace", () => {
-  // Posaune with parts 1, 2, 3 on staves "1.2.3", "1" and "2.3"; Violine;
-  // Harfe on a grand staff.
-  const named: LayoutInstruments = {
-    instruments: [
-      {
-        id: "i1",
-        name: "Posaune",
-        abbr: "",
-        grand: false,
-        parts: [{ name: "1" }, { name: "2" }, { name: "3" }],
-        staves: [
-          { id: "i1-1", parts: [0, 1, 2] },
-          { id: "i1-2", parts: [0] },
-          { id: "i1-3", parts: [1, 2] },
-        ],
-      },
-      {
-        id: "i2",
-        name: "Violine",
-        abbr: "",
-        grand: false,
-        parts: [],
-        staves: [{ id: "i2-1", parts: [] }],
-      },
-      {
-        id: "i3",
-        name: "Harfe",
-        abbr: "",
-        grand: true,
-        parts: [],
-        staves: [
-          { id: "i3-1", parts: [] },
-          { id: "i3-2", parts: [] },
-        ],
-      },
-    ],
-    groups: [],
-    fixed: true,
+test("unprintedStaves: a resting part rests in its layer on the staff in force, other unprinted staves hold an mSpace", () => {
+  const posaune: LayoutInstrument = {
+    id: "i1",
+    name: "Posaune",
+    abbr: "",
+    grand: false,
+    parts: [{ name: "1" }, { name: "2" }, { name: "3" }],
+    staves: [],
   };
-  const ids = ["i1-1", "i1-2", "i1-3", "i2-1", "i3-1", "i3-2"];
-  // Violine alone; "1.2.3" with harp; "1" and "2.3"; Violine alone.
-  const printed = [[4], [1, 4, 5, 6], [2, 3, 4], [4]].map((s) => new Set(s));
-  const out = unprintedStaves(named, ids, printed).map((m) =>
+  const violine: LayoutInstrument = {
+    id: "i2",
+    name: "Violine",
+    abbr: "",
+    grand: false,
+    parts: [],
+    staves: [],
+  };
+  const harfe: LayoutInstrument = {
+    id: "i3",
+    name: "Harfe",
+    abbr: "",
+    grand: true,
+    parts: [],
+    staves: [],
+  };
+  const staff = (instrument: LayoutInstrument, position: number) => ({
+    id: `${instrument.id}-staff${position}`,
+    instrument,
+    position,
+    parts: [],
+    sameParts: true,
+    first: null,
+  });
+  // Staves: Posaune 1, 2; Violine; Harfe 1, 2.
+  const system = (boxes: [number, number[]][]) => ({
+    page: 0,
+    system: 0,
+    boxes: new Map(boxes.map(([n, parts], i) => [i, { n, parts }])),
+  });
+  const plan: StaffPlan = {
+    staves: [
+      staff(posaune, 1),
+      staff(posaune, 2),
+      staff(violine, 1),
+      staff(harfe, 1),
+      staff(harfe, 2),
+    ],
+    // Violine alone; "1.2.3" with harp; "1" and "2.3"; Violine alone.
+    systems: [
+      system([[3, []]]),
+      system([
+        [1, [0, 1, 2]],
+        [3, []],
+        [4, []],
+        [5, []],
+      ]),
+      system([
+        [1, [0]],
+        [2, [1, 2]],
+        [3, []],
+      ]),
+      system([[3, []]]),
+    ],
+  };
+  const out = unprintedStaves(plan).map((m) =>
     Object.fromEntries([...m].sort(([a], [b]) => a - b)),
   );
   assert.deepEqual(out, [
-    // Before its first showing, Posaune rests where it first shows.
-    { 1: [1, 2, 3], 2: "space", 3: "space", 5: [1], 6: [1] },
-    { 2: "space", 3: "space" },
-    { 1: "space", 5: [1], 6: [1] },
-    // Parts 2 and 3 rest in their layers of "2.3".
-    { 1: "space", 2: [1], 3: [1, 2], 5: [1], 6: [1] },
+    // Before its first printing, Posaune rests where it first prints.
+    { 1: [1, 2, 3], 2: "space", 4: [1], 5: [1] },
+    { 2: "space" },
+    { 4: [1], 5: [1] },
+    // Parts 2 and 3 rest in their own layers on the staff of "2.3".
+    { 1: [1], 2: [2, 3], 4: [1], 5: [1] },
   ]);
+});
+
+test("dropParts: a first-system staff named without parts takes them away from an instrument no other first-system staff shows", () => {
+  const pages = [pageA(), pageB()];
+  // The first system names the horns Cors LA and Cors MI; a later
+  // system shows Cors MI.
+  const named = nameAll(pages, [
+    [0, "Cors", "LA"],
+    [1, "Cors", "MI"],
+    [2, "Pianoforte", ""],
+    [4, "Cors", "MI"],
+  ]);
+  const units = namingUnits(pages);
+  const first = (u: NamingUnit) => u.page === 0 && u.system === 0;
+  // Two first-system staves show Cors: its parts stay.
+  assert.equal(dropParts(named, pages, units[0], "Cors", first), null);
+  // Renamed to its own instrument, still with part MI from the field.
+  let r = nameUnit(named, 1, "Cors en MI", "MI");
+  apply(pages, units[1], r.staves);
+  apply(pages, units[4], r.staves);
+  const d = dropParts(r.named, pages, units[1], "Cors en MI", first)!;
+  const corsMi = d.named.instruments.find((i) => i.name === "Cors en MI")!;
+  assert.deepEqual(corsMi.parts, []);
+  assert.equal(corsMi.staves.length, 1);
+  // Its boxes, here and in the later system, move to the staff without parts.
+  assert.equal(d.staves.get(r.staves[0]!), corsMi.staves[0].id);
+  r = nameUnit(d.named, 1, "Cors en MI", "");
+  assert.deepEqual(r.staves, [corsMi.staves[0].id]);
 });

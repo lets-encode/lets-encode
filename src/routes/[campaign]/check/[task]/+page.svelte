@@ -22,8 +22,7 @@
     ScoreDefModel,
     StaffModel,
   } from "$lib/mei-facsimile.ts";
-  import { pageSystems } from "$lib/omr-layout.ts";
-  import { partsLabel } from "$lib/instrument-naming.ts";
+  import { staffPlan, type PlannedStaff } from "$lib/instrument-naming.ts";
   import {
     CLEF_OPTIONS,
     COMMON_CLEFS,
@@ -88,9 +87,11 @@
         // instrument's name gives ("Klarinette in A").
         if (d.holdsLock && d.status === "encoding_required" && !d.workSource)
           for (const staff of staves) {
-            const name = d.instruments?.instruments.find((i) =>
-              i.staves.some((s) => s.id === staff.id),
-            )?.name;
+            const name = (
+              d.instruments
+                ? staffPlan(d.instruments, d.model.pages).staves
+                : []
+            ).find((s) => s.id === staff.id)?.instrument.name;
             const t = name ? transpositionFromLabel(name) : null;
             if (t && !transposes(staff) && !unpitched(staff))
               setTransposition(keysig, staff, t);
@@ -133,58 +134,55 @@
     },
   );
 
-  // Per score staff: its name, and the staff box where it first appears
-  // (page, system and staff order), with the end of that system's first
-  // measure, where the crop beside it ends.
+  // Per score staff: its name (the instrument's, with the parts the staff
+  // carries), and the staff box where it is first printed (staffPlan), with
+  // the end of that system's first measure, where the crop beside it ends.
   const rows = $derived.by(() => {
     if (!data) return [];
-    const named = data.instruments;
+    const pages = data.model.pages;
+    const plan = data.instruments ? staffPlan(data.instruments, pages) : null;
     const first = new Map<
       string,
       { page: number; box: MeasureBox; end: number }
     >();
-    data.model.pages.forEach((pg, p) => {
-      for (const system of pageSystems(pg).systems) {
-        for (const box of system) {
-          const id = (box as { staff?: string }).staff;
-          if (!id || first.has(id)) continue;
-          const measures = pg.zones.filter(
-            (z) => z.box.uly <= box.lry && z.box.lry >= box.uly,
-          );
-          const opening = measures.reduce<MeasureBox | null>(
-            (a, z) => (!a || z.box.ulx < a.ulx ? z.box : a),
-            null,
-          );
-          first.set(id, { page: p, box, end: opening?.lrx ?? box.lrx });
-        }
-      }
-    });
+    for (const planned of plan?.staves ?? []) {
+      if (!planned.first) continue;
+      const pg = pages[planned.first.page];
+      const box = pg.staves?.[planned.first.box];
+      if (!box) continue;
+      const measures = pg.zones.filter(
+        (z) => z.box.uly <= box.lry && z.box.lry >= box.uly,
+      );
+      const opening = measures.reduce<MeasureBox | null>(
+        (a, z) => (!a || z.box.ulx < a.ulx ? z.box : a),
+        null,
+      );
+      first.set(planned.id, {
+        page: planned.first.page,
+        box,
+        end: opening?.lrx ?? box.lrx,
+      });
+    }
     const firstPage = Math.min(
       ...[...first.values()].map((f) => f.page),
       Infinity,
     );
     return staves.map((staff) => {
-      const instrument = named?.instruments.find((i) =>
-        i.staves.some((s) => s.id === staff.id),
-      );
-      const own = instrument?.staves.find((s) => s.id === staff.id);
-      const siblings = instrument?.grand
-        ? instrument.staves.filter(
-            (s) => s.parts.join(",") === own?.parts.join(","),
-          )
-        : [];
-      const parts = instrument && own ? partsLabel(instrument, own) : "";
-      const name = instrument
-        ? `${instrument.name}${parts ? ` ${parts}` : ""}${
-            siblings.length > 1
-              ? ` (staff ${siblings.findIndex((s) => s.id === staff.id) + 1})`
-              : ""
-          }`
-        : staff.label;
+      const planned = plan?.staves.find((s) => s.id === staff.id);
+      const name = planned ? plannedName(planned) : staff.label;
       const at = staff.id ? first.get(staff.id) : undefined;
       return { staff, name, at, later: !!at && at.page > firstPage };
     });
   });
+
+  // A planned staff's row name: its instrument, the parts it carries in
+  // some system, and for a grand staff which of its staves it is.
+  function plannedName(planned: PlannedStaff): string {
+    const { instrument } = planned;
+    const parts = planned.parts.map((p) => instrument.parts[p].name).join(".");
+    const grand = instrument.grand ? ` (staff ${planned.position})` : "";
+    return `${instrument.name}${parts ? ` ${parts}` : ""}${grand}`;
+  }
 
   /**
    * The crop of a staff box: from a little before the box (the end of a
@@ -257,7 +255,6 @@
 
   let sidePanel = $state(readSidePanel());
   let sheetOpen = $state(false);
-  const noAnchor = () => ({ page: "1", m1: "", m2: "" });
 </script>
 
 <svelte:head>
@@ -327,7 +324,7 @@
   {:else if data}
     <div class="main">
       <h1 class="vh">Score check · {session.pieceName || campaign}</h1>
-      <TaskRunState task={taskId} bar />
+      <div class="runrow"><TaskRunState task={taskId} pill /></div>
       <div class="deskwrap">
         <fieldset class="check" disabled={!canEdit}>
           <div class="scorerow">
@@ -580,8 +577,6 @@
           card={session.card}
           tools={resultNote}
           {headAction}
-          prefill={noAnchor}
-          measures={false}
         />
       {/if}
     {/snippet}
@@ -626,6 +621,13 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* The run state's pill above the work area; takes room only while shown. */
+  .runrow {
+    flex: none;
+  }
+  .runrow:has(:global(.runstate)) {
+    padding: 12px 16px 0;
   }
   .deskwrap {
     flex: 1;

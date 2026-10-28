@@ -62,9 +62,9 @@ const plainClef = (token: string | null): string | null =>
 
 /**
  * Every page's staves, in page order. `parts` are the score staves the boxes
- * are placed on (the score's, unless a proposal is being made). With `ids`
- * (the score staves' staffDef xml:ids, in order), each box is placed on the
- * staff its `staff` id names, 0 when it names none of them, instead of by
+ * are placed on (the score's, unless a proposal is being made). With
+ * `placedBoxes` (per page, each staff box's index → its score staff n), each
+ * box is placed on that staff, 0 where it has none, instead of by
  * suggestion. The clef corrections apply from the piece's start: to every
  * staff placed on a corrected score staff, system after system, until a clef
  * read as anything else than the misread one.
@@ -73,7 +73,7 @@ export function pieceStaves(
   parsed: Pick<ParsedFacsimile, "pages">,
   record: OmrRecord,
   parts: ScoreStaff[],
-  ids?: (string | undefined)[],
+  placedBoxes?: Map<number, number>[],
 ): PageStaves[] {
   const reference = parsed.pages
     .flatMap((p) => pageSystems(p).systems)
@@ -101,8 +101,8 @@ export function pieceStaves(
     const assigned: number[][] = [];
     const transcriptions: (string | null)[][] = [];
     systems.forEach((system, s) => {
-      const placed = ids
-        ? system.map((box) => (box.staff ? ids.indexOf(box.staff) + 1 : 0))
+      const placed = placedBoxes
+        ? system.map((box) => placedBoxes[p]?.get(staves.indexOf(box)) ?? 0)
         : suggestStaffAssignment(
             system.map((box, i) => ({
               box,

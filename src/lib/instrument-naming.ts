@@ -22,9 +22,14 @@ import {
   type LayoutInstrument,
   type LayoutInstruments,
 } from "./omr-layout.ts";
-import { labelScore, suggestStaffAssignment } from "./omr-staff-assign.ts";
+import {
+  labelNumerals,
+  labelScore,
+  suggestStaffAssignment,
+} from "./omr-staff-assign.ts";
 import { proposeScoreDef, readAttributes } from "./omr-musicxml.ts";
 import { sameBox, type OmrRecord } from "./omr-record.ts";
+import { xmlEscape } from "./mei-xml.ts";
 import type { UnprintedStaff } from "./omr-draft.ts";
 
 /** The boxes of one page that the naming reads. */
@@ -122,6 +127,224 @@ export function unitName(
   return null;
 }
 
+// ----------------------------------------------------------- score staves
+
+/** A score staff of the named instruments: an instrument's k-th staff from the top in a system. */
+export interface PlannedStaff {
+  /** Its staffDef xml:id, `<instrument>-staff<k>`. */
+  id: string;
+  instrument: LayoutInstrument;
+  /** k: its place among the instrument's staves, from 1. */
+  position: number;
+  /** Every part it carries in some system, ascending; [] for an instrument without parts. */
+  parts: number[];
+  /** It carries the same parts in every system that prints it. */
+  sameParts: boolean;
+  /** Where it is first printed: page index and index of the page's staff box; null for never. */
+  first: { page: number; box: number } | null;
+}
+
+/** A system and, per staff box (index into its page's boxes), the score staff n it prints and the parts it carries there. */
+export interface PlannedSystem {
+  page: number;
+  system: number;
+  boxes: Map<number, { n: number; parts: number[] }>;
+}
+
+/** The score staves of the named instruments and what each system prints of them. */
+export interface StaffPlan {
+  staves: PlannedStaff[];
+  /** Every system with staff boxes, page by page, top to bottom. */
+  systems: PlannedSystem[];
+}
+
+/**
+ * The score staves the named instruments need, and where each system's staff
+ * boxes go. An instrument has as many score staves as it prints at once at
+ * most in one system; its boxes in a system, top to bottom (a grand staff's
+ * one by one), are its score staves 1, 2, …, each carrying the parts its unit
+ * is named with. The staves follow the instruments' order. A box of an
+ * unnamed unit goes to no staff.
+ */
+export function staffPlan(
+  named: LayoutInstruments,
+  pages: NamingPage[],
+): StaffPlan {
+  type Placed = {
+    box: number;
+    instrument: LayoutInstrument;
+    position: number;
+    parts: number[];
+  };
+  const systems: { page: number; system: number; placed: Placed[] }[] = [];
+  const count = new Map<LayoutInstrument, number>();
+  for (const unit of namingUnits(pages)) {
+    let current = systems[systems.length - 1];
+    if (current?.page !== unit.page || current.system !== unit.system) {
+      current = { page: unit.page, system: unit.system, placed: [] };
+      systems.push(current);
+    }
+    const shown = unitName(named, pages[unit.page], unit);
+    if (!shown) continue;
+    for (const box of unit.staves) {
+      const position =
+        current.placed.filter((x) => x.instrument === shown.instrument).length +
+        1;
+      current.placed.push({
+        box,
+        instrument: shown.instrument,
+        position,
+        parts: shown.staff.parts,
+      });
+      count.set(
+        shown.instrument,
+        Math.max(count.get(shown.instrument) ?? 0, position),
+      );
+    }
+  }
+  const staves: PlannedStaff[] = [];
+  const numberOf = new Map<string, number>();
+  for (const instrument of named.instruments) {
+    for (let k = 1; k <= (count.get(instrument) ?? 0); k++) {
+      const shown = systems.flatMap((s) =>
+        s.placed
+          .filter((x) => x.instrument === instrument && x.position === k)
+          .map((x) => ({ page: s.page, box: x.box, parts: x.parts })),
+      );
+      staves.push({
+        id: `${instrument.id}-staff${k}`,
+        instrument,
+        position: k,
+        parts: [...new Set(shown.flatMap((x) => x.parts))].sort(
+          (a, b) => a - b,
+        ),
+        sameParts: new Set(shown.map((x) => x.parts.join(","))).size <= 1,
+        first: shown[0] ? { page: shown[0].page, box: shown[0].box } : null,
+      });
+      numberOf.set(`${instrument.id}#${k}`, staves.length);
+    }
+  }
+  return {
+    staves,
+    systems: systems.map((s) => ({
+      page: s.page,
+      system: s.system,
+      boxes: new Map(
+        s.placed.map((x) => [
+          x.box,
+          {
+            n: numberOf.get(`${x.instrument.id}#${x.position}`)!,
+            parts: x.parts,
+          },
+        ]),
+      ),
+    })),
+  };
+}
+
+/** Per page (index), each staff box's score staff n (staffPlan); a box of no staff is absent. */
+export const plannedBoxes = (
+  plan: StaffPlan,
+  pageCount: number,
+): Map<number, number>[] =>
+  Array.from(
+    { length: pageCount },
+    (_, p) =>
+      new Map(
+        plan.systems
+          .filter((s) => s.page === p)
+          .flatMap((s) => [...s.boxes].map(([box, at]) => [box, at.n])),
+      ),
+  );
+
+/** A planned system's index, by page and system index; -1 for a system without staff boxes. */
+export const plannedSystemIndex = (
+  plan: StaffPlan,
+  page: number,
+  system: number,
+): number =>
+  plan.systems.findIndex((s) => s.page === page && s.system === system);
+
+/**
+ * Per planned system, per score staff (n − 1): whether the system prints it,
+ * and the parts it carries there; a staff the system does not print keeps
+ * the parts it last carried, before its first printing those it first
+ * carries.
+ */
+export function staffStates(
+  plan: StaffPlan,
+): { visible: boolean; parts: number[] }[][] {
+  const current = plan.staves.map((_, i) => {
+    for (const system of plan.systems)
+      for (const at of system.boxes.values())
+        if (at.n === i + 1) return at.parts;
+    return [] as number[];
+  });
+  return plan.systems.map((system) => {
+    const printed = new Map([...system.boxes.values()].map((at) => [at.n, at]));
+    return plan.staves.map((_, i) => {
+      const at = printed.get(i + 1);
+      if (at) current[i] = at.parts;
+      return { visible: !!at, parts: current[i] };
+    });
+  });
+}
+
+/**
+ * A staff's full and short name where it carries `parts`: the instrument's
+ * names, followed by the part where it carries one ("Flöte I"); none for a
+ * staff of a grand-staff instrument, whose brace carries them.
+ */
+export function plannedLabels(
+  staff: PlannedStaff,
+  parts: number[],
+): { label: string; labelAbbr: string } {
+  const { instrument } = staff;
+  if (instrument.grand) return { label: "", labelAbbr: "" };
+  const part =
+    parts.length === 1 && instrument.parts[parts[0]]
+      ? ` ${instrument.parts[parts[0]].name}`
+      : "";
+  return {
+    label: `${instrument.name}${part}`,
+    labelAbbr: instrument.abbr ? `${instrument.abbr}${part}` : "",
+  };
+}
+
+/**
+ * The `<scoreDef>` that opens planned system `g` where a staff's visibility
+ * or label differs from the system before it: the changed staves'
+ * `<staffDef>`s with @visible, <label> and <labelAbbr>; '' for the first
+ * system and where nothing changes.
+ */
+export function systemScoreDef(
+  plan: StaffPlan,
+  states: { visible: boolean; parts: number[] }[][],
+  g: number,
+): string {
+  if (g <= 0 || !states[g]) return "";
+  const defs = plan.staves.flatMap((staff, i) => {
+    const before = states[g - 1][i];
+    const now = states[g][i];
+    const was = plannedLabels(staff, before.parts);
+    const is = plannedLabels(staff, now.parts);
+    const relabel =
+      now.visible && (was.label !== is.label || was.labelAbbr !== is.labelAbbr);
+    if (before.visible === now.visible && !relabel) return [];
+    const names = relabel
+      ? (is.label ? `<label>${xmlEscape(is.label)}</label>` : "") +
+        (is.labelAbbr
+          ? `<labelAbbr>${xmlEscape(is.labelAbbr)}</labelAbbr>`
+          : "")
+      : "";
+    const open = `<staffDef n="${i + 1}" visible="${now.visible}"`;
+    return [names ? `${open}>${names}</staffDef>` : `${open}/>`];
+  });
+  return defs.length
+    ? `<scoreDef><staffGrp>${defs.join("")}</staffGrp></scoreDef>`
+    : "";
+}
+
 /** The parts a staff carries, by name, joined by "." ("I.II"); '' for an instrument without parts. */
 export function partsLabel(
   instrument: LayoutInstrument,
@@ -166,6 +389,48 @@ const cloneInstruments = (named: LayoutInstruments): LayoutInstrument[] =>
 const sameParts = (a: number[], b: number[]) =>
   a.length === b.length && a.every((x, i) => x === b[i]);
 
+const ROMAN: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+
+/** A part name's number: arabic ("2") or roman ("IV"); null for any other name. */
+function partNumber(name: string): number | null {
+  if (/^\d+$/.test(name)) return Number(name);
+  if (!/^[IVXLC]+$/i.test(name)) return null;
+  const digits = [...name.toUpperCase()].map((c) => ROMAN[c]);
+  return digits.reduce(
+    (sum, d, i) => sum + (d < (digits[i + 1] ?? 0) ? -d : d),
+    0,
+  );
+}
+
+/**
+ * Add the parts `names` to an instrument's parts, in the order given: the
+ * named parts move to where the first of them that the instrument has stands,
+ * new ones there or at the end. Parts that are all numbers stand in numeric
+ * order. The staves' part indices follow. Returns the indices of `names`.
+ */
+function orderParts(instrument: LayoutInstrument, names: string[]): number[] {
+  const old = instrument.parts.map((p) => p.name);
+  const typed = [...new Set(names)];
+  const anchor = old.findIndex((n) => typed.includes(n));
+  const rest = old.filter((n) => !typed.includes(n));
+  const at =
+    anchor < 0
+      ? rest.length
+      : old.slice(0, anchor).filter((n) => !typed.includes(n)).length;
+  let order = [...rest.slice(0, at), ...typed, ...rest.slice(at)];
+  const numbers = order.map(partNumber);
+  if (numbers.every((n) => n !== null))
+    order = order
+      .map((n, i) => ({ n, v: numbers[i]! }))
+      .sort((a, b) => a.v - b.v)
+      .map((x) => x.n);
+  const moved = old.map((n) => order.indexOf(n));
+  instrument.parts = order.map((name) => ({ name }));
+  for (const staff of instrument.staves)
+    staff.parts = staff.parts.map((i) => moved[i]).sort((a, b) => a - b);
+  return names.map((n) => order.indexOf(n));
+}
+
 /**
  * The staff ids for a unit of `size` staves showing `instrument` with
  * `parts` (indices; none = all the instrument has), adding the staves the
@@ -204,8 +469,8 @@ function staffIds(
  * later system: the instrument called `name` (a new one when the piece has none
  * by that name, added to the end of the list, which pruneInstruments puts in
  * score order; a grand staff when the unit has several staves) and the
- * parts `partsText` names (parseParts; added to the instrument's parts as
- * needed; none = all it has). `added` marks a new instrument with the page it was
+ * parts `partsText` names (parseParts; added to and ordered in the
+ * instrument's parts by orderParts; none = all it has). `added` marks a new instrument with the page it was
  * added on. Returns the instruments and the staff ids for the unit's boxes;
  * an empty name returns the unit's boxes without ids.
  */
@@ -233,17 +498,54 @@ export function nameUnit(
     };
     instruments.push(instrument);
   }
-  const own = instrument;
-  const parts = parseParts(partsText).map((partName) => {
-    const at = own.parts.findIndex((p) => p.name === partName);
-    if (at >= 0) return at;
-    own.parts.push({ name: partName });
-    return own.parts.length - 1;
-  });
+  const parts = orderParts(instrument, parseParts(partsText));
   return {
     named: { ...named, instruments },
-    staves: staffIds(own, size, parts),
+    staves: staffIds(instrument, size, parts),
   };
+}
+
+/**
+ * The instruments with the parts of the instrument called `name` taken away,
+ * for `unit` of the first system named with it and no parts, where no other
+ * unit of `first` (the first system's units) shows that instrument: it keeps
+ * one staff without parts, and `staves` maps each staff id it had to that
+ * staff's, for the boxes that showed them. Null where there is nothing to
+ * take away: no such instrument, one without parts, a grand-staff
+ * instrument, or another unit of the first system showing it.
+ */
+export function dropParts(
+  named: LayoutInstruments,
+  pages: NamingPage[],
+  unit: NamingUnit,
+  name: string,
+  first: (unit: NamingUnit) => boolean,
+): { named: LayoutInstruments; staves: Map<string, string> } | null {
+  const target = named.instruments.find((i) => i.name === name.trim());
+  if (!target || !target.parts.length || target.grand) return null;
+  const same = (u: NamingUnit) =>
+    u.page === unit.page && u.staves[0] === unit.staves[0];
+  if (
+    namingUnits(pages).some(
+      (u) =>
+        first(u) &&
+        !same(u) &&
+        unitName(named, pages[u.page], u)?.instrument.id === target.id,
+    )
+  )
+    return null;
+  const instruments = cloneInstruments(named);
+  const own = instruments.find((i) => i.id === target.id)!;
+  const keep = own.staves.find((s) => !s.parts.length) ?? {
+    id: nextStaffId(own),
+    parts: [],
+  };
+  const staves = new Map(
+    own.staves.filter((s) => s.id !== keep.id).map((s) => [s.id, keep.id]),
+  );
+  own.parts = [];
+  own.staves = [keep];
+  return { named: { ...named, instruments }, staves };
 }
 
 /**
@@ -510,20 +812,25 @@ export function mergeInstrument(
 }
 
 /**
- * The score definition the named instruments make, on `base`: their score
- * staves in score order, each with its staffDef xml:id. A one-player
- * instrument's staff carries its full and short name; a grand-staff
- * instrument is a brace group of one instrument with its names; an
- * instrument with parts is a bracket group of one instrument with its names,
- * whose staves are labelled with the parts they carry (the staff carrying
- * all of them first) and declare one layer per part where they carry
- * several; a grand-staff instrument with parts is a group of one instrument
- * without a symbol (symbol="none") around one brace per combination of
- * parts, labelled with them (Harfe: 1, 2), so no bracket is drawn over the
- * braces. A staff `base` already defines (same id) keeps its clef, lines and
- * transposition; a new one gets a treble clef, or a bass clef as a lower
- * staff of a grand staff. The key and meter are `base`'s. The groups of
- * instruments span their instruments' staves.
+ * The score definition the named instruments make on `pages`, on `base`:
+ * the score staves of their staff plan (staffPlan) in order, each with its
+ * staffDef xml:id, named and shown as the piece's first system prints them
+ * (a staff it does not print is not visible and named as where it is first
+ * printed). A staff's names are its instrument's, followed by the part where
+ * it carries one (plannedLabels). A staff of an instrument with parts
+ * declares a layer for each part it carries in some system, numbered by the
+ * part (part 1 is layer 1 on every staff); the layer names are printed where
+ * the staff carries the same two or more parts in every system, else given
+ * as @label only. Each staff of an instrument that is not a grand staff is
+ * one instrument (<instrDef>), and such an instrument with more than one
+ * staff is a bracket group without names. A grand-staff instrument is a
+ * brace group of one instrument with its names; with parts, a group of one
+ * instrument without a symbol (symbol="none") around one brace per two
+ * staves, named with the parts they first carry (Harfe: 1, 2). A staff `base`
+ * already defines (same id) keeps its clef, lines and transposition; a new
+ * one gets a treble clef, or a bass clef as the lower staff of a grand staff.
+ * The key and meter are `base`'s. The groups of instruments span their
+ * instruments' staves.
  *
  * With `opening` (openingTranscriptions), the clefs, key and meter are
  * proposed from the transcription (proposeScoreDef): a staff with an opening
@@ -534,87 +841,92 @@ export function mergeInstrument(
 export function instrumentScoreDef(
   named: LayoutInstruments,
   base: ScoreDefModel,
+  pages: NamingPage[],
   opening?: OpeningTranscriptions,
 ): ScoreDefModel {
   const known = new Map(
     base.staves.flatMap((staff) => (staff.id ? [[staff.id, staff]] : [])),
   );
-  const staves: StaffModel[] = [];
+  const plan = staffPlan(named, pages);
+  const first = staffStates(plan)[0];
+  const staves: StaffModel[] = plan.staves.map((planned, i) => {
+    const { instrument } = planned;
+    const kept = known.get(planned.id);
+    const lower = instrument.grand && planned.position % 2 === 0;
+    const parts = first?.[i].parts ?? planned.parts;
+    const visible = first?.[i].visible ?? true;
+    return {
+      ...(kept ?? {
+        clefShape: lower ? "F" : "G",
+        clefLine: lower ? 4 : 2,
+        clefDis: "",
+        clefDisPlace: "",
+        lines: 5,
+        notationType: "",
+      }),
+      id: planned.id,
+      ...plannedLabels(planned, parts),
+      layers: instrument.parts.length
+        ? planned.parts.map((p) => ({
+            n: p + 1,
+            label: instrument.parts[p].name,
+            printed: planned.sameParts && planned.parts.length > 1,
+          }))
+        : [],
+      ...(visible ? {} : { visible: false }),
+      ...(instrument.grand ? {} : { instrument: true }),
+    };
+  });
   const groups: StaffGroupModel[] = [];
   const span = new Map<string, { start: number; end: number }>();
-  const firstPart = (s: InstrumentStaff) =>
-    s.parts.length === 0 ? -1 : s.parts[0];
   for (const instrument of named.instruments) {
-    const start = staves.length + 1;
-    const withParts = instrument.parts.length > 0;
-    // A stable sort keeps a grand staff's staves together.
-    const ordered = [...instrument.staves].sort(
-      (a, b) => firstPart(a) - firstPart(b) || b.parts.length - a.parts.length,
+    const own = plan.staves.flatMap((p, i) =>
+      p.instrument === instrument ? [i + 1] : [],
     );
-    ordered.forEach((staff, k) => {
-      const kept = known.get(staff.id);
-      const lower =
-        instrument.grand &&
-        k > 0 &&
-        sameParts(ordered[k - 1].parts, staff.parts);
-      const carried = staff.parts;
-      const label = instrument.grand
-        ? { label: "", labelAbbr: "" }
-        : withParts
-          ? {
-              label: partsLabel(instrument, staff),
-              labelAbbr: partsLabel(instrument, staff),
-            }
-          : { label: instrument.name, labelAbbr: instrument.abbr };
-      staves.push({
-        ...(kept ?? {
-          clefShape: lower ? "F" : "G",
-          clefLine: lower ? 4 : 2,
-          clefDis: "",
-          clefDisPlace: "",
-          lines: 5,
-          notationType: "",
-        }),
-        id: staff.id,
-        ...label,
-        layers:
-          withParts && carried.length > 1
-            ? carried.map((i) => instrument.parts[i].name)
-            : [],
-      });
-    });
-    const end = staves.length;
+    if (!own.length) continue;
+    const start = own[0];
+    const end = own[own.length - 1];
     span.set(instrument.id, { start, end });
-    if (instrument.grand || withParts)
-      groups.push({
-        id: instrument.id,
-        start,
-        end,
-        symbol: !instrument.grand ? "bracket" : withParts ? "none" : "brace",
-        label: instrument.name,
-        labelAbbr: instrument.abbr,
-        barThru: true,
-        oneInstrument: true,
-      });
-    if (instrument.grand && withParts) {
-      let from = start;
-      ordered.forEach((staff, k) => {
-        const next = ordered[k + 1];
-        if (next && sameParts(next.parts, staff.parts)) return;
-        const label = partsLabel(instrument, staff);
+    if (!instrument.grand) {
+      if (end > start)
         groups.push({
-          id: `${instrument.id}-${staff.id.slice(instrument.id.length + 1)}g`,
-          start: from,
-          end: start + k,
+          id: instrument.id,
+          start,
+          end,
+          symbol: "bracket",
+          label: "",
+          labelAbbr: "",
+          barThru: true,
+          oneInstrument: false,
+        });
+      continue;
+    }
+    const withParts = instrument.parts.length > 0;
+    groups.push({
+      id: instrument.id,
+      start,
+      end,
+      symbol: withParts ? "none" : "brace",
+      label: instrument.name,
+      labelAbbr: instrument.abbr,
+      barThru: true,
+      oneInstrument: true,
+    });
+    if (withParts)
+      for (let n = start; n <= end; n += 2) {
+        const parts = plan.staves[n - 1].parts;
+        const label = parts.map((p) => instrument.parts[p].name).join(".");
+        groups.push({
+          id: `${plan.staves[n - 1].id}g`,
+          start: n,
+          end: Math.min(n + 1, end),
           symbol: "brace",
           label,
           labelAbbr: label,
           barThru: true,
           oneInstrument: false,
         });
-        from = start + k + 1;
-      });
-    }
+      }
   }
   for (const group of named.groups) {
     const first = span.get(group.first);
@@ -677,15 +989,19 @@ export interface OpeningTranscriptions {
 
 /**
  * The opening transcriptions of the named pages in `record`: for each score
- * staff the transcription of the first box named for it that reads a clef,
- * in page, system and staff order, where the staff's opening clef is
- * printed; and the piece's first system, where the key and time signatures
- * are printed. A box the record describes with other corners has none.
+ * staff of the staff plan (staffPlan) the transcription of the first box
+ * placed on it that reads a clef, in page, system and staff order, where the
+ * staff's opening clef is printed; and the piece's first system, where the
+ * key and time signatures are printed. A box the record describes with other
+ * corners has none.
  */
 export function openingTranscriptions(
+  named: LayoutInstruments,
   pages: NamingPage[],
   record: OmrRecord,
 ): OpeningTranscriptions {
+  const plan = staffPlan(named, pages);
+  const placed = plannedBoxes(plan, pages.length);
   const byStaff = new Map<string, string>();
   let firstSystem: (string | null)[] | null = null;
   for (const [p, pg] of pages.entries()) {
@@ -701,14 +1017,11 @@ export function openingTranscriptions(
       const xmls = system.map(xmlOf);
       firstSystem ??= xmls;
       system.forEach((box, i) => {
+        const n = placed[p].get(staves.indexOf(box));
+        const id = n ? plan.staves[n - 1].id : null;
         const xml = xmls[i];
-        if (
-          box.staff &&
-          xml &&
-          !byStaff.has(box.staff) &&
-          readAttributes(xml).clef
-        )
-          byStaff.set(box.staff, xml);
+        if (id && xml && !byStaff.has(id) && readAttributes(xml).clef)
+          byStaff.set(id, xml);
       });
     }
   }
@@ -716,58 +1029,59 @@ export function openingTranscriptions(
 }
 
 /**
- * How each system writes the score staves it does not print, from the
- * staves each prints (`printed`: per system of the piece, in order, the
- * staff numbers; `ids`: the score staves' staffDef xml:ids, staff n at
- * n − 1). Every part of an instrument (an instrument without parts counts as
- * one) that a system does not show rests on the staves that carry it in
- * force: those that last showed it, before its first showing those that
- * first show it. Such a staff rests in the layer of each resting part (its
- * layer by the staff's parts where it carries several, else 1). Every other
- * staff the system does not print holds an mSpace: its parts are on other
- * staves there. A staff of no instrument is left out (rests in layer 1).
+ * How each planned system (staffPlan) writes the score staves it does not
+ * print. Every part of an instrument (an instrument without parts counts as
+ * one) that a system does not print rests on the staves that carry it in
+ * force: those that last printed it, before its first printing those that
+ * first print it. Such a staff rests in the part's layer (part 1 is layer
+ * 1). Every other staff the system does not print holds an mSpace: its parts
+ * are on other staves there.
  */
 export function unprintedStaves(
-  named: LayoutInstruments,
-  ids: (string | undefined)[],
-  printed: Set<number>[],
+  plan: StaffPlan,
 ): Map<number, UnprintedStaff>[] {
-  const numberOf = new Map(ids.map((id, i) => [id, i + 1]));
-  const instruments = named.instruments.map((instrument) => {
-    const staves = instrument.staves.flatMap((s) => {
-      const n = numberOf.get(s.id);
-      return n ? [{ n, parts: s.parts.length ? s.parts : [0] }] : [];
-    });
-    const parts = Math.max(1, instrument.parts.length);
-    const carrying = (p: number, system: Set<number>) =>
-      staves.filter((s) => system.has(s.n) && s.parts.includes(p));
-    // Before its first showing, a part is in force where it first shows.
-    const inForce = Array.from({ length: parts }, (_, p) => {
-      const first = printed.find((system) => carrying(p, system).length);
-      const at = first
-        ? carrying(p, first)
-        : staves.filter((s) => s.parts.includes(p)).slice(0, 1);
-      return at;
-    });
-    return { staves, parts, carrying, inForce };
-  });
+  // Per system, staff n → the parts it prints there ([0] without parts).
+  const printed = plan.systems.map(
+    (system) =>
+      new Map(
+        [...system.boxes.values()].map((at) => [
+          at.n,
+          at.parts.length ? at.parts : [0],
+        ]),
+      ),
+  );
+  const instruments = [...new Set(plan.staves.map((s) => s.instrument))].map(
+    (instrument) => {
+      const staves = plan.staves.flatMap((s, i) =>
+        s.instrument === instrument ? [i + 1] : [],
+      );
+      const carrying = (p: number, system: Map<number, number[]>) =>
+        staves.filter((n) => system.get(n)?.includes(p));
+      const parts = Math.max(1, instrument.parts.length);
+      const inForce = Array.from({ length: parts }, (_, p) => {
+        const first = printed.find((system) => carrying(p, system).length);
+        return first ? carrying(p, first) : staves.slice(0, 1);
+      });
+      return { staves, parts, carrying, inForce };
+    },
+  );
   return printed.map((system) => {
     const out = new Map<number, UnprintedStaff>();
     for (const { staves, parts, carrying, inForce } of instruments) {
-      for (const s of staves) if (!system.has(s.n)) out.set(s.n, "space");
+      for (const n of staves) if (!system.has(n)) out.set(n, "space");
       for (let p = 0; p < parts; p++) {
         const shown = carrying(p, system);
         if (shown.length) {
           inForce[p] = shown;
           continue;
         }
-        for (const s of inForce[p]) {
-          const layer = s.parts.length > 1 ? s.parts.indexOf(p) + 1 : 1;
-          const held = out.get(s.n);
+        for (const n of inForce[p]) {
+          if (system.has(n)) continue;
+          const held = out.get(n);
           const layers = held === "space" || !held ? [] : held;
           out.set(
-            s.n,
-            [...new Set([...layers, layer])].sort((a, b) => a - b),
+            n,
+            [...new Set([...layers, p + 1])].sort((a, b) => a - b),
           );
         }
       }
@@ -867,7 +1181,9 @@ export function suggestFirstSystem(
  * suggestStaffAssignment (labels, the slots of the system before, staff
  * spacing), and a unit it gives a slot of another size takes the next free
  * slot of its size in score order. A unit only takes a slot of its size and
- * no slot twice in a system. A unit still without one stays unnamed.
+ * no slot twice in a system. A unit still without one stays unnamed. A
+ * one-staff unit whose printed label gives no part, and the only unit of its
+ * instrument in the system, shows all the instrument's parts.
  */
 export function suggestFromList(
   pages: NamingPage[],
@@ -1001,13 +1317,27 @@ export function suggestFromList(
           floor = next;
         }
       }
+      // A staff whose printed name gives no part, and the only staff of its
+      // instrument in the system, carries all the instrument's parts.
+      const partsOf = (unit: NamingUnit, k: number) => {
+        const { instrument, parts } = slots[k];
+        const shared = units.filter((u) => {
+          const j = chosen.get(u);
+          return j !== undefined && slots[j].instrument.id === instrument.id;
+        });
+        return shared.length === 1 &&
+          !instrument.grand &&
+          !labelNumerals(label(unit), fullNames).length
+          ? instrument.parts.map((_, i) => i)
+          : parts;
+      };
       for (const unit of units) {
         const k = chosen.get(unit);
         if (k === undefined || unitName(named, page, unit)) continue;
         out.push({
           unit,
           instrument: slots[k].instrument.id,
-          parts: slots[k].parts,
+          parts: partsOf(unit, k),
         });
       }
     }

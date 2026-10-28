@@ -820,10 +820,11 @@
                           <input
                             class="ctl parts"
                             type="text"
+                            value={partsLabel(instrument, shown.staff)}
                             placeholder="Parts"
                             disabled={!canEdit}
                             aria-label={`${where(unit, strip.units)}: parts`}
-                            title="The players this staff carries, as printed: I, II, or 1.2.3."
+                            title="The players this staff carries, as printed: I, II, or 1.2.3. Empty for all its parts."
                             onchange={(e) => {
                               ondefine(
                                 unit,
@@ -852,6 +853,13 @@
                                 >{partsLabel(instrument, list[0])}</option
                               >
                             {/each}
+                            {#if instrument.parts.length > 1 && !instrument.staves.some((s) => s.parts.length === instrument.parts.length)}
+                              <option value=""
+                                >{instrument.parts
+                                  .map((part) => part.name)
+                                  .join(".")}</option
+                              >
+                            {/if}
                             {#each instrument.parts as part, i (i)}
                               {#if !instrument.staves.some((s) => s.parts.length === 1 && s.parts[0] === i)}
                                 <option value={String(i)}>{part.name}</option>

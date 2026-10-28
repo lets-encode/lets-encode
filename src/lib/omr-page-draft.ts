@@ -9,10 +9,13 @@
 // has) that starts in the clefs, key and meter the pages before it leave in
 // force, converted to MEI by verovio and put into the page's measures of the
 // piece's score, which is then committed to the task branch mei-friend
-// opens. With named instruments, a
-// staff a system does not print rests where its instrument's parts rest and
-// holds an mSpace where they are on other staves (unprintedStaves), and the
-// note names the page's reasons to check it (pageChecks). The first page
+// opens. With named instruments, the staves follow the staff plan
+// (staffPlan): a staff a system does not print rests where its instrument's
+// parts rest and holds an mSpace where they are on other staves
+// (unprintedStaves), a printed staff's layers are numbered by its parts, a
+// system opens with a `<scoreDef>` where the staves it shows or their names
+// change (systemScoreDef), and the note names the page's reasons to check it
+// (pageChecks). The first page
 // task's check of the opening score definition is put into the score before
 // the draft, so the draft starts from it and commits it. No recognition runs
 // here.
@@ -39,12 +42,14 @@ import {
   layoutInstruments,
   withCorrectedLayout,
 } from "./omr-layout.ts";
-import { unprintedStaves } from "./instrument-naming.ts";
 import {
-  namedPieceStaves,
-  pageChecks,
-  scoreStaffIds,
-} from "./omr-page-checks.ts";
+  plannedSystemIndex,
+  staffPlan,
+  staffStates,
+  systemScoreDef,
+  unprintedStaves,
+} from "./instrument-naming.ts";
+import { namedPieceStaves, pageChecks } from "./omr-page-checks.ts";
 import { recordApplications } from "./mei-provenance.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { checkMei } from "./mei-check.ts";
@@ -123,8 +128,9 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   // The piece read through to this page: clef corrections, and the clefs,
   // key and meter in force where the page starts.
   const named = corrected ? layoutInstruments(corrected) : null;
-  const pieces = named
-    ? namedPieceStaves(parsed, record)
+  const plan = named ? staffPlan(named, parsed.pages) : null;
+  const pieces = plan
+    ? namedPieceStaves(parsed, record, plan)
     : pieceStaves(parsed, record, scoreStaves(parsed));
   const staves = pieces[page - 1];
   const flat = staves.systems.flat();
@@ -142,21 +148,32 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     (_, s) => new Set(staves.assigned[s].filter((n) => n > 0)),
   );
   const left = staves.assigned.flat().filter((n) => n === 0).length;
-  // How the staves the page's systems do not print are written, solved
-  // through the piece; and why the page is to be checked.
-  const before = pieces
-    .slice(0, page - 1)
-    .reduce((n, p) => n + p.systems.length, 0);
-  const unprinted = named
-    ? unprintedStaves(
-        named,
-        scoreStaffIds(parsed),
-        pieces.flatMap((p) =>
-          p.assigned.map((system) => new Set(system.filter((n) => n > 0))),
-        ),
-      ).slice(before, before + staves.systems.length)
-    : [];
-  const checks = named ? pageChecks(parsed, pieces, named)[page - 1] : [];
+  // Per system of the page, from the staff plan solved through the piece:
+  // how the staves it does not print are written, the parts each printed
+  // staff carries, and the <scoreDef> it opens with; and why the page is to
+  // be checked.
+  const planned = staves.systems.map((_, s) =>
+    plan ? plannedSystemIndex(plan, page - 1, s) : -1,
+  );
+  const allUnprinted = plan ? unprintedStaves(plan) : [];
+  const states = plan ? staffStates(plan) : [];
+  const unprinted = planned.map((g) => allUnprinted[g] ?? new Map());
+  const layerParts = planned.map(
+    (g) =>
+      new Map(
+        g < 0 || !plan
+          ? []
+          : [...plan.systems[g].boxes.values()].flatMap((at) =>
+              plan.staves[at.n - 1].instrument.parts.length
+                ? [[at.n, at.parts] as const]
+                : [],
+            ),
+      ),
+  );
+  const systemScoreDefs = planned.map((g) =>
+    plan && g >= 0 ? systemScoreDef(plan, states, g) : "",
+  );
+  const checks = plan ? pageChecks(parsed, pieces, plan)[page - 1] : [];
   const start = pageStart(parsed, pieces, page);
   const stitched = stitchPage(
     staves.transcriptions,
@@ -175,6 +192,8 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     printed,
     stitched.opening,
     unprinted,
+    layerParts,
+    systemScoreDefs,
   );
   const models = {
     layoutModel: o.models.layoutModel,
