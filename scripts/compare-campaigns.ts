@@ -183,10 +183,6 @@ function namedBoxes(
   const plan = staffPlan(state.named!, state.pages);
   const name = (staff: PlannedStaff, parts: number[]) => {
     const { instrument } = staff;
-    const own =
-      instrument.partsAreInstruments && parts.length === 1
-        ? instrument.parts[parts[0]].name
-        : instrument.name;
     const printed = parts.map((i) => instrument.parts[i].name).join(".");
     const several = plan.staves.some(
       (other) => other.instrument === instrument && other.position > 1,
@@ -196,7 +192,7 @@ function namedBoxes(
       staffName: several
         ? `${instrument.name}, staff ${staff.position}`
         : instrument.name,
-      shown: printed && own === instrument.name ? `${own} ${printed}` : own,
+      shown: printed ? `${instrument.name} ${printed}` : instrument.name,
     };
   };
   return state.pages.map(

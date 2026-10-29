@@ -15,7 +15,6 @@ import {
   namingUnits,
   openingTranscriptions,
   parseParts,
-  staffInstrumentName,
   staffPlan,
   staffStates,
   systemScoreDef,
@@ -28,7 +27,6 @@ import {
   unitBoxes,
   unitName,
   unprintedStaves,
-  withLayerTranspositions,
   type NamingPage,
   type NamingUnit,
   type StaffPlan,
@@ -40,7 +38,6 @@ import {
   DEFAULT_SCORE_DEF,
   parseScoreDef,
 } from "../mei-facsimile.ts";
-import { spliceOpeningScoreDef } from "../mei-page-splice.ts";
 
 const box = (uly: number, lry: number) => ({ ulx: 100, uly, lrx: 900, lry });
 const zone = (uly: number, lry: number, pb: boolean, sb: boolean) => ({
@@ -443,110 +440,6 @@ test("instrumentScoreDef: a staff the first system does not print is hidden, and
   assert.equal(parseScoreDef(mei).staves[1].visible, false);
 });
 
-test("parts that are instruments: labels by part, an instrDef and transposition per layer of the shared staff", () => {
-  const pages = [pageA(), pageB()];
-  // Page A: Violoncello and Kontrabass on two staves in both systems; page
-  // B: both on one staff.
-  const pair = "Violoncello und Kontrabass";
-  let named = nameAll(pages, [
-    [0, pair, "Violoncello"],
-    [1, pair, "Kontrabass"],
-    [2, "Klavier", ""],
-    [3, pair, "Violoncello"],
-    [4, pair, "Kontrabass"],
-    [5, "Klavier", ""],
-    [6, pair, "Violoncello.Kontrabass"],
-    [7, "Klavier", ""],
-  ]);
-  named = {
-    ...named,
-    instruments: named.instruments.map((i) =>
-      i.name === pair
-        ? {
-            ...i,
-            abbr: "Vcll. u. K.-B.",
-            partsAreInstruments: true,
-            parts: [
-              { name: "Violoncello", abbr: "Vc." },
-              { name: "Kontrabass", abbr: "Kb." },
-            ],
-          }
-        : i,
-    ),
-  };
-  const plan = staffPlan(named, pages);
-  assert.deepEqual(
-    plan.staves.slice(0, 2).map((s) => staffInstrumentName(s)),
-    ["Violoncello", "Kontrabass"],
-  );
-  const def = instrumentScoreDef(named, DEFAULT_SCORE_DEF, pages);
-  assert.deepEqual(
-    def.staves
-      .slice(0, 2)
-      .map((s) => [
-        s.label,
-        s.labelAbbr,
-        s.instrument,
-        (s.layers ?? []).map((l) => `${l.n}${l.instrument ? "i" : ""}`),
-      ]),
-    [
-      ["Violoncello", "Vc.", true, ["1i", "2i"]],
-      ["Kontrabass", "Kb.", true, ["2"]],
-    ],
-  );
-  // Page B's system names the shared staff after the pair and hides the
-  // Kontrabass staff.
-  const change = systemScoreDef(plan, staffStates(plan), 2);
-  assert.match(
-    change,
-    /<staffDef n="1" visible="true"><label>Violoncello und Kontrabass<\/label><labelAbbr>Vcll\. u\. K\.-B\.<\/labelAbbr>/,
-  );
-  assert.match(change, /<staffDef n="2" visible="false"\/>/);
-
-  // The Kontrabass layer takes the Kontrabass staff's transposition.
-  const checked = withLayerTranspositions(
-    {
-      ...def,
-      staves: def.staves.map((s, i) =>
-        i === 1 ? { ...s, transDiat: -7, transSemi: -12 } : s,
-      ),
-    },
-    plan,
-  );
-  assert.deepEqual(
-    checked.staves[0].layers?.map((l) => [l.transDiat, l.transSemi]),
-    [
-      [undefined, undefined],
-      [-7, -12],
-    ],
-  );
-  const write = (scoreDef: typeof def) =>
-    buildFacsimileMei(
-      {
-        headXml: "<meiHead/>",
-        scoreDef,
-        pages: [{ image: "p.jpg", width: 10, height: 10, zones: [] }],
-      },
-      { withBreaks: true },
-    );
-  const mei = write(checked);
-  assert.match(
-    mei,
-    /<layerDef\b[^>]* n="2" label="Kontrabass" trans\.diat="-7" trans\.semi="-12"><instrDef\b[^>]*\/><\/layerDef>/,
-  );
-  const back = parseScoreDef(mei).staves[0].layers?.[1];
-  assert.deepEqual(
-    [back?.instrument, back?.transDiat, back?.transSemi],
-    [true, -7, -12],
-  );
-  // The first page task's check may set the layer transposition.
-  const spliced = parseScoreDef(spliceOpeningScoreDef(write(def), mei));
-  assert.deepEqual(
-    [spliced.staves[0].layers?.[1].transSemi, spliced.staves[1].transSemi],
-    [-12, -12],
-  );
-});
-
 test("suggestFirstSystem: printed names with trailing part names make one instrument with parts", () => {
   const pages = [pageA()];
   // The second system's labels are not read: it chooses from the list.
@@ -788,31 +681,6 @@ test("doubleNamings: an instrument named like parts of several instruments is li
   assert.deepEqual(
     doubleNamings(named).map((d) => [nameOf(d.instrument), nameOf(d.like)]),
     [["II", "Flöte"]],
-  );
-});
-
-test("mergeInstrument: an instrument merged into a part that is an instrument gives it its short name", () => {
-  let named = nameUnit(
-    NO_INSTRUMENTS,
-    1,
-    "Violoncello und Kontrabass",
-    "Vc",
-  ).named;
-  named = nameUnit(named, 1, "Violoncello und Kontrabass", "Kb").named;
-  named = nameUnit(named, 1, "Kontrabass").named;
-  named = {
-    ...named,
-    instruments: named.instruments.map((i) =>
-      i.name === "Kontrabass"
-        ? { ...i, abbr: "K.-B." }
-        : { ...i, partsAreInstruments: true },
-    ),
-  };
-  const d = doubleNamings(named)[0];
-  const merged = mergeInstrument(named, d)!.named.instruments;
-  assert.deepEqual(
-    merged.map((i) => [i.name, i.parts.map((p) => p.abbr ?? "")]),
-    [["Violoncello und Kontrabass", ["", "K.-B."]]],
   );
 });
 
