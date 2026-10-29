@@ -11,28 +11,39 @@
 
   let {
     task,
-    bar = false,
+    pill = false,
+    short = false,
     large = false,
   }: {
     /** The task id whose run state renders, e.g. "T0002". */
     task: string;
-    /** Render as a full-width strip (side panel task box) instead of a card badge. */
-    bar?: boolean;
+    /** Render as a pill (side panel status row, editor views) instead of a card badge. */
+    pill?: boolean;
+    /** Name the submission by its number alone, e.g. "processing #29…". */
+    short?: boolean;
     /** Render at the next-task card's text size. */
     large?: boolean;
   } = $props();
 
   const entry = $derived(pendingVerdicts.forTask(task));
+  const sub = $derived(short ? "" : "submission ");
 </script>
 
 <!-- A live region that is always present, so a run state appearing in it
      is announced; empty, it takes no room. -->
 <div class="live" aria-live="polite">
   {#if entry}
-    <div class="runstate {entry.state}" class:bar class:large>
+    <div
+      class="runstate {entry.state}"
+      class:pill
+      class:large
+      title={short && entry.prNumber
+        ? `submission #${entry.prNumber}`
+        : undefined}
+    >
       {#if entry.state === "opening"}
         <span class="spinner" aria-hidden="true"></span>
-        <span>opening the submission…</span>
+        <span>{short ? "opening…" : "opening the submission…"}</span>
       {:else if entry.state === "processing"}
         <span class="spinner" aria-hidden="true"></span>
         <span
@@ -41,14 +52,14 @@
             href={entry.prUrl}
             target="_blank"
             rel="noreferrer"
-            onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
+            onclick={(e) => e.stopPropagation()}>{sub}#{entry.prNumber}</a
           >…</span
         >
       {:else if entry.state === "accepted"}
         <span class="mark" aria-hidden="true"
           ><Icon name="check" size={12} /></span
         >
-        <span>submission #{entry.prNumber} accepted</span>
+        <span>{sub}#{entry.prNumber} accepted</span>
       {:else if entry.state === "timeout"}
         <span class="mark" aria-hidden="true">…</span>
         <span
@@ -56,18 +67,18 @@
             href={entry.prUrl}
             target="_blank"
             rel="noreferrer"
-            onclick={(e) => e.stopPropagation()}>submission #{entry.prNumber}</a
-          > is still being processed</span
+            onclick={(e) => e.stopPropagation()}>{sub}#{entry.prNumber}</a
+          >{short ? " still processing" : " is still being processed"}</span
         >
       {:else}
         <span class="mark" aria-hidden="true"
-          ><Icon name="close" size={12} /></span
+          ><Icon name="warning" size={12} /></span
         >
         <span
           >{entry.runFailed
-            ? `run for submission #${entry.prNumber} failed`
+            ? `run for ${sub}#${entry.prNumber} failed`
             : entry.prNumber
-              ? `submission #${entry.prNumber} rejected`
+              ? `${sub}#${entry.prNumber} rejected`
               : "submission failed"}</span
         >
       {/if}
@@ -92,21 +103,27 @@
     font-weight: 600;
     color: var(--ink-faint);
   }
-  .runstate.bar {
-    flex: none;
+  .runstate.pill {
     margin-top: 0;
-    padding: 6px 20px;
-    font-size: 12px;
-    border-bottom: 1px solid var(--line);
+    padding: 3px 10px;
+    /* Full pill on one line; a rounded box where the text wraps. */
+    border-radius: 11px;
+    font-size: 11.5px;
+    line-height: 1.25;
+    width: fit-content;
+    max-width: 100%;
+    box-sizing: border-box;
+    color: var(--ink-soft);
     background: var(--card);
+    border: 1px solid var(--line);
+  }
+  .runstate.pill .spinner {
+    border-color: color-mix(in srgb, var(--st) 30%, var(--card));
+    border-top-color: var(--st);
   }
   .runstate.large {
     margin-top: 0;
     font-size: 13px;
-  }
-  .runstate.large .spinner {
-    width: 16px;
-    height: 16px;
   }
   .runstate a {
     color: var(--link);
@@ -114,44 +131,25 @@
   .runstate.accepted {
     color: var(--ok);
   }
-  .runstate.accepted.bar {
+  .runstate.accepted.pill {
     background: var(--ok-bg);
     border-color: var(--ok-line);
   }
   .runstate.timeout {
     color: var(--warn);
   }
-  .runstate.timeout.bar {
+  .runstate.timeout.pill {
     background: var(--warn-bg);
     border-color: var(--warn-line);
   }
   .runstate.rejected {
     color: var(--danger);
   }
-  .runstate.rejected.bar {
+  .runstate.rejected.pill {
     background: var(--danger-bg);
     border-color: var(--danger-line);
   }
   .mark {
     flex: none;
-  }
-  .spinner {
-    flex: none;
-    width: 12px;
-    height: 12px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
   }
 </style>

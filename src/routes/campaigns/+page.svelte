@@ -219,10 +219,23 @@
           await loadAllCampaignStats(f, provider.repoTopic, {
             onEach: placeRow,
           });
+        // All heads in one batch read where the client can; else one each.
+        const polled = stats;
+        const heads = await f
+          .getRepoFilesBatch(
+            polled.map((s) => ({ owner: s.owner, repo: s.repo })),
+            [],
+          )
+          .catch((err) => {
+            if (err instanceof RateLimitError) throw err;
+            return null;
+          });
         await Promise.all(
-          stats.map(async (s) => {
-            const { sha } = await f.getRepoHead(s.owner, s.repo);
-            if (sha !== s.headSha) await refreshStats(s);
+          polled.map(async (s, i) => {
+            const sha = heads
+              ? heads[i]?.headSha
+              : (await f.getRepoHead(s.owner, s.repo)).sha;
+            if (sha !== undefined && sha !== s.headSha) await refreshStats(s);
           }),
         );
       },
@@ -283,6 +296,10 @@
   async function claimNext(s: CampaignStats, next: NextTask) {
     if (next.action === "encode" && next.pre) {
       await goto(preTaskHref(s.name, next.locator, next.task));
+      return;
+    }
+    if (next.checksOpening && next.action !== "review") {
+      await goto(`/${s.name}/check/${next.task}`);
       return;
     }
     const c = ctxOf(s);
@@ -530,7 +547,7 @@
                       <span class="isub">{a.campaign}</span>
                     </span>
                     <span
-                      class="chip danger"
+                      class="chip chip-fail"
                       title="A review asked for changes; the task is back with its encoder."
                       >Change request</span
                     >
@@ -549,14 +566,14 @@
                           .feed.comment.body}”</span
                       >
                     </span>
-                    <span class="chip grey">Comment</span>
+                    <span class="chip chip-note">Comment</span>
                   </a>
                 {/if}
               {/each}
               {#if attention.length > attentionMax}
                 <button
                   type="button"
-                  class="moretoggle"
+                  class="linkish moretoggle"
                   aria-expanded={allAttention}
                   onclick={() => (allAttention = !allAttention)}
                   >{allAttention
@@ -621,7 +638,7 @@
                         <span class="isub">{t.campaign}</span>
                         <span class="imeta">{reviewMeta(t)}</span>
                       </span>
-                      <span class="chip grey">Awaiting review</span>
+                      <span class="chip">review</span>
                     </a>
                   {:else}
                     <div class="item">
@@ -637,9 +654,9 @@
                         <span class="imeta">{claimMeta(t)}</span>
                       </a>
                       {#if t.group === "encoding"}
-                        <span class="chip blue">Ongoing</span>
+                        <span class="chip">encoding</span>
                       {:else}
-                        <span class="chip review">Reviewing</span>
+                        <span class="chip">review · reviewing</span>
                       {/if}
                       {#if t.group === "encoding"}
                         <div class="iacts">
@@ -654,7 +671,7 @@
                                     t.task,
                                   )}
                               aria-disabled={processing(t)}
-                              >Open {workPlace(t.locator)}</a
+                              >Continue in {workPlace(t.locator)}</a
                             >
                           {:else}
                             <button
@@ -675,7 +692,7 @@
                 {#if openWork.length > SIDE_MAX}
                   <button
                     type="button"
-                    class="moretoggle"
+                    class="linkish moretoggle"
                     aria-expanded={allWork}
                     onclick={() => (allWork = !allWork)}
                     >{allWork
@@ -789,36 +806,40 @@
         </div>
       </div>
       {#if !listError && listFailed > 0}
-        <p class="msg-error" role="alert">
-          {#if partialRateLimit && auth.expired}Your GitHub login has expired.{/if}
-          <span title={partialRateLimit ? undefined : listFailure?.message}
-            >{listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded{partialRateLimit
-              ? `: ${partialRateLimit.message}`
-              : "."}</span
-          >
-          <button
-            type="button"
-            class="btn"
-            disabled={listLoading}
-            onclick={retryList}>Try again</button
-          >
-        </p>
+        <div class="banner err" role="alert">
+          <span>
+            {#if partialRateLimit && auth.expired}Your GitHub login has expired.{/if}
+            <span title={partialRateLimit ? undefined : listFailure?.message}
+              >{listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded{partialRateLimit
+                ? `: ${partialRateLimit.message}`
+                : "."}</span
+            >
+            <button
+              type="button"
+              class="linkish"
+              disabled={listLoading}
+              onclick={retryList}>Try again</button
+            >
+          </span>
+        </div>
       {/if}
       {#if listError}
-        <p class="msg-error" role="alert">
-          {#if listRateLimit && auth.expired}Your GitHub login has expired.{/if}
-          <span title={listRateLimit ? undefined : listError.message}
-            >Couldn't load the campaigns{listRateLimit
-              ? `: ${listRateLimit.message}`
-              : "."}</span
-          >
-          <button
-            type="button"
-            class="btn"
-            disabled={listLoading}
-            onclick={retryList}>Try again</button
-          >
-        </p>
+        <div class="banner err" role="alert">
+          <span>
+            {#if listRateLimit && auth.expired}Your GitHub login has expired.{/if}
+            <span title={listRateLimit ? undefined : listError.message}
+              >Couldn't load the campaigns{listRateLimit
+                ? `: ${listRateLimit.message}`
+                : "."}</span
+            >
+            <button
+              type="button"
+              class="linkish"
+              disabled={listLoading}
+              onclick={retryList}>Try again</button
+            >
+          </span>
+        </div>
       {:else if listLoaded && stats.length === 0}
         <p class="note">No campaigns yet. Create one with New campaign.</p>
       {:else if (listLoading || auth.status === "loading") && stats.length === 0}
@@ -914,14 +935,6 @@
     font-size: 12.5px;
     color: var(--ink-faint);
   }
-  .msg-error {
-    margin: 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px 12px;
-  }
   /* Wide screens: the viewer's work in a side column beside the list. */
   .layout {
     flex: 1;
@@ -982,16 +995,6 @@
   .hand-attn {
     height: 22px;
     flex: none;
-  }
-  .countpill {
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 1.2;
-    padding: 2px 8px;
-    border-radius: 999px;
-    color: var(--ink-soft);
-    background: var(--bg-tint);
-    font-variant-numeric: tabular-nums;
   }
   /* The folded work panel's header: one line that opens the list. */
   .barh {
@@ -1113,35 +1116,6 @@
     align-items: center;
     gap: 8px;
   }
-  .chip {
-    font-size: 12px;
-    font-weight: 600;
-    line-height: 19px;
-    padding: 0 9px;
-    border: 1px solid;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-  .chip.blue {
-    color: var(--info);
-    background: var(--info-bg);
-    border-color: var(--info-line);
-  }
-  .chip.review {
-    color: var(--warn);
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
-  }
-  .chip.danger {
-    color: var(--danger);
-    background: var(--danger-wash);
-    border-color: var(--danger-line);
-  }
-  .chip.grey {
-    color: var(--ink-faint);
-    background: var(--bg-tint);
-    border-color: var(--line);
-  }
   .donetoggle {
     display: flex;
     align-items: center;
@@ -1163,18 +1137,6 @@
   }
   .moretoggle {
     align-self: flex-start;
-    min-height: 24px;
-    padding: 0;
-    font: 600 12.5px var(--font);
-    color: var(--link);
-    background: none;
-    border: 0;
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .moretoggle:hover {
-      text-decoration: underline;
-    }
   }
   .donerow .ititle {
     font-weight: 400;
@@ -1328,20 +1290,6 @@
     text-align: center;
     font-size: 12.5px;
     color: var(--ink-faint);
-  }
-  .linkish {
-    font: inherit;
-    font-weight: 600;
-    color: var(--link);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .linkish:hover {
-      text-decoration: underline;
-    }
   }
   /* Banner styles are shared app-wide in ui.css. */
 </style>

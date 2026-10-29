@@ -1,19 +1,15 @@
 <!--
-  A task's validation record in its task box: the viewer's own slot with its
-  verdict controls (ReviewActions; without `actions` the host shows them
-  elsewhere), and for the owner (canPush) also the slots held and
-  passed under a "Reviews" heading. Change requests are listed with the
-  task's comments in the side panel. The host's status pill
-  carries the slot count and its footer the claim. Commands run through
-  callbacks the host passes in.
+  A task's validation record in its task box: the viewer's own slot, and for
+  the owner (canPush) also the slots held and passed under a "Reviews"
+  heading. The verdict controls are in the task's own view (ReviewActions).
+  Change requests are listed with the task's comments in the side panel.
+  The host's status pill carries the slot count and its footer the claim.
 -->
 <script lang="ts">
-  import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { LockRow } from "$lib/campaign-tables.ts";
-  import type { FailComment, Result } from "$lib/commands.ts";
   import { buildRecord, expiresIn } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
-  import ReviewActions from "./ReviewActions.svelte";
+  import SlotMark, { slotLabel } from "./SlotMark.svelte";
 
   let {
     card,
@@ -21,12 +17,6 @@
     viewer,
     logins,
     canPush,
-    runner,
-    prefill,
-    measures = true,
-    actions = true,
-    onvalidate,
-    onreviewedit,
   }: {
     card: BoardCard;
     /** The claim locks, for when a held slot's claim expires. */
@@ -34,34 +24,7 @@
     logins: Record<string, string>;
     viewer: string;
     canPush: boolean;
-    runner: CommandRunner;
-    /** The anchor a fresh fail form opens with (page and measure range). */
-    prefill: () => { page: string; m1: string; m2: string };
-    /** The fail form asks for a measure range besides the page. */
-    measures?: boolean;
-    /** The viewer's slot carries its verdict controls. */
-    actions?: boolean;
-    onvalidate: (
-      task_id: string,
-      subtask_id: string,
-      verdict: string,
-      comment?: FailComment,
-    ) => Promise<Result | null>;
-    /** Switch the viewer's review to editing; no Edit button without it. */
-    onreviewedit?: (
-      task_id: string,
-      subtask_id: string,
-      comment: FailComment,
-    ) => Promise<Result | null>;
   } = $props();
-
-  /** How a slot's state reads in the record. */
-  const slotLabel = (key: string): string =>
-    ({
-      pass: "approved",
-      fail: "changes requested",
-      review: "in review",
-    })[key] ?? key;
 
   // With one slot in all, its rows need no slot number.
   const slotName = (slot: number) =>
@@ -85,20 +48,6 @@
   );
 </script>
 
-{#snippet slotDot(key: string)}
-  {#if key === "pass"}
-    <img
-      class="hand-pass"
-      src="/green-hand.svg"
-      alt={slotLabel(key)}
-      title={slotLabel(key)}
-    />
-  {:else}
-    <span class="dot {key}" aria-label={slotLabel(key)} title={slotLabel(key)}
-    ></span>
-  {/if}
-{/snippet}
-
 {#if rows.length > 0}
   <div class="rsec">
     {#if canPush}
@@ -106,7 +55,7 @@
     {/if}
     {#each rows as r (r.sub + "/" + r.slot)}
       <div class="rrow">
-        {@render slotDot(r.key)}
+        <SlotMark key={r.key} />
         <span class="rslot">{slotName(r.slot)}{slotLabel(r.key)}</span>
         {#if r.login}
           <span class="rwho"
@@ -118,18 +67,6 @@
         <span class="mspacer"></span>
         {#if r.key === "pass"}
           <span class="muted small-note">no remarks</span>
-        {:else if r.mine && actions}
-          <ReviewActions
-            task={card.task}
-            sub={r.sub}
-            {runner}
-            {prefill}
-            {measures}
-            onvalidate={(sub, verdict, comment) =>
-              onvalidate(card.task, sub, verdict, comment)}
-            onreviewedit={onreviewedit &&
-              ((sub, comment) => onreviewedit(card.task, sub, comment))}
-          />
         {/if}
       </div>
     {/each}
@@ -143,35 +80,13 @@
   .mspacer {
     flex: 1;
   }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    flex: none;
-    display: inline-block;
-  }
-  /* The green thumbs-up hand marks a passed slot. */
-  .hand-pass {
-    height: 14px;
-    flex: none;
-  }
-  .dot.fail {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
-  }
-  .dot.review {
-    background: var(--info-bg);
-    border-color: var(--info);
-  }
   .rlabel {
     font-size: 12px;
     font-weight: 600;
     color: var(--ink-soft);
     padding-bottom: 4px;
   }
-  /* Wraps so the trailing controls stay visible in a narrow panel. */
+  /* Wraps so the row's end stays visible in a narrow panel. */
   .rrow {
     display: flex;
     align-items: center;

@@ -13,15 +13,15 @@
   Coordinates are the page image's own pixels, which is what the detector
   returns boxes in, so no rescaling is needed when the boxes are partitioned.
 
-  On touch the toolbar holds a piece picker and a Scroll / Draw switch. In
-  Draw one finger draws, moves and resizes, and two fingers pan and zoom; a
-  second finger landing mid-edit undoes the edit it interrupted. In Scroll a
-  finger or a pen scrolls and nothing is edited.
+  On touch the toolbar holds a piece picker, a Draw toggle and Select
+  several. In Draw one finger draws, moves and resizes, and two fingers pan
+  and zoom; a second finger landing mid-edit undoes the edit it interrupted.
+  Out of Draw a finger or a pen scrolls and nothing is edited.
 
   Several regions of one page can be selected together: Shift+click adds or
   removes one, Shift+drag selects every region its rectangle touches, and
-  Select several (the bar over the pages) turns a plain click or tap into
-  the same toggle. A selected group moves, copies and is deleted as a whole.
+  Select several turns a tap into the same toggle. A selected group moves,
+  copies and is deleted as a whole. Undo and redo restore the regions.
 -->
 <script lang="ts">
   import {
@@ -218,6 +218,57 @@
       if (!s) pickMode = false;
     });
   });
+  // Undo and redo: a snapshot of every piece's regions, by piece id, taken
+  // when a pointer release, key release or click leaves them changed. Adding
+  // or removing a piece starts the history again: a new piece can take a
+  // removed piece's id.
+  const HISTORY_LIMIT = 100;
+  type Snapshot = Record<string, PieceZone[]>;
+  const snapshot = (): Snapshot =>
+    Object.fromEntries(
+      pieces.map((piece) => [piece.id, piece.zones.map((z) => ({ ...z }))]),
+    );
+  let history = $state.raw<Snapshot[]>([]);
+  let historyIndex = $state(-1);
+  const canUndo = $derived(historyIndex > 0);
+  const canRedo = $derived(historyIndex < history.length - 1);
+  function commit() {
+    if (drag) return;
+    const now = snapshot();
+    const last = history[historyIndex];
+    if (JSON.stringify(now) === JSON.stringify(last)) return;
+    const ids = (snap: Snapshot) => Object.keys(snap).join("\n");
+    if (!last || ids(now) !== ids(last)) {
+      history = [now];
+      historyIndex = 0;
+      return;
+    }
+    history = [
+      ...history.slice(
+        Math.max(0, historyIndex + 2 - HISTORY_LIMIT),
+        historyIndex + 1,
+      ),
+      now,
+    ];
+    historyIndex = history.length - 1;
+  }
+  $effect(() => untrack(commit));
+  function restore(i: number) {
+    historyIndex = i;
+    for (const piece of pieces) {
+      const zones = history[i][piece.id];
+      if (zones) piece.zones = zones.map((z) => ({ ...z }));
+    }
+    selectedZone = null;
+    firstCorner = null;
+  }
+  function undo() {
+    if (canUndo && !drag) restore(historyIndex - 1);
+  }
+  function redo() {
+    if (canRedo && !drag) restore(historyIndex + 1);
+  }
+
   // The group's regions with their piece and index; empty without a group.
   const members = $derived.by(() => {
     if (group.length < 2) return [];
@@ -887,12 +938,27 @@
 
 <svelte:window
   onkeydown={(e) => {
+    const typing = (e.target as Element).closest(
+      "input, textarea, select, [contenteditable]",
+    );
+    // Cmd/Ctrl+Z undoes; add Shift (or Ctrl+Y) to redo.
+    if (!typing && (e.ctrlKey || e.metaKey) && /^[zy]$/i.test(e.key)) {
+      e.preventDefault();
+      if (e.shiftKey || e.key.toLowerCase() === "y") redo();
+      else undo();
+      return;
+    }
     if (e.key !== "Escape") return;
     if (firstCorner) firstCorner = null;
     else if (members.length) selectedZone = null;
   }}
+  onkeyup={commit}
+  onclick={commit}
   onpointermove={pointerMove}
-  onpointerup={pointerUp}
+  onpointerup={(e) => {
+    pointerUp(e);
+    commit();
+  }}
   onpointercancel={(e) => {
     releaseFinger(e);
     cancelDrag();
@@ -901,6 +967,24 @@
 
 <div class="material-card">
   <div class="material-toolbar">
+    <span class="undoredo">
+      <button
+        type="button"
+        class="btn btn-icon"
+        onclick={undo}
+        disabled={!canUndo}
+        aria-label="Undo"
+        title="Undo the last change (Ctrl/Cmd+Z)"><Icon name="undo" /></button
+      >
+      <button
+        type="button"
+        class="btn btn-icon"
+        onclick={redo}
+        disabled={!canRedo}
+        aria-label="Redo"
+        title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
+      >
+    </span>
     {#if wizardLayout.coarse}
       <label
         class="pchip"
@@ -925,32 +1009,33 @@
       {#if pieces[selectedPiece]?.kind !== "facsimile"}
         <span class="drag-hint">An uploaded encoding needs no regions</span>
       {/if}
-      <span class="tbtn-pair" role="group" aria-label="What a finger does">
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={touchMode === "scroll"}
-          aria-pressed={touchMode === "scroll"}
-          aria-label="Scroll"
-          onclick={() => {
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        class:on={touchMode === "draw"}
+        aria-pressed={touchMode === "draw"}
+        aria-label="Draw"
+        title="Draw: a finger drag draws a new region. Off, a drag scrolls the pages."
+        onclick={() => {
+          if (touchMode === "scroll") touchMode = "draw";
+          else {
             // A finger that scrolls edits nothing, so no region stays selected.
             touchMode = "scroll";
             selectedZone = null;
-          }}
-          ><Icon name="hand" size={16} /><span class="mode-label">Scroll</span
-          ></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={touchMode === "draw"}
-          aria-pressed={touchMode === "draw"}
-          aria-label="Draw regions"
-          onclick={() => (touchMode = "draw")}
-          ><Icon name="square" size={16} /><span class="mode-label">Draw</span
-          ></button
-        >
-      </span>
+          }
+        }}><Icon name="touch-box" size={16} /></button
+      >
+      <button
+        type="button"
+        class="tbtn tbtn-icon"
+        class:on={pickMode}
+        aria-pressed={pickMode}
+        aria-label="Select several"
+        disabled={touchMode !== "draw"}
+        title="A tap on a region adds it to the selection or takes it out"
+        onclick={() => (pickMode = !pickMode)}
+        ><Icon name="select-several" size={16} /></button
+      >
     {:else}
       <span
         class="drag-hint"
@@ -1183,57 +1268,47 @@
       {/each}
     </div>
   </div>
-  <!-- The selection's controls float over the pages' bottom edge, on an
+  <!-- A group's count and actions float over the pages' bottom edge, on an
        anchor that takes no height, so the pages do not shift when a group
-       forms: for a group its count and actions, and on a touch screen
-       Select several. -->
-  {#if members.length || (wizardLayout.coarse && selectedZone)}
+       forms. -->
+  {#if members.length}
     <div class="groupctl">
       <div class="groupbar">
-        {#if members.length}
-          <span class="groupcount">{members.length} regions</span>
-        {/if}
+        <span class="groupcount">{members.length} regions</span>
         <button
           type="button"
-          class="chip-switch"
-          class:on={pickMode}
-          aria-pressed={pickMode}
-          onclick={() => (pickMode = !pickMode)}
-          title={`A ${wizardLayout.coarse ? "tap" : "click"} on a region adds it to the selection or takes it out${wizardLayout.coarse ? "" : " (Shift+click does the same)"}`}
-          >Select several</button
+          class="btn"
+          onclick={duplicateGroup}
+          title={`Copy the ${members.length} regions below or beside them`}
+          ><Icon name="copy" />Duplicate</button
         >
-        {#if members.length}
-          <button
-            type="button"
-            class="btn"
-            onclick={duplicateGroup}
-            title={`Copy the ${members.length} regions below or beside them`}
-            ><Icon name="copy" />Duplicate</button
-          >
-          <button
-            type="button"
-            class="btn btn-danger"
-            onclick={() => {
-              removeRegions(members.map((m) => m.zone));
-              notice = null;
-            }}
-            title={`Delete the ${members.length} regions`}
-            ><Icon name="trash" />Delete</button
-          >
-          <button
-            type="button"
-            class="btn btn-icon"
-            onclick={() => (selectedZone = null)}
-            aria-label="Deselect the regions"
-            title="Deselect the regions"><Icon name="close" /></button
-          >
-        {/if}
+        <button
+          type="button"
+          class="btn btn-danger"
+          onclick={() => {
+            removeRegions(members.map((m) => m.zone));
+            notice = null;
+          }}
+          title={`Delete the ${members.length} regions`}
+          ><Icon name="trash" />Delete</button
+        >
+        <button
+          type="button"
+          class="btn"
+          onclick={() => (selectedZone = null)}
+          title="Deselect the regions"><Icon name="close" />Deselect</button
+        >
       </div>
     </div>
   {/if}
 </div>
 
 <style>
+  .undoredo {
+    flex: none;
+    display: flex;
+    gap: 2px;
+  }
   /* A Shift+drag's selection rectangle. */
   .marquee {
     fill: color-mix(in srgb, var(--ink) 6%, transparent);
@@ -1325,16 +1400,6 @@
     width: calc(100% + 12px);
     opacity: 0;
     font-size: 16px;
-  }
-  .mode-label {
-    margin-left: 5px;
-    font: 600 12px var(--font);
-    line-height: 1;
-  }
-  @container material (max-width: 639px) {
-    .mode-label {
-      display: none;
-    }
   }
   @container material (max-width: 439px) {
     .per-row-ctl {

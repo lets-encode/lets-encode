@@ -51,7 +51,7 @@
     return [
       { key: "open", label: "open", n: n?.open ?? 0 },
       { key: "encoding", label: "encoding", n: n?.encoding ?? 0 },
-      { key: "validation", label: "in review", n: n?.validation ?? 0 },
+      { key: "validation", label: "review", n: n?.validation ?? 0 },
       { key: "done", label: "done", n: progress.get(path)?.done ?? 0 },
     ];
   };

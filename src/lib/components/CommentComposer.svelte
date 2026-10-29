@@ -171,16 +171,6 @@
 {/if}
 
 <style>
-  .linkish {
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-  }
   .composer {
     flex: none;
     display: flex;
@@ -201,25 +191,6 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--ink-faint);
-  }
-  .spinner {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
   }
   .composer-actions {
     display: flex;

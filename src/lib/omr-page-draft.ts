@@ -1,18 +1,33 @@
 // The draft an OMR-prepared piece's page task starts from. Run when the
 // encoding task's branch has just been created: the page's staff
 // transcriptions and labels are taken from the piece's recognition record
-// (`omr.xml`, committed by the score setup), with its clef corrections,
-// stitched into a page score (each staff on the score staff suggested for it
-// from its clef, its instrument label and the staff spacing, since a system
-// may print fewer staves than the score has) that starts in the clefs, key
-// and meter the pages before it leave in force, converted to MEI by verovio
-// and put into the page's measures of the piece's score, which is then
-// committed to the task branch mei-friend opens. No recognition runs here.
+// (`omr.xml`, committed by the score setup or the layout task), with its clef
+// corrections, stitched into a page score (each staff on the score staff
+// its named instrument gives, where the layout task names the instruments,
+// else on the one suggested for it from its clef, its instrument label and
+// the staff spacing, since a system may print fewer staves than the score
+// has) that starts in the clefs, key and meter the pages before it leave in
+// force, converted to MEI by verovio and put into the page's measures of the
+// piece's score, which is then committed to the task branch mei-friend
+// opens. With named instruments, the staves follow the staff plan
+// (staffPlan): a staff a system does not print rests where its instrument's
+// parts rest and holds an mSpace where they are on other staves
+// (unprintedStaves), a printed staff's layers are numbered by its parts, a
+// system opens with a `<scoreDef>` where the staves it shows or their names
+// change (systemScoreDef), and the note names the page's reasons to check it
+// (pageChecks). The first page
+// task's check of the opening score definition is put into the score before
+// the draft, so the draft starts from it and commits it. No recognition runs
+// here.
 // Browser only: the verovio WASM module.
 
 import type { ForgeClient } from "./forge/types.ts";
 import type { OmrPipeline } from "./omr-client.ts";
-import { parseFacsimileMei } from "./mei-facsimile.ts";
+import {
+  parseFacsimileMei,
+  replaceOpeningScoreDef,
+  type ScoreDefModel,
+} from "./mei-facsimile.ts";
 import { stitchPage } from "./omr-stitch.ts";
 import {
   pageStart,
@@ -22,7 +37,19 @@ import {
 } from "./omr-timeline.ts";
 import { insertPageDraft } from "./omr-draft.ts";
 import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
-import { correctedLayoutPath, withCorrectedLayout } from "./omr-layout.ts";
+import {
+  correctedLayoutPath,
+  layoutInstruments,
+  withCorrectedLayout,
+} from "./omr-layout.ts";
+import {
+  plannedSystemIndex,
+  staffPlan,
+  staffStates,
+  systemScoreDef,
+  unprintedStaves,
+} from "./instrument-naming.ts";
+import { namedPieceStaves, pageChecks } from "./omr-page-checks.ts";
 import { recordApplications } from "./mei-provenance.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { checkMei } from "./mei-check.ts";
@@ -46,6 +73,12 @@ export interface PageDraftOptions {
   /** The piece's score path and the page (1-based) the task covers. */
   fragment: string;
   page: number;
+  /**
+   * The opening score definition as the first page task's check gave it:
+   * put into the score before the draft, which is made and committed with
+   * it; absent keeps the score's.
+   */
+  scoreDef?: ScoreDefModel;
   models: OmrModels;
   progress: (step: string) => void;
 }
@@ -65,12 +98,15 @@ export const applicationNames = (models: OmrModels): string[] =>
 
 export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   const { forge, owner, repo, fragment, page } = o;
-  const [score, recordXml, corrected] = await Promise.all([
+  const [scoreAtHead, recordXml, corrected] = await Promise.all([
     forge.getRepoFile(owner, repo, fragment, o.headSha),
     forge.getRepoFile(owner, repo, omrRecordPath(fragment), o.headSha),
     forge.getRepoFile(owner, repo, correctedLayoutPath(fragment), o.headSha),
   ]);
-  if (score == null) throw new Error(`Could not read ${fragment}.`);
+  if (scoreAtHead == null) throw new Error(`Could not read ${fragment}.`);
+  const score = o.scoreDef
+    ? replaceOpeningScoreDef(scoreAtHead, o.scoreDef)
+    : scoreAtHead;
   const parsed = parseFacsimileMei(score);
   parsed.pages = withCorrectedLayout(parsed.pages, corrected);
   const pg = parsed.pages[page - 1];
@@ -91,7 +127,11 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   o.progress("Reading the recognition record");
   // The piece read through to this page: clef corrections, and the clefs,
   // key and meter in force where the page starts.
-  const pieces = pieceStaves(parsed, record, scoreStaves(parsed));
+  const named = corrected ? layoutInstruments(corrected) : null;
+  const plan = named ? staffPlan(named, parsed.pages) : null;
+  const pieces = plan
+    ? namedPieceStaves(parsed, record, plan)
+    : pieceStaves(parsed, record, scoreStaves(parsed));
   const staves = pieces[page - 1];
   const flat = staves.systems.flat();
   if (!flat.length) {
@@ -108,6 +148,32 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     (_, s) => new Set(staves.assigned[s].filter((n) => n > 0)),
   );
   const left = staves.assigned.flat().filter((n) => n === 0).length;
+  // Per system of the page, from the staff plan solved through the piece:
+  // how the staves it does not print are written, the parts each printed
+  // staff carries, and the <scoreDef> it opens with; and why the page is to
+  // be checked.
+  const planned = staves.systems.map((_, s) =>
+    plan ? plannedSystemIndex(plan, page - 1, s) : -1,
+  );
+  const allUnprinted = plan ? unprintedStaves(plan) : [];
+  const states = plan ? staffStates(plan) : [];
+  const unprinted = planned.map((g) => allUnprinted[g] ?? new Map());
+  const layerParts = planned.map(
+    (g) =>
+      new Map(
+        g < 0 || !plan
+          ? []
+          : [...plan.systems[g].boxes.values()].flatMap((at) =>
+              plan.staves[at.n - 1].instrument.parts.length
+                ? [[at.n, at.parts] as const]
+                : [],
+            ),
+      ),
+  );
+  const systemScoreDefs = planned.map((g) =>
+    plan && g >= 0 ? systemScoreDef(plan, states, g) : "",
+  );
+  const checks = plan ? pageChecks(parsed, pieces, plan)[page - 1] : [];
   const start = pageStart(parsed, pieces, page);
   const stitched = stitchPage(
     staves.transcriptions,
@@ -125,13 +191,19 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     stitched.measuresPerSystem,
     printed,
     stitched.opening,
+    unprinted,
+    layerParts,
+    systemScoreDefs,
   );
   const models = {
     layoutModel: o.models.layoutModel,
     staffPipeline: record.staffPipeline,
   };
+  // Drafts of other pages start from the same score; the page prefix keeps
+  // their new ids apart when both are spliced in.
   const content = addXmlIds(
     recordApplications(draft.mei, applicationNames(models)),
+    `p${page}-`,
   );
   const meiError = await checkMei(content);
   if (meiError)
@@ -164,7 +236,9 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
       : []),
     ...(left
       ? [
-          `${left} staff box(es) are more than the score has staves and were left out.`,
+          named
+            ? `${left} staff box(es) name no staff of the score and were left out.`
+            : `${left} staff box(es) are more than the score has staves and were left out.`,
         ]
       : []),
     ...draft.warnings,
@@ -172,7 +246,10 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   return {
     note:
       `Page ${page} was drafted into ${draft.filled} measure(s).` +
-      (warnings.length ? ` ${warnings.join(" ")}` : ""),
+      (warnings.length ? ` ${warnings.join(" ")}` : "") +
+      (checks.length
+        ? ` Check the clefs, key, meter and staves against the scan: ${checks.join(" ")}`
+        : ""),
     warnings,
   };
 }

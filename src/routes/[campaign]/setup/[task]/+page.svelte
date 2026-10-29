@@ -8,6 +8,7 @@
 <script lang="ts">
   import { commentAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import PageState from "$lib/components/PageState.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import MusicGlyph, {
@@ -16,7 +17,7 @@
   import { page } from "$app/state";
   import { tick, untrack, type Snippet } from "svelte";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { auth, login, forge } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type {
@@ -35,6 +36,7 @@
     buildBlankScoreMei,
     DEFAULT_SCORE_DEF,
     staffKeysig,
+    withoutIds,
   } from "$lib/mei-facsimile.ts";
   import {
     COMMON_TRANSPOSITIONS,
@@ -44,7 +46,6 @@
     soundsText,
     toCustom,
     transpositionFromLabel,
-    writtenKeysig,
   } from "$lib/transposition.ts";
   import type { Transposition } from "$lib/transposition.ts";
   import type {
@@ -98,142 +99,28 @@
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import {
+    CLEF_OPTIONS,
+    COMMON_CLEFS,
+    KEY_SIGNATURES,
+    clefGlyph,
+    clefOption,
+    clefText,
+    followedKey as followedStaffKey,
+    linesChoices,
+    setClef as setStaffClef,
+    setTransposition as setStaffTransposition,
+    settleKey as settleStaffKey,
+    transOf,
+    transposes,
+    unpitched,
+  } from "$lib/staff-edit.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
 
-  // The clefs and staff kinds the form offers, by name. Each option carries
-  // the staff values it sets: clef shape, line, octave displacement and
-  // notation type as MEI writes them, and the staff's line count. A modern
-  // (guitar) tablature staff shows the TAB lettering as its clef; the lute
-  // kinds carry no clef.
-  const pitchedClef = (
-    value: string,
-    label: string,
-    clefShape: string,
-    clefLine: number,
-    clefDis = "",
-  ) => ({
-    value,
-    label,
-    glyph: (clefDis
-      ? "gClef8vb"
-      : clefShape === "G"
-        ? "gClef"
-        : clefShape === "F"
-          ? "fClef"
-          : "cClef") as MusicGlyphName,
-    clefShape,
-    clefDis,
-    notationType: "",
-    clefLine,
-    lines: 5,
-  });
-  const CLEF_OPTIONS = [
-    pitchedClef("G2", "Treble", "G", 2),
-    pitchedClef("G2-8", "Treble, octave lower", "G", 2, "8"),
-    pitchedClef("G1", "French violin", "G", 1),
-    pitchedClef("C1", "Soprano", "C", 1),
-    pitchedClef("C2", "Mezzo-soprano", "C", 2),
-    pitchedClef("C3", "Alto", "C", 3),
-    pitchedClef("C4", "Tenor", "C", 4),
-    pitchedClef("C5", "Baritone (C clef)", "C", 5),
-    pitchedClef("F3", "Baritone (F clef)", "F", 3),
-    pitchedClef("F4", "Bass", "F", 4),
-    pitchedClef("F5", "Sub-bass", "F", 5),
-    {
-      value: "perc",
-      label: "Percussion",
-      glyph: "percussion" as MusicGlyphName,
-      clefShape: "perc",
-      clefDis: "",
-      notationType: "",
-      clefLine: 3,
-      lines: 5,
-    },
-    {
-      value: "TAB",
-      label: "Tablature, modern",
-      glyph: "tab" as MusicGlyphName,
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.guitar",
-      clefLine: 3,
-      lines: 6,
-    },
-    {
-      value: "TABfr",
-      label: "Tablature, French",
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.lute.french",
-      clefLine: 3,
-      lines: 6,
-    },
-    {
-      value: "TABit",
-      label: "Tablature, Italian",
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.lute.italian",
-      clefLine: 3,
-      lines: 6,
-    },
-    {
-      value: "TABde",
-      label: "Tablature, German",
-      clefShape: "TAB",
-      clefDis: "",
-      notationType: "tab.lute.german",
-      clefLine: 3,
-      lines: 6,
-    },
-  ] as const;
-  // The clefs most staves open with, listed first in the clef menu.
-  const COMMON_CLEFS = ["G2", "F4", "C3"];
-  // The option behind a staff's stored values: the one with its shape,
-  // displacement and notation type, and for a pitched clef its line too.
-  // An unlisted combination (an OMR reading, an imported file) has none.
-  const clefOption = (staff: StaffModel) =>
-    CLEF_OPTIONS.find(
-      (o) =>
-        o.clefShape === staff.clefShape &&
-        o.clefDis === staff.clefDis &&
-        o.notationType === staff.notationType &&
-        (unpitched(staff) || o.clefLine === staff.clefLine),
-    );
-  const unpitched = (staff: StaffModel): boolean =>
-    staff.clefShape === "perc" || staff.clefShape === "TAB";
-  /** The symbol of a staff's clef: its option's, else its shape's. */
-  function clefGlyph(staff: StaffModel): MusicGlyphName | undefined {
-    const option = clefOption(staff);
-    if (option) return "glyph" in option ? option.glyph : undefined;
-    return (
-      { G: "gClef", F: "fClef", C: "cClef" } as Record<string, MusicGlyphName>
-    )[staff.clefShape];
-  }
-  /** A staff's clef as text. */
-  function clefText(staff: StaffModel): string {
-    const option = clefOption(staff);
-    if (option) return option.label;
-    const octaves =
-      { "8": "an octave", "15": "two octaves", "22": "three octaves" }[
-        staff.clefDis
-      ] ?? "";
-    const octave = octaves
-      ? `, ${octaves} ${staff.clefDisPlace === "above" ? "higher" : "lower"}`
-      : "";
-    return `${staff.clefShape} clef on line ${staff.clefLine}${octave}`;
-  }
-  // A percussion staff has up to 5 lines; a tablature one line (string or
-  // course) per string, 4 to 8.
-  const linesChoices = (staff: StaffModel): number[] =>
-    staff.clefShape === "perc" ? [1, 2, 3, 4, 5] : [4, 5, 6, 7, 8];
-  const KEY_SIGNATURES = ["0", "1s", "2s", "3s", "4s", "5s", "6s", "7s"]
-    .concat(["1f", "2f", "3f", "4f", "5f", "6f", "7f"])
-    .map((value) => ({ value, label: keysigText(value) }));
   const METER_NAMES = { common: "Common time", cut: "Cut time" };
   const METER_KINDS = [
     { value: "numeric", label: "Numbers", glyph: "threeFour" },
@@ -274,7 +161,7 @@
         // staff count its layout has; the clefs, key and meter follow from the
         // recognition once the task is held.
         unset =
-          JSON.stringify(d.model.scoreDef) ===
+          JSON.stringify(withoutIds(d.model.scoreDef)) ===
           JSON.stringify(DEFAULT_SCORE_DEF);
         if (d.preparation === "omr" && unset) {
           staves = Array.from(
@@ -1044,47 +931,14 @@
       groups.map((h) => (h === g ? { ...h, ...change } : h)),
       staves.length,
     );
-  function setClef(staff: StaffModel, key: string) {
-    const option = CLEF_OPTIONS.find((o) => o.value === key);
-    if (!option) return;
-    staff.clefShape = option.clefShape;
-    staff.clefDis = option.clefDis;
-    staff.clefDisPlace = option.clefDis ? "below" : "";
-    staff.notationType = option.notationType;
-    staff.clefLine = option.clefLine;
-    staff.lines = option.lines;
-    // Percussion and tablature staves do not transpose or carry a key.
-    if (unpitched(staff)) {
-      setTransposition(staff, null);
-      delete staff.keysig;
-    }
-  }
+  // The staff edits against the score's key (staff-edit.ts).
+  const setClef = (staff: StaffModel, key: string) =>
+    setStaffClef(keysig, staff, key);
+  const followedKey = (staff: StaffModel) => followedStaffKey(keysig, staff);
+  const settleKey = (staff: StaffModel) => settleStaffKey(keysig, staff);
+  const setTransposition = (staff: StaffModel, t: Transposition | null) =>
+    setStaffTransposition(keysig, staff, t);
 
-  // Transposition and key per staff. A staff's key follows the score's,
-  // moved by its transposition, unless it has its own (`keysig`); a key set
-  // equal to the one it would follow is dropped, so it keeps following.
-  const transOf = (staff: StaffModel): Transposition => ({
-    diat: staff.transDiat ?? 0,
-    semi: staff.transSemi ?? 0,
-  });
-  const transposes = (staff: StaffModel) =>
-    !!(staff.transDiat || staff.transSemi);
-  const followedKey = (staff: StaffModel) =>
-    writtenKeysig(keysig, transOf(staff));
-  function settleKey(staff: StaffModel) {
-    if (staff.keysig !== undefined && staff.keysig === followedKey(staff))
-      delete staff.keysig;
-  }
-  function setTransposition(staff: StaffModel, t: Transposition | null) {
-    if (t && (t.diat || t.semi)) {
-      staff.transDiat = t.diat;
-      staff.transSemi = t.semi;
-    } else {
-      delete staff.transDiat;
-      delete staff.transSemi;
-    }
-    settleKey(staff);
-  }
   // Staves whose transposition the volunteer chose, which a label no longer
   // fills, and those showing the pitch fields although a listed
   // transposition matches.
@@ -1469,62 +1323,27 @@
   }}
 >
   {#if session.campaign.error}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.campaign.error}
-          <button
-            type="button"
-            class="linkish"
-            onclick={() => session.campaign.retry()}>Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState
+      error={session.campaign.error}
+      onretry={() => session.campaign.retry()}
+    />
   {:else if session.campaign.notFound}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          No campaign called <code>{campaign}</code> was found.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
-    </div>
+    <PageState missingCampaign={campaign} />
   {:else if auth.status === "loading" || !session.campaign.resolved}
-    <div class="deskwrap"><p class="muted">Loading…</p></div>
+    <PageState loading="the campaign" />
   {:else if !auth.user}
-    <div class="deskwrap">
-      <div class="banner warn">
-        <span>
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Please
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          >
-          to work on this task.
-        </span>
-      </div>
-    </div>
+    <PageState loggedOut />
   {:else if session.loading}
-    <div class="deskwrap"><p class="muted">Loading the score…</p></div>
+    <PageState loading="the score" />
   {:else if session.loadError}
-    <div class="deskwrap">
-      <div class="banner err">
-        <span>
-          {session.loadError}
-          <button type="button" class="linkish" onclick={() => session.load()}
-            >Try again</button
-          >
-        </span>
-      </div>
-    </div>
+    <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data}
     <!-- The work area: the source's first measure beside the preview of
          the setup, split by a divider that moves the boundary. A piece
          without page images has the preview alone. -->
     <div class="main">
       <h1 class="vh">Score setup · {session.pieceName || campaign}</h1>
-      <TaskRunState task={taskId} bar />
+      <div class="runrow"><TaskRunState task={taskId} pill /></div>
       <div class="desk" bind:this={desk}>
         {#if firstMeasure && data.imageUrls[shownPage]}
           {@const pg = data.model.pages[shownPage]}
@@ -1810,7 +1629,7 @@
                     {#if canEdit && staves.length > 1}
                       <button
                         type="button"
-                        class="staffgrip"
+                        class="grip staffgrip"
                         class:target={picked !== null && picked !== i}
                         style:grid-row="2 / span {transValue(staff) ===
                           'other' && !unpitched(staff)
@@ -2009,7 +1828,8 @@
                     (omr && data?.hasNotation)}
                   title={omr && data?.hasNotation
                     ? "The staff count is fixed once the piece holds notation"
-                    : "Add a staff below the last one."}>Add staff</button
+                    : "Add a staff below the last one."}
+                  ><Icon name="plus" />Add staff</button
                 >
               {/if}
             </fieldset>
@@ -2106,7 +1926,7 @@
                     class="btn addbtn"
                     onclick={() => addGroup()}
                     title="Join two neighbouring staves with a brace. Its staves and symbol can be changed below."
-                    >Add group</button
+                    ><Icon name="plus" />Add group</button
                   >
                 {/if}
               {/if}
@@ -2169,7 +1989,11 @@
               </div>
               <label class="field narrow">
                 <span>From staff</span>
-                <select bind:value={g.start} title="The group's first staff.">
+                <select
+                  class="ctl"
+                  bind:value={g.start}
+                  title="The group's first staff."
+                >
                   {#each staves as _, n (n)}
                     <option
                       value={n + 1}
@@ -2180,7 +2004,11 @@
               </label>
               <label class="field narrow">
                 <span>To staff</span>
-                <select bind:value={g.end} title="The group's last staff.">
+                <select
+                  class="ctl"
+                  bind:value={g.end}
+                  title="The group's last staff."
+                >
                   {#each staves as _, n (n)}
                     <option
                       value={n + 1}
@@ -2202,6 +2030,7 @@
             <label class="field">
               <span>Label</span>
               <input
+                class="ctl"
                 type="text"
                 bind:value={g.label}
                 placeholder={canEdit ? "optional" : "—"}
@@ -2397,8 +2226,6 @@
           card={session.card}
           tools={resultNote}
           {headAction}
-          prefill={reviewPrefill}
-          measures={false}
         />
       {/if}
     {/snippet}
@@ -2455,19 +2282,19 @@
   .corrector > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 4px 0;
   }
-  .deskwrap {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    padding: 1.25rem 2rem;
-    box-sizing: border-box;
-  }
   .main {
     flex: 1;
     min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
+  }
+  /* The run state's pill above the work area; takes room only while shown. */
+  .runrow {
+    flex: none;
+  }
+  .runrow:has(:global(.runstate)) {
+    padding: 12px 16px 0;
   }
   /* The source's first measure on the left, the preview of the setup
      beside it, both at the work area's full height, the divider (.pane-grip
@@ -2709,41 +2536,6 @@
     grid-column: 1;
     justify-self: center;
     align-self: center;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 12px;
-    height: 28px;
-    padding: 0;
-    border: 0;
-    border-radius: 999px;
-    background: color-mix(in srgb, var(--line) 55%, transparent);
-    color: var(--ink-soft);
-    cursor: grab;
-    touch-action: none;
-    user-select: none;
-  }
-  .staffgrip::after {
-    content: "";
-    position: absolute;
-    inset: -6px -6px;
-  }
-  .staffgrip :global(svg) {
-    width: 12px;
-    height: 18px;
-  }
-  .staffgrip:active {
-    cursor: grabbing;
-  }
-  @media (hover: hover) {
-    .staffgrip:hover {
-      color: var(--ink);
-      background: var(--line);
-    }
-  }
-  .staffgrip.target {
-    cursor: pointer;
   }
   .staffrow.dragged {
     background: var(--accent-tint-strong);
@@ -2803,7 +2595,7 @@
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
   }
-  .ctl,
+  /* The glyph select takes the look of the shared compact control (.ctl). */
   .setup :global(.gsel) {
     font: inherit;
     font-size: 13px;
@@ -2816,11 +2608,6 @@
     color: var(--ink);
     text-overflow: ellipsis;
   }
-  /* The select's arrow brings its own space on the right. */
-  select.ctl {
-    padding: 4px 2px 4px 6px;
-  }
-  .ctl:disabled,
   .setup :global(.gsel:disabled) {
     color: var(--ink-faint);
     background: var(--bg-tint);
@@ -2986,21 +2773,7 @@
   }
   .field select,
   .field input {
-    font: inherit;
-    font-size: 13px;
     width: 100%;
-    box-sizing: border-box;
-    padding: 6px 10px;
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--ink);
-  }
-  .field select:disabled,
-  .field input:disabled {
-    color: var(--ink-faint);
-    background: var(--bg-tint);
-    cursor: not-allowed;
   }
   .rowbtns {
     flex: none;

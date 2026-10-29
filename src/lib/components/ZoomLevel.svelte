@@ -8,7 +8,7 @@
 -->
 <script module lang="ts">
   /** The zoom's range, in percent. */
-  export const ZOOM_MIN = 50;
+  export const ZOOM_MIN = 20;
   export const ZOOM_MAX = 400;
 
   /**
@@ -76,35 +76,30 @@
   const LEAST = ZOOM_MIN;
   const MOST = ZOOM_MAX;
   const STOPS = 100;
+  // One press of zoom out or in: a tenth of the slider, about a third larger
+  // or smaller.
+  const STEP = 10;
   const pos = $derived(
     Math.round((Math.log(value / LEAST) / Math.log(MOST / LEAST)) * STOPS),
   );
   const setPos = (p: number) =>
     (value = Math.round(LEAST * (MOST / LEAST) ** (p / STOPS)));
   // The buttons that stand in for the slider on touch and in narrow panes.
-  function step(factor: number) {
-    value = Math.round(Math.min(MOST, Math.max(LEAST, value * factor)));
+  function step(dir: 1 | -1) {
+    setPos(Math.min(STOPS, Math.max(0, pos + dir * STEP)));
     fit = null;
   }
 </script>
 
 <span class="zoomctl">
-  <span class="tbtn-pair zstep">
-    <button
-      type="button"
-      class="tbtn tbtn-icon"
-      aria-label="Zoom out"
-      disabled={value <= LEAST}
-      onclick={() => step(1 / 1.25)}><Icon name="zoom-out" size={16} /></button
-    >
-    <button
-      type="button"
-      class="tbtn tbtn-icon"
-      aria-label="Zoom in"
-      disabled={value >= MOST}
-      onclick={() => step(1.25)}><Icon name="zoom-in" size={16} /></button
-    >
-  </span>
+  <button
+    type="button"
+    class="tbtn tbtn-icon zstep"
+    aria-label="Zoom out"
+    title="Zoom out"
+    disabled={value <= LEAST}
+    onclick={() => step(-1)}><Icon name="zoom-out" /></button
+  >
   <input
     class="zoomslider"
     type="range"
@@ -120,34 +115,40 @@
     }}
   />
   <span class="zval">{value}%</span>
-  <span class="tbtn-pair">
+  <button
+    type="button"
+    class="tbtn tbtn-icon zstep"
+    aria-label="Zoom in"
+    title="Zoom in"
+    disabled={value >= MOST}
+    onclick={() => step(1)}><Icon name="zoom-in" /></button
+  >
+  <button
+    type="button"
+    class="tbtn tbtn-icon fit-width"
+    class:on={fit === "width"}
+    aria-pressed={fit === "width"}
+    onclick={() => (fit = "width")}
+    aria-label="Fit the page width"
+    title="Fit the page width"><FitIcon kind="width" /></button
+  >
+  {#if fitPage !== undefined}
     <button
       type="button"
-      class="tbtn tbtn-icon fit-width"
-      class:on={fit === "width"}
-      aria-pressed={fit === "width"}
-      onclick={() => (fit = "width")}
-      aria-label="Fit the page width"
-      title="Fit the page width to the pane"><FitIcon kind="width" /></button
+      class="tbtn tbtn-icon fit-page"
+      class:on={fit === "page"}
+      aria-pressed={fit === "page"}
+      onclick={() => (fit = "page")}
+      aria-label="Fit the whole page"
+      title="Fit the whole page, top to bottom"><FitIcon kind="page" /></button
     >
-    {#if fitPage !== undefined}
-      <button
-        type="button"
-        class="tbtn tbtn-icon fit-page"
-        class:on={fit === "page"}
-        aria-pressed={fit === "page"}
-        onclick={() => (fit = "page")}
-        aria-label="Fit the whole page"
-        title="Fit the whole page in the pane, top to bottom"
-        ><FitIcon kind="page" /></button
-      >
-    {/if}
-  </span>
+  {/if}
 </span>
 
 <style>
-  /* A mouse gets the slider, touch the − / + buttons. Narrower panes drop the
-     readout, and below 440px the slider gives way to the buttons. */
+  /* A mouse gets the slider, touch zoom out and in either side of the
+     readout. Narrower panes drop the readout, and below 440px the slider
+     gives way to the buttons. */
   .zoomctl {
     flex: none;
     display: flex;

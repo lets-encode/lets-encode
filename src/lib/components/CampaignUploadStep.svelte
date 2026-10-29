@@ -123,6 +123,15 @@
     ? 'Drop material here'
     : 'Add files'}, or point at a IIIF manifest. You pick which pages to keep next."
   status={railStatus}
+  onBack={previousStep}
+  backDisabled={busy}
+  onNext={continueToNextStep}
+  nextLabel={continueLabel}
+  nextIcon={busy ? null : "arrow-right"}
+  nextDisabled={!canContinue}
+  nextReason={!busy && hasUpload && !wizard.copyrightAccepted
+    ? "Confirm that you have the right to publish these materials."
+    : undefined}
 >
   <FileDropzone bind:files={wizard.files} />
 
@@ -144,36 +153,16 @@
     </span>
   </label>
 
+  <label class="ack">
+    <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
+    <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
+  </label>
+
   {#snippet pinned()}
     {#if error}
       <p class="msg-error" role="alert">{error}</p>
     {/if}
     <ProgressSteps {log} />
-  {/snippet}
-
-  <!-- The footer is this step's own: the acknowledgement gating Continue sits
-       on the buttons' row, left of them. -->
-  {#snippet footer()}
-    <label class="ack">
-      <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
-      <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
-    </label>
-    <button
-      type="button"
-      class="btn btn-secondary"
-      onclick={previousStep}
-      disabled={busy}
-    >
-      Back
-    </button>
-    <button
-      type="button"
-      class="btn btn-primary"
-      onclick={continueToNextStep}
-      disabled={!canContinue}
-    >
-      {continueLabel}
-    </button>
   {/snippet}
 </WizardCard>
 
@@ -204,9 +193,8 @@
   .ack {
     display: flex;
     align-items: flex-start;
-    align-self: center;
     gap: 9px;
-    margin-right: auto;
+    margin-top: 22px;
     font-size: 12.5px;
     font-weight: 400;
     line-height: 1.5;

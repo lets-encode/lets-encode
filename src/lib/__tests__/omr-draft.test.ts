@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { insertPageDraft } from "../omr-draft.ts";
+import { insertPageDraft, type UnprintedStaff } from "../omr-draft.ts";
 import {
   buildFacsimileMei,
   DEFAULT_SCORE_DEF,
@@ -312,5 +312,87 @@ test("a staff the system does not print keeps the clef change verovio placed on 
   assert.match(
     result.mei,
     /<staff n="2"><layer n="1"><mRest\/><clef shape="C" line="3"\/><\/layer><\/staff>/,
+  );
+});
+
+test("an unprinted staff rests in the layers given, or holds an mSpace", () => {
+  // System 2 prints staff 3 only: staff 1 holds an mSpace, staff 2 rests in layers 2 and 3.
+  const printed = [new Set([1, 2, 3]), new Set([3])];
+  const unprinted = [
+    new Map(),
+    new Map<number, UnprintedStaff>([
+      [1, "space"],
+      [2, [2, 3]],
+    ]),
+  ];
+  const result = insertPageDraft(
+    skeleton([1, 1], 3),
+    "surface-1",
+    converted(2, 3),
+    [1, 1],
+    printed,
+    undefined,
+    unprinted,
+  );
+  const second = /<measure[^>]* n="2"[^>]*>([\s\S]*?)<\/measure>/.exec(
+    result.mei,
+  )![1];
+  assert.match(
+    second,
+    /<staff n="1"><layer n="1"><mSpace\/><\/layer><\/staff>/,
+  );
+  assert.match(
+    second,
+    /<staff n="2"><layer n="2"><mRest\/><\/layer><layer n="3"><mRest\/><\/layer><\/staff>/,
+  );
+  assert.match(second, /<staff n="3"><layer n="1"><note xml:id="n2-3"/);
+});
+
+test("a printed staff's layers are numbered by its parts, and a system opens with its own scoreDef", () => {
+  // System 1 prints staves 1 (part I) and 2 (part II); system 2 staff 1
+  // with both parts, staff 2 not printed.
+  const printed = [new Set([1, 2]), new Set([1])];
+  const layerParts = [
+    new Map([
+      [1, [0]],
+      [2, [1]],
+    ]),
+    new Map([[1, [0, 1]]]),
+  ];
+  const change =
+    '<scoreDef><staffGrp><staffDef n="2" visible="false"/></staffGrp></scoreDef>';
+  const twoLayers = converted(2).replace(
+    /(<staff n="1"><layer n="1">[\s\S]*?<\/layer>)/g,
+    '$1<layer n="2"><note pname="e" oct="4" dur="4"/></layer>',
+  );
+  const result = insertPageDraft(
+    skeleton([1, 1]),
+    "surface-1",
+    twoLayers,
+    [1, 1],
+    printed,
+    undefined,
+    [new Map(), new Map<number, UnprintedStaff>([[2, "space"]])],
+    layerParts,
+    ["", change],
+  );
+  const first = /<measure[^>]* n="1"[^>]*>([\s\S]*?)<\/measure>/.exec(
+    result.mei,
+  )![1];
+  // Part II is layer 2 on its own staff too.
+  assert.match(first, /<staff n="2"><layer n="2"><note xml:id="n1-2"/);
+  assert.match(first, /<staff n="1"><layer n="1">/);
+  // The second system's scoreDef opens it, after its system break.
+  assert.match(
+    result.mei,
+    /<sb\b[^>]*\/>\s*<scoreDef><staffGrp><staffDef n="2" visible="false"\/><\/staffGrp><\/scoreDef><measure[^>]* n="2"/,
+  );
+  const second = /<measure[^>]* n="2"[^>]*>([\s\S]*?)<\/measure>/.exec(
+    result.mei,
+  )![1];
+  assert.match(second, /<staff n="1"><layer n="1">[\s\S]*<layer n="2">/);
+  assert.match(
+    second,
+    /<staff n="2"><layer n="1"><mSpace\/><\/layer><\/staff>/,
   );
 });

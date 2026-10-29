@@ -418,7 +418,7 @@ export interface PlannedTask {
  * fall out of step.
  */
 export function planTasks(
-  config: CampaignConfig,
+  config: Pick<CampaignConfig, "pieces">,
   surfaces?: PieceSurfaces,
 ): PlannedTask[] {
   const planned: PlannedTask[] = [];
@@ -506,7 +506,7 @@ export function planTasks(
  * score by page (mei-page-splice.ts).
  */
 export function buildTaskCsv(
-  config: CampaignConfig,
+  config: Pick<CampaignConfig, "pieces">,
   surfaces?: PieceSurfaces,
 ): string {
   const lines = [csvRow(TASK_COLUMNS)];
@@ -526,7 +526,7 @@ export function buildTaskCsv(
  * rows mirror buildTaskCsv one-for-one.
  */
 export function buildStateCsv(
-  config: CampaignConfig,
+  config: Pick<CampaignConfig, "pieces" | "validation">,
   surfaces?: PieceSurfaces,
 ): string {
   const count = config.validation?.required_validations ?? 0;

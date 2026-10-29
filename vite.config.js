@@ -15,10 +15,13 @@ const branchModes = {
   testing: "testing",
 };
 
-function modeForBranch() {
-  const branch = execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
+const checkedOutBranch = () =>
+  execFileSync("git", ["rev-parse", "--abbrev-ref", "HEAD"], {
     encoding: "utf8",
   }).trim();
+
+function modeForBranch() {
+  const branch = checkedOutBranch();
   if (branch === "HEAD") {
     throw new Error(
       "detached HEAD: pass --mode production|staging|testing to vite build",
@@ -98,6 +101,13 @@ export default defineConfig(({ command, mode }) => {
     mode = process.env.INSTIGATION_BUILD_MODE ??= cliMode
       ? mode
       : modeForBranch();
+  } else {
+    // The dev server points the campaigns it creates at the branch checked
+    // out when it starts (automation.ref); the environment wins over the
+    // .env files. scripts/use-branch.ts points a campaign's caller.yml at it
+    // as well.
+    const branch = checkedOutBranch();
+    if (branch !== "HEAD") process.env.PUBLIC_AUTOMATION_REF = branch;
   }
   return {
     mode,

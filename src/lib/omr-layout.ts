@@ -51,30 +51,56 @@ export function layoutRecord(
   return { model, corrected: false, note: LAYOUT_RECORD_NOTE, pages };
 }
 
-/**
- * An instrument named in the layout task of an 'omr-instruments' piece, with
- * its score staves top to bottom: one, two for a grand staff, more with
- * divisi staves.
- */
-export interface LayoutInstrument {
-  /**
-   * Opaque id, written as the xml:id of the instrument's staffGrp, or of its
-   * staffDef when it has one staff.
-   */
-  id: string;
+/** One player of an instrument with several (Flauto I, Posaune 2). */
+export interface LayoutPart {
+  /** As printed: "I", "2", "Vc."; the full name for a part that is an instrument ("Kontrabass"). */
   name: string;
-  /** Each staff's staffDef xml:id and its own label ('' for none, "div. 1" for a divisi staff). */
-  staves: { id: string; label: string }[];
+  /** Short name of a part that is an instrument ("Kb."), printed from the second system on; absent or '' for none. */
+  abbr?: string;
 }
 
-/** A bracket or brace over consecutive instruments, in score order. */
+/**
+ * An instrument named in the layout task of an 'omr-instruments' piece, with
+ * its score staves in score order. An instrument of several players has
+ * parts, and each of its staves carries some of them (a bracket: Flauto I and
+ * II on two staves, or on one). A grand-staff instrument (a brace: piano,
+ * harp) has staves that always appear together and no parts.
+ */
+export interface LayoutInstrument {
+  /** Opaque id, written as the xml:id of the instrument's staffGrp. */
+  id: string;
+  /** Full name, printed at the first system (<label>). */
+  name: string;
+  /** Short name, printed at every later system (<labelAbbr>); '' for none. */
+  abbr: string;
+  grand: boolean;
+  parts: LayoutPart[];
+  /**
+   * Each part is an instrument of its own (Violoncello and Kontrabass, which
+   * share a staff in some systems): a staff of one part is named after the
+   * part, and each part has its own <instrDef> and transposition.
+   */
+  partsAreInstruments?: boolean;
+  /**
+   * Each score staff's staffDef xml:id and the indices of the parts it
+   * carries, in `parts` order; [] for an instrument without parts.
+   */
+  staves: { id: string; parts: number[] }[];
+  /**
+   * The page (1-based) on which the instrument was added after the first
+   * system's instruments were confirmed; absent for those.
+   */
+  added?: number;
+}
+
+/** A group of instruments shown together (woodwinds, strings), in score order. */
 export interface LayoutGroup {
   /** Written as the group's staffGrp xml:id. */
   id: string;
   /** Ids of the first and last instrument the group spans. */
   first: string;
   last: string;
-  /** MEI staffGrp @symbol: 'brace' or 'bracket'. */
+  /** The printed symbol, MEI staffGrp @symbol: 'bracket' or 'brace'. */
   symbol: string;
   label: string;
   barThru: boolean;
@@ -84,6 +110,8 @@ export interface LayoutGroup {
 export interface LayoutInstruments {
   instruments: LayoutInstrument[];
   groups: LayoutGroup[];
+  /** The first system's instruments are confirmed: the other systems choose from them. */
+  fixed: boolean;
 }
 
 /**
@@ -98,6 +126,8 @@ export interface CorrectedLayout {
   note: string;
   instruments?: LayoutInstrument[];
   groups?: LayoutGroup[];
+  /** LayoutInstruments.fixed. */
+  instrumentsFixed?: boolean;
   /** One entry per page in surface order, `image` as the score's graphic target. */
   pages: {
     image: string;
@@ -136,7 +166,13 @@ export function correctedLayoutJson(
 ): string {
   const layout: CorrectedLayout = {
     note: CORRECTED_LAYOUT_NOTE,
-    ...(named ? { instruments: named.instruments, groups: named.groups } : {}),
+    ...(named
+      ? {
+          instruments: named.instruments,
+          groups: named.groups,
+          instrumentsFixed: named.fixed,
+        }
+      : {}),
     pages: pages.map((pg) => ({
       image: pg.image,
       measures: pg.zones.map((zone) => roundedBox(zone.box)),
@@ -147,11 +183,24 @@ export function correctedLayoutJson(
   return JSON.stringify(layout, null, "\t") + "\n";
 }
 
-/** The named instruments of a corrected layout; null when it names none. */
+/**
+ * The named instruments of a corrected layout; null when it names none. A
+ * field the file lacks takes its empty value.
+ */
 export function layoutInstruments(json: string): LayoutInstruments | null {
   const layout = JSON.parse(json) as CorrectedLayout;
   if (!layout.instruments) return null;
-  return { instruments: layout.instruments, groups: layout.groups ?? [] };
+  return {
+    instruments: layout.instruments.map((i) => ({
+      ...i,
+      abbr: i.abbr ?? "",
+      grand: i.grand ?? false,
+      parts: i.parts ?? [],
+      staves: i.staves.map((s) => ({ id: s.id, parts: s.parts ?? [] })),
+    })),
+    groups: layout.groups ?? [],
+    fixed: layout.instrumentsFixed ?? false,
+  };
 }
 
 /**

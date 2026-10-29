@@ -42,7 +42,7 @@
         >
           <span class="mark" aria-hidden="true">
             {#if step.failed}
-              <Icon name="close" size={12} />
+              <Icon name="warning" size={12} />
             {:else if step.endedAt === undefined}
               <span class="spinner"></span>
             {:else}
@@ -108,26 +108,6 @@
     color: var(--ink-faint);
   }
   /* The open step's marker: a small spinning ring. */
-  .spinner {
-    display: inline-block;
-    box-sizing: border-box;
-    width: 11px;
-    height: 11px;
-    border: 2px solid var(--line-strong);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation: none;
-    }
-  }
   li.failed {
     color: var(--danger);
   }

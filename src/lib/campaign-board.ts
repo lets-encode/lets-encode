@@ -18,7 +18,11 @@ import type {
   StatusKey,
 } from "./campaign-graph.ts";
 import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
-import { keptWorkSince } from "./coordinator-policy.ts";
+import {
+  checksOpening,
+  keptWorkSince,
+  rejectedSubmission,
+} from "./coordinator-policy.ts";
 import { usesOmr } from "./campaign-init.ts";
 import type {
   CommentRow,
@@ -186,6 +190,9 @@ export interface BoardCard {
   pre: boolean;
   /** A page task of an OMR-prepared piece: it starts from the OMR draft. */
   omr: boolean;
+  /** The task checks the piece's opening score definition in the app's
+      check view before its draft (checksOpening). */
+  checksOpening: boolean;
   /** The task's locator, for routing a pre-task to its own editor. */
   locator: string;
   statusKey: StatusKey;
@@ -201,6 +208,10 @@ export interface BoardCard {
   keptFrom: string;
   /** Encoding column: who holds the claim, and when it expires ("expires in 2 d"). */
   worker: { login: string; expires: string; mine: boolean } | null;
+  /** The viewer's latest submission under a claim they hold on the task,
+      when it was rejected (rejectedSubmission): its pull request number and
+      reason code; null otherwise. */
+  rejected: { pr: string; reason: string } | null;
   /** Validation column: pass progress. */
   passes: number;
   threshold: number;
@@ -305,6 +316,18 @@ export function reviewWaitLabel(
     .join(" · ");
 }
 
+/** The stage whose colour a card's surfaces take (data-stage, ui.css). */
+export const stageOf = (
+  card: BoardCard,
+): "review" | "done" | "pre" | "encode" =>
+  card.column === "validation"
+    ? "review"
+    : card.column === "done"
+      ? "done"
+      : card.pre
+        ? "pre"
+        : "encode";
+
 /**
  * The one-line status pill of a card: the current stage (the task's heading
  * names its kind), the worker on a claimed task, and numeric pass progress
@@ -321,12 +344,12 @@ export function cardPill(card: BoardCard, viewer = ""): string {
     case "encoding": {
       const w = card.worker;
       const who = w ? (w.mine ? "you" : w.login) : "";
-      return `in progress${who ? ` · ${who}` : ""}${w?.expires ? ` · ${w.expires}` : ""}`;
+      return `encoding${who ? ` · ${who}` : ""}${w?.expires ? ` · ${w.expires}` : ""}`;
     }
     case "validation": {
       const held = card.slots.filter((s) => s.key === "review");
       const reviewing = viewer !== "" && held.some((s) => s.user === viewer);
-      return `in review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : held.length ? " · being reviewed" : ""}`;
+      return `review · ${card.passes} of ${card.threshold}${reviewing ? " · reviewing" : held.length ? " · being reviewed" : ""}`;
     }
     case "done":
       return card.threshold > 0
@@ -366,6 +389,12 @@ export function buildBoard(
     const dep = blockedBy(d, n.task);
     const depDef = dep ? findRow(d.taskDefs, dep, "") : undefined;
     const counts = taskCounts(comments, n.task);
+    const rejected = d.locks
+      .filter(
+        (l) => viewer !== "" && l.task_id === n.task && l.user_id === viewer,
+      )
+      .map((l) => rejectedSubmission(history, l))
+      .find((h) => h !== null);
     const omr = usesOmr(preparations[def.fragment]);
     columnByKey.get(column)!.cards.push({
       task: n.task,
@@ -376,6 +405,7 @@ export function buildBoard(
       piece: fragmentPieceName(def.fragment, names),
       pre: n.kind === "pre",
       omr: omr && n.kind !== "pre",
+      checksOpening: checksOpening(def, d.taskDefs, preparations[def.fragment]),
       locator: def.locator,
       statusKey: n.statusKey,
       waitsFor: depDef ? taskName(depDef.locator) : dep,
@@ -394,6 +424,9 @@ export function buildBoard(
               mine: viewer !== "" && lock.user_id === viewer,
             }
           : null,
+      rejected: rejected
+        ? { pr: rejected.pr ?? "", reason: rejected.detail }
+        : null,
       passes: n.passes,
       threshold: n.threshold,
       counts,

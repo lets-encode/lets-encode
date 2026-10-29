@@ -14,6 +14,7 @@
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
 import type { FileChange, ForgeClient } from "./forge/types.ts";
+import { RateLimitError } from "./forge/github-rest.ts";
 import {
   parseTaskCsv,
   parseStateCsv,
@@ -71,6 +72,7 @@ import type {
   ScoreDefModel,
 } from "./mei-facsimile.ts";
 import {
+  checksOpening,
   keptWorkBranch,
   pieceFieldForPath,
   pieceKindForPath,
@@ -91,11 +93,16 @@ import type { OmrModels } from "./omr-page-draft.ts";
 import {
   correctedLayoutJson,
   correctedLayoutPath,
+  layoutInstruments,
   layoutRecordPath,
   withCorrectedLayout,
 } from "./omr-layout.ts";
-import type { LayoutRecord } from "./omr-layout.ts";
-import { omrRecordPath } from "./omr-record.ts";
+import type { LayoutInstruments, LayoutRecord } from "./omr-layout.ts";
+import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
+import {
+  instrumentScoreDef,
+  openingTranscriptions,
+} from "./instrument-naming.ts";
 
 const MAX_LOG_ATTEMPTS = 3;
 
@@ -268,7 +275,7 @@ type PrProcessingResult =
 // (the job-level guard in campaign.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
-  "a submission must change at most three files, must not be a draft, and must come from a user account";
+  "a submission must change at most four files, must not be a draft, and must come from a user account";
 
 // Wait until the campaign automation has processed a PR (it closes the PR
 // when done) and return its verdict comment. A timeout means the run is still
@@ -586,6 +593,8 @@ function openAndFinishInBackground(
     headSha?: string;
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
+    /** The task whose branch `encode-<task>` is deleted once the submission is accepted. */
+    taskBranch?: string;
   }>,
 ): Result {
   const id = verdictSink.begin({
@@ -636,6 +645,7 @@ async function settleWhenProcessed(
     headSha?: string;
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
+    taskBranch?: string;
   },
 ): Promise<void> {
   let res: Result;
@@ -662,6 +672,10 @@ async function settleWhenProcessed(
   }
   const state = res.error ? "rejected" : res.warn ? "timeout" : "accepted";
   console.log("[pending-verdict]", label, "PR", pr.number, state);
+  // A pre-task's work is saved on its task branch while the claim lasts; the
+  // accepted submission ends the claim, and no later claim deletes it.
+  if (state === "accepted" && pr.taskBranch)
+    await deleteTaskBranch(ctx, pr.taskBranch);
   verdictSink.settle(
     id,
     state,
@@ -800,6 +814,80 @@ export interface CampaignTables {
    * this map is how the UI shows a username. Missing entries fall back to the id.
    */
   logins: Record<string, string>;
+  /** The default branch head the tables were read at; null when unknown. */
+  headSha: string | null;
+}
+
+/** The tracking tables and config, as readTableFiles reads them. */
+const TABLE_PATHS = [
+  TASK_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  HISTORY_PATH,
+  COMMENT_PATH,
+  CONFIG_PATH,
+];
+
+interface TableFiles {
+  headSha: string | null;
+  isPrivate: boolean;
+  canPush: boolean;
+  /** TABLE_PATHS → text; null where the file does not exist. */
+  files: Record<string, string | null>;
+}
+
+// Table reads in flight, by forge client and repo. Commands that read the
+// tables at the same time through the same client share one read.
+const tableReadsInFlight = new WeakMap<
+  ForgeClient,
+  Map<string, Promise<TableFiles>>
+>();
+
+/**
+ * The campaign's tables and config with the repo's access, in one batch read
+ * where the forge client can, else one read per file.
+ */
+function readTableFiles(ctx: CommandContext): Promise<TableFiles> {
+  let reads = tableReadsInFlight.get(ctx.forge);
+  if (!reads) tableReadsInFlight.set(ctx.forge, (reads = new Map()));
+  const key = `${ctx.owner}/${ctx.repo}`;
+  const pending = reads.get(key);
+  if (pending) return pending;
+  const read = fetchTableFiles(ctx).finally(() => reads.delete(key));
+  reads.set(key, read);
+  return read;
+}
+
+async function fetchTableFiles({
+  forge: f,
+  owner,
+  repo,
+}: CommandContext): Promise<TableFiles> {
+  try {
+    const [read] =
+      (await f.getRepoFilesBatch([{ owner, repo }], TABLE_PATHS)) ?? [];
+    if (read) return { ...read, headSha: read.headSha || null };
+  } catch (err) {
+    // The per-file reads pass through the broker too.
+    if (err instanceof RateLimitError && err.source === "broker") throw err;
+  }
+  // The head is read before the files: a commit that lands during the read
+  // moves the branch past `headSha`, and the next read sees it.
+  let headSha: string | null;
+  try {
+    headSha = (await f.getRepoHead(owner, repo)).sha;
+  } catch {
+    headSha = null;
+  }
+  const [access, ...contents] = await Promise.all([
+    f.getRepoAccess(owner, repo),
+    ...TABLE_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+  ]);
+  return {
+    headSha,
+    ...access,
+    files: Object.fromEntries(TABLE_PATHS.map((p, i) => [p, contents[i]])),
+  };
 }
 
 const readTables: CommandDef<Record<string, never>, CampaignTables> = {
@@ -807,24 +895,10 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
   version: 1,
   log: "none",
   async run(_input, ctx) {
-    const { forge: f, owner, repo } = ctx;
-    const [
-      taskCsv,
-      stateCsv,
-      lockCsv,
-      historyCsv,
-      commentCsv,
-      configYaml,
-      access,
-    ] = await Promise.all([
-      f.getRepoFile(owner, repo, TASK_PATH),
-      f.getRepoFile(owner, repo, STATE_PATH),
-      f.getRepoFile(owner, repo, LOCK_PATH),
-      f.getRepoFile(owner, repo, HISTORY_PATH),
-      f.getRepoFile(owner, repo, COMMENT_PATH),
-      f.getRepoFile(owner, repo, CONFIG_PATH),
-      f.getRepoAccess(owner, repo),
-    ]);
+    const { forge: f } = ctx;
+    const { headSha, files, ...access } = await readTableFiles(ctx);
+    const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
+      TABLE_PATHS.map((path) => files[path]);
     if (taskCsv == null || stateCsv == null || lockCsv == null) {
       return {
         notInitialised: true,
@@ -843,6 +917,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
         passThreshold: 1,
         allowSelfValidation: false,
         logins: {},
+        headSha,
       };
     }
     const state = parseStateCsv(stateCsv);
@@ -875,6 +950,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
         history,
         comments,
       }),
+      headSha,
     };
   },
 };
@@ -958,16 +1034,24 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
 // for editing first claims the task (unless the user already holds the lock).
 // The caller decides when to navigate — never on a rejected or still-pending
 // claim. `campaign` and `base` tell mei-friend where to return the volunteer:
-// <base>/<campaign>?task=<task_id>&mf_status=….
+// <base>/<campaign>?task=<task_id>&mf_status=…. A task that checks its
+// piece's opening score definition (checksOpening) is claimed in the app's
+// check view, which passes the checked definition as `scoreDef`: the draft is
+// made with it.
 const openEditor: CommandDef<
-  { task_id: string; campaign: string; base: string },
+  {
+    task_id: string;
+    campaign: string;
+    base: string;
+    scoreDef?: ScoreDefModel;
+  },
   Result
 > = {
   id: "campaign.openEditor",
   version: 1,
   log: "pr",
   envelopeInput: ({ task_id }) => ({ task_id }),
-  async run({ task_id, campaign, base }, ctx, envelope) {
+  async run({ task_id, campaign, base, scoreDef }, ctx, envelope) {
     const { forge: f, owner, repo, viewer, meiFriendUrl } = ctx;
     if (!meiFriendUrl)
       return {
@@ -981,7 +1065,8 @@ const openEditor: CommandDef<
         f.getRepoFile(owner, repo, CONFIG_PATH),
         f.getRepoFile(owner, repo, LOCK_PATH),
       ]);
-      const taskDef = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+      const taskDefs = parseTaskCsv(taskCsv ?? "");
+      const taskDef = findRow(taskDefs, task_id, "");
       const fragment = taskDef?.fragment;
       const task = findRow(parseStateCsv(stateCsv ?? "").rows, task_id, "");
       if (!taskDef || !fragment || !task)
@@ -996,6 +1081,17 @@ const openEditor: CommandDef<
           l.user_id === viewer,
       );
       const claiming = task.status === "encoding_required" && !mine;
+      if (
+        claiming &&
+        checksOpening(
+          taskDef,
+          taskDefs,
+          pieceFieldForPath(configYaml, fragment, "preparation"),
+        )
+      )
+        return {
+          error: `${task_id} starts with a check of the score definition: open the task and claim it there.`,
+        };
       if (claiming) {
         // Someone else's active claim would reject this one; stop before the
         // task branch, which may hold their work, is touched.
@@ -1153,6 +1249,7 @@ const openEditor: CommandDef<
             branch: ref,
             fragment,
             page: pageNo,
+            scoreDef,
             models: ctx.omr,
             progress: (detail) => ctx.progress({ detail }),
           });
@@ -1865,6 +1962,8 @@ export interface FacsimileTaskData {
   workSource: FileSource | null;
   /** The incomplete task this one waits for (task.csv depends_on); '' when none. */
   blockedBy: string;
+  /** The instruments a layout task named (layout-corrected.json); null when none. */
+  instruments: LayoutInstruments | null;
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -1873,12 +1972,13 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
   log: "none",
   async run({ task_id }, ctx) {
     const { forge: f, owner, repo, viewer } = ctx;
-    const [taskCsv, stateCsv, lockCsv, configYaml] = await Promise.all([
-      f.getRepoFile(owner, repo, TASK_PATH),
-      f.getRepoFile(owner, repo, STATE_PATH),
-      f.getRepoFile(owner, repo, LOCK_PATH),
-      f.getRepoFile(owner, repo, CONFIG_PATH),
-    ]);
+    const { files } = await readTableFiles(ctx);
+    const [taskCsv, stateCsv, lockCsv, configYaml] = [
+      TASK_PATH,
+      STATE_PATH,
+      LOCK_PATH,
+      CONFIG_PATH,
+    ].map((path) => files[path]);
     const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
     if (!task) throw new Error(`Unknown task ${task_id}.`);
     const preparation =
@@ -1914,6 +2014,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     const model = parseFacsimileMei(mei);
     if (usesOmr(preparation))
       model.pages = withCorrectedLayout(model.pages, corrected);
+    const instruments = corrected ? layoutInstruments(corrected) : null;
     const imageUrls = await resolveFacsimileImageUrls(
       f,
       owner,
@@ -1946,6 +2047,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       encodingLockExpires: encodingLock?.expires ?? "",
       workSource: source,
       blockedBy,
+      instruments,
     };
   },
 };
@@ -1972,36 +2074,51 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // carried over verbatim, its score definition through the parse.
 //
 // The submission advances the score to stage C (generated measures, breaks and
-// movements), so a first submission always differs from the file in the repo
-// — even when the volunteer changed nothing, since the new stage adds elements
-// the previous one lacked. A submission that changes no file is not opened: an
-// empty PR never runs the automation.
+// movements). A submission that changes no file is opened as well: it
+// confirms the boxes as they are, and the coordinator reads the score from
+// the pull request's head whether or not it changed.
 //
 // A layout submission (an OMR-prepared piece) writes its measure zones with a
 // margin and leaves the measures empty: the notation comes from transcription
 // later. Its tight measure, staff and grand-staff boxes go to
-// `layout-corrected.json`, and the score is left out of the pull request when
-// only those boxes changed.
+// `layout-corrected.json`.
 // The score a measure or layout correction's pages amount to, built on the
-// campaign's current score (`current`), and for a layout correction its
-// corrected boxes.
+// campaign's current score, and for a layout correction its corrected boxes.
+// A layout correction that names the instruments also gives the score its
+// staves (instrumentScoreDef), with the clefs, key and meter proposed from its
+// recognition record `omr` where it has one.
 async function facsimileScore(
   ctx: CommandContext,
   task: TaskRow,
   pages: PageModel[],
   layout: boolean,
-): Promise<{ current: string; content: string; corrected: string | null }> {
+  instruments?: LayoutInstruments,
+  omr?: string | null,
+): Promise<{ content: string; corrected: string | null }> {
   const { forge: f, owner, repo } = ctx;
   const current = await f.getRepoFile(owner, repo, task.fragment);
   if (current == null) throw new Error(`Could not read ${task.fragment}.`);
   const parsed = parseFacsimileMei(current);
+  const record = instruments && omr ? parseOmrRecord(omr) : null;
   return {
-    current,
     content: buildFacsimileMei(
-      { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
+      {
+        headXml: parsed.headXml,
+        scoreDef: instruments
+          ? instrumentScoreDef(
+              instruments,
+              parsed.scoreDef,
+              pages,
+              record
+                ? openingTranscriptions(instruments, pages, record)
+                : undefined,
+            )
+          : parsed.scoreDef,
+        pages,
+      },
       { withBreaks: true, emptyMeasures: layout, padZones: layout },
     ),
-    corrected: layout ? correctedLayoutJson(pages) : null,
+    corrected: layout ? correctedLayoutJson(pages, instruments) : null,
   };
 }
 
@@ -2029,6 +2146,8 @@ async function submitFacsimile(
   envelope: CommandEnvelope | null,
   layout = false,
   rawLayout?: LayoutRecord,
+  instruments?: LayoutInstruments,
+  omr?: string,
 ): Promise<Result> {
   const { forge: f, owner, repo } = ctx;
   try {
@@ -2037,11 +2156,23 @@ async function submitFacsimile(
     const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
     if (!task) return { error: `Unknown task ${task_id}.` };
     const fragment = task.fragment;
-    const { current, content, corrected } = await facsimileScore(
+    // A recognition record from an earlier session of the claim was saved
+    // with the work; the campaign's own record still proposes the score
+    // definition when neither is given.
+    const recordPath = omrRecordPath(fragment);
+    const campaignRecord = instruments
+      ? await f.getRepoFile(owner, repo, recordPath)
+      : null;
+    const record =
+      omr ?? (instruments ? await savedSideFile(ctx, task, recordPath) : null);
+    const recordChanged = record != null && record !== campaignRecord;
+    const { content, corrected } = await facsimileScore(
       ctx,
       task,
       pages,
       layout,
+      instruments,
+      record ?? campaignRecord,
     );
     // The layout model's raw output from an earlier session of the claim
     // was saved with the work.
@@ -2054,15 +2185,6 @@ async function submitFacsimile(
       corrected !== null &&
       corrected !==
         (await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)));
-    // A no-op would open an empty PR the path-filtered caller never runs;
-    // guard against that rather than leaving the console polling forever.
-    if (content === current && !correctedChanged) {
-      return {
-        ok: true,
-        warn: true,
-        message: "Nothing to submit — the score already matches this step.",
-      };
-    }
     const meiError = await checkMei(content);
     if (meiError)
       return {
@@ -2073,17 +2195,20 @@ async function submitFacsimile(
       : `Correct measure zones (${task_id})`;
     const body = `${title}. Opened from the zone editor.`;
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
-    // The corrected boxes and the layout model's raw output go next to the
-    // score, one file each per piece: the campaign workflow runs a pull
-    // request of at most three files.
-    const files: FileChange[] =
-      content === current ? [] : [{ path: fragment, content }];
+    // The corrected boxes, the layout model's raw output and the recognition
+    // record go next to the score, one file each per piece: the campaign
+    // workflow runs a pull request of at most four files. The score is
+    // committed when unchanged too, which gives the pull request a commit
+    // when nothing differs from the campaign's (boxes confirmed as they
+    // are).
+    const files: FileChange[] = [{ path: fragment, content }];
     if (correctedChanged) {
       files.push({ path: correctedLayoutPath(fragment), content: corrected! });
     }
     if (rawLayoutJson) {
       files.push({ path: layoutRecordPath(fragment), content: rawLayoutJson });
     }
+    if (recordChanged) files.push({ path: recordPath, content: record! });
     return openAndFinishInBackground(
       ctx,
       label,
@@ -2098,7 +2223,7 @@ async function submitFacsimile(
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         });
         console.log("[zones] PR opened", pr.number, pr.html_url);
-        return { ...pr, cleanup: "accepted" };
+        return { ...pr, cleanup: "accepted", taskBranch: task_id };
       },
     );
   } catch (e) {
@@ -2135,9 +2260,17 @@ const submitZones: CommandDef<{ task_id: string; pages: PageModel[] }, Result> =
 // `layout-corrected.json` alongside. The validation subtask reviews the
 // boxes. `layout` is the model's raw output for every page, present when
 // detection ran in the editor session; it is committed as `layout.json` next
-// to the score.
+// to the score. `instruments` are the instruments the layout task named, for
+// a piece prepared as 'omr-instruments'; `omr` is that piece's recognition
+// record, committed as `omr.xml` next to the score for the page drafts.
 const submitOmrLayout: CommandDef<
-  { task_id: string; pages: PageModel[]; layout?: LayoutRecord },
+  {
+    task_id: string;
+    pages: PageModel[];
+    layout?: LayoutRecord;
+    instruments?: LayoutInstruments;
+    omr?: string;
+  },
   Result
 > = {
   id: "campaign.submitOmrLayout",
@@ -2153,17 +2286,26 @@ const submitOmrLayout: CommandDef<
     movements:
       1 + pages.reduce((n, p) => n + p.zones.filter((z) => z.mdiv).length, 0),
   }),
-  run: ({ task_id, pages, layout }, ctx, envelope) =>
-    submitFacsimile(ctx, task_id, pages, envelope, true, layout),
+  run: ({ task_id, pages, layout, instruments, omr }, ctx, envelope) =>
+    submitFacsimile(
+      ctx,
+      task_id,
+      pages,
+      envelope,
+      true,
+      layout,
+      instruments,
+      omr,
+    ),
 };
 
 // The score a score setup's definition amounts to, built on the campaign's
-// current score (`current`) as described at submitScoreSetup.
+// current score as described at submitScoreSetup.
 async function setupScore(
   ctx: CommandContext,
   task: TaskRow,
   scoreDef: ScoreDefModel,
-): Promise<{ current: string; content: string }> {
+): Promise<{ content: string }> {
   const { forge: f, owner, repo } = ctx;
   const fragment = task.fragment;
   const [current, configYaml] = await Promise.all([
@@ -2202,7 +2344,7 @@ async function setupScore(
               { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
               { withBreaks: parsed.hasBreaks },
             );
-  return { current, content };
+  return { content };
 }
 
 // Score setup: submit the piece's initial score definition — staves with their
@@ -2239,7 +2381,7 @@ const submitScoreSetup: CommandDef<
       const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
       if (!task) return { error: `Unknown task ${task_id}.` };
       const fragment = task.fragment;
-      const { current, content } = await setupScore(ctx, task, scoreDef);
+      const { content } = await setupScore(ctx, task, scoreDef);
       const recordPath = omrRecordPath(fragment);
       // A recognition record from an earlier session of the claim was saved
       // with the work.
@@ -2247,15 +2389,6 @@ const submitScoreSetup: CommandDef<
       const recordChanged =
         record != null &&
         record !== (await f.getRepoFile(owner, repo, recordPath));
-      // A no-op would open an empty PR the path-filtered caller never runs;
-      // guard against that rather than leaving the console polling forever.
-      if (content === current && !recordChanged) {
-        return {
-          ok: true,
-          warn: true,
-          message: "Nothing to submit — the score already matches this setup.",
-        };
-      }
       const meiError = await checkMei(content);
       if (meiError)
         return {
@@ -2271,8 +2404,11 @@ const submitScoreSetup: CommandDef<
           console.log("[setup] opening PR", { task_id });
           const pr = await f.openChangePr(owner, repo, {
             branch: `setup-${task_id}-${rand()}`,
+            // The score is committed when unchanged too, which gives the
+            // pull request a commit when the definition is confirmed as it
+            // is.
             files: [
-              ...(content === current ? [] : [{ path: fragment, content }]),
+              { path: fragment, content },
               ...(recordChanged
                 ? [{ path: recordPath, content: record! }]
                 : []),
@@ -2282,7 +2418,7 @@ const submitScoreSetup: CommandDef<
             body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
           });
           console.log("[setup] PR opened", pr.number, pr.html_url);
-          return { ...pr, cleanup: "accepted" };
+          return { ...pr, cleanup: "accepted", taskBranch: task_id };
         },
       );
     } catch (e) {
@@ -2300,9 +2436,11 @@ export type DraftInput = {
   layout?: boolean;
   /** The layout model's raw output, when detection ran in this session. */
   rawLayout?: LayoutRecord;
+  /** The instruments a layout correction named. */
+  instruments?: LayoutInstruments;
   /** A score setup's definition. */
   scoreDef?: ScoreDefModel;
-  /** A score setup's recognition record, when recognition ran in this session. */
+  /** A score setup's or a naming layout correction's recognition record, when recognition ran in this session. */
   omr?: string;
 };
 
@@ -2339,6 +2477,8 @@ const saveDraft: CommandDef<DraftInput, Result> = {
           task,
           input.pages,
           Boolean(input.layout),
+          input.instruments,
+          input.omr,
         );
         files.push({ path: task.fragment, content });
         if (corrected)
@@ -2350,6 +2490,11 @@ const saveDraft: CommandDef<DraftInput, Result> = {
           files.push({
             path: layoutRecordPath(task.fragment),
             content: JSON.stringify(input.rawLayout, null, "\t") + "\n",
+          });
+        if (input.omr)
+          files.push({
+            path: omrRecordPath(task.fragment),
+            content: input.omr,
           });
       } else return { error: "Nothing to save." };
       const workRepo = await workRepoOf(ctx);

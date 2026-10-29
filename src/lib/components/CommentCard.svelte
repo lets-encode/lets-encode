@@ -213,8 +213,7 @@
   /* The anchor and the actions are 24px tall to tap, 32px on a touch
      screen; the row's negative margin keeps the extra height out of the
      card. */
-  .anchor,
-  .linkish {
+  .anchor {
     min-height: 24px;
     display: inline-flex;
     align-items: center;
@@ -251,38 +250,5 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--ink-faint);
-  }
-  .spinner {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
-  }
-  .linkish {
-    font: inherit;
-    font-size: 12px;
-    font-weight: 600;
-    background: none;
-    border: none;
-    padding: 0;
-    color: var(--link);
-    cursor: pointer;
-  }
-  .linkish:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 </style>

@@ -1,9 +1,10 @@
 // A piece's recognised staves read through in order, from its score and its
 // recognition record: each page's systems with the record's entry for every
-// staff box, the score staff each box is placed on (solved system after
-// system through the piece, each system placed with the clefs in force and
-// the staves the system before it showed, and the volunteers' placements
-// from the record kept), and the transcriptions with the recorded clef
+// staff box, the score staff each box is placed on (the staff its named
+// instrument staff id gives, or else solved system after system through the
+// piece, each system placed with the clefs in force and the staves the
+// system before it showed, and the volunteers' placements from the record
+// kept), and the transcriptions with the recorded clef
 // corrections applied. From these the clef per staff,
 // the key and the meter in force at any page start are computed by stitching
 // the pages before it, so a page draft continues where the piece stands. Pure
@@ -22,7 +23,12 @@ import {
 import { sameBox } from "./omr-record.ts";
 import type { OmrRecord, OmrStaffEntry } from "./omr-record.ts";
 import { suggestStaffAssignment, type ScoreStaff } from "./omr-staff-assign.ts";
-import { clefTokenOf, stitchPage, type PageSignatures } from "./omr-stitch.ts";
+import {
+  clefTokenOf,
+  stitchPage,
+  type PageSignatures,
+  type StitchChange,
+} from "./omr-stitch.ts";
 
 export interface PageStaves {
   /** 1-based. */
@@ -56,15 +62,18 @@ const plainClef = (token: string | null): string | null =>
 
 /**
  * Every page's staves, in page order. `parts` are the score staves the boxes
- * are placed on (the score's, unless a proposal is being made). The clef
- * corrections apply from the piece's start: to every staff placed on a
- * corrected score staff, system after system, until a clef read as anything
- * else than the misread one.
+ * are placed on (the score's, unless a proposal is being made). With
+ * `placedBoxes` (per page, each staff box's index → its score staff n), each
+ * box is placed on that staff, 0 where it has none, instead of by
+ * suggestion. The clef corrections apply from the piece's start: to every
+ * staff placed on a corrected score staff, system after system, until a clef
+ * read as anything else than the misread one.
  */
 export function pieceStaves(
   parsed: Pick<ParsedFacsimile, "pages">,
   record: OmrRecord,
   parts: ScoreStaff[],
+  placedBoxes?: Map<number, number>[],
 ): PageStaves[] {
   const reference = parsed.pages
     .flatMap((p) => pageSystems(p).systems)
@@ -92,25 +101,27 @@ export function pieceStaves(
     const assigned: number[][] = [];
     const transcriptions: (string | null)[][] = [];
     systems.forEach((system, s) => {
-      const placed = suggestStaffAssignment(
-        system.map((box, i) => ({
-          box,
-          clef: clefToken(entries[s][i]?.musicxml ?? null),
-          label: entries[s][i]?.label ?? "",
-        })),
-        parts,
-        reference,
-        {
-          // A staff still under a correction is read in the misread clef.
-          clefs: clefs.map((clef, k) => {
-            const correction = record.clefs.find((c) => c.staff === k + 1);
-            return correction && correcting.get(k + 1) === "misread"
-              ? plainClef(correction.read)
-              : clef;
-          }),
-          previous,
-        },
-      );
+      const placed = placedBoxes
+        ? system.map((box) => placedBoxes[p]?.get(staves.indexOf(box)) ?? 0)
+        : suggestStaffAssignment(
+            system.map((box, i) => ({
+              box,
+              clef: clefToken(entries[s][i]?.musicxml ?? null),
+              label: entries[s][i]?.label ?? "",
+            })),
+            parts,
+            reference,
+            {
+              // A staff still under a correction is read in the misread clef.
+              clefs: clefs.map((clef, k) => {
+                const correction = record.clefs.find((c) => c.staff === k + 1);
+                return correction && correcting.get(k + 1) === "misread"
+                  ? plainClef(correction.read)
+                  : clef;
+              }),
+              previous,
+            },
+          );
       assigned.push(placed);
       transcriptions.push(
         entries[s].map((entry, i) => {
@@ -160,8 +171,24 @@ export function pageStart(
   pages: PageStaves[],
   page: number,
 ): { clefs: string[] } & PageSignatures {
+  let state = scoreStart(parsed);
+  for (const staves of pages.slice(0, page - 1)) {
+    state = stitchPage(
+      staves.transcriptions,
+      state.clefs,
+      placementsOf(staves),
+      state,
+    ).end;
+  }
+  return state;
+}
+
+/** The clef per score staff, the key and the meter the score definition opens with. */
+function scoreStart(
+  parsed: Pick<ParsedFacsimile, "scoreDef">,
+): { clefs: string[] } & PageSignatures {
   const { keysig, meterCount, meterUnit, meterSym } = parsed.scoreDef;
-  let state: { clefs: string[] } & PageSignatures = {
+  return {
     clefs: parsed.scoreDef.staves.map(staffClefToken),
     fifths: fifthsFor(keysig),
     keys: parsed.scoreDef.staves.map((staff) =>
@@ -173,15 +200,28 @@ export function pageStart(
       symbol: meterSym === "common" || meterSym === "cut" ? meterSym : "",
     },
   };
-  for (const staves of pages.slice(0, page - 1)) {
-    state = stitchPage(
+}
+
+/**
+ * Per page, the clef, key and meter changes the stitching keeps against
+ * what is in force (see StitchedPage.changes), the piece stitched from the
+ * score definition through every page.
+ */
+export function pageChanges(
+  parsed: Pick<ParsedFacsimile, "scoreDef">,
+  pages: PageStaves[],
+): StitchChange[][] {
+  let state = scoreStart(parsed);
+  return pages.map((staves) => {
+    const stitched = stitchPage(
       staves.transcriptions,
       state.clefs,
       placementsOf(staves),
       state,
-    ).end;
-  }
-  return state;
+    );
+    state = stitched.end;
+    return stitched.changes;
+  });
 }
 
 /**

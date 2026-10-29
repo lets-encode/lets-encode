@@ -90,38 +90,33 @@
         </button>
         <span class="spacer"></span>
         {#if confirming === draft.handle}
-          {#if draft.repo}
-            <span class="dnote">
+          <span class="dnote">
+            Discard everything entered so far?{#if draft.repo}
               Discarding frees the name but leaves the repository
               <a href={draft.repo.html_url} target="_blank" rel="noreferrer"
                 >{draft.repo.full_name}</a
-              > — delete it yourself if you don't want it.
-            </span>
-          {/if}
+              > — delete it yourself if you don't want it.{/if}
+          </span>
           <button
             type="button"
-            class="linkish"
-            onclick={() => (confirming = null)}
-          >
-            Keep it
-          </button>
-          <button
-            type="button"
-            class="linkish danger"
+            class="btn btn-danger"
             onclick={() => discard(draft)}
             disabled={busy !== null}
           >
             Discard for good
           </button>
+          <button type="button" class="btn" onclick={() => (confirming = null)}>
+            Cancel
+          </button>
         {:else}
           <button
             type="button"
-            class="linkish quiet"
+            class="btn btn-icon btn-danger"
             onclick={() => (confirming = draft.handle)}
             disabled={busy !== null}
+            aria-label="Discard this setup"
+            title="Discard this setup"><Icon name="trash" /></button
           >
-            Discard
-          </button>
         {/if}
       </div>
     {/each}
@@ -163,10 +158,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* The repository note is a sentence the reader needs whole: it takes its
-     own line under the row. */
+  /* The question, with the repository note, is a sentence the reader needs
+     whole: it takes its own line above its buttons. */
   .dnote {
-    order: 1;
     flex: 1 1 100%;
     font-size: 12px;
     color: var(--ink-soft);
@@ -179,27 +173,5 @@
   }
   .linkish {
     flex: none;
-    font: 600 12.5px var(--font);
-    color: var(--link);
-    background: none;
-    border: 0;
-    padding: 0;
-    cursor: pointer;
-  }
-  .linkish.quiet {
-    color: var(--ink-faint);
-    font-weight: 400;
-  }
-  .linkish.danger {
-    color: var(--danger);
-  }
-  @media (hover: hover) {
-    .linkish:hover:not(:disabled) {
-      text-decoration: underline;
-    }
-  }
-  .linkish:disabled {
-    opacity: 0.6;
-    cursor: default;
   }
 </style>

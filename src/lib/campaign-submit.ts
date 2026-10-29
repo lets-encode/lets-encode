@@ -160,9 +160,10 @@ export function resetTaskRows(
 
 /**
  * The files a pre-task's submission may commit beside its score: the
- * corrected boxes (`layout-corrected.json`) and the layout model's raw output
- * (`layout.json`) for a layout correction, the recognition record (`omr.xml`)
- * for a score setup.
+ * corrected boxes (`layout-corrected.json`), the layout model's raw output
+ * (`layout.json`) and, where the layout task names the instruments, the
+ * recognition record (`omr.xml`) for a layout correction; the recognition
+ * record for a score setup.
  */
 export function sideFilesOf(task: {
   locator: string;
@@ -172,6 +173,7 @@ export function sideFilesOf(task: {
     return [
       correctedLayoutPath(task.fragment),
       layoutRecordPath(task.fragment),
+      omrRecordPath(task.fragment),
     ];
   if (task.locator === "score-setup") return [omrRecordPath(task.fragment)];
   return [];

@@ -6,6 +6,7 @@
   new task table to the console, which runs the savePlan command.
 -->
 <script lang="ts">
+  import { tick } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
   import { taskDescription, handle } from "$lib/campaign-graph.ts";
@@ -72,16 +73,16 @@
     ...new Set(taskDefs.map((t) => t.fragment).filter(Boolean)),
   ]);
 
-  const statusOf = (task: string): { key: string; label: string } => {
+  /** A task's state, in the board's words. */
+  const statusOf = (task: string): string => {
     const row = rows.find((r) => r.task_id === task && r.subtask_id === "");
     const lock = locks.find(
       (l) => l.task_id === task && l.subtask_id === "" && l.kind === "encoding",
     );
-    if (row?.status === "completed") return { key: "done", label: "done" };
-    if (row?.status === "validation_required")
-      return { key: "validation", label: "review" };
-    if (lock) return { key: "encoding", label: "● encoding" };
-    return { key: "open", label: "○ open" };
+    if (row?.status === "completed") return "done";
+    if (row?.status === "validation_required") return "review";
+    if (lock) return "encoding";
+    return "open";
   };
   const workerOf = (task: string): string => {
     const lock = locks.find((l) => l.task_id === task && l.kind === "encoding");
@@ -154,31 +155,100 @@
     }
   }
 
-  // Drag to reorder: the dragged group index rides in the drag state; rows
-  // swap as the pointer crosses them.
-  let dragging = $state<number | null>(null);
-  function dragOver(index: number, e: DragEvent) {
-    e.preventDefault();
-    if (dragging === null || dragging === index) return;
+  function moveTask(from: number, to: number) {
+    const n = groups.length;
+    if (from === to || from < 0 || from >= n || to < 0 || to >= n) return;
     const next = [...groups];
-    const [moved] = next.splice(dragging, 1);
-    next.splice(index, 0, moved);
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
     groups = next;
-    dragging = index;
   }
+
+  // Reordering by a task's handle: dragged, the task takes the place of each
+  // row the pointer crosses. A click picks the task and a click on another
+  // task's handle moves it there; the arrow keys move it by one.
+  let rowList = $state<HTMLDivElement | null>(null);
+  let dragging = $state<number | null>(null);
+  // The picked task's id, so removing or moving a task keeps the pick.
+  let picked = $state<string | null>(null);
+  const pickedIndex = $derived(
+    picked === null ? -1 : groups.findIndex((g) => g.task.task_id === picked),
+  );
+  let gesture: { x: number; y: number; moved: boolean } | null = null;
+  let swallowClick = false;
+  function handleDown(i: number, e: PointerEvent) {
+    if (e.button !== 0) return;
+    gesture = { x: e.clientX, y: e.clientY, moved: false };
+    dragging = i;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function handleMove(e: PointerEvent) {
+    if (!gesture || dragging === null || !rowList) return;
+    if (!gesture.moved) {
+      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
+      gesture.moved = true;
+      picked = null;
+    }
+    const rows = [...rowList.querySelectorAll<HTMLElement>(".prow")];
+    const over = rows.findIndex((row) => {
+      const box = row.getBoundingClientRect();
+      return e.clientY >= box.top && e.clientY < box.bottom;
+    });
+    if (over >= 0 && over !== dragging) {
+      moveTask(dragging, over);
+      dragging = over;
+    }
+    const box = rowList.getBoundingClientRect();
+    if (e.clientY < box.top + 40) rowList.scrollTop -= 10;
+    else if (e.clientY > box.bottom - 40) rowList.scrollTop += 10;
+  }
+  function handleUp() {
+    swallowClick = !!gesture?.moved;
+    gesture = null;
+    dragging = null;
+  }
+  function handleClick(i: number) {
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
+    if (pickedIndex < 0) picked = groups[i].task.task_id;
+    else {
+      moveTask(pickedIndex, i);
+      picked = null;
+    }
+  }
+  async function handleKey(i: number, e: KeyboardEvent) {
+    const to =
+      e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : null;
+    if (e.key === "Escape") picked = null;
+    if (to === null || to < 0 || to >= groups.length) return;
+    e.preventDefault();
+    moveTask(i, to);
+    await tick();
+    rowList?.querySelectorAll<HTMLElement>(".grip")[to]?.focus();
+  }
+  const handleTitle = (i: number) =>
+    pickedIndex < 0
+      ? "Drag to move this task. Or click it, then click the task whose place it takes. The arrow keys move it up and down."
+      : pickedIndex === i
+        ? "Click again to leave this task where it is."
+        : `Click to move task ${picked} here.`;
 
   const save = () => onsave(groups.flatMap((g) => [g.task, ...g.subs]));
 </script>
 
 <div class="plan">
   <div class="phead">
-    <span class="plabel">Task plan · {groups.length}</span>
+    <span class="plabel"
+      >Task plan <span class="countpill">{groups.length}</span></span
+    >
     <span class="pmode">● Editing the plan</span>
     <span class="pnote">Changes only touch tasks nobody has worked on yet.</span
     >
     <span class="pspacer"></span>
     <button type="button" class="btn" onclick={addTask} disabled={busy}
-      >+ Add task</button
+      ><Icon name="plus" />Add task</button
     >
     <button type="button" class="btn" onclick={oncancel} disabled={busy}
       >Cancel</button
@@ -192,24 +262,31 @@
       >Depends on</span
     ><span>Status</span><span></span>
   </div>
-  <div class="pbody">
+  <div class="pbody" bind:this={rowList}>
     {#each groups as g, i (g.task.task_id)}
       {@const status = statusOf(g.task.task_id)}
       <div
         class="prow"
         class:locked={!g.editable}
-        class:dragged={dragging === i}
+        class:dragged={dragging === i && pickedIndex < 0}
+        class:picked={pickedIndex === i}
         role="row"
         tabindex="-1"
-        draggable="true"
-        ondragstart={(e) => {
-          dragging = i;
-          e.dataTransfer?.setData("text/plain", g.task.task_id);
-        }}
-        ondragend={() => (dragging = null)}
-        ondragover={(e) => dragOver(i, e)}
       >
-        <span class="grip" title="Drag to reorder">⋮⋮</span>
+        <button
+          type="button"
+          class="grip"
+          class:target={pickedIndex >= 0 && pickedIndex !== i}
+          aria-label={`Task ${g.task.task_id}: move`}
+          aria-pressed={pickedIndex === i}
+          title={handleTitle(i)}
+          onpointerdown={(e) => handleDown(i, e)}
+          onpointermove={handleMove}
+          onpointerup={handleUp}
+          onpointercancel={handleUp}
+          onclick={() => handleClick(i)}
+          onkeydown={(e) => handleKey(i, e)}><Icon name="grip" /></button
+        >
         <div class="pcell-task">
           {#if g.editable}
             <div class="ptitle">{titleOf(g)}</div>
@@ -241,9 +318,6 @@
           {:else}
             <div class="ptitle">
               {titleOf(g)}
-              {#if status.key === "encoding"}
-                <span class="pchip blue">claimed</span>
-              {/if}
             </div>
             <div class="psub muted">
               <span class="mono">{g.task.task_id}</span>
@@ -287,15 +361,16 @@
             >
           {/if}
         </div>
-        <span class="pstatus s-{status.key}">{status.label}</span>
+        <span class="chip pstatus">{status}</span>
         <span class="pact">
           {#if g.editable}
             <button
               type="button"
-              class="btn btn-icon"
+              class="btn btn-icon btn-danger"
               aria-label="Remove task"
+              title="Remove this task"
               onclick={() => removeTask(i)}
-              disabled={busy}><Icon name="close" /></button
+              disabled={busy}><Icon name="trash" /></button
             >
           {/if}
         </span>
@@ -381,13 +456,14 @@
   }
   .prow.dragged {
     background: var(--accent-tint-strong);
+    box-shadow: 0 2px 8px rgba(31, 36, 51, 0.14);
   }
-  .grip {
-    color: var(--ink-faint);
-    font-size: 14px;
-    text-align: center;
-    cursor: grab;
-    user-select: none;
+  .prow.picked {
+    background: var(--accent-tint-strong);
+    outline: 1.5px solid var(--accent);
+  }
+  .prow .grip {
+    justify-self: center;
   }
   .ptitle {
     font-size: 13.5px;
@@ -431,47 +507,8 @@
   .lockmark {
     color: var(--ink-faint);
   }
-  .pchip {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 7px;
-    margin-left: 4px;
-  }
-  .pchip.blue {
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
-  }
   .pstatus {
     justify-self: start;
-    font-size: 11.5px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 4px 10px;
-    white-space: nowrap;
-  }
-  .pstatus.s-done {
-    color: var(--ok);
-    background: var(--ok-bg);
-    border: 1px solid var(--ok-line);
-  }
-  .pstatus.s-encoding {
-    color: var(--info);
-    background: var(--info-bg);
-    border: 1px solid var(--info-line);
-  }
-  .pstatus.s-validation {
-    color: var(--warn);
-    background: var(--warn-bg);
-    border: 1px solid var(--warn-line);
-  }
-  .pstatus.s-open {
-    color: var(--ink-soft);
-    background: var(--bg);
-    border: 1px solid var(--line-input);
   }
   .pact {
     text-align: right;

@@ -61,12 +61,14 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
-  MAX_ANCHOR_LENGTH,
-  MAX_COMMENT_LENGTH,
   resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
-import { splicePage, splicePageSpan } from "../src/lib/mei-page-splice.ts";
+import {
+  spliceOpeningScoreDef,
+  splicePage,
+  splicePageSpan,
+} from "../src/lib/mei-page-splice.ts";
 import { measuredSurfaceIds } from "../src/lib/mei-facsimile.ts";
 import { replanPageTasks } from "../src/lib/campaign-plan.ts";
 import {
@@ -78,14 +80,19 @@ import { reapLocks } from "../src/lib/campaign-reaper.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  checksOpening,
   claimPullRequest,
   classifyPullRequest,
   isAutomaticCommit,
+  isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkBranch,
   keptWorkSince,
+  pieceFieldForPath,
   pieceKindForPath,
+  MAX_OPEN_PRS_PER_AUTHOR,
   priorDecision,
+  REASON_TEXT,
   rejectionDetail,
   removedRowFromPatch,
   resolveEncodingTask,
@@ -104,6 +111,7 @@ import {
   getPullRequest,
   getUserLogin,
   listOpenPullRequests,
+  listBranchCommitTimes,
   getCollaboratorCanPush,
   commitFiles,
   commentAndClosePr,
@@ -171,10 +179,6 @@ function coAuthored(message: string): string {
 }
 
 const MAX_ATTEMPTS = 5;
-// Open non-draft pull requests one author may have on a campaign, counting
-// the one being processed; beyond it a pull request is closed unprocessed and
-// without a history row.
-const MAX_OPEN_PRS_PER_AUTHOR = 10;
 // The scheduled catch-up pass (runCatchUp) picks up open pull requests older
 // than the minimum age — a run of their own may still be under way before
 // that — and younger than the maximum, processing at most CATCHUP_MAX_PRS
@@ -199,55 +203,6 @@ const historyColumns = (
 // A rejection's `reason` is the machine-readable code recorded in the history
 // table; `detail` is the human explanation behind it, for the PR comment only.
 type Verdict = { ok: boolean; reason?: string; detail?: string };
-
-// Human explanations for the rejection codes, appended to the PR comment
-// (which the console shows verbatim). The code itself stays in the comment
-// and in the history row.
-const REASON_TEXT: Record<string, string> = {
-  malformed_claim:
-    "the submission does not add exactly one lock row or remove exactly one",
-  malformed_validation: "the submission is not a single verdict",
-  malformed_comment:
-    "the submission does not append or resolve exactly one comment row",
-  malformed_review_edit:
-    "the submission does not remove exactly one review lock and add one comment",
-  out_of_bounds:
-    "the submission changes files outside the ones this operation may touch",
-  invalid_kind: "unknown claim or comment kind",
-  invalid_target: "the claim addresses the wrong row for its kind",
-  unknown_task: "no such task",
-  dependency_incomplete:
-    "this task opens once the task it depends on is completed",
-  wrong_state: "the task is not in the right state for this operation",
-  already_locked: "someone already holds this claim",
-  review_in_progress:
-    "someone else is reviewing this task; reviews run one at a time",
-  too_many_claims:
-    "you hold as many claims as this campaign allows one person at once; submit or give back one of them first",
-  self_validation: "the encoder cannot review their own work",
-  already_validated: "this person already recorded a verdict on this subtask",
-  no_open_validation_slot: "no review slot is open",
-  not_lock_holder: "the author does not hold the required claim",
-  claim_expired:
-    "the author's claim had run out when the submission was opened",
-  mei_invalid: "the submitted MEI failed the machine check",
-  invalid_verdict: "a review verdict must approve or request changes",
-  fail_without_comment:
-    "a change request must carry a note saying what needs to change",
-  no_recorded_fail:
-    "the task has no recorded change request to send it back for",
-  not_permitted:
-    "only a reviewer who requested changes or the campaign owner may do this",
-  empty_comment: "the comment is empty",
-  comment_too_long: `the comment is longer than ${MAX_COMMENT_LENGTH} characters`,
-  invalid_anchor: `the comment's page or measures are longer than ${MAX_ANCHOR_LENGTH} characters, or its piece is not the path of an MEI file`,
-  unknown_parent: "the reply's parent comment does not exist",
-  invalid_parent:
-    "a parent comment must be a top-level comment, and only replies carry one",
-  unknown_comment: "no such comment",
-  already_resolved: "the comment is already resolved",
-  too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open submissions on this campaign`,
-};
 
 // Rejections of pull requests that do not parse as any operation. They leave
 // no history row: the closed pull request and its comment are the record, and
@@ -869,12 +824,16 @@ async function decideEncoding(
   // fork's page into the base score, leaving other pages as they stand. A
   // facsimile piece's page is joined measure by measure (matched by xml:id —
   // its measure grid is fixed by the measure correction); a physical piece has
-  // no grid, so its page span is taken from the fork wholesale. Whole-file
-  // tasks (empty locator) and pre-tasks take the fork verbatim.
+  // no grid, so its page span is taken from the fork wholesale. The first page
+  // task of an 'omr-instruments' piece also brings the opening score
+  // definition's clefs, keys, meter and transpositions. Whole-file tasks
+  // (empty locator) and pre-tasks take the fork verbatim.
   //
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
-  // in `detail`, since the reason code is what the tables record.
+  // in `detail`, since the reason code is what the tables record. A page
+  // whose file passes the schema on its own while the assembled score fails
+  // is `splice_invalid`: the join is at fault, not the encoding.
   // Everything but the MEI check is decided before the fork's file is read:
   // a submitter who holds no claim cannot make the run parse their file.
   const precheck = checkEncoding({
@@ -929,6 +888,15 @@ async function decideEncoding(
         mei = physical
           ? splicePageSpan(baseMei, forkMei, task.locator)
           : splicePage(baseMei, forkMei, task.locator);
+        // The first page task of an 'omr-instruments' piece checks the
+        // opening score definition, which lies outside every page's span.
+        const preparation = pieceFieldForPath(
+          configText,
+          task.fragment,
+          "preparation",
+        );
+        if (checksOpening(task, tasks, preparation))
+          mei = spliceOpeningScoreDef(mei, forkMei);
         // The splice keeps the base header. The recognition models an OMR
         // page draft names in the fork's header are carried over; no other
         // entry is taken from a fork.
@@ -988,10 +956,14 @@ async function decideEncoding(
   }
 
   let meiValid = false;
+  let joinFailed = false;
   if (mei != null) {
     const check = await validateMei(mei);
     meiValid = check.ok;
-    if (!check.ok) detail = `${task.fragment}:${check.error}`;
+    if (!check.ok) {
+      detail = `${task.fragment}:${check.error}`;
+      joinFailed = isPageTask && (await validateMei(forkMei!)).ok;
+    }
   }
   logPhase("mei_check", checkStart);
 
@@ -1007,6 +979,11 @@ async function decideEncoding(
     expired,
   });
 
+  const reason = verdict.ok
+    ? ""
+    : joinFailed && verdict.reason === "mei_invalid"
+      ? "splice_invalid"
+      : verdict.reason;
   const history: HistoryRow = {
     timestamp: now,
     task_id: task.task_id,
@@ -1014,13 +991,14 @@ async function decideEncoding(
     user_id: author,
     action: "submit_encoding",
     outcome: verdict.ok ? "accepted" : "rejected",
-    detail: verdict.ok ? "" : verdict.reason,
+    detail: reason,
   };
   if (!verdict.ok) {
     return {
       ok: false,
-      reason: verdict.reason,
-      detail: verdict.reason === "mei_invalid" ? detail : "",
+      reason,
+      detail:
+        reason === "mei_invalid" || reason === "splice_invalid" ? detail : "",
       history,
     };
   }
@@ -1597,10 +1575,35 @@ async function runCatchUp(): Promise<void> {
   }
 }
 
+// An operation branch whose pull request was never opened (a request that
+// failed after GitHub created the branch) or whose cleanup failed stays in
+// the campaign repo; the scheduled pass deletes those (isLeftoverOperationBranch).
+async function sweepOperationBranches(): Promise<void> {
+  const [branches, open] = await Promise.all([
+    listBranchCommitTimes(token, owner, repo),
+    listOpenPullRequests(token, owner, repo),
+  ]);
+  const openHeads = new Set(open.map((pr) => pr.head.ref));
+  const now = Date.now();
+  for (const branch of branches) {
+    if (!isLeftoverOperationBranch(branch, openHeads, now)) continue;
+    try {
+      await deleteBranch(token, owner, repo, branch.name);
+      console.log(`Deleted the leftover branch ${branch.name}.`);
+    } catch (e) {
+      console.error(
+        `Could not delete the leftover branch ${branch.name}: ${(e as Error).message}`,
+      );
+      process.exitCode = 1;
+    }
+  }
+}
+
 async function run(): Promise<void> {
   if (eventName === "schedule" || eventName === "workflow_dispatch") {
     await runReap();
-    return runCatchUp();
+    await runCatchUp();
+    return sweepOperationBranches();
   }
   if (eventName !== "pull_request_target") {
     throw new Error(`Unsupported event: ${eventName}`);

@@ -46,14 +46,14 @@
     <div class="material-card">
       <div class="material-toolbar">
         <span class="toolbar-name head-name">meiHead — source header</span>
-        <span class="chip" class:chip-err={!xmlValid}>
+        <span class="chip" class:chip-ok={xmlValid} class:chip-err={!xmlValid}>
           <span class="chip-dot"></span>
           {xmlValid ? "Well-formed" : "Not a well-formed meiHead"}
         </span>
         <div class="toolbar-gap"></div>
         <button
           type="button"
-          class="tbtn"
+          class="chip-switch"
           class:on={wrap}
           aria-pressed={wrap}
           onclick={() => (wrap = !wrap)}

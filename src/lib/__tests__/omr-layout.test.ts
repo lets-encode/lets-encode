@@ -261,17 +261,28 @@ test("named instruments and each staff box's score staff survive the corrected l
   ];
   const named = {
     instruments: [
-      { id: "i1", name: "Voce", staves: [{ id: "i1", label: "" }] },
+      {
+        id: "i1",
+        name: "Voce",
+        abbr: "",
+        grand: false,
+        parts: [],
+        staves: [{ id: "i1", parts: [] }],
+      },
       {
         id: "i2",
         name: "Pianoforte",
+        abbr: "Pfte.",
+        grand: true,
+        parts: [],
         staves: [
-          { id: "i2-s1", label: "" },
-          { id: "i2-s2", label: "" },
+          { id: "i2-s1", parts: [] },
+          { id: "i2-s2", parts: [] },
         ],
       },
     ],
     groups: [],
+    fixed: true,
   };
   const json = correctedLayoutJson(pages, named);
   assert.deepEqual(layoutInstruments(json), named);

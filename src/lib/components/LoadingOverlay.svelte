@@ -35,14 +35,14 @@
   <div class="overlay-card">
     {#if finished && error}
       <div class="fail-mark" aria-hidden="true">
-        <Icon name="close" size={22} />
+        <Icon name="warning" size={22} />
       </div>
       <p class="overlay-title failed">Failed</p>
       <p class="overlay-error">{error}</p>
     {:else if finished}
       <p class="overlay-title">Finished</p>
     {:else}
-      <div class="spinner" aria-hidden="true"></div>
+      <div class="spinner spinner-lg" aria-hidden="true"></div>
       <p class="overlay-title">Working…</p>
       <p class="overlay-sub">
         The campaign automation runs on GitHub — this can take a few seconds.
@@ -63,24 +63,6 @@
     align-self: stretch;
     margin-top: 0;
     text-align: left;
-  }
-  .spinner {
-    width: 34px;
-    height: 34px;
-    border: 3px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
   }
   .overlay-title {
     margin: 0;

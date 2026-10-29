@@ -145,7 +145,7 @@ export class CampaignFinisher {
     if (this.busy) return;
     if (!user || !f) {
       this.error =
-        "You are no longer signed in. Log in again to finish the campaign.";
+        "You are no longer logged in. Log in with GitHub again to finish the campaign.";
       return;
     }
     if (!claim) {

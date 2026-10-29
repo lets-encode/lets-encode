@@ -7,6 +7,8 @@ import type { ForgeClient } from "./types.ts";
 export function createGitHubForge(token: string): ForgeClient {
   return {
     repoWebUrl: (owner, repo) => `${gh.WEB}/${owner}/${repo}`,
+    changeRequestWebUrl: (owner, repo, number) =>
+      `${gh.WEB}/${owner}/${repo}/pull/${number}`,
     userWebUrl: (login) => `${gh.WEB}/${login}`,
     getAuthenticatedUser: () => gh.getAuthenticatedUser(token),
     getUserLogin: (id) => gh.getUserLogin(token, id),
@@ -22,6 +24,8 @@ export function createGitHubForge(token: string): ForgeClient {
       gh.commitFiles(token, owner, repo, files, message, opts),
     getRepoFile: (owner, repo, path, ref, maxBytes) =>
       gh.getRepoFile(token, owner, repo, path, ref, maxBytes),
+    getRepoFilesBatch: (repos, paths) =>
+      gh.getRepoFilesBatch(token, repos, paths),
     getRepoFileBytes: (owner, repo, path, ref) =>
       gh.getRepoFileBytes(token, owner, repo, path, ref),
     getRepoFileDownloadUrl: (owner, repo, path, ref) =>

@@ -369,9 +369,6 @@ export function buildPieceHead(
       `${indent(2)}<fileDesc>\n` +
       `${indent(3)}<titleStmt>\n` +
       `${indent(4)}<title>${xmlEscape(piece.title.trim())}</title>\n` +
-      // The guidelines recommend a title that marks the file as an electronic
-      // work, distinct from the source's title the manifestation carries.
-      `${indent(4)}<title type="subordinate">electronic transcription</title>\n` +
       respStmt +
       `${indent(3)}</titleStmt>\n` +
       `${indent(3)}<pubStmt>\n${availability}${indent(3)}</pubStmt>\n` +

@@ -3,12 +3,81 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-29
+
+- Logged in, the campaign list reads all campaigns' tables in one GraphQL query.
+- The broker proxy relays GraphQL queries but no mutations.
+- Simultaneous reads of the same GitHub URL share one request.
+- Logged in, the campaign, task and review pages read the tables in one GraphQL query.
+- A page that fails the machine check only once joined into the score is rejected as a platform error.
+- The scheduled run deletes operation branches left without a pull request.
+- An accepted layout, measure correction or score setup deletes its task branch.
+- A layout, measure correction or score setup can be submitted without changes.
+- Scripts to copy a campaign with another preparation and to compare the two campaigns page by page.
+- The score setup of an `omr` piece fills in staves, clefs, signatures and labels from the recognition again.
+
+## 2026-10-28
+
+- The task panel shows a claim holder's rejected submission after a reload.
+- Page drafts made in parallel no longer share xml:ids, so the second accepted page passes the check.
+- Page drafts keep the transcriptions of staff boxes moved in the layout correction.
+- Accepting the first page task keeps the xml:ids of the opening score definition.
+- The next-task card of an OMR page no longer shows the score's staff count.
+- An instrument's parts can be instruments of their own, such as Violoncello and Kontrabass sharing a staff.
+- Buttons, links, chips, counts, progress bars, spinners, errors and loading states have one look across the app.
+- Task states and button wording are the same on every screen.
+- Remove buttons show a trash icon, and the close icon only closes.
+- Zoom controls and view switches work the same in every view.
+- Measure-zone buttons show an eye, and Escape clears a measure selection.
+- The wizard's region editor gains undo and the zone editor's Draw button.
+- The plan editor reorders tasks by a grip, also by click and arrow keys.
+- The wizard shows why Continue is disabled and confirms removing a piece in place.
+- Generated scores no longer get the subordinate title "electronic transcription".
+
+## 2026-10-27
+
+- The instruments step no longer breaks when one instrument looks like a part of several others.
+- An instrument's parts keep the order typed, numbered parts in numeric order.
+- Editing from a layout review continues at the step in view, the instruments step at the first system.
+- A staff of the other systems can carry all the instrument's parts, and gets them when no part is printed.
+- Score staves are labelled with the instrument's name and a single part; shared parts show only as layers.
+- An instrument gets only as many score staves as it prints at once, each part in its own layer, with staves hidden per system where not printed.
+- Emptying the parts of an instrument's only first-system staff takes its parts away.
+- On the dev server, a campaign created on a branch opens with a dialog giving the command that points its workflow at the branch.
+- A submission's processing state shows as a pill wherever it appears.
+- The next-task card shows the task's change requests as a pill.
+- A review task's instruction names the page and piece to compare with the scan.
+- Approve and Request changes are offered only in the task's review view, no longer in the side panel.
+
+## 2026-10-23
+
+- The instruments are named in the first system and chosen from them in the other systems, switched by tabs.
+- Grand staves can carry parts, such as Harfe 1 and Harfe 2.
+- The instruments step shows braces, brackets and groups beside each system, and the whole pages on request.
+- Instruments named twice or beyond the first system's staves are flagged and can be merged into parts.
+- The instruments step explains itself in the side panel and help, lists the confirmed instruments, and shows a reviewer the names as text.
+- A layout review can be approved once every step has been opened.
+- On the dev server, a campaign whose workflow still runs from main shows the command that points it at its branch.
+- Page drafts of named instruments place each staff by its instrument and write rests or spaces for the staves a system leaves out.
+- A page task whose page brings a new instrument, other staves or a clef, key or meter change is marked Check.
+- The first page task of named instruments opens a score check of every staff's clef, key and transposition before its draft.
+- The coordinator accepts the clefs, keys, meter and transpositions the first page task checked.
+
 ## 2026-10-22
 
+- The score definition of named instruments takes its clefs, key and meter from the transcription.
+- A script points a test campaign's automation at a branch, and the dev server creates campaigns on the checked-out branch.
+- The instruments step transcribes the staves in the background and submits the transcription with the layout.
+- The campaign workflow accepts pull requests of up to four files.
+- The instruments step can switch from the name fields to the full pages.
+- The instruments step shows each system's opening only as large as its name fields need.
 - Node is pinned to the 22.23.4 security release, locally and in the coordinator action.
 
 ## 2026-10-21
 
+- The measure correction of an OMR piece with named instruments has a fourth step that confirms the first page's instruments with their parts and groups, then assigns them on the other pages.
+- Score definitions keep short staff names and the players of a shared staff.
+- The instrument names are prefilled from the names printed in front of the staves and from the systems before them, also after each name entered.
 - The wizard offers OMR with instruments named during measure correction, which plans no score setup task and makes later pages wait for the first.
 - Score definitions keep the xml:ids of their staves and staff groups.
 - The corrected layout can hold the named instruments and the score staff of each staff box.

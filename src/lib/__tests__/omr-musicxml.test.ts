@@ -111,6 +111,25 @@ test("proposeScoreDef: signatures are read from the given sources before the cle
   assert.equal(`${proposal.meterCount}/${proposal.meterUnit}`, "6/8");
 });
 
+test("proposeScoreDef: the meter most staves read, the first of a tie", () => {
+  const time = (beats: number, type: number) =>
+    staff(
+      `<time><beats>${beats}</beats><beat-type>${type}</beat-type></time>${G}`,
+    );
+  const meter = (p: ReturnType<typeof proposeScoreDef>) =>
+    `${p.meterCount}/${p.meterUnit}`;
+  assert.equal(
+    meter(
+      proposeScoreDef(
+        [staff(G)],
+        [time(4, 4), time(2, 2), null, time(2, 2), time(3, 8)],
+      ),
+    ),
+    "2/2",
+  );
+  assert.equal(meter(proposeScoreDef([time(3, 4), time(6, 8)])), "3/4");
+});
+
 test("proposeScoreDef: a staff reading another key than the score's keeps it as its own", () => {
   const key = (f: number) => `<key><fifths>${f}</fifths></key>`;
   const proposal = proposeScoreDef([

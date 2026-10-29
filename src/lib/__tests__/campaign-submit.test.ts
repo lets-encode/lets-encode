@@ -178,8 +178,23 @@ test("encoding: side files are accepted only for the locator that owns them", ()
     ],
     ["omr-layout", ["sources/layout-corrected.json"], undefined],
     [
+      "omr-layout",
+      [
+        "sources/score.mei",
+        "sources/layout-corrected.json",
+        "sources/layout.json",
+        "sources/omr.xml",
+      ],
+      undefined,
+    ],
+    [
       "measure-zones",
       ["sources/score.mei", "sources/layout-corrected.json"],
+      "out_of_bounds",
+    ],
+    [
+      "measure-zones",
+      ["sources/score.mei", "sources/omr.xml"],
       "out_of_bounds",
     ],
     ["", ["sources/score.mei", "sources/layout.json"], "out_of_bounds"],

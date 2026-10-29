@@ -12,6 +12,7 @@ import {
 } from "../campaign-board.ts";
 import {
   parseCommentCsv,
+  parseHistoryCsv,
   parseStateCsv,
   parseTaskCsv,
 } from "../campaign-tables.ts";
@@ -195,6 +196,45 @@ test("a card in review knows whether the viewer submitted it", () => {
     card("9").slots.some((s) => s.claimable),
     true,
   );
+});
+
+test("a card carries the viewer's rejected submission under the claim they hold", () => {
+  const d = {
+    taskDefs: parseTaskCsv(
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
+        "T0002,,sources/a.mei,surface-2,,,\n" +
+        "T0002,S0001,sources/a.mei,surface-2,,,\n",
+    ),
+    rows: parseStateCsv(
+      "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n" +
+        "T0002,,encoding_required,,,\n" +
+        "T0002,S0001,pending,,,\n",
+    ).rows,
+    validationColumns: ["validate_status_1"],
+    locks: [
+      {
+        task_id: "T0002",
+        subtask_id: "",
+        user_id: "7",
+        timestamp: "2026-10-28T13:26:05Z",
+        kind: "encoding",
+        expires: "2099-01-01T00:00:00Z",
+      },
+    ],
+    passThreshold: 1,
+  };
+  const history = parseHistoryCsv(
+    "timestamp,task_id,subtask_id,user_id,action,outcome,detail,command,version,input,pr\n" +
+      "2026-10-28T13:26:05Z,T0002,,7,claim_encoding,accepted,,,,,10\n" +
+      "2026-10-28T13:27:24Z,T0002,,7,submit_encoding,rejected,mei_invalid,,,,12\n",
+  );
+  const card = (viewer: string) =>
+    buildBoard(d, [], history, viewer)
+      .columns.flatMap((c) => c.cards)
+      .find((c) => c.task === "T0002")!;
+  assert.deepEqual(card("7").rejected, { pr: "12", reason: "mei_invalid" });
+  assert.equal(card("9").rejected, null);
+  assert.equal(card("").rejected, null);
 });
 
 test("cardSummary describes the task by kind and stage", () => {

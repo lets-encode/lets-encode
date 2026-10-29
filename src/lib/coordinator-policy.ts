@@ -5,8 +5,14 @@ import {
   LOCK_PATH,
   STATE_PATH,
 } from "./campaign-tables.ts";
-import type { CommentRow, HistoryRow, TaskRow } from "./campaign-tables.ts";
+import type {
+  CommentRow,
+  HistoryRow,
+  LockRow,
+  TaskRow,
+} from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
+import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
 
 export type PullRequestKind =
   | "claim"
@@ -37,6 +43,29 @@ export function pieceFieldForPath(
     return value ? JSON.parse(`"${value[1]}"`) : null;
   }
   return null;
+}
+
+/**
+ * Whether a task of a piece prepared as `preparation` checks the piece's
+ * opening score definition before its draft, and may change it (mei-page-splice spliceOpeningScoreDef): the
+ * first page task of an 'omr-instruments' piece, the page task that depends
+ * on the piece's layout task (planTasks).
+ */
+export function checksOpening(
+  task: TaskRow,
+  tasks: TaskRow[],
+  preparation: string | null | undefined,
+): boolean {
+  return (
+    task.locator.startsWith("surface-") &&
+    preparation === "omr-instruments" &&
+    tasks.some(
+      (t) =>
+        t.task_id === task.depends_on &&
+        t.subtask_id === "" &&
+        t.locator === "omr-layout",
+    )
+  );
 }
 
 /**
@@ -278,6 +307,35 @@ export function isReviewEdit(
   return false;
 }
 
+/**
+ * How long an operation branch without an open pull request is kept: the app
+ * creates the branch and opens its pull request a moment later.
+ */
+export const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
+
+// The branches the app opens operation pull requests from, each ending in a
+// random suffix of eight hex digits.
+const OPERATION_BRANCH =
+  /^(claim|release|validate|review-edit|comment|setup|layout|zones)-.+-[0-9a-f]{8}$/;
+
+/**
+ * Whether a campaign branch is an operation branch left without a pull
+ * request: its name is an operation branch's, no open pull request has it as
+ * head, and its head commit is older than OPERATION_BRANCH_GRACE_MS. Task
+ * branches (`encode-`) and kept work (`wip-`) never are.
+ */
+export function isLeftoverOperationBranch(
+  branch: { name: string; committedAt: string },
+  openHeads: Set<string>,
+  now: number,
+): boolean {
+  return (
+    OPERATION_BRANCH.test(branch.name) &&
+    !openHeads.has(branch.name) &&
+    now - Date.parse(branch.committedAt) > OPERATION_BRANCH_GRACE_MS
+  );
+}
+
 /** The campaign branch holding the unsubmitted work of a task's expired claims. */
 export const keptWorkBranch = (task_id: string): string => `wip-${task_id}`;
 
@@ -357,6 +415,91 @@ export function priorDecision(
     if (history[i].pr === pr) return history[i];
   return null;
 }
+
+/**
+ * The latest submission made under the claim `lock` when it was rejected:
+ * the holder's newest `submit_<kind>` row on the lock's task and subtask, if
+ * it is newer than the accepted claim that gave them the lock (a
+ * `claim_<kind>`, or for an encoding claim a review edit) and its outcome is
+ * `rejected`. Null otherwise.
+ */
+export function rejectedSubmission(
+  history: HistoryRow[],
+  lock: LockRow,
+): HistoryRow | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const h = history[i];
+    if (h.task_id !== lock.task_id || h.user_id !== lock.user_id) continue;
+    if (
+      lock.kind === "encoding" &&
+      h.action === "review_edit" &&
+      h.outcome === "accepted"
+    )
+      return null;
+    if (h.subtask_id !== lock.subtask_id) continue;
+    if (h.action === `submit_${lock.kind}`)
+      return h.outcome === "rejected" ? h : null;
+    if (h.action === `claim_${lock.kind}` && h.outcome === "accepted")
+      return null;
+  }
+  return null;
+}
+
+// Open non-draft pull requests one author may have on a campaign, counting
+// the one being processed; beyond it a pull request is closed unprocessed and
+// without a history row.
+export const MAX_OPEN_PRS_PER_AUTHOR = 10;
+
+// Explanations of the rejection codes, for the pull request comment and the
+// app's task panel. The code itself stays in the comment and in the history
+// row.
+export const REASON_TEXT: Record<string, string> = {
+  malformed_claim:
+    "the submission does not add exactly one lock row or remove exactly one",
+  malformed_validation: "the submission is not a single verdict",
+  malformed_comment:
+    "the submission does not append or resolve exactly one comment row",
+  malformed_review_edit:
+    "the submission does not remove exactly one review lock and add one comment",
+  out_of_bounds:
+    "the submission changes files outside the ones this operation may touch",
+  invalid_kind: "unknown claim or comment kind",
+  invalid_target: "the claim addresses the wrong row for its kind",
+  unknown_task: "no such task",
+  dependency_incomplete:
+    "this task opens once the task it depends on is completed",
+  wrong_state: "the task is not in the right state for this operation",
+  already_locked: "someone already holds this claim",
+  review_in_progress:
+    "someone else is reviewing this task; reviews run one at a time",
+  too_many_claims:
+    "you hold as many claims as this campaign allows one person at once; submit or give back one of them first",
+  self_validation: "the encoder cannot review their own work",
+  already_validated: "this person already recorded a verdict on this subtask",
+  no_open_validation_slot: "no review slot is open",
+  not_lock_holder: "the author does not hold the required claim",
+  claim_expired:
+    "the author's claim had run out when the submission was opened",
+  mei_invalid: "the submitted MEI failed the machine check",
+  splice_invalid:
+    "the page passes the machine check on its own but not joined into the score; this is an error of the platform, not of the encoding",
+  invalid_verdict: "a review verdict must approve or request changes",
+  fail_without_comment:
+    "a change request must carry a note saying what needs to change",
+  no_recorded_fail:
+    "the task has no recorded change request to send it back for",
+  not_permitted:
+    "only a reviewer who requested changes or the campaign owner may do this",
+  empty_comment: "the comment is empty",
+  comment_too_long: `the comment is longer than ${MAX_COMMENT_LENGTH} characters`,
+  invalid_anchor: `the comment's page or measures are longer than ${MAX_ANCHOR_LENGTH} characters, or its piece is not the path of an MEI file`,
+  unknown_parent: "the reply's parent comment does not exist",
+  invalid_parent:
+    "a parent comment must be a top-level comment, and only replies carry one",
+  unknown_comment: "no such comment",
+  already_resolved: "the comment is already resolved",
+  too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open submissions on this campaign`,
+};
 
 /** The longest detail a rejection comment carries, in characters. */
 export const MAX_REJECTION_DETAIL = 500;

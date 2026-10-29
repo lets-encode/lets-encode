@@ -5,9 +5,11 @@ import { type TaskRow } from "../campaign-tables.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  checksOpening,
   claimPullRequest,
   classifyPullRequest,
   isAutomaticCommit,
+  isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkSince,
   touchesCampaignPaths,
@@ -15,6 +17,7 @@ import {
   pieceKindForPath,
   MAX_REJECTION_DETAIL,
   priorDecision,
+  rejectedSubmission,
   rejectionDetail,
   removedRowFromPatch,
   resolveEncodingTask,
@@ -407,6 +410,77 @@ test("claimPullRequest and keptWorkSince read the claim and the kept work from t
   );
 });
 
+test("rejectedSubmission finds a rejected submission under the holder's current claim", () => {
+  const row = (
+    action: string,
+    outcome: string,
+    pr: string,
+    user_id = "7",
+    subtask_id = "",
+  ) => ({
+    timestamp: "t",
+    task_id: "T0002",
+    subtask_id,
+    user_id,
+    action,
+    outcome,
+    detail: outcome === "rejected" ? "mei_invalid" : "",
+    pr,
+  });
+  const lock = {
+    task_id: "T0002",
+    subtask_id: "",
+    user_id: "7",
+    timestamp: "t",
+    kind: "encoding",
+    expires: "t",
+  };
+  const claimed = [row("claim_encoding", "accepted", "10")];
+  const rejected = [...claimed, row("submit_encoding", "rejected", "12")];
+  assert.equal(rejectedSubmission(claimed, lock), null);
+  assert.equal(rejectedSubmission(rejected, lock)?.pr, "12");
+  // Another person's rows and other subtasks do not count.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("submit_encoding", "accepted", "13", "8")],
+      lock,
+    )?.pr,
+    "12",
+  );
+  assert.equal(
+    rejectedSubmission(rejected, {
+      ...lock,
+      kind: "validation",
+      subtask_id: "S0001",
+    }),
+    null,
+  );
+  // A claim after the rejection starts over.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("claim_encoding", "accepted", "14")],
+      lock,
+    ),
+    null,
+  );
+  // So does an encoding claim from a review edit, on the review's subtask.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("review_edit", "accepted", "15", "7", "S0001")],
+      lock,
+    ),
+    null,
+  );
+  // A rejected claim does not.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("claim_encoding", "rejected", "14")],
+      lock,
+    )?.pr,
+    "12",
+  );
+});
+
 test("isAutomaticCommit tells the console's commits from the claimer's", () => {
   assert.equal(isAutomaticCommit("Transcription draft of page 3 (x 1)"), true);
   assert.equal(
@@ -426,4 +500,48 @@ test("a rejection detail is one capped line of inline code", () => {
     rejectionDetail("é".repeat(MAX_REJECTION_DETAIL + 1)),
     `\`${"é".repeat(MAX_REJECTION_DETAIL)}…\``,
   );
+});
+
+test("checksOpening: the page task of an omr-instruments piece that waits for its layout task", () => {
+  const row = (task_id: string, locator: string, depends_on = ""): TaskRow => ({
+    task_id,
+    subtask_id: "",
+    fragment: "sources/piece-01/score.mei",
+    locator,
+    allowlist: "",
+    blocklist: "",
+    depends_on,
+  });
+  const tasks = [
+    row("P0001", "omr-layout"),
+    row("T0001", "surface-1", "P0001"),
+    row("T0002", "surface-2", "T0001"),
+  ];
+  assert.equal(checksOpening(tasks[1], tasks, "omr-instruments"), true);
+  assert.equal(checksOpening(tasks[2], tasks, "omr-instruments"), false);
+  assert.equal(checksOpening(tasks[1], tasks, "omr"), false);
+  assert.equal(checksOpening(tasks[0], tasks, "omr-instruments"), false);
+});
+
+test("isLeftoverOperationBranch takes old operation branches without an open pull request", () => {
+  const now = Date.parse("2026-10-29T12:00:00Z");
+  const old = "2026-10-29T10:00:00Z";
+  const left = (name: string, committedAt = old, open: string[] = []) =>
+    isLeftoverOperationBranch({ name, committedAt }, new Set(open), now);
+  assert.equal(left("claim-T0001-8fe2db55"), true);
+  assert.equal(left("claim-T0001-S0001-450a7323"), true);
+  assert.equal(left("review-edit-T0002-0a1b2c3d"), true);
+  assert.equal(left("layout-P0001-662a10a7"), true);
+  // younger than the grace period: its pull request may still be opening
+  assert.equal(left("claim-T0001-8fe2db55", "2026-10-29T11:30:00Z"), false);
+  // the head of an open pull request
+  assert.equal(
+    left("claim-T0001-8fe2db55", old, ["claim-T0001-8fe2db55"]),
+    false,
+  );
+  // task branches, kept work, the default branch and other names
+  assert.equal(left("encode-T0001"), false);
+  assert.equal(left("wip-T0001"), false);
+  assert.equal(left("main"), false);
+  assert.equal(left("claim-T0001"), false);
 });

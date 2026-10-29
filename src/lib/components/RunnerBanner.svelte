@@ -81,7 +81,7 @@
       {#if collapsible}
         <button
           type="button"
-          class="fold"
+          class="btn btn-icon dismiss"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Show the whole message" : "Fold the message"}
           title={collapsed ? "Show the whole message" : "Fold the message"}
@@ -91,8 +91,10 @@
       {:else}
         <button
           type="button"
-          class="dismiss"
-          onclick={() => (runner.result = null)}>Dismiss</button
+          class="btn btn-icon dismiss"
+          aria-label="Dismiss"
+          title="Dismiss"
+          onclick={() => (runner.result = null)}><Icon name="close" /></button
         >
       {/if}
     </div>
@@ -115,28 +117,6 @@
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-  }
-  .fold {
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    margin: -2px -4px -2px 0;
-    padding: 0;
-    border: 0;
-    border-radius: 6px;
-    background: none;
-    color: inherit;
-    cursor: pointer;
-    opacity: 0.7;
-  }
-  @media (hover: hover) {
-    .fold:hover {
-      opacity: 1;
-      background: color-mix(in srgb, currentColor 10%, transparent);
-    }
   }
   .rawlink {
     display: flex;

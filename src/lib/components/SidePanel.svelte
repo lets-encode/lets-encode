@@ -601,7 +601,7 @@
             {#if !selection}
               <span class="secdot"></span>
               {task ? "Comments" : "Campaign comments"}
-              <span class="seccount">{count}</span>
+              <span class="countpill">{count}</span>
             {/if}
             {#if resolvedCount > 0}
               <button
@@ -611,7 +611,7 @@
                 aria-pressed={hideResolved}
                 onclick={() => (hideResolved = !hideResolved)}
                 title="Hide the resolved threads"
-                ><span class="sw"></span>Hide resolved · {resolvedCount}</button
+                >Hide resolved · {resolvedCount}</button
               >
             {/if}
           </div>
@@ -990,25 +990,6 @@
     justify-content: center;
     border-style: dashed;
   }
-  .spinner {
-    flex: none;
-    width: 10px;
-    height: 10px;
-    border: 2px solid var(--line);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .spinner {
-      animation-duration: 2s;
-    }
-  }
   .sp > .clist {
     flex: 0 1 auto;
     /* Room for the list heading and a line below it. */
@@ -1041,17 +1022,6 @@
     border-radius: 2px;
     background: currentColor;
     flex: none;
-  }
-  .seccount {
-    font-size: 9.5px;
-    font-weight: 600;
-    letter-spacing: 0;
-    text-transform: none;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 7px;
-    color: var(--ink-soft);
-    background: var(--card);
   }
   .sechead .chip-switch {
     margin-left: auto;

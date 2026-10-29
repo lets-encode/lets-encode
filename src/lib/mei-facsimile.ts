@@ -209,6 +209,18 @@ export interface StaffModel {
   notationType: string;
   /** Instrument label, written as a <label> child; '' emits none. */
   label: string;
+  /** Short label for the systems after the first, written as a <labelAbbr> child; absent or '' emits none. */
+  labelAbbr?: string;
+  /**
+   * The players the staff carries, one <layerDef> each: its layer number and
+   * name, the name as a <label> child where `printed` (drawn in front of the
+   * staff), else as @label. Absent or empty emits none.
+   */
+  layers?: LayerModel[];
+  /** MEI staffDef @visible: false where the system does not print the staff; absent is shown. */
+  visible?: boolean;
+  /** The staff is one instrument of its own, written as an <instrDef> child. */
+  instrument?: boolean;
   /**
    * MEI staffDef @trans.diat and @trans.semi: the interval from written to
    * sounding pitch of a transposing instrument (a clarinet in B♭: -1, -2).
@@ -221,6 +233,18 @@ export interface StaffModel {
    * one its transposition gives (`staffKeysig`); absent follows it.
    */
   keysig?: string;
+}
+
+/** A player of a staff: its layer number (MEI layerDef @n) and name. */
+export interface LayerModel {
+  n: number;
+  label: string;
+  printed: boolean;
+  /** The player is an instrument of its own, written as an <instrDef> child of the layerDef. */
+  instrument?: boolean;
+  /** The layer's own transposition (MEI layerDef @trans.diat, @trans.semi); absent or both 0 is none. */
+  transDiat?: number;
+  transSemi?: number;
 }
 
 /** The key signature a staff is written in: its own, else the score's moved by its transposition. */
@@ -246,12 +270,16 @@ export interface StaffGroupModel {
   symbol: string;
   /** Group label, written as a <label> child; '' emits none. */
   label: string;
+  /** Short group label, written as a <labelAbbr> child; absent or '' emits none. */
+  labelAbbr?: string;
   /** MEI staffGrp @bar.thru: the barlines run through the group's staves. */
   barThru: boolean;
   /**
    * The staves are one instrument (a piano, a harp: one part over several
    * staves), written as an <instrDef> in the <staffGrp>; false for staves of
-   * separate instruments (Horn 1, 2). Braces only.
+   * separate instruments (Horn 1, 2). The score setup sets it on braces
+   * only; an instrument of several players on several staves is a bracket
+   * of one instrument.
    */
   oneInstrument: boolean;
 }
@@ -467,15 +495,33 @@ function buildScoreDefXml(
     const clef = staff.notationType.startsWith("tab.lute.")
       ? ""
       : ` clef.shape="${xmlEscape(staff.clefShape)}" clef.line="${staff.clefLine}"${dis}`;
+    const visible = staff.visible === false ? ' visible="false"' : "";
     const open =
-      `${indent}<staffDef${idOf(staff.id)} n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans} ` +
+      `${indent}<staffDef${idOf(staff.id)} n="${n}" lines="${staff.lines}"${notation}${clef}${key}${trans}${visible} ` +
       meter;
-    if (!staff.label) return `${open}/>`;
-    return (
-      `${open}>\n` +
-      `${indent}   <label>${xmlEscape(staff.label)}</label>\n` +
-      `${indent}</staffDef>`
-    );
+    const children = [
+      ...(staff.label
+        ? [`${indent}   <label>${xmlEscape(staff.label)}</label>`]
+        : []),
+      ...(staff.labelAbbr
+        ? [`${indent}   <labelAbbr>${xmlEscape(staff.labelAbbr)}</labelAbbr>`]
+        : []),
+      ...(staff.instrument ? [`${indent}   <instrDef/>`] : []),
+      ...(staff.layers ?? []).map((layer) => {
+        const layerTrans =
+          layer.transDiat || layer.transSemi
+            ? ` trans.diat="${layer.transDiat ?? 0}" trans.semi="${layer.transSemi ?? 0}"`
+            : "";
+        const inner =
+          (layer.printed ? `<label>${xmlEscape(layer.label)}</label>` : "") +
+          (layer.instrument ? "<instrDef/>" : "");
+        const label = layer.printed ? "" : ` label="${xmlEscape(layer.label)}"`;
+        const open = `${indent}   <layerDef n="${layer.n}"${label}${layerTrans}`;
+        return inner ? `${open}>${inner}</layerDef>` : `${open}/>`;
+      }),
+    ];
+    if (!children.length) return `${open}/>`;
+    return `${open}>\n${children.join("\n")}\n${indent}</staffDef>`;
   };
   // Outer groups first, so each group is found before the groups inside it.
   const groups = [...scoreDef.groups].sort(
@@ -503,8 +549,11 @@ function buildScoreDefXml(
       );
       if (group.label)
         rows.push(`${indent}   <label>${xmlEscape(group.label)}</label>`);
-      if (group.symbol === "brace" && group.oneInstrument)
-        rows.push(`${indent}   <instrDef/>`);
+      if (group.labelAbbr)
+        rows.push(
+          `${indent}   <labelAbbr>${xmlEscape(group.labelAbbr)}</labelAbbr>`,
+        );
+      if (group.oneInstrument) rows.push(`${indent}   <instrDef/>`);
       emit(n, end, `${indent}   `);
       rows.push(`${indent}</staffGrp>`);
       n = end + 1;
@@ -773,6 +822,52 @@ export function replaceScoreDef(mei: string, scoreDef: ScoreDefModel): string {
   return out + mei.slice(last);
 }
 
+/** The staff fields a page task's check of the opening score definition may change. */
+export const CHECKED_STAFF_FIELDS = [
+  "clefShape",
+  "clefLine",
+  "clefDis",
+  "clefDisPlace",
+  "keysig",
+  "transDiat",
+  "transSemi",
+] as const;
+
+/** A score definition without the xml:ids of its staves and groups. */
+export const withoutIds = (def: ScoreDefModel): ScoreDefModel => ({
+  ...def,
+  staves: def.staves.map(({ id: _, ...staff }) => staff),
+  groups: def.groups.map(({ id: _, ...group }) => group),
+});
+
+/**
+ * `mei` with its opening score definition (its first `<scoreDef>`) and every
+ * later block that repeats it (a movement's copy) built from the model; the
+ * other blocks (a key or meter change) stay as they are, and so does the
+ * document's @optimize. The opening block carries the model's ids.
+ */
+export function replaceOpeningScoreDef(
+  mei: string,
+  scoreDef: ScoreDefModel,
+): string {
+  const blocks = [...elementsNamed(mei, "scoreDef", true)];
+  if (!blocks.length) return mei;
+  const plain = (el: (typeof blocks)[number]) =>
+    JSON.stringify(withoutIds(parseScoreDef(mei.slice(el.start, el.end))));
+  const opening = plain(blocks[0]);
+  const optimize = blocks.some((el) => /\boptimize="true"/.test(el.tag));
+  let out = "";
+  let last = 0;
+  for (const [i, el] of blocks.entries()) {
+    if (i > 0 && plain(el) !== opening) continue;
+    out +=
+      mei.slice(last, el.start) +
+      buildScoreDefXml(scoreDef, optimize, i === 0).trim();
+    last = el.end;
+  }
+  return out + mei.slice(last);
+}
+
 // One attribute's value from an XML tag string, unescaped; null if absent.
 function attr(tag: string, name: string): string | null {
   const m = new RegExp(`\\b${name}="([^"]*)"`).exec(tag);
@@ -794,7 +889,31 @@ export function parseScoreDef(text: string): ScoreDefModel {
   const staves: StaffModel[] = [];
   for (const staffDefAt of elementsNamed(block, "staffDef", true)) {
     const tag = staffDefAt.tag;
-    const label = firstElementNamed(staffDefAt.inner, "label")?.inner;
+    // The staff's own label and short label; its layers' labels sit inside
+    // their <layerDef> elements.
+    const layerDefs = [...elementsNamed(staffDefAt.inner, "layerDef", true)];
+    const own = layerDefs.reduceRight(
+      (text, el) => text.slice(0, el.start) + text.slice(el.end),
+      staffDefAt.inner,
+    );
+    const label = firstElementNamed(own, "label")?.inner;
+    const labelAbbr = firstElementNamed(own, "labelAbbr")?.inner;
+    const layers = layerDefs.map((el, i): LayerModel => {
+      const child = firstElementNamed(el.inner, "label")?.inner;
+      const diat = Number(attr(el.tag, "trans\\.diat") ?? 0);
+      const semi = Number(attr(el.tag, "trans\\.semi") ?? 0);
+      return {
+        n: Number(attr(el.tag, "n") ?? i + 1),
+        label:
+          child !== undefined
+            ? xmlUnescape(child.trim())
+            : (attr(el.tag, "label") ?? ""),
+        printed: child !== undefined,
+        ...(/<instrDef\b/.test(el.inner) ? { instrument: true } : {}),
+        ...(diat || semi ? { transDiat: diat, transSemi: semi } : {}),
+      };
+    });
+    const instrument = /<instrDef\b/.test(own);
     // A tablature staffDef may carry no clef attributes; its shape is the
     // TAB convention, so the model stays complete.
     const notationType = attr(tag, "notationtype") ?? "";
@@ -809,6 +928,10 @@ export function parseScoreDef(text: string): ScoreDefModel {
       lines: Number(attr(tag, "lines") ?? 5),
       notationType,
       label: label ? xmlUnescape(label.trim()) : "",
+      ...(labelAbbr ? { labelAbbr: xmlUnescape(labelAbbr.trim()) } : {}),
+      ...(layers.length ? { layers } : {}),
+      ...(attr(tag, "visible") === "false" ? { visible: false } : {}),
+      ...(instrument ? { instrument } : {}),
     };
     const diat = Number(attr(tag, "trans\\.diat") ?? 0);
     const semi = Number(attr(tag, "trans\\.semi") ?? 0);
@@ -845,10 +968,11 @@ export function parseScoreDef(text: string): ScoreDefModel {
       depth++;
       if (depth >= 2) {
         // A label directly after the open tag names the group (a staff's
-        // own label sits inside its staffDef instead); an <instrDef> after
-        // it makes the staves one instrument.
+        // own label sits inside its staffDef instead), a <labelAbbr> after it
+        // gives its short name, and an <instrDef> after those makes the
+        // staves one instrument.
         const head =
-          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(<instrDef\b)?/.exec(
+          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(?:<labelAbbr\b[^>]*>([\s\S]*?)<\/labelAbbr>)?\s*(<instrDef\b)?/.exec(
             block.slice(tokenRe.lastIndex),
           )!;
         const id = attr(token[0], "xml:id");
@@ -857,8 +981,9 @@ export function parseScoreDef(text: string): ScoreDefModel {
           start: staffNo + 1,
           symbol: attr(token[0], "symbol") ?? "bracket",
           label: head[1] ? xmlUnescape(head[1].trim()) : "",
+          ...(head[2] ? { labelAbbr: xmlUnescape(head[2].trim()) } : {}),
           barThru: attr(token[0], "bar\\.thru") === "true",
-          oneInstrument: !!head[2],
+          oneInstrument: !!head[3],
         });
       }
     }

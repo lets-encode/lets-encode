@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   firstElementOfPage,
+  spliceOpeningScoreDef,
   splicePage,
   splicePageSpan,
 } from "../mei-page-splice.ts";
@@ -10,7 +11,12 @@ import {
   initialFacsimileModel,
   buildBlankScoreMei,
   buildFacsimileMei,
+  DEFAULT_SCORE_DEF,
+  parseScoreDef,
+  replaceOpeningScoreDef,
+  replaceScoreDef,
   type FacsimilePage,
+  type ScoreDefModel,
 } from "../mei-facsimile.ts";
 import { buildPieceHead, emptySourceMetadata } from "../source-metadata.ts";
 
@@ -285,4 +291,111 @@ test("splices and checks a page in linear time whatever its comments hold", () =
   const elapsed = performance.now() - started;
   assert.ok(spliced.includes("<measure <note <measure"));
   assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+// A score of two named staves in a bracket over two movements, the second
+// opening on page 2, so its score definition repeats the opening one there.
+const defOf = (clefShape: string, clefLine: number): ScoreDefModel => ({
+  ...DEFAULT_SCORE_DEF,
+  staves: [
+    { ...DEFAULT_SCORE_DEF.staves[0], id: "i1-1", label: "Violine" },
+    {
+      ...DEFAULT_SCORE_DEF.staves[0],
+      id: "i2-1",
+      label: "Viola",
+      clefShape,
+      clefLine,
+    },
+  ],
+  groups: [
+    {
+      id: "g1",
+      start: 1,
+      end: 2,
+      symbol: "bracket",
+      label: "",
+      barThru: false,
+      oneInstrument: false,
+    },
+  ],
+});
+const model = initialFacsimileModel(PAGES);
+model.pages[1].zones[0].mdiv = true;
+const opened = buildFacsimileMei(
+  { ...model, headXml: HEAD, scoreDef: defOf("G", 2) },
+  { withBreaks: true },
+);
+
+test("spliceOpeningScoreDef takes clefs, keys and meter from the fork, also into a movement's copy", () => {
+  const fork = replaceScoreDef(opened, {
+    ...defOf("C", 3),
+    keysig: "3s",
+    meterCount: "2",
+    meterUnit: "2",
+  });
+  const spliced = spliceOpeningScoreDef(opened, fork);
+  const blocks = spliced.match(/<scoreDef\b[\s\S]*?<\/scoreDef>/g) ?? [];
+  assert.equal(blocks.length, 2);
+  for (const block of blocks) {
+    const def = parseScoreDef(block);
+    assert.equal(def.keysig, "3s");
+    assert.equal(def.meterCount, "2");
+    assert.deepEqual(
+      def.staves.map((s) => `${s.clefShape}${s.clefLine}`),
+      ["G2", "C3"],
+    );
+  }
+  // The opening keeps its ids and its group.
+  const opening = parseScoreDef(spliced);
+  assert.deepEqual(
+    opening.staves.map((s) => s.id),
+    ["i1-1", "i2-1"],
+  );
+  assert.equal(opening.groups[0].id, "g1");
+  // Outside the score definitions nothing changes.
+  const outside = (mei: string) =>
+    mei.replace(/<scoreDef\b[\s\S]*?<\/scoreDef>/g, "");
+  assert.equal(outside(spliced), outside(opened));
+});
+
+test("spliceOpeningScoreDef keeps the xml:ids of every element of the opening", () => {
+  const ids = (mei: string) =>
+    mei.match(/<scoreDef\b[\s\S]*?<\/scoreDef>/)![0].match(/xml:id="[^"]*"/g);
+  const fork = replaceScoreDef(opened, { ...defOf("F", 4), keysig: "2f" });
+  const spliced = spliceOpeningScoreDef(opened, fork);
+  assert.equal(parseScoreDef(spliced).keysig, "2f");
+  assert.ok(ids(opened)!.length > 4);
+  assert.deepEqual(ids(spliced), ids(opened));
+});
+
+test("spliceOpeningScoreDef refuses other changes and keeps an unchanged base", () => {
+  assert.equal(spliceOpeningScoreDef(opened, opened), opened);
+  const renamed = replaceScoreDef(opened, {
+    ...defOf("G", 2),
+    staves: defOf("G", 2).staves.map((s, i) =>
+      i === 1 ? { ...s, label: "Bratsche" } : s,
+    ),
+  });
+  assert.throws(
+    () => spliceOpeningScoreDef(opened, renamed),
+    /staff 2 changes more than its clef/,
+  );
+  const fewer = replaceScoreDef(opened, {
+    ...defOf("G", 2),
+    staves: defOf("G", 2).staves.slice(0, 1),
+    groups: [],
+  });
+  assert.throws(() => spliceOpeningScoreDef(opened, fewer), /2 staves/);
+});
+
+test("replaceOpeningScoreDef leaves a key change inside a page as it is", () => {
+  const change = '<scoreDef keysig="1f"/>';
+  const withChange = opened.replace(
+    '<measure xml:id="measure-4"',
+    `${change}<measure xml:id="measure-4"`,
+  );
+  assert.ok(withChange.includes(change));
+  const replaced = replaceOpeningScoreDef(withChange, defOf("F", 4));
+  assert.ok(replaced.includes(change));
+  assert.equal(parseScoreDef(replaced).staves[1].clefShape, "F");
 });

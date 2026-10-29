@@ -32,13 +32,14 @@
     }
   }
 
-  // The main screen, the campaign view, the wizard, the pre-task editors and
-  // the review view are full-bleed, full-height surfaces (the wizard splits
+  // The main screen, the campaign view, the wizard, the pre-task editors, the
+  // score check and the review view are full-bleed, full-height surfaces (the wizard splits
   // into a form pane and a page-preview pane); every other route keeps the
   // narrow reading column.
   const corrector = $derived(
     page.route.id === "/[campaign]/zones/[task]" ||
       page.route.id === "/[campaign]/setup/[task]" ||
+      page.route.id === "/[campaign]/check/[task]" ||
       page.route.id === "/[campaign]/review/[task]",
   );
   const full = $derived(
@@ -129,11 +130,8 @@
   {/if}
   <div class="topbar-right">
     {#if onHome}
-      <a
-        class="btn btn-icon"
-        href="/new"
-        aria-label="New campaign"
-        title="New campaign"><Icon name="plus" size={16} /></a
+      <a class="btn newcampaign" href="/new" title="New campaign"
+        ><Icon name="plus" /><span class="newlabel">New campaign</span></a
       >
     {/if}
     {#if auth.user}
@@ -152,7 +150,7 @@
       >
     {/if}
     <button
-      class="theme-toggle"
+      class="btn btn-icon theme-toggle"
       type="button"
       onclick={toggleTheme}
       aria-pressed={theme === "dark"}
@@ -203,14 +201,16 @@
 
 {#snippet body()}
   {#if auth.error}
-    <p class="auth-error" role="alert">
-      Sign-in failed: {auth.error}
+    <div class="banner bar err" role="alert">
+      <span>Login failed: {auth.error}</span>
       <button
         type="button"
-        class="btn btn-soft"
-        onclick={() => (auth.error = null)}>Dismiss</button
+        class="btn btn-icon dismiss"
+        aria-label="Dismiss"
+        title="Dismiss"
+        onclick={() => (auth.error = null)}><Icon name="close" /></button
       >
-    </p>
+    </div>
   {/if}
   {@render children()}
 {/snippet}
@@ -328,8 +328,17 @@
     white-space: nowrap;
     line-height: var(--back-h);
   }
-  /* Phones: one line — a smaller logo, a 32px back link, no login name. */
+  /* Phones: one line — a smaller logo, a 32px back link, no login name,
+     New campaign as its icon (the label stays for screen readers). */
   @media (max-width: 560px) {
+    .newlabel {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
     header {
       height: 48px;
       gap: 10px;
@@ -380,17 +389,6 @@
     width: 26px;
     height: 26px;
     border-radius: 50%;
-  }
-  .auth-error {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.6rem;
-    padding: 0.6rem 0.8rem;
-    border: 1px solid var(--danger-line);
-    border-radius: 6px;
-    background: var(--danger-bg);
-    color: var(--danger);
   }
   main {
     flex: 1;
@@ -472,36 +470,6 @@
     }
   }
   /* ---- Theme (light/dark) bulb toggle --------------------------------- */
-  .theme-toggle {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    padding: 0;
-    cursor: pointer;
-    color: var(--ink-soft);
-    background: transparent;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    transition:
-      color 0.15s ease,
-      border-color 0.15s ease,
-      background 0.15s ease,
-      transform 0.15s ease;
-  }
-  @media (hover: hover) {
-    .theme-toggle:hover {
-      color: var(--accent);
-      border-color: var(--accent);
-      background: transparent;
-      transform: translateY(-1px);
-    }
-  }
-  .theme-toggle:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
   .bulb {
     display: block;
   }
@@ -531,14 +499,6 @@
   /* Lit bulb in dark mode: a warm glowing shine so it reads as "on". */
   :global([data-theme="dark"]) .theme-toggle {
     color: #ffdf85;
-    border-color: rgba(255, 223, 133, 0.55);
-  }
-  @media (hover: hover) {
-    :global([data-theme="dark"]) .theme-toggle:hover {
-      color: #ffe9a6;
-      border-color: #ffdf85;
-      background: rgba(255, 223, 133, 0.14);
-    }
   }
   :global([data-theme="dark"]) .bulb {
     filter: drop-shadow(0 0 3px rgba(255, 210, 110, 0.8));
@@ -553,7 +513,6 @@
     opacity: 1;
   }
   @media (prefers-reduced-motion: reduce) {
-    .theme-toggle,
     .bulb-glass,
     .bulb-filament,
     .bulb-rays {

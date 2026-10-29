@@ -77,7 +77,7 @@
   nextLabel={finisher.busy
     ? "Working…"
     : finisher.error
-      ? "Retry"
+      ? "Try again"
       : "Create campaign"}
   nextIcon={finisher.busy ? null : finisher.error ? "arrow-right" : "check"}
   finish={!finisher.error}

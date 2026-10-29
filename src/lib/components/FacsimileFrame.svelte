@@ -87,9 +87,11 @@
     align?: { uly: number; lry: number; top: number; bottom: number } | null;
   } = $props();
 
-  const ZOOM_MIN = 0.25;
-  const ZOOM_MAX = 8;
-  const ZOOM_STEP = 1.25;
+  const ZOOM_MIN = 0.2;
+  const ZOOM_MAX = 4;
+  // One press of zoom out or in: a tenth of the range on a log scale, about
+  // a third larger or smaller.
+  const ZOOM_STEP = (ZOOM_MAX / ZOOM_MIN) ** 0.1;
 
   let view = $state<HTMLDivElement>();
   let vw = $state(0);
@@ -243,26 +245,24 @@
     {/if}
   </div>
   <div class="fftools">
-    <span class="tbtn-pair">
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        aria-label="Zoom out"
-        title="Zoom out"
-        disabled={zoom <= ZOOM_MIN}
-        onclick={() => zoomBy(1 / ZOOM_STEP)}
-        ><Icon name="zoom-out" size={16} /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        aria-label="Zoom in"
-        title="Zoom in"
-        disabled={zoom >= ZOOM_MAX}
-        onclick={() => zoomBy(ZOOM_STEP)}
-        ><Icon name="zoom-in" size={16} /></button
-      >
-    </span>
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom out"
+      title="Zoom out"
+      disabled={zoom <= ZOOM_MIN}
+      onclick={() => zoomBy(1 / ZOOM_STEP)}
+      ><Icon name="zoom-out" size={16} /></button
+    >
+    <button
+      type="button"
+      class="tbtn tbtn-icon"
+      aria-label="Zoom in"
+      title="Zoom in"
+      disabled={zoom >= ZOOM_MAX}
+      onclick={() => zoomBy(ZOOM_STEP)}
+      ><Icon name="zoom-in" size={16} /></button
+    >
     <button
       type="button"
       class="tbtn tbtn-icon"

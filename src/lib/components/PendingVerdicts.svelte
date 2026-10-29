@@ -21,7 +21,7 @@
   <div class="overlay" role="alert">
     <div class="overlay-card">
       <div class="fail-mark" aria-hidden="true">
-        <Icon name="close" size={22} />
+        <Icon name="warning" size={22} />
       </div>
       <p class="overlay-title">
         {rejected.every((e) => e.runFailed)

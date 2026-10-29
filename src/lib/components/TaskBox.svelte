@@ -15,7 +15,6 @@
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import { findRow } from "$lib/campaign-tables.ts";
   import type { LockRow, StateRow } from "$lib/campaign-tables.ts";
-  import type { FailComment, Result } from "$lib/commands.ts";
   import {
     handle,
     pageOfLocator,
@@ -24,11 +23,13 @@
     workPlace,
   } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { REASON_TEXT } from "$lib/coordinator-policy.ts";
   import {
     buildRecord,
     cardPill,
     elapsed,
     initialOf,
+    stageOf,
   } from "$lib/campaign-board.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import AbandonButton from "./AbandonButton.svelte";
@@ -48,17 +49,15 @@
     canPush,
     runner,
     editorError = null,
+    changeRequestUrl,
     primary = true,
     inView = false,
     tools,
     headAction,
-    prefill,
-    measures = true,
+    checks = [],
     onclaim,
     oneditor,
     onabandon,
-    onvalidate,
-    onreviewedit,
   }: {
     card: BoardCard;
     /** The display name of the task's piece. */
@@ -81,45 +80,37 @@
       text: string;
       confirm?: { label: string; run: () => void };
     } | null;
+    /** The web address of the campaign's pull request `number`, for the
+        link of a rejected submission. */
+    changeRequestUrl?: (number: number) => string;
     /** The footer's action is the view's primary action (a solid button);
         otherwise an outline, beside a primary elsewhere in the view. */
     primary?: boolean;
     /** The box sits in the task's own view (the review view or the
         pre-task's editor): the footer leaves out the links to that view, and
-        the viewer's verdict controls and Give back task go to the view's
-        side panel footer (ReviewActions). */
+        Give back task goes to the view's side panel footer (ReviewActions),
+        beside the verdict controls. */
     inView?: boolean;
     /** The view's own controls, below the status row. */
     tools?: Snippet;
     /** A control at the heading's right end (the side panel's comments
         button). */
     headAction?: Snippet;
-    /** The anchor a fresh fail form opens with; defaults to the task's page. */
-    prefill?: () => { page: string; m1: string; m2: string };
-    /** The fail form asks for a measure range besides the page. */
-    measures?: boolean;
+    /** Why the task's page is to be checked against the scan
+        (omr-page-checks.ts); none shows no mark. */
+    checks?: string[];
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     /** Claim or open the task in mei-friend; not used in the review view. */
     oneditor?: (task_id: string) => Promise<void>;
     /** Abandon the viewer's claim: the task's encoding ('' subtask) or a review slot. */
     onabandon: (task_id: string, subtask_id: string) => Promise<unknown>;
-    onvalidate: (
-      task_id: string,
-      subtask_id: string,
-      verdict: string,
-      comment?: FailComment,
-    ) => Promise<Result | null>;
-    /** Switch the viewer's review to editing, with the fail comment. */
-    onreviewedit: (
-      task_id: string,
-      subtask_id: string,
-      comment: FailComment,
-    ) => Promise<Result | null>;
   } = $props();
 
   // A submission on this task still being processed: every action in the
   // footer holds until it lands.
   const processing = $derived(pendingVerdicts.taskProcessing(card.task));
+  // A submission's run state takes the status pill's place while it shows.
+  const runState = $derived(pendingVerdicts.forTask(card.task));
   /** The viewer's encoding claim on the task, if any. */
   const myEncodingLock = $derived(
     viewer === ""
@@ -153,6 +144,9 @@
   const compact = new MediaQuery(DOCKED_QUERY, false);
   const foldRecord = $derived(compact.current && hasRecord && !myReview);
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
+  // The first page task of a piece whose instruments were named is claimed
+  // and continued in the app's score check, which makes its draft.
+  const checkRoute = $derived(`/${campaign}/check/${card.task}`);
   const editorName = $derived(workPlace(card.locator));
 
   // The submitted encoding behind the card, for the Submission section.
@@ -174,14 +168,22 @@
   // view is used: the panel is where a touch screen reads it.
   const help = $derived.by(() => {
     if (card.column === "done") return "";
-    if (card.column === "validation")
+    if (card.column === "validation") {
+      // "page 1 of “Die Fledermaus”", "“Die Fledermaus”", "page 1", "".
+      const page = pageOfLocator(card.locator);
+      const piece = pieceName ? `“${pieceName}”` : "";
+      const what = [page === null ? "" : `page ${page}`, piece]
+        .filter(Boolean)
+        .join(" of ");
+      const encoding = what ? `the encoding of ${what}` : "the encoding";
       return taskState?.encoder === viewer && !claimableSub && !myReview
         ? "Another volunteer reviews your submission."
         : card.pre
           ? `Check the submitted work in the ${editorName} and approve it or request changes.`
           : inView
-            ? "Compare the encoding with the scan and approve it or request changes."
-            : "Compare the encoding with the scan in the review view and approve it or request changes.";
+            ? `Compare ${encoding} with the scan and approve it or request changes.`
+            : `Compare ${encoding} with the scan in the review view and approve it or request changes.`;
+    }
     if (card.locator === "score-setup")
       return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
     if (card.locator === "omr-layout")
@@ -196,18 +198,7 @@
   });
 
   // The stage whose colour the box and its side panel take (ui.css).
-  const stage = $derived(
-    card.column === "validation"
-      ? "review"
-      : card.column === "done"
-        ? "done"
-        : card.pre
-          ? "pre"
-          : "encode",
-  );
-
-  // The task's page, prefilling a fail's anchor.
-  const taskPage = $derived(String(pageOfLocator(card.locator) ?? ""));
+  const stage = $derived(stageOf(card));
 </script>
 
 <div
@@ -224,7 +215,21 @@
     />
     {@render headAction?.()}
   </div>
-  <TaskRunState task={card.task} bar />
+  {#if card.rejected && !runState}
+    {@const { pr, reason } = card.rejected}
+    <div class="banner err bar">
+      <span
+        ><b
+          >Submission {#if changeRequestUrl && pr}<a
+              href={changeRequestUrl(Number(pr))}
+              target="_blank"
+              rel="noreferrer">#{pr}</a
+            >{:else if pr}#{pr}{/if} rejected:</b
+        >
+        {REASON_TEXT[reason] ?? reason}.</span
+      >
+    </div>
+  {/if}
   {#if editorError}
     <div class="banner err bar">
       <span
@@ -242,18 +247,28 @@
     </div>
   {/if}
   <div class="statusrow">
-    <span
-      class="pill c-{card.column}"
-      title={card.column === "blocked"
-        ? `Waits for ${card.waitsFor}.`
-        : card.column === "done"
-          ? card.doneLine
-          : card.keptFrom
-            ? `${card.keptFrom}'s claim ran out with unsubmitted changes. The next claim continues from them.`
-            : myEncodingLock && card.column === "encoding"
-              ? `Your claim ends ${new Date(myEncodingLock.expires).toLocaleString()}. Submit before then; afterwards the task is open to others.`
-              : undefined}>{cardPill(card, viewer)}</span
-    >
+    <TaskRunState task={card.task} pill />
+    {#if !runState}
+      <span
+        class="chip"
+        title={card.column === "blocked"
+          ? `Waits for ${card.waitsFor}.`
+          : card.column === "done"
+            ? card.doneLine
+            : card.keptFrom
+              ? `${card.keptFrom}'s claim ran out with unsubmitted changes. The next claim continues from them.`
+              : myEncodingLock && card.column === "encoding"
+                ? `Your claim ends ${new Date(myEncodingLock.expires).toLocaleString()}. Submit before then; afterwards the task is open to others.`
+                : undefined}>{cardPill(card, viewer)}</span
+      >
+    {/if}
+    {#if checks.length && card.column !== "done"}
+      <span
+        class="chip chip-note"
+        title={`Check the clefs, key, meter and staves of this page against the scan. ${checks.join(" ")}`}
+        >Check</span
+      >
+    {/if}
     {#if help}
       <p class="help">{help}</p>
     {/if}
@@ -276,19 +291,7 @@
   {/snippet}
   {#snippet reviewRecord()}
     <div class="section">
-      <ValidationRecord
-        {card}
-        {locks}
-        {viewer}
-        {logins}
-        {canPush}
-        {runner}
-        prefill={prefill ?? (() => ({ page: taskPage, m1: "", m2: "" }))}
-        {measures}
-        actions={!inView}
-        {onvalidate}
-        {onreviewedit}
-      />
+      <ValidationRecord {card} {locks} {viewer} {logins} {canPush} />
     </div>
   {/snippet}
   {#if compact.current && foldLabel}
@@ -317,6 +320,15 @@
           title={`Claims the task for you and opens the ${editorName}.`}
           >{claimLabel(card.locator)}</a
         >
+      {:else if card.checksOpening}
+        <a
+          class="btn btn-enc"
+          class:btn-primary={primary}
+          href={processing ? undefined : checkRoute}
+          aria-disabled={processing}
+          title="Claims the task for you and opens the score check: the clefs, key signatures, meter and transpositions of the score's staves, before the draft opens in mei-friend."
+          >Claim & open score check</a
+        >
       {:else}
         <button
           type="button"
@@ -325,8 +337,8 @@
           onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
           title={auth.user
-            ? "Claims the task for you, then opens the score in mei-friend."
-            : "Log in to claim a task."}
+            ? "Claims this task for you and opens the score in mei-friend."
+            : "Log in with GitHub to claim a task."}
           >{claimLabel(card.locator)} <Icon name="external" /></button
         >
       {/if}
@@ -341,6 +353,21 @@
           aria-disabled={processing}
           title={`Continue your work in the ${editorName}.`}
           >Continue in {editorName}</a
+        >
+        <AbandonButton
+          disabled={runner.busy || processing}
+          onabandon={() => onabandon(card.task, "")}
+        />
+      </div>
+    {:else if mineEncoding && card.checksOpening}
+      <div class="tspfoot">
+        <a
+          class="btn"
+          class:btn-primary={primary}
+          href={processing ? undefined : checkRoute}
+          aria-disabled={processing}
+          title="Continue in the score check, which opens the draft in mei-friend."
+          >Continue in score check</a
         >
         <AbandonButton
           disabled={runner.busy || processing}
@@ -373,15 +400,14 @@
           class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
-          title="Reserves this review for you for a limited time. Give back task releases it."
-          >Claim to review</button
+          title="Claims a review of this task for you.">Claim to review</button
         >
         {#if !card.pre && !inView}
           <a
             class="btn btn-soft"
             href={`/${campaign}/review/${card.task}`}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
-            >Open review view</a
+            >Open review</a
           >
         {/if}
       </div>
@@ -394,7 +420,7 @@
             href={processing ? undefined : editorRoute}
             aria-disabled={processing}
             title={`Review the submitted work in the ${editorName}.`}
-            >Open {editorName}</a
+            >Continue in {editorName}</a
           >
         {:else}
           <a
@@ -403,7 +429,7 @@
             href={processing ? undefined : `/${campaign}/review/${card.task}`}
             aria-disabled={processing}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
-            >Open review view</a
+            >Continue in review</a
           >
         {/if}
         <AbandonButton
@@ -560,27 +586,5 @@
       position: absolute;
       inset: -6px;
     }
-  }
-
-  /* ---------------------------------------------------------------- pills */
-  /* The status on paper over the wash, in the stage's colour once the task
-     is under way. */
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-weight: 600;
-    font-size: 11.5px;
-    line-height: 1;
-    padding: 5px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
-    background: var(--card);
-    color: var(--ink-soft);
-  }
-  .pill.c-encoding,
-  .pill.c-validation,
-  .pill.c-done {
-    color: var(--st);
   }
 </style>

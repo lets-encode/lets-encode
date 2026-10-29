@@ -11,9 +11,11 @@ const START_TAG =
  * Add an xml:id to every element that lacks one. Ids are deterministic — the
  * tag name plus a per-tag counter in document order (fileDesc-1, staff-2, …),
  * skipping values the document already uses — so rebuilds are stable and
- * diffable. Elements with an xml:id keep it.
+ * diffable. Elements with an xml:id keep it. `prefix` goes before each new
+ * id (`p2-staff-1`), so documents numbered from the same base with different
+ * prefixes share no new ids.
  */
-export function addXmlIds(xml: string): string {
+export function addXmlIds(xml: string, prefix = ""): string {
   const used = new Set<string>();
   for (const match of xml.matchAll(/\bxml:id\s*=\s*"([^"]*)"/g))
     used.add(match[1]);
@@ -25,7 +27,7 @@ export function addXmlIds(xml: string): string {
       if (/\bxml:id\s*=/.test(attrs ?? "")) return tag;
       let n = counters.get(name) ?? 0;
       let id: string;
-      do id = `${name}-${++n}`;
+      do id = `${prefix}${name}-${++n}`;
       while (used.has(id));
       counters.set(name, n);
       used.add(id);

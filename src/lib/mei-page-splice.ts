@@ -17,7 +17,14 @@
 // checked afterwards (assertSpliceIntegrity) so a fork that smuggles in a
 // page break or a duplicate measure is rejected rather than merged.
 
-import { tagsIn } from "./mei-xml.ts";
+import { elementsNamed, tagsIn } from "./mei-xml.ts";
+import {
+  CHECKED_STAFF_FIELDS,
+  parseScoreDef,
+  replaceOpeningScoreDef,
+  type ScoreDefModel,
+  type StaffModel,
+} from "./mei-facsimile.ts";
 
 /**
  * The `<pb>` tags of `xml` from offset `from`, outside comments, with the
@@ -178,6 +185,21 @@ function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
 }
 
 /**
+ * The offsets of `locator`'s page (`surface-N`) in `mei`: from just after its
+ * `<pb>` to the next page's, or to the close of the enclosing element on the
+ * last page. Null if the page has no `<pb>`.
+ */
+export function pageSpan(
+  mei: string,
+  locator: string,
+): { from: number; to: number } | null {
+  const surfaces = pbSurfaces(mei);
+  const at = surfaces.indexOf(locator);
+  if (at === -1) return null;
+  return pageSpanAt(mei, locator, surfaces[at + 1] ?? null);
+}
+
+/**
  * The xml:id of the element to select when opening `locator`'s page
  * (`surface-N`): its first note, or its first measure if it has no note with an
  * xml:id. Null if the page has no `<pb>` or neither element.
@@ -186,10 +208,9 @@ export function firstElementOfPage(
   mei: string,
   locator: string,
 ): string | null {
-  const surfaces = pbSurfaces(mei);
-  const at = surfaces.indexOf(locator);
-  if (at === -1) return null;
-  const { from, to } = pageSpanAt(mei, locator, surfaces[at + 1] ?? null);
+  const span = pageSpan(mei, locator);
+  if (!span) return null;
+  const { from, to } = span;
   const tags = [...tagsIn(mei.slice(from, to))];
   for (const name of ["note", "measure"]) {
     const id = tags
@@ -235,4 +256,147 @@ export function splicePageSpan(
   locator: string,
 ): string {
   return spliceSpan(baseMei, forkMei, locator);
+}
+
+/**
+ * A staff without the fields a check of the opening score definition may
+ * change: CHECKED_STAFF_FIELDS and its layers' transpositions.
+ */
+function unchecked(staff: StaffModel): Partial<StaffModel> {
+  const rest: Partial<StaffModel> = { ...staff };
+  for (const field of CHECKED_STAFF_FIELDS) delete rest[field];
+  if (staff.layers)
+    rest.layers = staff.layers.map(
+      ({ transDiat: _d, transSemi: _s, ...layer }) => layer,
+    );
+  return rest;
+}
+
+/** A staff's layer transpositions, comparable as text. */
+const layerTranspositions = (staff: StaffModel): string =>
+  (staff.layers ?? [])
+    .map((l) => `${l.transDiat ?? 0},${l.transSemi ?? 0}`)
+    .join(" ");
+
+/**
+ * Why the fork's opening score definition may not replace the base's, or
+ * null when it may: the two differ at most in the staves' clefs, own key
+ * signatures and transpositions (CHECKED_STAFF_FIELDS), their layers'
+ * transpositions, the key and the meter. Staves, their ids, names and
+ * layers, and the groups stay.
+ */
+export function openingScoreDefChange(
+  base: ScoreDefModel,
+  fork: ScoreDefModel,
+): string | null {
+  if (fork.staves.length !== base.staves.length)
+    return `the score has ${base.staves.length} staves, the submission ${fork.staves.length}`;
+  const changed = base.staves.findIndex(
+    (staff, i) =>
+      JSON.stringify(unchecked(staff)) !==
+      JSON.stringify(unchecked(fork.staves[i])),
+  );
+  if (changed >= 0)
+    return `staff ${changed + 1} changes more than its clef, key signature or transposition`;
+  if (JSON.stringify(base.groups) !== JSON.stringify(fork.groups))
+    return "the staff groups change";
+  return null;
+}
+
+/**
+ * The base score with the fork's opening score definition, which may change
+ * only what openingScoreDefChange allows; a movement's copy of it follows
+ * (replaceOpeningScoreDef). Unchanged, the base is returned as it is. Throws
+ * with the reason for any other change.
+ */
+export function spliceOpeningScoreDef(
+  baseMei: string,
+  forkMei: string,
+): string {
+  const base = parseScoreDef(baseMei);
+  const fork = parseScoreDef(forkMei);
+  const reason = openingScoreDefChange(base, fork);
+  if (reason)
+    throw new Error(
+      `The score definition may change only in clefs, key signatures, meter and transpositions: ${reason}.`,
+    );
+  const same =
+    base.keysig === fork.keysig &&
+    base.meterCount === fork.meterCount &&
+    base.meterUnit === fork.meterUnit &&
+    base.meterSym === fork.meterSym &&
+    base.staves.every(
+      (staff, i) =>
+        CHECKED_STAFF_FIELDS.every(
+          (field) => staff[field] === fork.staves[i][field],
+        ) && layerTranspositions(staff) === layerTranspositions(fork.staves[i]),
+    );
+  if (same) return baseMei;
+  const replaced = replaceOpeningScoreDef(baseMei, {
+    ...base,
+    keysig: fork.keysig,
+    meterCount: fork.meterCount,
+    meterUnit: fork.meterUnit,
+    meterSym: fork.meterSym,
+    staves: base.staves.map((staff, i) => {
+      const checked: Record<string, unknown> = { ...staff };
+      for (const field of CHECKED_STAFF_FIELDS) {
+        const value = fork.staves[i][field];
+        if (value === undefined) delete checked[field];
+        else checked[field] = value;
+      }
+      if (staff.layers)
+        checked.layers = staff.layers.map(
+          ({ transDiat: _d, transSemi: _s, ...layer }, k) => {
+            const from = fork.staves[i].layers?.[k];
+            return from?.transDiat || from?.transSemi
+              ? {
+                  ...layer,
+                  transDiat: from.transDiat ?? 0,
+                  transSemi: from.transSemi ?? 0,
+                }
+              : layer;
+          },
+        );
+      return checked as unknown as StaffModel;
+    }),
+  });
+  return withOpeningIds(replaced, baseMei);
+}
+
+/**
+ * `mei` with the xml:ids of `from`'s opening `<scoreDef>` on the elements of
+ * its own opening `<scoreDef>` that have none, paired in document order. The
+ * model keeps only the staves' and groups' ids; the score definition, its
+ * root group, labels, instrument and layer definitions get theirs here.
+ * Unchanged where the two blocks do not hold the same elements in the same
+ * order.
+ */
+function withOpeningIds(mei: string, from: string): string {
+  const opening = (xml: string) => {
+    const block = elementsNamed(xml, "scoreDef", true).next().value;
+    if (!block) return null;
+    const tags = [...tagsIn(xml.slice(block.start, block.end))].filter(
+      (tag) => tag.kind !== "end",
+    );
+    return { start: block.start, end: block.end, tags };
+  };
+  const target = opening(mei);
+  const source = opening(from);
+  if (
+    !target ||
+    !source ||
+    target.tags.length !== source.tags.length ||
+    target.tags.some((tag, i) => tag.name !== source.tags[i].name)
+  )
+    return mei;
+  let block = mei.slice(target.start, target.end);
+  for (let i = target.tags.length - 1; i >= 0; i--) {
+    const tag = target.tags[i];
+    const id = source.tags[i].attributes?.get("xml:id");
+    if (!id || tag.attributes?.has("xml:id")) continue;
+    const at = tag.start + 1 + tag.name.length;
+    block = `${block.slice(0, at)} xml:id="${id}"${block.slice(at)}`;
+  }
+  return mei.slice(0, target.start) + block + mei.slice(target.end);
 }

@@ -149,6 +149,43 @@ test("readTables decodes generated quoted config values", async () => {
   assert.equal(result.isPrivate, true);
 });
 
+test("table reads started together share one batch read", async () => {
+  const files: Record<string, string> = {
+    "tracking/task.csv":
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\nT0001,,sources/score.mei,,,,\n",
+    "tracking/state.csv":
+      "task_id,subtask_id,status,encoder,encoded_at\nT0001,,encoding_required,,\n",
+    "tracking/lock.csv": lockHeader,
+  };
+  let batches = 0;
+  const forge = fakeForge({
+    getRepoFilesBatch: async (_repos, paths) => {
+      batches++;
+      return [
+        {
+          headSha: "head1",
+          isPrivate: false,
+          canPush: true,
+          files: Object.fromEntries(paths.map((p) => [p, files[p] ?? null])),
+        },
+      ];
+    },
+    getUserLogin: async () => null,
+  });
+
+  const [first, second] = await Promise.all([
+    invoke(commands.readTables, {}, context(forge)),
+    invoke(commands.readTables, {}, context(forge)),
+  ]);
+
+  assert.equal(batches, 1);
+  assert.equal(first.headSha, "head1");
+  assert.equal(first.canPush, true);
+  assert.deepEqual(second.taskDefs, first.taskDefs);
+  await invoke(commands.readTables, {}, context(forge));
+  assert.equal(batches, 2);
+});
+
 test("submitValidation rejects an invalid verdict before opening a PR", async () => {
   const result = await invoke(
     commands.submitValidation,
@@ -246,7 +283,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
 
   assert.match(
     result.error ?? "",
-    /did not run for submission #22: a submission must change at most three files/,
+    /did not run for submission #22: a submission must change at most four files/,
   );
   assert.match(result.error ?? "", /was closed/);
   assert.equal(closed, 1);

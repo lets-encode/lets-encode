@@ -129,17 +129,12 @@
     selected = wizard.pieces.length - 1;
   }
 
-  // Removing a piece is confirmed in place: the first press arms the button,
-  // the second removes. An encoded piece cannot be re-added without discarding
-  // the setup, so an accidental press must not already be a loss.
+  // Removing a piece is confirmed in place: the button turns into a question
+  // with Remove and Cancel. An encoded piece cannot be re-added without
+  // discarding the setup, so an accidental press must not already be a loss.
   let confirmingRemove = $state<string | null>(null);
 
   function removePiece(index: number) {
-    const piece = wizard.pieces[index];
-    if (confirmingRemove !== piece.id) {
-      confirmingRemove = piece.id;
-      return;
-    }
     confirmingRemove = null;
     wizard.pieces = wizard.pieces.filter((_, i) => i !== index);
     selected = Math.max(0, Math.min(selected, wizard.pieces.length - 1));
@@ -147,10 +142,8 @@
 
   // Bulk page actions, always scoped to the selected piece.
   let bulkNotice = $state<string | null>(null);
-  let confirmingClear = $state(false);
 
   function assignAllPages() {
-    confirmingClear = false;
     const { blocked, blockers } = coverPages(
       wizard.pieces,
       selected,
@@ -166,11 +159,6 @@
   }
 
   function clearRegions() {
-    if (!confirmingClear) {
-      confirmingClear = true;
-      return;
-    }
-    confirmingClear = false;
     bulkNotice = null;
     const piece = wizard.pieces[selected];
     if (piece) piece.zones = [];
@@ -246,7 +234,6 @@
   function selectPiece(index: number) {
     selected = index;
     bulkNotice = null;
-    confirmingClear = false;
     confirmingRemove = null;
   }
 </script>
@@ -287,7 +274,7 @@
     : busy
       ? "Working…"
       : finisher.error
-        ? "Retry"
+        ? "Try again"
         : "Create campaign"}
   nextIcon={!last
     ? "arrow-right"
@@ -299,13 +286,15 @@
   finish={last && !finisher.error}
 >
   <div class="pieces-head">
-    <span class="pieces-count">Pieces · {wizard.pieces.length}</span>
+    <span class="pieces-count"
+      >Pieces <span class="countpill">{wizard.pieces.length}</span></span
+    >
     <button
       type="button"
-      class="pill pill-sm"
+      class="btn"
       onclick={addPiece}
       disabled={xmlBlock !== undefined}
-      title={xmlBlock}>+ Add piece</button
+      title={xmlBlock}><Icon name="plus" />Add piece</button
     >
   </div>
 
@@ -329,29 +318,36 @@
             <span class="range">{rangeOf(p)}</span>
           </button>
           {#if wizard.pieces.length > 1}
-            {#if confirmingRemove === p.id}
-              <button
-                type="button"
-                class="btn btn-danger delete"
-                onclick={() => removePiece(i)}
-                disabled={busy}
-              >
-                Really remove {labelOf(p)}?
-              </button>
-            {:else}
+            {#if confirmingRemove !== p.id}
               <button
                 type="button"
                 class="btn btn-icon btn-danger delete"
-                onclick={() => removePiece(i)}
+                onclick={() => (confirmingRemove = p.id)}
                 disabled={busy}
                 aria-label="Remove {labelOf(p)}"
                 title="Remove this piece"
               >
-                <Icon name="close" size={14} />
+                <Icon name="trash" />
               </button>
             {/if}
           {/if}
         </div>
+        {#if confirmingRemove === p.id}
+          <div class="ask">
+            <span class="q">Remove {labelOf(p)}?</span>
+            <button
+              type="button"
+              class="btn btn-danger"
+              onclick={() => removePiece(i)}
+              disabled={busy}>Remove</button
+            >
+            <button
+              type="button"
+              class="btn"
+              onclick={() => (confirmingRemove = null)}>Cancel</button
+            >
+          </div>
+        {/if}
         {#if selected === i && p.kind === "facsimile" && pages.length}
           <div class="piece-actions">
             <button
@@ -365,17 +361,17 @@
             <button
               type="button"
               class="pill pill-sm"
-              class:confirming={confirmingClear}
               onclick={clearRegions}
               disabled={busy || !p.zones.length}
             >
-              {confirmingClear ? "Really clear all regions?" : "Clear regions"}
+              Clear regions
             </button>
             {#if !p.zones.length}
               <button
                 type="button"
-                class="pill pill-sm"
+                class="chip-switch"
                 class:on={p.noRegions}
+                aria-pressed={p.noRegions}
                 onclick={() => (wizard.pieces[i].noRegions = !p.noRegions)}
                 disabled={busy}
                 title="This piece covers no regions of the source on purpose; it gets no tasks."
@@ -586,40 +582,30 @@
     color: var(--ink-faint);
     white-space: nowrap;
   }
-  /* The remove control stays quiet until hovered; the confirmation is the
-     same small size in the danger colour. */
   .delete {
-    flex: none;
     margin-right: 10px;
-    min-height: 24px;
-    font-size: 11.5px;
-    padding: 2px 9px;
-  }
-  .delete.btn-icon {
-    width: 24px;
-    padding: 0;
-    border-radius: 6px;
-    color: var(--ink-faint);
-    border-color: transparent;
-    background: transparent;
-  }
-  @media (hover: hover) {
-    .delete.btn-icon:hover:not(:disabled) {
-      color: var(--danger);
-      border-color: var(--danger-line);
-      background: var(--danger-bg);
-    }
   }
   /* On touch the remove button's press area grows to 44px. */
   @media (pointer: coarse) {
-    .delete.btn-icon {
+    .delete {
       position: relative;
     }
-    .delete.btn-icon::after {
+    .delete::after {
       content: "";
       position: absolute;
-      inset: -10px;
+      inset: -6px;
     }
+  }
+  .ask {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 12px 10px 35px;
+  }
+  .q {
+    font-size: 13px;
+    color: var(--ink-soft);
   }
   .piece-actions {
     display: flex;
@@ -628,22 +614,16 @@
     padding: 0 12px 10px 35px;
   }
   @media (hover: hover) {
-    .piece-actions .pill:hover:not(:disabled):not(.confirming) {
+    .piece-actions .pill:hover:not(:disabled) {
       color: var(--piece);
       border-color: var(--piece);
     }
   }
-  /* The on state is an outline in the piece's colour, not the solid blue of
-     a selected view pill, which clashes with the piece tints. */
-  .piece-actions .pill.on {
-    font-weight: 600;
-    color: var(--piece);
-    border-color: var(--piece);
-    background: color-mix(in srgb, var(--piece) 10%, var(--card));
-  }
-  .piece-actions .confirming {
-    color: var(--danger);
-    border-color: var(--danger);
+  /* The switch takes the piece's colour in place of the stage's. */
+  .piece-actions .chip-switch {
+    --st: var(--piece);
+    --st-tint: color-mix(in srgb, var(--piece) 16%, var(--card));
+    --st-tint-hover: color-mix(in srgb, var(--piece) 24%, var(--card));
   }
   .bulk-notice {
     margin: 0;

@@ -257,11 +257,11 @@
         >
       {:else if handleCheck.state === "taken"}
         <span class="hint hint-err"
-          ><Icon name="close" size={12} /> Already used by {handleCheck.by}</span
+          ><Icon name="warning" size={12} /> Already used by {handleCheck.by}</span
         >
       {:else if handleCheck.state === "draft"}
         <span class="hint hint-err">
-          <Icon name="close" size={12} /> Reserved by your unfinished setup of this
+          <Icon name="warning" size={12} /> Reserved by your unfinished setup of this
           campaign
         </span>
         {#if handleCheck.resumable}
@@ -334,7 +334,9 @@
     <!-- Continue submits the form, so this step draws its own footer. -->
     {#snippet footer()}
       {#if !canAdvance && blockReason}
-        <span class="footnote" id="name-block-reason">{blockReason}</span>
+        <span class="footnote" id="name-block-reason" title={blockReason}
+          >{blockReason}</span
+        >
       {/if}
       <button
         type="submit"
@@ -359,12 +361,6 @@
   }
   .field {
     margin-top: 18px;
-  }
-  .footnote {
-    margin-right: auto;
-    align-self: center;
-    font-size: 12.5px;
-    color: var(--ink-faint);
   }
   .field:first-child {
     margin-top: 26px;
