@@ -29,7 +29,6 @@ import {
   staffPlan,
   staffStates,
   systemScoreDef,
-  withLayerTranspositions,
   type NamingPage,
 } from "../instrument-naming.ts";
 import {
@@ -396,78 +395,6 @@ test("a document carrying a DOCTYPE declaration is rejected outright", async () 
   );
   assert.equal(check.ok, false);
   assert.match(check.error, /DOCTYPE/);
-});
-
-test("parts that are instruments validate: an instrDef and a transposition per layer of the shared staff", async () => {
-  const pair = "Violoncello und Kontrabass";
-  let r = nameUnit(NO_INSTRUMENTS, 1, pair, "Violoncello");
-  let named = r.named;
-  const ids: (string | undefined)[] = [...r.staves];
-  for (const parts of ["Kontrabass", "Violoncello.Kontrabass"]) {
-    r = nameUnit(named, 1, pair, parts);
-    named = r.named;
-    ids.push(...r.staves);
-  }
-  named = {
-    ...named,
-    instruments: named.instruments.map((i) => ({
-      ...i,
-      partsAreInstruments: true,
-    })),
-  };
-  // System 1: Violoncello, Kontrabass; system 2: both on one staff.
-  const page: NamingPage = {
-    zones: [
-      {
-        box: { ulx: 100, uly: 80, lrx: 900, lry: 280 },
-        label: "1",
-        pb: true,
-        sb: false,
-        mdiv: false,
-      },
-      {
-        box: { ulx: 100, uly: 380, lrx: 900, lry: 480 },
-        label: "2",
-        pb: false,
-        sb: true,
-        mdiv: false,
-      },
-    ],
-    staves: [100, 200, 400].map((uly, i) => ({
-      ulx: 100,
-      uly,
-      lrx: 900,
-      lry: uly + 60,
-      staff: ids[i],
-    })),
-    grandstaves: [],
-  };
-  const plan = staffPlan(named, [page]);
-  const def = instrumentScoreDef(named, DEFAULT_SCORE_DEF, [page]);
-  const checked = withLayerTranspositions(
-    {
-      ...def,
-      staves: def.staves.map((s, i) =>
-        i === 1 ? { ...s, transDiat: -7, transSemi: -12 } : s,
-      ),
-    },
-    plan,
-  );
-  const mei = buildFacsimileMei(
-    {
-      ...initialFacsimileModel(PAGES),
-      headXml: buildSourceHead(source()),
-      scoreDef: checked,
-    },
-    { withBreaks: true },
-  );
-  assert.match(mei, /<layerDef\b[^>]*trans\.semi="-12"><instrDef\b/);
-  const change = systemScoreDef(plan, staffStates(plan), 1);
-  const second = mei.indexOf("<measure", mei.indexOf("</measure>"));
-  const check = await validateMei(
-    mei.slice(0, second) + change + mei.slice(second),
-  );
-  assert.ok(check.ok, `parts that are instruments: ${check.error}`);
 });
 
 test("named instruments validate: parts, layers, a brace, harps without a bracket, hidden staves and a system's staff changes", async () => {

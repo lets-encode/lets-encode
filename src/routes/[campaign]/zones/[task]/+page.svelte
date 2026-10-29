@@ -90,7 +90,6 @@
     LAYOUT_PARAMETERS,
     type CocoLayout,
     type LayoutGroup,
-    type LayoutInstrument,
     type LayoutInstruments,
   } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
@@ -1071,17 +1070,6 @@
         ...named,
         instruments: named.instruments.map((i) =>
           i.id === id ? { ...i, abbr: abbr.trim() } : i,
-        ),
-      };
-    },
-    instrument(
-      id: string,
-      change: Pick<Partial<LayoutInstrument>, "partsAreInstruments" | "parts">,
-    ) {
-      named = {
-        ...named,
-        instruments: named.instruments.map((i) =>
-          i.id === id ? { ...i, ...change } : i,
         ),
       };
     },
@@ -2866,7 +2854,6 @@
             ondefine={naming4.define}
             onassign={naming4.assign}
             onabbr={naming4.abbr}
-            oninstrument={naming4.instrument}
             ongroups={naming4.groups}
             onfix={naming4.fix}
             onmerge={naming4.merge}

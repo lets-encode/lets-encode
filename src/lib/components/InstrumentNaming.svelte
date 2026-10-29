@@ -45,7 +45,6 @@
     ondefine,
     onassign,
     onabbr,
-    oninstrument,
     ongroups,
     onfix,
     onmerge,
@@ -70,11 +69,6 @@
     onassign: (unit: NamingUnit, instrument: string, parts: number[]) => void;
     /** Set an instrument's short name. */
     onabbr: (instrument: string, abbr: string) => void;
-    /** Change an instrument's other fields: whether its parts are instruments, and their short names. */
-    oninstrument: (
-      instrument: string,
-      change: Pick<Partial<LayoutInstrument>, "partsAreInstruments" | "parts">,
-    ) => void;
     ongroups: (groups: LayoutGroup[]) => void;
     /** Open the other systems (true) or the first system (false). */
     onfix: (fixed: boolean) => void;
@@ -598,57 +592,7 @@
                 </td>
                 <td class="faint">{instrument.abbr}</td>
                 <td class="faint">
-                  <span class="partlist">
-                    {#if instrument.partsAreInstruments}
-                      {#each instrument.parts as part, k (k)}
-                        <span class="ownpart"
-                          >{part.name}
-                          <input
-                            class="ctl short"
-                            type="text"
-                            value={part.abbr ?? ""}
-                            placeholder="Short"
-                            disabled={!canEdit}
-                            aria-label={`${instrument.name}, ${part.name}: short name`}
-                            title="The short name printed in front of the systems after the first where the staff carries only this instrument, such as Kb."
-                            onchange={(e) =>
-                              oninstrument(instrument.id, {
-                                parts: instrument.parts.map((p, i) =>
-                                  i === k
-                                    ? {
-                                        ...p,
-                                        abbr: (
-                                          e.target as HTMLInputElement
-                                        ).value.trim(),
-                                      }
-                                    : p,
-                                ),
-                              })}
-                          /></span
-                        >
-                      {/each}
-                    {:else}
-                      {instrument.parts.map((part) => part.name).join(", ")}
-                    {/if}
-                    {#if !instrument.grand && instrument.parts.length > 1}
-                      <label
-                        class="check"
-                        title="Each part is an instrument of its own, such as Violoncello and Kontrabass on a shared staff: a staff of one part is named after it, and each part has its own short name and transposition."
-                      >
-                        <input
-                          type="checkbox"
-                          checked={!!instrument.partsAreInstruments}
-                          disabled={!canEdit}
-                          onchange={(e) =>
-                            oninstrument(instrument.id, {
-                              partsAreInstruments: (
-                                e.target as HTMLInputElement
-                              ).checked,
-                            })}
-                        /> Parts are instruments
-                      </label>
-                    {/if}
-                  </span>
+                  {instrument.parts.map((part) => part.name).join(", ")}
                 </td>
                 <td>
                   <span class="staves">
@@ -1371,21 +1315,8 @@
     margin: 0;
     font-size: 15px;
   }
-  .field-row .short,
-  .ownpart .short {
+  .field-row .short {
     width: 64px;
-  }
-  .partlist {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px 12px;
-  }
-  .ownpart {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--ink);
   }
   .group-row {
     display: flex;
@@ -1396,12 +1327,6 @@
   .to {
     font-size: 13px;
     color: var(--ink-faint);
-  }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 13px;
   }
   @media (max-width: 640px) {
     .strip {

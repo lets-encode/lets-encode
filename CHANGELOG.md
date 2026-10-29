@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-29
 
+- The "Parts are instruments" option of the instrument naming is removed.
 - Logged in, the campaign list reads all campaigns' tables in one GraphQL query.
 - The broker proxy relays GraphQL queries but no mutations.
 - Simultaneous reads of the same GitHub URL share one request.
