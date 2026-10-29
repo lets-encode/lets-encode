@@ -43,6 +43,8 @@ export interface DraftEntries {
   pieces: Piece[];
   /** How facsimile pieces are prepared. */
   preparation: Preparation;
+  /** The preparation was chosen by hand; absent in drafts stored before. */
+  preparationPicked?: boolean;
 }
 
 export interface WizardDraft {

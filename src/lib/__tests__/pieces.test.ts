@@ -12,6 +12,7 @@ import {
   pieceColour,
   pieceForBox,
   partitionPages,
+  startFromEncoding,
   zonesOverlap,
   PIECE_COLOURS,
   type Piece,
@@ -235,11 +236,12 @@ test("starts one encoded piece per upload, a facsimile piece for images, else on
       false,
       ["encoded", "encoded"],
     ],
+    ["encoding and images", ["prelude.musicxml"], true, ["facsimile"]],
     [
-      "encoding and images",
-      ["prelude.musicxml"],
+      "encodings and images",
+      ["prelude.musicxml", "fugue.mei"],
       true,
-      ["encoded", "facsimile"],
+      ["encoded", "encoded", "facsimile"],
     ],
     ["neither", [], false, ["physical-only"]],
     ["one encoding, no images", ["sonata.mei"], false, ["encoded"]],
@@ -276,4 +278,30 @@ test("createEncodedPiece links the upload and takes its title from the file name
   assert.equal(piece.encodingName, "sonata.musicxml");
   assert.equal(piece.meta.title, "sonata");
   assert.equal(piece.id, "piece-02");
+});
+
+test("one encoding with page images is the facsimile piece's starting point", () => {
+  const [piece] = initialPieces(["sonata.mei"], true);
+  assert.equal(piece.kind, "facsimile");
+  assert.equal(piece.encodingName, "sonata.mei");
+});
+
+test("startFromEncoding moves a file from its encoded piece to a facsimile piece", () => {
+  let pieces = initialPieces(["prelude.mei", "fugue.mei"], true);
+  pieces = startFromEncoding(pieces, 2, "fugue.mei");
+  assert.deepEqual(
+    pieces.map((p) => [p.kind, p.encodingName]),
+    [
+      ["encoded", "prelude.mei"],
+      ["facsimile", "fugue.mei"],
+    ],
+  );
+  pieces = startFromEncoding(pieces, 1, undefined);
+  assert.equal(pieces[1].encodingName, undefined);
+  assert.equal(pieces.length, 2, "clearing removes no piece");
+  assert.equal(
+    startFromEncoding(pieces, 0, "fugue.mei"),
+    pieces,
+    "an encoded piece is left alone",
+  );
 });

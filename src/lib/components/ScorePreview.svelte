@@ -5,7 +5,9 @@
   preview-pane.ts), so it carries from one preview to the next.
 
   A caller can pass a measure range to highlight, which marks those measures in
-  both panes.
+  both panes, and the score's text in place of the file at `fragment` (a
+  score built in the browser); new text for the same score keeps the view
+  where it is.
 -->
 <script module lang="ts">
   // Once the user picks a view or flips the recto toggle, the choice holds for
@@ -55,6 +57,7 @@
     initialPane = null,
     initialView = null,
     initialZones = true,
+    mei = null,
     onmeasureselect,
   }: {
     owner: string;
@@ -71,6 +74,11 @@
     initialView?: "single" | "double" | null;
     /** Whether the measure-zone overlay starts visible. */
     initialZones?: boolean;
+    /**
+     * The score's text, shown in place of the file at `fragment`; the
+     * facsimile images are still resolved relative to `fragment`.
+     */
+    mei?: string | null;
     /** Reports the selected measure's label; null when deselected. */
     onmeasureselect?: (label: string | null) => void;
   } = $props();
@@ -434,24 +442,35 @@
 
   // Preview both sides of the score: the facsimile pages (when the score
   // references any) and the rendered encoding (when it holds measures).
-  async function loadPreview(path: string, from: number) {
+  // Each load's number; a load finishing after a later one started is dropped.
+  let loads = 0;
+  async function loadPreview(path: string, from: number, text: string | null) {
     const f = readForge();
-    preview = {
-      key: path,
-      loading: true,
-      pageCount: 0,
-      encAspect: A4_ASPECT,
-      svgs: {},
-    };
-    pvAnchor = { page: 0, frac: 0 };
-    pvNearPages = [];
-    // A selection belongs to the score it was made on.
-    if (selected !== null) {
-      selected = null;
-      onmeasureselect?.(null);
+    const load = ++loads;
+    // New text for the score already shown keeps the view and the selection.
+    const again =
+      text !== null &&
+      preview?.key === path &&
+      !preview.loading &&
+      !preview.error;
+    if (!again) {
+      preview = {
+        key: path,
+        loading: true,
+        pageCount: 0,
+        encAspect: A4_ASPECT,
+        svgs: {},
+      };
+      pvAnchor = { page: 0, frac: 0 };
+      pvNearPages = [];
+      // A selection belongs to the score it was made on.
+      if (selected !== null) {
+        selected = null;
+        onmeasureselect?.(null);
+      }
     }
     try {
-      const mei = await f.getRepoFile(owner, repo, path);
+      const mei = text ?? (await f.getRepoFile(owner, repo, path));
       if (mei == null) throw new Error(`Could not read ${path}.`);
       const parsed = parseFacsimileMei(mei);
 
@@ -500,7 +519,7 @@
         pageCount = tk.getPageCount();
       }
 
-      if (preview?.key === path) {
+      if (load === loads) {
         preview = {
           key: path,
           loading: false,
@@ -509,17 +528,20 @@
           encAspect,
           svgs: {},
         };
+        if (again) {
+          renderNear();
+          return;
+        }
         const total = Math.max(facs?.length ?? 0, pageCount);
         if (initialView) pvView = initialView;
         else if (!viewChosen)
           ({ view: pvView, firstOnRight: pvFirstOnRight } =
             defaultSpreadView(total));
         await tick();
-        if (preview?.key === path)
-          showPage(Math.min(from, Math.max(0, total - 1)));
+        if (load === loads) showPage(Math.min(from, Math.max(0, total - 1)));
       }
     } catch (e) {
-      if (preview?.key === path)
+      if (load === loads)
         preview = {
           key: path,
           loading: false,
@@ -535,7 +557,8 @@
   // put in front of it.
   $effect(() => {
     const path = fragment;
-    untrack(() => loadPreview(path, startPage));
+    const text = mei;
+    untrack(() => loadPreview(path, startPage, text));
   });
 </script>
 

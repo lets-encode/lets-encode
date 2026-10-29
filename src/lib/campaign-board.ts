@@ -282,6 +282,8 @@ export function cardSummary(
     return "Check the staff, grand staff and measure boxes on each page and correct the wrong ones.";
   if (card.locator === "measure-zones")
     return "Check the measure boxes on each page and correct the wrong ones.";
+  if (card.locator === "encoding-align")
+    return "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.";
   if (card.omr) return "Correct the notes read automatically from this page.";
   return card.scope
     ? "Encode the music of this page."

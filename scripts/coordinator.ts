@@ -919,13 +919,14 @@ async function decideEncoding(
   // Record the contribution in the assembled score's header — the revision,
   // the contributor, and the editing application — before the machine check,
   // so the updated header is validated with the rest of the file. Encodings
-  // are edited in mei-friend; a zones, layout or score-setup submission comes
-  // from the console itself, whose <application> entry every generated score
-  // already carries.
+  // are edited in mei-friend; a zones, layout, score-setup or encoding
+  // alignment submission comes from the console itself, whose <application>
+  // entry every generated score already carries.
   const consoleCommands = [
     "campaign.submitZones",
     "campaign.submitOmrLayout",
     "campaign.submitScoreSetup",
+    "campaign.submitEncodingAlignment",
   ];
   if (mei != null) {
     const application = consoleCommands.includes(envelope?.command ?? "")

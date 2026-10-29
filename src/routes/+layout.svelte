@@ -39,6 +39,7 @@
   const corrector = $derived(
     page.route.id === "/[campaign]/zones/[task]" ||
       page.route.id === "/[campaign]/setup/[task]" ||
+      page.route.id === "/[campaign]/align/[task]" ||
       page.route.id === "/[campaign]/check/[task]" ||
       page.route.id === "/[campaign]/review/[task]",
   );

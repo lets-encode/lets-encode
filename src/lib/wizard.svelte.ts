@@ -133,6 +133,11 @@ export const wizard = $state<{
    * piece's layout task with encoding starting from a transcription.
    */
   preparation: Preparation;
+  /**
+   * The preparation was chosen by hand in its step; until then the step
+   * chooses it from the uploaded encodings.
+   */
+  preparationPicked: boolean;
 }>({
   step: "name",
   handle: "",
@@ -151,6 +156,7 @@ export const wizard = $state<{
   source: emptySourceMetadata(),
   pieces: [],
   preparation: "measure-detection",
+  preparationPicked: false,
 });
 
 export const stepIndex = (id: WizardStepId) =>
@@ -226,6 +232,7 @@ export function resetWizard(): void {
   wizard.source = emptySourceMetadata();
   wizard.pieces = [];
   wizard.preparation = "measure-detection";
+  wizard.preparationPicked = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -283,6 +290,7 @@ export function draftSnapshot(): DraftSnapshot {
       source: $state.snapshot(wizard.source),
       pieces: $state.snapshot(wizard.pieces),
       preparation: wizard.preparation,
+      preparationPicked: wizard.preparationPicked,
     },
   };
 }
@@ -346,6 +354,7 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   }));
   wizard.encodings = entries.encodings;
   wizard.preparation = entries.preparation;
+  wizard.preparationPicked = entries.preparationPicked ?? false;
   wizard.images = images;
   // Picked files are not part of a draft; the upload step collects them again.
   // The candidate pages read from them go the same way.

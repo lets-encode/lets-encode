@@ -99,6 +99,8 @@ import {
 } from "./omr-layout.ts";
 import type { LayoutInstruments, LayoutRecord } from "./omr-layout.ts";
 import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
+import { alignmentPath, differentReason, type Pin } from "./encoding-align.ts";
+import { alignEncoding, alignmentMessage } from "./encoding-merge.ts";
 import {
   instrumentScoreDef,
   openingTranscriptions,
@@ -1964,6 +1966,18 @@ export interface FacsimileTaskData {
   blockedBy: string;
   /** The instruments a layout task named (layout-corrected.json); null when none. */
   instruments: LayoutInstruments | null;
+  /** For an encoding alignment, the uploaded encoding; null otherwise. */
+  upload: string | null;
+  /**
+   * For an encoding alignment, the alignment record (alignment.json) where
+   * the score was read from; null when there is none.
+   */
+  alignment: string | null;
+  /**
+   * For an encoding alignment, the piece's score in the campaign and its
+   * corrected layout, which the alignment is made on; null otherwise.
+   */
+  campaignScore: { mei: string; corrected: string | null } | null;
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -2015,6 +2029,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     if (usesOmr(preparation))
       model.pages = withCorrectedLayout(model.pages, corrected);
     const instruments = corrected ? layoutInstruments(corrected) : null;
+    const aligning = task.locator === "encoding-align";
+    const [upload, alignment, campaignScore] = aligning
+      ? await alignmentInputs(ctx, task, configYaml, from)
+      : [null, null, null];
     const imageUrls = await resolveFacsimileImageUrls(
       f,
       owner,
@@ -2048,9 +2066,42 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       workSource: source,
       blockedBy,
       instruments,
+      upload,
+      alignment,
+      campaignScore,
     };
   },
 };
+
+/** An encoding alignment's files: the upload, the alignment record where
+    the score is read from, and the campaign's score and corrected layout. */
+async function alignmentInputs(
+  ctx: CommandContext,
+  task: TaskRow,
+  configYaml: string | null,
+  from: { owner: string; repo: string; ref: string | undefined },
+): Promise<[string, string | null, { mei: string; corrected: string | null }]> {
+  const { forge: f, owner, repo } = ctx;
+  const path = pieceFieldForPath(configYaml, task.fragment, "encoding");
+  if (!path) throw new Error(`${task.fragment} has no uploaded encoding.`);
+  const omr = usesOmr(
+    pieceFieldForPath(configYaml, task.fragment, "preparation"),
+  );
+  const [upload, alignment, mei, corrected] = await Promise.all([
+    f.getRepoFile(owner, repo, path),
+    f.getRepoFile(
+      from.owner,
+      from.repo,
+      alignmentPath(task.fragment),
+      from.ref,
+    ),
+    f.getRepoFile(owner, repo, task.fragment),
+    omr ? f.getRepoFile(owner, repo, correctedLayoutPath(task.fragment)) : null,
+  ]);
+  if (upload == null) throw new Error(`Could not read ${path}.`);
+  if (mei == null) throw new Error(`Could not read ${task.fragment}.`);
+  return [upload, alignment, { mei, corrected }];
+}
 
 // Claim a task for encoding-kind work without a mei-friend hand-off — the
 // zone editor's claim path for the facsimile pre-tasks.
@@ -2315,35 +2366,36 @@ async function setupScore(
   if (current == null) throw new Error(`Could not read ${fragment}.`);
   const parsed = parseFacsimileMei(current);
   const omr = usesOmr(pieceFieldForPath(configYaml, fragment, "preparation"));
-  const content =
-    omr && hasNotation(current)
-      ? replaceScoreDef(current, scoreDef)
-      : omr
-        ? buildFacsimileMei(
-            {
-              headXml: parsed.headXml,
-              scoreDef,
-              pages: withCorrectedLayout(
-                parsed.pages,
-                await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)),
-              ),
-            },
-            {
-              withBreaks: parsed.hasBreaks,
-              emptyMeasures: true,
-              padZones: true,
-            },
+  // A score holding notation (transcriptions, or an aligned encoding) keeps
+  // its measures: only its definition is replaced.
+  const content = hasNotation(current)
+    ? replaceScoreDef(current, scoreDef)
+    : omr
+      ? buildFacsimileMei(
+          {
+            headXml: parsed.headXml,
+            scoreDef,
+            pages: withCorrectedLayout(
+              parsed.pages,
+              await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)),
+            ),
+          },
+          {
+            withBreaks: parsed.hasBreaks,
+            emptyMeasures: true,
+            padZones: true,
+          },
+        )
+      : pieceKindForPath(configYaml, fragment) === "physical-only"
+        ? buildBlankScoreMei(
+            parsed.headXml,
+            (current.match(/<pb\b/g) ?? []).length,
+            scoreDef,
           )
-        : pieceKindForPath(configYaml, fragment) === "physical-only"
-          ? buildBlankScoreMei(
-              parsed.headXml,
-              (current.match(/<pb\b/g) ?? []).length,
-              scoreDef,
-            )
-          : buildFacsimileMei(
-              { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
-              { withBreaks: parsed.hasBreaks },
-            );
+        : buildFacsimileMei(
+            { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
+            { withBreaks: parsed.hasBreaks },
+          );
   return { content };
 }
 
@@ -2427,6 +2479,92 @@ const submitScoreSetup: CommandDef<
   },
 };
 
+// The score and alignment record an encoding alignment with `pins` amounts
+// to, made on the campaign's score as described at alignEncoding.
+async function alignmentScore(ctx: CommandContext, task: TaskRow, pins: Pin[]) {
+  const { forge: f, owner, repo } = ctx;
+  const configYaml = await f.getRepoFile(owner, repo, CONFIG_PATH);
+  const [upload, , campaign] = await alignmentInputs(ctx, task, configYaml, {
+    owner,
+    repo,
+    ref: undefined,
+  });
+  const aligned = alignEncoding({
+    current: campaign.mei,
+    corrected: campaign.corrected,
+    upload,
+    preparation:
+      pieceFieldForPath(configYaml, task.fragment, "preparation") ??
+      "measure-detection",
+    pins,
+  });
+  return aligned;
+}
+
+// Encoding alignment: submit the uploaded encoding merged into the piece's
+// measures along the alignment the pins give, with the alignment record. A
+// file that does not fit the piece (kind "different") is not submitted.
+const submitEncodingAlignment: CommandDef<
+  { task_id: string; pins: Pin[] },
+  Result
+> = {
+  id: "campaign.submitEncodingAlignment",
+  version: 1,
+  log: "pr",
+  background: true,
+  envelopeInput: ({ task_id, pins }) => ({ task_id, pins: pins.length }),
+  async run({ task_id, pins }, ctx, envelope) {
+    const { forge: f, owner, repo } = ctx;
+    try {
+      await muteOnce(ctx);
+      const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
+      const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+      if (!task) return { error: `Unknown task ${task_id}.` };
+      const aligned = await alignmentScore(ctx, task, pins);
+      if (aligned.summary.kind === "different")
+        return { error: differentReason(aligned.summary) };
+      const content = aligned.merged.mei;
+      const recordPath = alignmentPath(task.fragment);
+      const recordChanged =
+        aligned.record !== (await f.getRepoFile(owner, repo, recordPath));
+      const meiError = await checkMei(content);
+      if (meiError)
+        return {
+          error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.`,
+        };
+      const title = alignmentMessage(task_id, aligned.layout, aligned.merged);
+      const body = `${title}. Opened from the encoding alignment editor.`;
+      return openAndFinishInBackground(
+        ctx,
+        `Encoding alignment of ${task_id}`,
+        `encode:${task_id}`,
+        async () => {
+          console.log("[align] opening PR", { task_id });
+          const pr = await f.openChangePr(owner, repo, {
+            branch: `align-${task_id}-${rand()}`,
+            // The score is committed when unchanged too, which gives the
+            // pull request a commit when the alignment is confirmed as it
+            // is.
+            files: [
+              { path: task.fragment, content },
+              ...(recordChanged
+                ? [{ path: recordPath, content: aligned.record }]
+                : []),
+            ],
+            message: title,
+            title,
+            body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+          });
+          console.log("[align] PR opened", pr.number, pr.html_url);
+          return { ...pr, cleanup: "accepted", taskBranch: task_id };
+        },
+      );
+    } catch (e) {
+      return { error: `Submission failed: ${(e as Error).message}` };
+    }
+  },
+};
+
 /** A pre-task editor's state, as saveDraft takes it. */
 export type DraftInput = {
   task_id: string;
@@ -2442,6 +2580,8 @@ export type DraftInput = {
   scoreDef?: ScoreDefModel;
   /** A score setup's or a naming layout correction's recognition record, when recognition ran in this session. */
   omr?: string;
+  /** An encoding alignment's fixed links. */
+  pins?: Pin[];
 };
 
 // Save a pre-task editor's state to the viewer's task branch
@@ -2471,6 +2611,12 @@ const saveDraft: CommandDef<DraftInput, Result> = {
             path: omrRecordPath(task.fragment),
             content: input.omr,
           });
+      } else if (input.pins) {
+        const aligned = await alignmentScore(ctx, task, input.pins);
+        files.push(
+          { path: task.fragment, content: aligned.merged.mei },
+          { path: alignmentPath(task.fragment), content: aligned.record },
+        );
       } else if (input.pages) {
         const { content, corrected } = await facsimileScore(
           ctx,
@@ -2538,5 +2684,6 @@ export const commands = {
   submitZones,
   submitOmrLayout,
   submitScoreSetup,
+  submitEncodingAlignment,
   saveDraft,
 };

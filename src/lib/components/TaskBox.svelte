@@ -190,6 +190,8 @@
       return "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.";
     if (card.locator === "measure-zones")
       return "Check the measure boxes on each page and correct the wrong ones.";
+    if (card.locator === "encoding-align")
+      return "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.";
     if (card.omr)
       return "Correct the notes of this page's draft, read automatically from the scan, in the mei-friend editor.";
     return card.scope

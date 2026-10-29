@@ -26,6 +26,7 @@ import {
   buildCommentCsv,
   buildCampaignReadme,
   piecePath,
+  uploadPath,
   usesOmr,
   type PieceSurfaces,
 } from "./campaign-init.ts";
@@ -268,6 +269,19 @@ export class CampaignFinisher {
             path: piecePath(piece.id),
             content: buildFacsimileMei({ ...model, headXml: head }),
           });
+          // The encoding the piece starts from is kept as uploaded; its
+          // measures are aligned with the corrected ones later.
+          if (piece.encodingName) {
+            const encoding = wizard.encodings.find(
+              (e) => e.name === piece.encodingName,
+            );
+            if (!encoding)
+              throw new Error(
+                `The encoding for ${piece.id} is no longer available.`,
+              );
+            this.log.detail(`starts from the encoding ${encoding.name}`);
+            scores.push({ path: uploadPath(piece.id), content: encoding.mei });
+          }
           if (!usesOmr(wizard.preparation))
             surfaces[piece.id] = split[i].measuredSurfaces;
         });
@@ -302,6 +316,9 @@ export class CampaignFinisher {
                 : {}),
               ...(piece.kind === "facsimile"
                 ? { preparation: wizard.preparation }
+                : {}),
+              ...(piece.kind === "facsimile" && piece.encodingName
+                ? { encoding: uploadPath(piece.id) }
                 : {}),
               zones: piece.zones.map((zone) => ({
                 // config records the source's page numbers, 1-based.

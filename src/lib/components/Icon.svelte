@@ -59,7 +59,8 @@
     | "repeat-end"
     | "repeat-both"
     | "segno"
-    | "coda";
+    | "coda"
+    | "wand";
   let {
     name,
     size = 14,
@@ -123,6 +124,7 @@
     segno:
       "M16 7c-1.5-2.5-8-2.5-8 1s8 4.5 8 8-6.5 3.5-8 1M6 18 18 6M7 11h.01M17 13h.01",
     coda: "M12 5a4.5 7 0 1 0 0 14 4.5 7 0 1 0 0-14zM12 2v20M3 12h18",
+    wand: "M2.4 3.6 3.6 2.4a1.2 1.2 0 0 1 1.7 0l16.3 16.2a1.2 1.2 0 0 1 0 1.7l-1.3 1.3a1.2 1.2 0 0 1-1.7 0L2.4 5.4a1.2 1.2 0 0 1 0-1.8zM10 7l-3 3M19 6v4M5 14v4M14 2v2M17 8h4M3 16h4M13 3h2",
     "page-two": "M2.5 5H12v14H2.5zM12 5h9.5v14H12z",
     "page-whole": "M5 3h14v18H5zM8 6h8v7H8z",
     overlap: "M4 4h10v10H4zM10 10h10v10H10zM10 14l4-4",

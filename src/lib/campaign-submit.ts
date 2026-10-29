@@ -14,6 +14,7 @@
 import { boundaryCheck } from "./campaign-claim.ts";
 import { claimRanOut } from "./campaign-reaper.ts";
 import { correctedLayoutPath, layoutRecordPath } from "./omr-layout.ts";
+import { alignmentPath } from "./encoding-align.ts";
 import { omrRecordPath } from "./omr-record.ts";
 import {
   findRow,
@@ -163,7 +164,8 @@ export function resetTaskRows(
  * corrected boxes (`layout-corrected.json`), the layout model's raw output
  * (`layout.json`) and, where the layout task names the instruments, the
  * recognition record (`omr.xml`) for a layout correction; the recognition
- * record for a score setup.
+ * record for a score setup; the alignment record (`alignment.json`) for an
+ * encoding alignment.
  */
 export function sideFilesOf(task: {
   locator: string;
@@ -176,6 +178,7 @@ export function sideFilesOf(task: {
       omrRecordPath(task.fragment),
     ];
   if (task.locator === "score-setup") return [omrRecordPath(task.fragment)];
+  if (task.locator === "encoding-align") return [alignmentPath(task.fragment)];
   return [];
 }
 

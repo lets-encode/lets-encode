@@ -77,6 +77,12 @@ export interface ConfigPiece {
   preparation?: string;
   /** For a physical piece, how many pages of the source it spans; unset = unknown. */
   pages?: number;
+  /**
+   * For a facsimile piece, the repo path of the uploaded encoding it starts
+   * from (uploadPath): its measures are aligned with the corrected ones in
+   * the encoding-alignment pre-task. Unset means none.
+   */
+  encoding?: string;
   header: { title: string; composer: string };
 }
 
@@ -166,6 +172,9 @@ const DEFAULTS = {
 /** The repo path a piece's MEI is committed to, and its tasks address. */
 export const piecePath = (id: string): string => `sources/${id}/score.mei`;
 
+/** The repo path of the uploaded encoding a facsimile piece starts from. */
+export const uploadPath = (id: string): string => `sources/${id}/upload.mei`;
+
 // JSON string syntax is valid for YAML double-quoted scalars and escapes
 // quotes, backslashes, newlines and control characters.
 function yamlStr(value: unknown): string {
@@ -188,6 +197,10 @@ export function assertSupported(config: CampaignConfig): void {
       );
     }
     if (!piece.path) throw new Error(`Piece ${piece.id} has no path.`);
+    if (piece.encoding && piece.kind !== "facsimile")
+      throw new Error(
+        `Piece ${piece.id} has an encoding to align but is not a facsimile piece.`,
+      );
     if (
       piece.preparation !== undefined &&
       !PREPARATIONS.includes(piece.preparation as Preparation)
@@ -307,6 +320,7 @@ export function configToYaml(config: CampaignConfig): string {
           ? `    preparation: ${yamlStr(piece.preparation)}\n`
           : "") +
         `    path: ${yamlStr(piece.path)}\n` +
+        (piece.encoding ? `    encoding: ${yamlStr(piece.encoding)}\n` : "") +
         (piece.pages ? `    pages: ${piece.pages}\n` : "") +
         `    zones:${zones ? `\n${zones}` : " []\n"}` +
         `    header:\n` +
@@ -397,10 +411,16 @@ export interface PlannedTask {
  * on that piece's setup task. A facsimile piece with no measured pages falls
  * back to a single whole-file encoding task.
  *
+ * A facsimile piece that starts from an uploaded encoding (`encoding`) gets
+ * an encoding-alignment pre-task (locator `encoding-align`) right after its
+ * measure task, on which the score setup depends in turn: the setup starts
+ * from the encoding's score definition.
+ *
  * A facsimile piece prepared as 'omr-instruments' has no score-setup pre-task:
  * its layout pre-task names the instruments, and the first page task checks
  * the score definition before encoding. That first page task depends on the
- * layout pre-task and every later page task on the first page task.
+ * layout pre-task (or the alignment that follows it) and every later page
+ * task on the first page task.
  *
  * An encoded piece is already notated, so it gets one whole-file task and no
  * pre-tasks.
@@ -466,14 +486,24 @@ export function planTasks(
     const locator = usesOmr(piece.preparation) ? "omr-layout" : "measure-zones";
     planned.push({ id: pre, fragment: piece.path, locator, dependsOn: "" });
     let opening = pre;
-    if (piece.preparation !== "omr-instruments") {
+    if (piece.encoding) {
       opening = preTaskId(++preTasks);
       planned.push({
         id: opening,
         fragment: piece.path,
-        locator: "score-setup",
+        locator: "encoding-align",
         dependsOn: pre,
       });
+    }
+    if (piece.preparation !== "omr-instruments") {
+      const setup = preTaskId(++preTasks);
+      planned.push({
+        id: setup,
+        fragment: piece.path,
+        locator: "score-setup",
+        dependsOn: opening,
+      });
+      opening = setup;
     }
     const pages = surfacesFor(piece, surfaces);
     if (pages.length === 0) {

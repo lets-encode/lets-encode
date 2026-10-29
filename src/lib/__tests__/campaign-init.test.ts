@@ -225,6 +225,50 @@ test("an omr-instruments piece has no setup task; later pages wait for the first
   ]);
 });
 
+test("a piece starting from an uploaded encoding gets the alignment between its measure task and its setup", () => {
+  const piece = {
+    ...facsimile("piece-01", [1, 2]),
+    encoding: "sources/piece-01/upload.mei",
+  };
+  assert.deepEqual(planTasks(build({ pieces: [piece] })).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "measure-zones", ""],
+    ["P0002", "sources/piece-01/score.mei", "encoding-align", "P0001"],
+    ["P0003", "sources/piece-01/score.mei", "score-setup", "P0002"],
+    ["T0001", "sources/piece-01/score.mei", "surface-1", "P0003"],
+    ["T0002", "sources/piece-01/score.mei", "surface-2", "P0003"],
+  ]);
+  assert.match(
+    configToYaml(build({ pieces: [piece] })),
+    /\n {4}encoding: "sources\/piece-01\/upload\.mei"\n/,
+  );
+});
+
+test("an omr-instruments piece with an encoding opens its pages after the alignment", () => {
+  const piece = {
+    ...facsimile("piece-01", [1, 2]),
+    preparation: "omr-instruments",
+    encoding: "sources/piece-01/upload.mei",
+  };
+  assert.deepEqual(planTasks(build({ pieces: [piece] })).map(brief), [
+    ["P0001", "sources/piece-01/score.mei", "omr-layout", ""],
+    ["P0002", "sources/piece-01/score.mei", "encoding-align", "P0001"],
+    ["T0001", "sources/piece-01/score.mei", "surface-1", "P0002"],
+    ["T0002", "sources/piece-01/score.mei", "surface-2", "T0001"],
+  ]);
+});
+
+test("only a facsimile piece may carry an encoding to align", () => {
+  assert.throws(
+    () =>
+      configToYaml(
+        build({
+          pieces: [{ ...encoded("piece-01"), encoding: "sources/x.mei" }],
+        }),
+      ),
+    /not a facsimile piece/,
+  );
+});
+
 test("omr-instruments page chains start at each piece's own first page task", () => {
   const first = {
     ...facsimile("piece-01", [1, 2]),

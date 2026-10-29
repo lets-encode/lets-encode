@@ -49,7 +49,8 @@ export function pieceFieldForPath(
  * Whether a task of a piece prepared as `preparation` checks the piece's
  * opening score definition before its draft, and may change it (mei-page-splice spliceOpeningScoreDef): the
  * first page task of an 'omr-instruments' piece, the page task that depends
- * on the piece's layout task (planTasks).
+ * on the piece's layout task, or on the encoding alignment that follows it
+ * (planTasks).
  */
 export function checksOpening(
   task: TaskRow,
@@ -63,7 +64,7 @@ export function checksOpening(
       (t) =>
         t.task_id === task.depends_on &&
         t.subtask_id === "" &&
-        t.locator === "omr-layout",
+        (t.locator === "omr-layout" || t.locator === "encoding-align"),
     )
   );
 }
@@ -316,7 +317,7 @@ export const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
 // The branches the app opens operation pull requests from, each ending in a
 // random suffix of eight hex digits.
 const OPERATION_BRANCH =
-  /^(claim|release|validate|review-edit|comment|setup|layout|zones)-.+-[0-9a-f]{8}$/;
+  /^(claim|release|validate|review-edit|comment|setup|layout|zones|align)-.+-[0-9a-f]{8}$/;
 
 /**
  * Whether a campaign branch is an operation branch left without a pull

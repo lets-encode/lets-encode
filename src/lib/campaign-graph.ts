@@ -87,9 +87,11 @@ export interface TaskNode {
 
 /**
  * Whether a task is a pre-task: score setup (the score's staves, clefs, key
- * signature and meter, filled in the setup editor) or measure correction
+ * signature and meter, filled in the setup editor), measure correction
  * (`measure-zones`, or `omr-layout` for an OMR-prepared piece, which also
- * corrects the staff boxes; both in the zone editor). Encoding tasks — whole-file
+ * corrects the staff boxes; both in the zone editor) or encoding alignment
+ * (`encoding-align`: an uploaded encoding's measures placed in the corrected
+ * ones, in the alignment editor). Encoding tasks — whole-file
  * (empty locator) and per-page (`surface-N`) — are not pre-tasks and use
  * mei-friend.
  */
@@ -97,13 +99,15 @@ export function isPreTask(locator: string): boolean {
   return (
     locator === "score-setup" ||
     locator === "measure-zones" ||
-    locator === "omr-layout"
+    locator === "omr-layout" ||
+    locator === "encoding-align"
   );
 }
 
 /** The console route segment a pre-task's own editor lives under. */
 export function preTaskRoute(locator: string): string {
-  return locator === "score-setup" ? "setup" : "zones";
+  if (locator === "score-setup") return "setup";
+  return locator === "encoding-align" ? "align" : "zones";
 }
 
 /** The console route of a pre-task's own editor. */
@@ -124,7 +128,11 @@ export const reviewHref = (
     : `/${campaign}/review/${task}`;
 
 /** A task's work stage. */
-export type WorkStage = "score setup" | "measure correction" | "encoding";
+export type WorkStage =
+  | "score setup"
+  | "measure correction"
+  | "encoding alignment"
+  | "encoding";
 
 /** A task's work stage from its locator; a send-back returns the task to it. */
 export const workStage = (locator: string): WorkStage =>
@@ -132,7 +140,9 @@ export const workStage = (locator: string): WorkStage =>
     ? "score setup"
     : locator === "measure-zones" || locator === "omr-layout"
       ? "measure correction"
-      : "encoding";
+      : locator === "encoding-align"
+        ? "encoding alignment"
+        : "encoding";
 
 /** Where a task's work happens: mei-friend for an encoding, the pre-task's own page otherwise. */
 export const workPlace = (locator: string): string =>
@@ -169,6 +179,7 @@ export function taskDescription(locator: string): string {
   if (locator === "score-setup") return "Score setup";
   if (locator === "measure-zones" || locator === "omr-layout")
     return "Measure correction";
+  if (locator === "encoding-align") return "Encoding alignment";
   return "Encode";
 }
 

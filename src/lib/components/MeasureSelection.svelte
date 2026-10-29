@@ -1,9 +1,12 @@
 <!--
   The measure selected in a ScorePreview, for the side panel's Selection tab:
   its name and page, stepping to the previous and next measure, commenting on
-  it and clearing the selection. Without a selection it shows `empty`.
+  it and clearing the selection. Without a selection it shows `empty`. A view
+  adds what it says about the measure below the heading (`children`) and its
+  own actions before Comment (`actions`).
 -->
 <script lang="ts">
+  import type { Snippet } from "svelte";
   import type ScorePreview from "./ScorePreview.svelte";
   import Icon from "./Icon.svelte";
   import StepGlyph from "./StepGlyph.svelte";
@@ -14,6 +17,8 @@
     preview,
     oncomment,
     empty,
+    children,
+    actions,
   }: {
     /** The selected measure's label; null when none is selected. */
     label: string | null;
@@ -24,6 +29,10 @@
     oncomment?: () => void;
     /** The text shown without a selection. */
     empty: string;
+    /** What the view says about the selected measure, below the heading. */
+    children?: Snippet;
+    /** The view's own actions on the selected measure. */
+    actions?: Snippet;
   } = $props();
 </script>
 
@@ -54,7 +63,9 @@
         >
       </span>
     </div>
+    {@render children?.()}
     <div class="selactions">
+      {@render actions?.()}
       {#if oncomment}
         <button
           type="button"

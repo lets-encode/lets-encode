@@ -39,7 +39,11 @@ export interface Piece {
    */
   noRegions?: boolean;
   meta: SourceMetadata;
-  /** For an encoded piece, the uploaded file it came from. */
+  /**
+   * The uploaded file the piece's notation comes from: an encoded piece's
+   * whole score, or for a facsimile piece the encoding aligned with its
+   * corrected measures.
+   */
   encodingName?: string;
   /**
    * For a physical piece, how many pages of the source it spans; 0 = unknown.
@@ -298,12 +302,19 @@ export function partitionPages(
  * The pieces a fresh campaign starts with: one per uploaded encoding, plus a
  * single facsimile piece covering the pages when there are any — or, with
  * nothing uploaded at all, a single physical piece to be encoded straight from
- * the source. An organiser with one work per source then has nothing to add.
+ * the source. One encoding uploaded with page images is taken to be the
+ * pages' piece: the facsimile piece starts from it instead. An organiser with
+ * one work per source then has nothing to add.
  */
 export function initialPieces(
   encodingNames: string[],
   hasImages: boolean,
 ): Piece[] {
+  if (hasImages && encodingNames.length === 1) {
+    const piece = createPiece([], "facsimile");
+    piece.encodingName = encodingNames[0];
+    return [piece];
+  }
   const pieces: Piece[] = [];
   for (const name of encodingNames) {
     pieces.push(createEncodedPiece(pieces, name));
@@ -311,4 +322,24 @@ export function initialPieces(
   if (hasImages) pieces.push(createPiece(pieces, "facsimile"));
   else if (!pieces.length) pieces.push(createPiece(pieces, "physical-only"));
   return pieces;
+}
+
+/**
+ * Let the facsimile piece at `index` start from the uploaded encoding `name`,
+ * or from none. An encoded piece made from that file is removed: a file is
+ * one piece's notation. Returns the pieces.
+ */
+export function startFromEncoding(
+  pieces: Piece[],
+  index: number,
+  name: string | undefined,
+): Piece[] {
+  const piece = pieces[index];
+  if (!piece || piece.kind !== "facsimile") return pieces;
+  piece.encodingName = name;
+  return name === undefined
+    ? pieces
+    : pieces.filter(
+        (other) => other.kind !== "encoded" || other.encodingName !== name,
+      );
 }

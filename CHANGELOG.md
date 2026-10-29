@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-10-29
 
+- The setup rail's footer links are left-aligned in a smaller size, with long campaign names shortened.
+- The Drafts list's Resume link matches the size of its line.
 - The "Parts are instruments" option of the instrument naming is removed.
 - Logged in, the campaign list reads all campaigns' tables in one GraphQL query.
 - The broker proxy relays GraphQL queries but no mutations.
@@ -16,6 +18,12 @@ parentheses.
 - A layout, measure correction or score setup can be submitted without changes.
 - Scripts to copy a campaign with another preparation and to compare the two campaigns page by page.
 - The score setup of an `omr` piece fills in staves, clefs, signatures and labels from the recognition again.
+- An uploaded encoding can be aligned with a piece's corrected measures and merged into its score.
+- A facsimile piece can start from an uploaded encoding, which is committed next to its score.
+- A piece that starts from an uploaded encoding gets an encoding alignment task before its score setup.
+- The encoding alignment task has its own editor for checking and fixing where the file's measures go.
+- Score setup keeps the measures of a score that already holds notation.
+- With uploaded encodings, the preparation step asks what goes where a measure is empty or missing in the file.
 
 ## 2026-10-28
 

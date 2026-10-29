@@ -521,6 +521,16 @@ test("checksOpening: the page task of an omr-instruments piece that waits for it
   assert.equal(checksOpening(tasks[2], tasks, "omr-instruments"), false);
   assert.equal(checksOpening(tasks[1], tasks, "omr"), false);
   assert.equal(checksOpening(tasks[0], tasks, "omr-instruments"), false);
+  const aligned = [
+    row("P0001", "omr-layout"),
+    row("P0002", "encoding-align", "P0001"),
+    row("T0001", "surface-1", "P0002"),
+  ];
+  assert.equal(
+    checksOpening(aligned[2], aligned, "omr-instruments"),
+    true,
+    "after the encoding alignment",
+  );
 });
 
 test("isLeftoverOperationBranch takes old operation branches without an open pull request", () => {
@@ -532,6 +542,7 @@ test("isLeftoverOperationBranch takes old operation branches without an open pul
   assert.equal(left("claim-T0001-S0001-450a7323"), true);
   assert.equal(left("review-edit-T0002-0a1b2c3d"), true);
   assert.equal(left("layout-P0001-662a10a7"), true);
+  assert.equal(left("align-P0002-1f2e3d4c"), true);
   // younger than the grace period: its pull request may still be opening
   assert.equal(left("claim-T0001-8fe2db55", "2026-10-29T11:30:00Z"), false);
   // the head of an open pull request

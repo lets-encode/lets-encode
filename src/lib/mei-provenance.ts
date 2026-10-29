@@ -64,6 +64,16 @@ function withContributor(head: string, name: string): string {
   return head.slice(0, at) + updated + head.slice(at + titleStmt.text.length);
 }
 
+/** The xml:id an application called `name` gets in <appInfo>. */
+export function applicationId(name: string): string {
+  return `app-${
+    name
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "unnamed"
+  }`;
+}
+
 /** The application among <appInfo>'s entries, added once (matched by name). */
 function withApplication(head: string, name: string): string {
   // Present: some <name> start tag followed by the name and an end tag.
@@ -73,14 +83,8 @@ function withApplication(head: string, name: string): string {
     if (recorded.test(head)) return head;
   }
 
-  const id = `app-${
-    name
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-+|-+$/g, "") || "unnamed"
-  }`;
   const application =
-    `${indent(4)}<application xml:id="${id}">\n` +
+    `${indent(4)}<application xml:id="${applicationId(name)}">\n` +
     `${indent(5)}<name>${xmlEscape(name)}</name>\n` +
     `${indent(4)}</application>\n`;
 

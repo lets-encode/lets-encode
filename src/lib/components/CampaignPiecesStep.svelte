@@ -21,7 +21,9 @@
     initialPieces,
     pagesCovered,
     pieceColour,
+    startFromEncoding,
   } from "$lib/pieces.ts";
+  import { encodingSize } from "$lib/encoding-align.ts";
   import {
     wizard,
     nextStep,
@@ -128,6 +130,27 @@
     wizard.pieces = [...wizard.pieces, createEncodedPiece(wizard.pieces, name)];
     selected = wizard.pieces.length - 1;
   }
+
+  // The uploaded encoding the selected facsimile piece starts from; choosing
+  // one takes the file from the encoded piece it was.
+  function startFrom(name: string) {
+    const id = wizard.pieces[selected].id;
+    wizard.pieces = startFromEncoding(
+      wizard.pieces,
+      selected,
+      name || undefined,
+    );
+    selected = wizard.pieces.findIndex((p) => p.id === id);
+  }
+
+  const encodingFacts = $derived.by(() => {
+    const encoding = wizard.encodings.find(
+      (e) => e.name === piece?.encodingName,
+    );
+    if (piece?.kind !== "facsimile" || !encoding) return "";
+    const { measures, staves } = encodingSize(encoding.mei);
+    return `${measures} measure${measures === 1 ? "" : "s"}, ${staves} ${staves === 1 ? "staff" : "staves"}.`;
+  });
 
   // Removing a piece is confirmed in place: the button turns into a question
   // with Remove and Cancel. An encoded piece cannot be re-added without
@@ -462,6 +485,36 @@
             has no regions marked yet. Mark them {wherePages}.
           {/if}
         </p>
+        {#if wizard.encodings.length}
+          <label
+            class="field encoding-field"
+            title="The file's measures are placed into this piece's measures once they are corrected. Measures the file lacks stay empty."
+          >
+            Start from encoding
+            <select
+              class="input encoding-select"
+              value={piece.encodingName ?? ""}
+              onchange={(e) => startFrom(e.currentTarget.value)}
+              disabled={busy}
+            >
+              <option value="">None</option>
+              {#each wizard.encodings as encoding (encoding.name)}
+                <option
+                  value={encoding.name}
+                  disabled={wizard.pieces.some(
+                    (p) =>
+                      p !== piece &&
+                      p.kind === "facsimile" &&
+                      p.encodingName === encoding.name,
+                  )}>{encoding.name}</option
+                >
+              {/each}
+            </select>
+            {#if encodingFacts}
+              <span class="hint">{encodingFacts}</span>
+            {/if}
+          </label>
+        {/if}
       {:else if piece.kind === "physical-only"}
         <p class="covered">
           <strong style="color: {pieceColour(selected)}">{label}</strong>
@@ -664,8 +717,12 @@
     font-size: 12px;
     color: var(--ink-faint);
   }
-  .pages-field {
+  .pages-field,
+  .encoding-field {
     margin-top: 11px;
+  }
+  .encoding-select {
+    max-width: 320px;
   }
   .pages-input {
     max-width: 110px;
