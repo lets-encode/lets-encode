@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-10-29
+
+- The score setup of an `omr` piece fills in staves, clefs, signatures and labels from the recognition again.
+
 ## 2026-10-28
 
 - The task panel shows a claim holder's rejected submission after a reload.

@@ -834,7 +834,7 @@ export const CHECKED_STAFF_FIELDS = [
 ] as const;
 
 /** A score definition without the xml:ids of its staves and groups. */
-const withoutIds = (def: ScoreDefModel): ScoreDefModel => ({
+export const withoutIds = (def: ScoreDefModel): ScoreDefModel => ({
   ...def,
   staves: def.staves.map(({ id: _, ...staff }) => staff),
   groups: def.groups.map(({ id: _, ...group }) => group),

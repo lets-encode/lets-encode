@@ -36,6 +36,7 @@
     buildBlankScoreMei,
     DEFAULT_SCORE_DEF,
     staffKeysig,
+    withoutIds,
   } from "$lib/mei-facsimile.ts";
   import {
     COMMON_TRANSPOSITIONS,
@@ -160,7 +161,7 @@
         // staff count its layout has; the clefs, key and meter follow from the
         // recognition once the task is held.
         unset =
-          JSON.stringify(d.model.scoreDef) ===
+          JSON.stringify(withoutIds(d.model.scoreDef)) ===
           JSON.stringify(DEFAULT_SCORE_DEF);
         if (d.preparation === "omr" && unset) {
           staves = Array.from(
