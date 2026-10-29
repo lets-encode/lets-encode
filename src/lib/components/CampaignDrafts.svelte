@@ -173,5 +173,7 @@
   }
   .linkish {
     flex: none;
+    gap: 4px;
+    font-size: 13px;
   }
 </style>

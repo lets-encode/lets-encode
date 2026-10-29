@@ -453,15 +453,19 @@
             {/if}
           {/if}
           {#each otherDrafts as draft (draft.handle)}
+            {@const name = draft.entries?.title?.trim() || draft.handle}
             <button
               type="button"
               class="linkish other-draft"
+              title={`Resume setup of “${name}”`}
               onclick={() => resumeOther(draft.handle)}
               disabled={resuming !== null}
             >
-              {resuming === draft.handle
-                ? "Working…"
-                : `Resume setup of “${draft.entries?.title?.trim() || draft.handle}”`}
+              <span class="resume-text">
+                {resuming === draft.handle
+                  ? "Working…"
+                  : `Resume setup of “${name}”`}
+              </span>
             </button>
           {/each}
           {#if resumeError}
@@ -1099,6 +1103,11 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 2px;
+    font-size: 12.5px;
+  }
+  .rail-foot .linkish {
+    max-width: 100%;
+    text-align: left;
   }
   .discard-inline {
     display: flex;
