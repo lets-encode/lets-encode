@@ -1215,6 +1215,7 @@
     checks={checksOf(card)}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
+    changeRequestUrl={(n) => readForge().changeRequestWebUrl(owner, repo, n)}
     oneditor={editor}
     onabandon={abandon}
   />

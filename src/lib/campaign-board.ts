@@ -18,7 +18,11 @@ import type {
   StatusKey,
 } from "./campaign-graph.ts";
 import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
-import { checksOpening, keptWorkSince } from "./coordinator-policy.ts";
+import {
+  checksOpening,
+  keptWorkSince,
+  rejectedSubmission,
+} from "./coordinator-policy.ts";
 import { usesOmr } from "./campaign-init.ts";
 import type {
   CommentRow,
@@ -204,6 +208,10 @@ export interface BoardCard {
   keptFrom: string;
   /** Encoding column: who holds the claim, and when it expires ("expires in 2 d"). */
   worker: { login: string; expires: string; mine: boolean } | null;
+  /** The viewer's latest submission under a claim they hold on the task,
+      when it was rejected (rejectedSubmission): its pull request number and
+      reason code; null otherwise. */
+  rejected: { pr: string; reason: string } | null;
   /** Validation column: pass progress. */
   passes: number;
   threshold: number;
@@ -381,6 +389,12 @@ export function buildBoard(
     const dep = blockedBy(d, n.task);
     const depDef = dep ? findRow(d.taskDefs, dep, "") : undefined;
     const counts = taskCounts(comments, n.task);
+    const rejected = d.locks
+      .filter(
+        (l) => viewer !== "" && l.task_id === n.task && l.user_id === viewer,
+      )
+      .map((l) => rejectedSubmission(history, l))
+      .find((h) => h !== null);
     const omr = usesOmr(preparations[def.fragment]);
     columnByKey.get(column)!.cards.push({
       task: n.task,
@@ -410,6 +424,9 @@ export function buildBoard(
               mine: viewer !== "" && lock.user_id === viewer,
             }
           : null,
+      rejected: rejected
+        ? { pr: rejected.pr ?? "", reason: rejected.detail }
+        : null,
       passes: n.passes,
       threshold: n.threshold,
       counts,

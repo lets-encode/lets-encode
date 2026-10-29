@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-10-28
 
+- The task panel shows a claim holder's rejected submission after a reload.
 - Page drafts made in parallel no longer share xml:ids, so the second accepted page passes the check.
 - Page drafts keep the transcriptions of staff boxes moved in the layout correction.
 - Accepting the first page task keeps the xml:ids of the opening score definition.

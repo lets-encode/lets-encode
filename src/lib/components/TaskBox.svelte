@@ -23,6 +23,7 @@
     workPlace,
   } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { REASON_TEXT } from "$lib/coordinator-policy.ts";
   import {
     buildRecord,
     cardPill,
@@ -48,6 +49,7 @@
     canPush,
     runner,
     editorError = null,
+    changeRequestUrl,
     primary = true,
     inView = false,
     tools,
@@ -78,6 +80,9 @@
       text: string;
       confirm?: { label: string; run: () => void };
     } | null;
+    /** The web address of the campaign's pull request `number`, for the
+        link of a rejected submission. */
+    changeRequestUrl?: (number: number) => string;
     /** The footer's action is the view's primary action (a solid button);
         otherwise an outline, beside a primary elsewhere in the view. */
     primary?: boolean;
@@ -210,6 +215,21 @@
     />
     {@render headAction?.()}
   </div>
+  {#if card.rejected && !runState}
+    {@const { pr, reason } = card.rejected}
+    <div class="banner err bar">
+      <span
+        ><b
+          >Submission {#if changeRequestUrl && pr}<a
+              href={changeRequestUrl(Number(pr))}
+              target="_blank"
+              rel="noreferrer">#{pr}</a
+            >{:else if pr}#{pr}{/if} rejected:</b
+        >
+        {REASON_TEXT[reason] ?? reason}.</span
+      >
+    </div>
+  {/if}
   {#if editorError}
     <div class="banner err bar">
       <span

@@ -61,8 +61,6 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
-  MAX_ANCHOR_LENGTH,
-  MAX_COMMENT_LENGTH,
   resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
@@ -91,7 +89,9 @@ import {
   keptWorkSince,
   pieceFieldForPath,
   pieceKindForPath,
+  MAX_OPEN_PRS_PER_AUTHOR,
   priorDecision,
+  REASON_TEXT,
   rejectionDetail,
   removedRowFromPatch,
   resolveEncodingTask,
@@ -177,10 +177,6 @@ function coAuthored(message: string): string {
 }
 
 const MAX_ATTEMPTS = 5;
-// Open non-draft pull requests one author may have on a campaign, counting
-// the one being processed; beyond it a pull request is closed unprocessed and
-// without a history row.
-const MAX_OPEN_PRS_PER_AUTHOR = 10;
 // The scheduled catch-up pass (runCatchUp) picks up open pull requests older
 // than the minimum age — a run of their own may still be under way before
 // that — and younger than the maximum, processing at most CATCHUP_MAX_PRS
@@ -205,55 +201,6 @@ const historyColumns = (
 // A rejection's `reason` is the machine-readable code recorded in the history
 // table; `detail` is the human explanation behind it, for the PR comment only.
 type Verdict = { ok: boolean; reason?: string; detail?: string };
-
-// Human explanations for the rejection codes, appended to the PR comment
-// (which the console shows verbatim). The code itself stays in the comment
-// and in the history row.
-const REASON_TEXT: Record<string, string> = {
-  malformed_claim:
-    "the submission does not add exactly one lock row or remove exactly one",
-  malformed_validation: "the submission is not a single verdict",
-  malformed_comment:
-    "the submission does not append or resolve exactly one comment row",
-  malformed_review_edit:
-    "the submission does not remove exactly one review lock and add one comment",
-  out_of_bounds:
-    "the submission changes files outside the ones this operation may touch",
-  invalid_kind: "unknown claim or comment kind",
-  invalid_target: "the claim addresses the wrong row for its kind",
-  unknown_task: "no such task",
-  dependency_incomplete:
-    "this task opens once the task it depends on is completed",
-  wrong_state: "the task is not in the right state for this operation",
-  already_locked: "someone already holds this claim",
-  review_in_progress:
-    "someone else is reviewing this task; reviews run one at a time",
-  too_many_claims:
-    "you hold as many claims as this campaign allows one person at once; submit or give back one of them first",
-  self_validation: "the encoder cannot review their own work",
-  already_validated: "this person already recorded a verdict on this subtask",
-  no_open_validation_slot: "no review slot is open",
-  not_lock_holder: "the author does not hold the required claim",
-  claim_expired:
-    "the author's claim had run out when the submission was opened",
-  mei_invalid: "the submitted MEI failed the machine check",
-  invalid_verdict: "a review verdict must approve or request changes",
-  fail_without_comment:
-    "a change request must carry a note saying what needs to change",
-  no_recorded_fail:
-    "the task has no recorded change request to send it back for",
-  not_permitted:
-    "only a reviewer who requested changes or the campaign owner may do this",
-  empty_comment: "the comment is empty",
-  comment_too_long: `the comment is longer than ${MAX_COMMENT_LENGTH} characters`,
-  invalid_anchor: `the comment's page or measures are longer than ${MAX_ANCHOR_LENGTH} characters, or its piece is not the path of an MEI file`,
-  unknown_parent: "the reply's parent comment does not exist",
-  invalid_parent:
-    "a parent comment must be a top-level comment, and only replies carry one",
-  unknown_comment: "no such comment",
-  already_resolved: "the comment is already resolved",
-  too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open submissions on this campaign`,
-};
 
 // Rejections of pull requests that do not parse as any operation. They leave
 // no history row: the closed pull request and its comment are the record, and

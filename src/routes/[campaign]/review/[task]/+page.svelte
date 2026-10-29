@@ -390,6 +390,8 @@
         {runner}
         inView
         tools={resultBanner}
+        changeRequestUrl={(n) =>
+          readForge().changeRequestWebUrl(owner, repo, n)}
         {headAction}
         onclaim={claim}
         onabandon={abandon}

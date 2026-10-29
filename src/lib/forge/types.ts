@@ -50,6 +50,8 @@ export interface OpenedChangeRequest extends ChangeRequest {
 export interface ForgeClient {
   /** The repo's page on the forge's website. */
   repoWebUrl(owner: string, repo: string): string;
+  /** A change request's page on the forge's website. */
+  changeRequestWebUrl(owner: string, repo: string, number: number): string;
   /** An account's page on the forge's website. */
   userWebUrl(login: string): string;
   /** The authenticated user + the scopes their token actually holds, or null. */

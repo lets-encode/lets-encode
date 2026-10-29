@@ -16,6 +16,7 @@ import {
   pieceKindForPath,
   MAX_REJECTION_DETAIL,
   priorDecision,
+  rejectedSubmission,
   rejectionDetail,
   removedRowFromPatch,
   resolveEncodingTask,
@@ -405,6 +406,77 @@ test("claimPullRequest and keptWorkSince read the claim and the kept work from t
   assert.deepEqual(
     keptWorkSince([...history, row("submit_encoding", "9")], "T0001"),
     [],
+  );
+});
+
+test("rejectedSubmission finds a rejected submission under the holder's current claim", () => {
+  const row = (
+    action: string,
+    outcome: string,
+    pr: string,
+    user_id = "7",
+    subtask_id = "",
+  ) => ({
+    timestamp: "t",
+    task_id: "T0002",
+    subtask_id,
+    user_id,
+    action,
+    outcome,
+    detail: outcome === "rejected" ? "mei_invalid" : "",
+    pr,
+  });
+  const lock = {
+    task_id: "T0002",
+    subtask_id: "",
+    user_id: "7",
+    timestamp: "t",
+    kind: "encoding",
+    expires: "t",
+  };
+  const claimed = [row("claim_encoding", "accepted", "10")];
+  const rejected = [...claimed, row("submit_encoding", "rejected", "12")];
+  assert.equal(rejectedSubmission(claimed, lock), null);
+  assert.equal(rejectedSubmission(rejected, lock)?.pr, "12");
+  // Another person's rows and other subtasks do not count.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("submit_encoding", "accepted", "13", "8")],
+      lock,
+    )?.pr,
+    "12",
+  );
+  assert.equal(
+    rejectedSubmission(rejected, {
+      ...lock,
+      kind: "validation",
+      subtask_id: "S0001",
+    }),
+    null,
+  );
+  // A claim after the rejection starts over.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("claim_encoding", "accepted", "14")],
+      lock,
+    ),
+    null,
+  );
+  // So does an encoding claim from a review edit, on the review's subtask.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("review_edit", "accepted", "15", "7", "S0001")],
+      lock,
+    ),
+    null,
+  );
+  // A rejected claim does not.
+  assert.equal(
+    rejectedSubmission(
+      [...rejected, row("claim_encoding", "rejected", "14")],
+      lock,
+    )?.pr,
+    "12",
   );
 });
 
