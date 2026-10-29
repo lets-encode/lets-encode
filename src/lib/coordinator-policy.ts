@@ -307,6 +307,35 @@ export function isReviewEdit(
   return false;
 }
 
+/**
+ * How long an operation branch without an open pull request is kept: the app
+ * creates the branch and opens its pull request a moment later.
+ */
+export const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
+
+// The branches the app opens operation pull requests from, each ending in a
+// random suffix of eight hex digits.
+const OPERATION_BRANCH =
+  /^(claim|release|validate|review-edit|comment|setup|layout|zones)-.+-[0-9a-f]{8}$/;
+
+/**
+ * Whether a campaign branch is an operation branch left without a pull
+ * request: its name is an operation branch's, no open pull request has it as
+ * head, and its head commit is older than OPERATION_BRANCH_GRACE_MS. Task
+ * branches (`encode-`) and kept work (`wip-`) never are.
+ */
+export function isLeftoverOperationBranch(
+  branch: { name: string; committedAt: string },
+  openHeads: Set<string>,
+  now: number,
+): boolean {
+  return (
+    OPERATION_BRANCH.test(branch.name) &&
+    !openHeads.has(branch.name) &&
+    now - Date.parse(branch.committedAt) > OPERATION_BRANCH_GRACE_MS
+  );
+}
+
 /** The campaign branch holding the unsubmitted work of a task's expired claims. */
 export const keptWorkBranch = (task_id: string): string => `wip-${task_id}`;
 
@@ -452,6 +481,8 @@ export const REASON_TEXT: Record<string, string> = {
   claim_expired:
     "the author's claim had run out when the submission was opened",
   mei_invalid: "the submitted MEI failed the machine check",
+  splice_invalid:
+    "the page passes the machine check on its own but not joined into the score; this is an error of the platform, not of the encoding",
   invalid_verdict: "a review verdict must approve or request changes",
   fail_without_comment:
     "a change request must carry a note saying what needs to change",

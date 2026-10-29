@@ -1815,6 +1815,34 @@ export async function fastForwardBranch(
   );
 }
 
+/** The repo's branches, each with the commit time of its head. */
+export async function listBranchCommitTimes(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<{ name: string; committedAt: string }[]> {
+  const root = `${apiRoot(token)}/repos/${owner}/${repo}`;
+  const refs = await ghGet<{ ref: string; object: { sha: string } }[]>(
+    `${root}/git/matching-refs/heads/`,
+    token,
+    { cache: false },
+  );
+  if (!refs.ok) throw new Error(`Failed to list the branches of ${repo}.`);
+  return Promise.all(
+    refs.data.map(async ({ ref, object }) => {
+      const commit = await ghGet<{ committer: { date: string } }>(
+        `${root}/git/commits/${object.sha}`,
+        token,
+      );
+      if (!commit.ok) throw new Error(`Failed to read commit ${object.sha}.`);
+      return {
+        name: ref.slice("refs/heads/".length),
+        committedAt: commit.data.committer.date,
+      };
+    }),
+  );
+}
+
 /** Delete a branch. An already-gone ref counts as success. */
 export async function deleteBranch(
   token: string,

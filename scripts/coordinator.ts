@@ -84,6 +84,7 @@ import {
   claimPullRequest,
   classifyPullRequest,
   isAutomaticCommit,
+  isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkBranch,
   keptWorkSince,
@@ -110,6 +111,7 @@ import {
   getPullRequest,
   getUserLogin,
   listOpenPullRequests,
+  listBranchCommitTimes,
   getCollaboratorCanPush,
   commitFiles,
   commentAndClosePr,
@@ -829,7 +831,9 @@ async function decideEncoding(
   //
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
-  // in `detail`, since the reason code is what the tables record.
+  // in `detail`, since the reason code is what the tables record. A page
+  // whose file passes the schema on its own while the assembled score fails
+  // is `splice_invalid`: the join is at fault, not the encoding.
   // Everything but the MEI check is decided before the fork's file is read:
   // a submitter who holds no claim cannot make the run parse their file.
   const precheck = checkEncoding({
@@ -952,10 +956,14 @@ async function decideEncoding(
   }
 
   let meiValid = false;
+  let joinFailed = false;
   if (mei != null) {
     const check = await validateMei(mei);
     meiValid = check.ok;
-    if (!check.ok) detail = `${task.fragment}:${check.error}`;
+    if (!check.ok) {
+      detail = `${task.fragment}:${check.error}`;
+      joinFailed = isPageTask && (await validateMei(forkMei!)).ok;
+    }
   }
   logPhase("mei_check", checkStart);
 
@@ -971,6 +979,11 @@ async function decideEncoding(
     expired,
   });
 
+  const reason = verdict.ok
+    ? ""
+    : joinFailed && verdict.reason === "mei_invalid"
+      ? "splice_invalid"
+      : verdict.reason;
   const history: HistoryRow = {
     timestamp: now,
     task_id: task.task_id,
@@ -978,13 +991,14 @@ async function decideEncoding(
     user_id: author,
     action: "submit_encoding",
     outcome: verdict.ok ? "accepted" : "rejected",
-    detail: verdict.ok ? "" : verdict.reason,
+    detail: reason,
   };
   if (!verdict.ok) {
     return {
       ok: false,
-      reason: verdict.reason,
-      detail: verdict.reason === "mei_invalid" ? detail : "",
+      reason,
+      detail:
+        reason === "mei_invalid" || reason === "splice_invalid" ? detail : "",
       history,
     };
   }
@@ -1561,10 +1575,35 @@ async function runCatchUp(): Promise<void> {
   }
 }
 
+// An operation branch whose pull request was never opened (a request that
+// failed after GitHub created the branch) or whose cleanup failed stays in
+// the campaign repo; the scheduled pass deletes those (isLeftoverOperationBranch).
+async function sweepOperationBranches(): Promise<void> {
+  const [branches, open] = await Promise.all([
+    listBranchCommitTimes(token, owner, repo),
+    listOpenPullRequests(token, owner, repo),
+  ]);
+  const openHeads = new Set(open.map((pr) => pr.head.ref));
+  const now = Date.now();
+  for (const branch of branches) {
+    if (!isLeftoverOperationBranch(branch, openHeads, now)) continue;
+    try {
+      await deleteBranch(token, owner, repo, branch.name);
+      console.log(`Deleted the leftover branch ${branch.name}.`);
+    } catch (e) {
+      console.error(
+        `Could not delete the leftover branch ${branch.name}: ${(e as Error).message}`,
+      );
+      process.exitCode = 1;
+    }
+  }
+}
+
 async function run(): Promise<void> {
   if (eventName === "schedule" || eventName === "workflow_dispatch") {
     await runReap();
-    return runCatchUp();
+    await runCatchUp();
+    return sweepOperationBranches();
   }
   if (eventName !== "pull_request_target") {
     throw new Error(`Unsupported event: ${eventName}`);

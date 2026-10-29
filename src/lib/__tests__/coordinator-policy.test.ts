@@ -9,6 +9,7 @@ import {
   claimPullRequest,
   classifyPullRequest,
   isAutomaticCommit,
+  isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkSince,
   touchesCampaignPaths,
@@ -520,4 +521,27 @@ test("checksOpening: the page task of an omr-instruments piece that waits for it
   assert.equal(checksOpening(tasks[2], tasks, "omr-instruments"), false);
   assert.equal(checksOpening(tasks[1], tasks, "omr"), false);
   assert.equal(checksOpening(tasks[0], tasks, "omr-instruments"), false);
+});
+
+test("isLeftoverOperationBranch takes old operation branches without an open pull request", () => {
+  const now = Date.parse("2026-10-29T12:00:00Z");
+  const old = "2026-10-29T10:00:00Z";
+  const left = (name: string, committedAt = old, open: string[] = []) =>
+    isLeftoverOperationBranch({ name, committedAt }, new Set(open), now);
+  assert.equal(left("claim-T0001-8fe2db55"), true);
+  assert.equal(left("claim-T0001-S0001-450a7323"), true);
+  assert.equal(left("review-edit-T0002-0a1b2c3d"), true);
+  assert.equal(left("layout-P0001-662a10a7"), true);
+  // younger than the grace period: its pull request may still be opening
+  assert.equal(left("claim-T0001-8fe2db55", "2026-10-29T11:30:00Z"), false);
+  // the head of an open pull request
+  assert.equal(
+    left("claim-T0001-8fe2db55", old, ["claim-T0001-8fe2db55"]),
+    false,
+  );
+  // task branches, kept work, the default branch and other names
+  assert.equal(left("encode-T0001"), false);
+  assert.equal(left("wip-T0001"), false);
+  assert.equal(left("main"), false);
+  assert.equal(left("claim-T0001"), false);
 });

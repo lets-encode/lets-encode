@@ -9,6 +9,11 @@ parentheses.
 - The broker proxy relays GraphQL queries but no mutations.
 - Simultaneous reads of the same GitHub URL share one request.
 - Logged in, the campaign, task and review pages read the tables in one GraphQL query.
+- A page that fails the machine check only once joined into the score is rejected as a platform error.
+- The scheduled run deletes operation branches left without a pull request.
+- An accepted layout, measure correction or score setup deletes its task branch.
+- A layout, measure correction or score setup can be submitted without changes.
+- Scripts to copy a campaign with another preparation and to compare the two campaigns page by page.
 - The score setup of an `omr` piece fills in staves, clefs, signatures and labels from the recognition again.
 
 ## 2026-10-28

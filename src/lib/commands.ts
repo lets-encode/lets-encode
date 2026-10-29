@@ -593,6 +593,8 @@ function openAndFinishInBackground(
     headSha?: string;
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
+    /** The task whose branch `encode-<task>` is deleted once the submission is accepted. */
+    taskBranch?: string;
   }>,
 ): Result {
   const id = verdictSink.begin({
@@ -643,6 +645,7 @@ async function settleWhenProcessed(
     headSha?: string;
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
+    taskBranch?: string;
   },
 ): Promise<void> {
   let res: Result;
@@ -669,6 +672,10 @@ async function settleWhenProcessed(
   }
   const state = res.error ? "rejected" : res.warn ? "timeout" : "accepted";
   console.log("[pending-verdict]", label, "PR", pr.number, state);
+  // A pre-task's work is saved on its task branch while the claim lasts; the
+  // accepted submission ends the claim, and no later claim deletes it.
+  if (state === "accepted" && pr.taskBranch)
+    await deleteTaskBranch(ctx, pr.taskBranch);
   verdictSink.settle(
     id,
     state,
@@ -2067,21 +2074,19 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
 // carried over verbatim, its score definition through the parse.
 //
 // The submission advances the score to stage C (generated measures, breaks and
-// movements), so a first submission always differs from the file in the repo
-// — even when the volunteer changed nothing, since the new stage adds elements
-// the previous one lacked. A submission that changes no file is not opened: an
-// empty PR never runs the automation.
+// movements). A submission that changes no file is opened as well: it
+// confirms the boxes as they are, and the coordinator reads the score from
+// the pull request's head whether or not it changed.
 //
 // A layout submission (an OMR-prepared piece) writes its measure zones with a
 // margin and leaves the measures empty: the notation comes from transcription
 // later. Its tight measure, staff and grand-staff boxes go to
-// `layout-corrected.json`, and the score is left out of the pull request when
-// only those boxes changed.
+// `layout-corrected.json`.
 // The score a measure or layout correction's pages amount to, built on the
-// campaign's current score (`current`), and for a layout correction its
-// corrected boxes. A layout correction that names the instruments also gives
-// the score its staves (instrumentScoreDef), with the clefs, key and meter
-// proposed from its recognition record `omr` where it has one.
+// campaign's current score, and for a layout correction its corrected boxes.
+// A layout correction that names the instruments also gives the score its
+// staves (instrumentScoreDef), with the clefs, key and meter proposed from its
+// recognition record `omr` where it has one.
 async function facsimileScore(
   ctx: CommandContext,
   task: TaskRow,
@@ -2089,14 +2094,13 @@ async function facsimileScore(
   layout: boolean,
   instruments?: LayoutInstruments,
   omr?: string | null,
-): Promise<{ current: string; content: string; corrected: string | null }> {
+): Promise<{ content: string; corrected: string | null }> {
   const { forge: f, owner, repo } = ctx;
   const current = await f.getRepoFile(owner, repo, task.fragment);
   if (current == null) throw new Error(`Could not read ${task.fragment}.`);
   const parsed = parseFacsimileMei(current);
   const record = instruments && omr ? parseOmrRecord(omr) : null;
   return {
-    current,
     content: buildFacsimileMei(
       {
         headXml: parsed.headXml,
@@ -2162,7 +2166,7 @@ async function submitFacsimile(
     const record =
       omr ?? (instruments ? await savedSideFile(ctx, task, recordPath) : null);
     const recordChanged = record != null && record !== campaignRecord;
-    const { current, content, corrected } = await facsimileScore(
+    const { content, corrected } = await facsimileScore(
       ctx,
       task,
       pages,
@@ -2181,15 +2185,6 @@ async function submitFacsimile(
       corrected !== null &&
       corrected !==
         (await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)));
-    // A no-op would open an empty PR the path-filtered caller never runs;
-    // guard against that rather than leaving the console polling forever.
-    if (content === current && !correctedChanged && !recordChanged) {
-      return {
-        ok: true,
-        warn: true,
-        message: "Nothing to submit — the score already matches this step.",
-      };
-    }
     const meiError = await checkMei(content);
     if (meiError)
       return {
@@ -2202,9 +2197,11 @@ async function submitFacsimile(
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
     // The corrected boxes, the layout model's raw output and the recognition
     // record go next to the score, one file each per piece: the campaign
-    // workflow runs a pull request of at most four files.
-    const files: FileChange[] =
-      content === current ? [] : [{ path: fragment, content }];
+    // workflow runs a pull request of at most four files. The score is
+    // committed when unchanged too, which gives the pull request a commit
+    // when nothing differs from the campaign's (boxes confirmed as they
+    // are).
+    const files: FileChange[] = [{ path: fragment, content }];
     if (correctedChanged) {
       files.push({ path: correctedLayoutPath(fragment), content: corrected! });
     }
@@ -2226,7 +2223,7 @@ async function submitFacsimile(
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         });
         console.log("[zones] PR opened", pr.number, pr.html_url);
-        return { ...pr, cleanup: "accepted" };
+        return { ...pr, cleanup: "accepted", taskBranch: task_id };
       },
     );
   } catch (e) {
@@ -2303,12 +2300,12 @@ const submitOmrLayout: CommandDef<
 };
 
 // The score a score setup's definition amounts to, built on the campaign's
-// current score (`current`) as described at submitScoreSetup.
+// current score as described at submitScoreSetup.
 async function setupScore(
   ctx: CommandContext,
   task: TaskRow,
   scoreDef: ScoreDefModel,
-): Promise<{ current: string; content: string }> {
+): Promise<{ content: string }> {
   const { forge: f, owner, repo } = ctx;
   const fragment = task.fragment;
   const [current, configYaml] = await Promise.all([
@@ -2347,7 +2344,7 @@ async function setupScore(
               { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
               { withBreaks: parsed.hasBreaks },
             );
-  return { current, content };
+  return { content };
 }
 
 // Score setup: submit the piece's initial score definition — staves with their
@@ -2384,7 +2381,7 @@ const submitScoreSetup: CommandDef<
       const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
       if (!task) return { error: `Unknown task ${task_id}.` };
       const fragment = task.fragment;
-      const { current, content } = await setupScore(ctx, task, scoreDef);
+      const { content } = await setupScore(ctx, task, scoreDef);
       const recordPath = omrRecordPath(fragment);
       // A recognition record from an earlier session of the claim was saved
       // with the work.
@@ -2392,15 +2389,6 @@ const submitScoreSetup: CommandDef<
       const recordChanged =
         record != null &&
         record !== (await f.getRepoFile(owner, repo, recordPath));
-      // A no-op would open an empty PR the path-filtered caller never runs;
-      // guard against that rather than leaving the console polling forever.
-      if (content === current && !recordChanged) {
-        return {
-          ok: true,
-          warn: true,
-          message: "Nothing to submit — the score already matches this setup.",
-        };
-      }
       const meiError = await checkMei(content);
       if (meiError)
         return {
@@ -2416,8 +2404,11 @@ const submitScoreSetup: CommandDef<
           console.log("[setup] opening PR", { task_id });
           const pr = await f.openChangePr(owner, repo, {
             branch: `setup-${task_id}-${rand()}`,
+            // The score is committed when unchanged too, which gives the
+            // pull request a commit when the definition is confirmed as it
+            // is.
             files: [
-              ...(content === current ? [] : [{ path: fragment, content }]),
+              { path: fragment, content },
               ...(recordChanged
                 ? [{ path: recordPath, content: record! }]
                 : []),
@@ -2427,7 +2418,7 @@ const submitScoreSetup: CommandDef<
             body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
           });
           console.log("[setup] PR opened", pr.number, pr.html_url);
-          return { ...pr, cleanup: "accepted" };
+          return { ...pr, cleanup: "accepted", taskBranch: task_id };
         },
       );
     } catch (e) {

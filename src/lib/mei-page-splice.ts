@@ -185,6 +185,21 @@ function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
 }
 
 /**
+ * The offsets of `locator`'s page (`surface-N`) in `mei`: from just after its
+ * `<pb>` to the next page's, or to the close of the enclosing element on the
+ * last page. Null if the page has no `<pb>`.
+ */
+export function pageSpan(
+  mei: string,
+  locator: string,
+): { from: number; to: number } | null {
+  const surfaces = pbSurfaces(mei);
+  const at = surfaces.indexOf(locator);
+  if (at === -1) return null;
+  return pageSpanAt(mei, locator, surfaces[at + 1] ?? null);
+}
+
+/**
  * The xml:id of the element to select when opening `locator`'s page
  * (`surface-N`): its first note, or its first measure if it has no note with an
  * xml:id. Null if the page has no `<pb>` or neither element.
@@ -193,10 +208,9 @@ export function firstElementOfPage(
   mei: string,
   locator: string,
 ): string | null {
-  const surfaces = pbSurfaces(mei);
-  const at = surfaces.indexOf(locator);
-  if (at === -1) return null;
-  const { from, to } = pageSpanAt(mei, locator, surfaces[at + 1] ?? null);
+  const span = pageSpan(mei, locator);
+  if (!span) return null;
+  const { from, to } = span;
   const tags = [...tagsIn(mei.slice(from, to))];
   for (const name of ["note", "measure"]) {
     const id = tags
