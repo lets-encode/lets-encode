@@ -671,15 +671,9 @@
     if (!loaded) loading = true;
     if (!background) loadError = null;
     try {
-      // The head is read before the tables: a commit that lands during the
-      // read moves the branch past `headSha`, and the next poll reads again.
-      const sha = await f.getRepoHead(owner, repo).then(
-        (h) => h.sha,
-        () => null,
-      );
       const tables = await invoke(commands.readTables, {}, ctx(f));
       if (name !== campaign) return;
-      headSha = sha;
+      headSha = tables.headSha;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
       canPush = tables.canPush;

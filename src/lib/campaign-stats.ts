@@ -303,6 +303,7 @@ export async function loadAllCampaignStats(
   opts: { onEach?: (stats: CampaignStats) => void } = {},
 ): Promise<CampaignListing> {
   const repos = await f.searchReposByTopic(topic);
+  await batchStats(f, repos);
   const errors: unknown[] = [];
   const all = await Promise.all(
     repos.map(async (repo) => {
@@ -331,11 +332,61 @@ export async function loadAllCampaignStats(
   };
 }
 
+/** The files a campaign's stats are built from, in buildStats' order. */
+const STATS_PATHS = [
+  TASK_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  HISTORY_PATH,
+  COMMENT_PATH,
+  CONFIG_PATH,
+];
+
+const ownerOf = (summary: RepoSummary) =>
+  summary.owner ?? summary.full_name.split("/")[0];
+
+/**
+ * Read the stats files of every repo not yet cached in batch reads and cache
+ * the results. Does nothing when the client cannot read in batches; a failed
+ * batch other than the broker's rate limit leaves the repos to the per-repo
+ * reads.
+ */
+async function batchStats(f: ForgeClient, repos: RepoSummary[]): Promise<void> {
+  const missing = repos.filter((r) => !cache.has(r.id));
+  if (missing.length === 0) return;
+  let batch: Awaited<ReturnType<ForgeClient["getRepoFilesBatch"]>>;
+  try {
+    batch = await f.getRepoFilesBatch(
+      missing.map((r) => ({ owner: ownerOf(r), repo: r.name })),
+      STATS_PATHS,
+    );
+  } catch (err) {
+    // GraphQL has its own GitHub budget, so the per-repo reads may still
+    // succeed; the broker's limit covers them too.
+    if (err instanceof RateLimitError && err.source === "broker") throw err;
+    return;
+  }
+  if (!batch) return;
+  missing.forEach((summary, i) => {
+    const read = batch[i];
+    // A repo the batch could not read is left to the per-repo reads.
+    if (!read) return;
+    const loading = buildStats(
+      f,
+      summary,
+      read.headSha,
+      STATS_PATHS.map((path) => read.files[path] ?? null),
+    );
+    cache.set(summary.id, loading);
+    loading.catch(() => cache.delete(summary.id));
+  });
+}
+
 async function fetchStats(
   f: ForgeClient,
   summary: RepoSummary,
 ): Promise<CampaignStats> {
-  const owner = summary.owner ?? summary.full_name.split("/")[0];
+  const owner = ownerOf(summary);
   const repo = summary.name;
   // The head is read before the tables: a commit that lands during the read
   // moves the branch past `headSha`, and the next poll reads again.
@@ -343,15 +394,22 @@ async function fetchStats(
     (h) => h.sha,
     () => "",
   );
-  const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
-    await Promise.all([
-      f.getRepoFile(owner, repo, TASK_PATH),
-      f.getRepoFile(owner, repo, STATE_PATH),
-      f.getRepoFile(owner, repo, LOCK_PATH),
-      f.getRepoFile(owner, repo, HISTORY_PATH),
-      f.getRepoFile(owner, repo, COMMENT_PATH),
-      f.getRepoFile(owner, repo, CONFIG_PATH),
-    ]);
+  const files = await Promise.all(
+    STATS_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+  );
+  return buildStats(f, summary, headSha, files);
+}
+
+async function buildStats(
+  f: ForgeClient,
+  summary: RepoSummary,
+  headSha: string,
+  [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml]: Array<
+    string | null
+  >,
+): Promise<CampaignStats> {
+  const owner = ownerOf(summary);
+  const repo = summary.name;
   const taskDefs = taskCsv ? parseTaskCsv(taskCsv) : [];
   const state = stateCsv
     ? parseStateCsv(stateCsv)

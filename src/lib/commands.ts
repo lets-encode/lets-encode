@@ -14,6 +14,7 @@
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
 import type { FileChange, ForgeClient } from "./forge/types.ts";
+import { RateLimitError } from "./forge/github-rest.ts";
 import {
   parseTaskCsv,
   parseStateCsv,
@@ -806,6 +807,80 @@ export interface CampaignTables {
    * this map is how the UI shows a username. Missing entries fall back to the id.
    */
   logins: Record<string, string>;
+  /** The default branch head the tables were read at; null when unknown. */
+  headSha: string | null;
+}
+
+/** The tracking tables and config, as readTableFiles reads them. */
+const TABLE_PATHS = [
+  TASK_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  HISTORY_PATH,
+  COMMENT_PATH,
+  CONFIG_PATH,
+];
+
+interface TableFiles {
+  headSha: string | null;
+  isPrivate: boolean;
+  canPush: boolean;
+  /** TABLE_PATHS → text; null where the file does not exist. */
+  files: Record<string, string | null>;
+}
+
+// Table reads in flight, by forge client and repo. Commands that read the
+// tables at the same time through the same client share one read.
+const tableReadsInFlight = new WeakMap<
+  ForgeClient,
+  Map<string, Promise<TableFiles>>
+>();
+
+/**
+ * The campaign's tables and config with the repo's access, in one batch read
+ * where the forge client can, else one read per file.
+ */
+function readTableFiles(ctx: CommandContext): Promise<TableFiles> {
+  let reads = tableReadsInFlight.get(ctx.forge);
+  if (!reads) tableReadsInFlight.set(ctx.forge, (reads = new Map()));
+  const key = `${ctx.owner}/${ctx.repo}`;
+  const pending = reads.get(key);
+  if (pending) return pending;
+  const read = fetchTableFiles(ctx).finally(() => reads.delete(key));
+  reads.set(key, read);
+  return read;
+}
+
+async function fetchTableFiles({
+  forge: f,
+  owner,
+  repo,
+}: CommandContext): Promise<TableFiles> {
+  try {
+    const [read] =
+      (await f.getRepoFilesBatch([{ owner, repo }], TABLE_PATHS)) ?? [];
+    if (read) return { ...read, headSha: read.headSha || null };
+  } catch (err) {
+    // The per-file reads pass through the broker too.
+    if (err instanceof RateLimitError && err.source === "broker") throw err;
+  }
+  // The head is read before the files: a commit that lands during the read
+  // moves the branch past `headSha`, and the next read sees it.
+  let headSha: string | null;
+  try {
+    headSha = (await f.getRepoHead(owner, repo)).sha;
+  } catch {
+    headSha = null;
+  }
+  const [access, ...contents] = await Promise.all([
+    f.getRepoAccess(owner, repo),
+    ...TABLE_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+  ]);
+  return {
+    headSha,
+    ...access,
+    files: Object.fromEntries(TABLE_PATHS.map((p, i) => [p, contents[i]])),
+  };
 }
 
 const readTables: CommandDef<Record<string, never>, CampaignTables> = {
@@ -813,24 +888,10 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
   version: 1,
   log: "none",
   async run(_input, ctx) {
-    const { forge: f, owner, repo } = ctx;
-    const [
-      taskCsv,
-      stateCsv,
-      lockCsv,
-      historyCsv,
-      commentCsv,
-      configYaml,
-      access,
-    ] = await Promise.all([
-      f.getRepoFile(owner, repo, TASK_PATH),
-      f.getRepoFile(owner, repo, STATE_PATH),
-      f.getRepoFile(owner, repo, LOCK_PATH),
-      f.getRepoFile(owner, repo, HISTORY_PATH),
-      f.getRepoFile(owner, repo, COMMENT_PATH),
-      f.getRepoFile(owner, repo, CONFIG_PATH),
-      f.getRepoAccess(owner, repo),
-    ]);
+    const { forge: f } = ctx;
+    const { headSha, files, ...access } = await readTableFiles(ctx);
+    const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configYaml] =
+      TABLE_PATHS.map((path) => files[path]);
     if (taskCsv == null || stateCsv == null || lockCsv == null) {
       return {
         notInitialised: true,
@@ -849,6 +910,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
         passThreshold: 1,
         allowSelfValidation: false,
         logins: {},
+        headSha,
       };
     }
     const state = parseStateCsv(stateCsv);
@@ -881,6 +943,7 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
         history,
         comments,
       }),
+      headSha,
     };
   },
 };
@@ -1902,12 +1965,13 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
   log: "none",
   async run({ task_id }, ctx) {
     const { forge: f, owner, repo, viewer } = ctx;
-    const [taskCsv, stateCsv, lockCsv, configYaml] = await Promise.all([
-      f.getRepoFile(owner, repo, TASK_PATH),
-      f.getRepoFile(owner, repo, STATE_PATH),
-      f.getRepoFile(owner, repo, LOCK_PATH),
-      f.getRepoFile(owner, repo, CONFIG_PATH),
-    ]);
+    const { files } = await readTableFiles(ctx);
+    const [taskCsv, stateCsv, lockCsv, configYaml] = [
+      TASK_PATH,
+      STATE_PATH,
+      LOCK_PATH,
+      CONFIG_PATH,
+    ].map((path) => files[path]);
     const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
     if (!task) throw new Error(`Unknown task ${task_id}.`);
     const preparation =

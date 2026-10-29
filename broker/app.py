@@ -385,7 +385,7 @@ github = oauth.register(
     },
 )
 
-# The proxy relays only GitHub REST API calls (the SPA does no git smart-HTTP).
+# The proxy relays only GitHub API calls (the SPA does no git smart-HTTP).
 ALLOWED_DOMAINS = ["api.github.com"]
 
 # The GitHub endpoints the SPA calls (src/lib/forge/github-rest.ts), by
@@ -427,6 +427,7 @@ PROXY_ROUTES = {
             _REPO + r"/issues/\d+/comments",
             _REPO + r"/git/(blobs|trees|commits|refs)",
             _REPO + r"/actions/workflows/[^/]+/dispatches",
+            r"/graphql",
         ),
         "PATCH": (
             _REPO + r"/pulls/\d+",
@@ -451,15 +452,33 @@ PROXY_HEADERS = (
 
 # Writes the allowlist admits whose body can do more than the app's own: the
 # app creates a ref only as a branch, moves one only without force, and
-# dispatches a workflow without inputs.
+# dispatches a workflow without inputs. Of GraphQL it sends queries only.
 _REF_WRITE = re.compile(_REPO + r"/git/refs(/heads/.+)?")
 _DISPATCH = re.compile(_REPO + r"/actions/workflows/[^/]+/dispatches")
+# A GraphQL document that names a mutation or subscription anywhere. The app
+# passes all values as variables, so its queries contain neither word.
+_GRAPHQL_WRITE = re.compile(r"\b(mutation|subscription)\b")
+
+
+def graphql_query(path):
+    """Whether this request is a GraphQL query, which only reads."""
+    if request.method != "POST" or path != "/graphql" or request.query_string:
+        return False
+    body = request.get_json(force=True, silent=True)
+    return (
+        isinstance(body, dict)
+        and set(body) <= {"query", "variables", "operationName"}
+        and isinstance(body.get("query"), str)
+        and not _GRAPHQL_WRITE.search(body["query"])
+    )
 
 
 def write_beyond_the_app(path):
     """Whether this request's body does more than the app's own writes."""
     if request.method not in ("POST", "PATCH"):
         return False
+    if path == "/graphql":
+        return not graphql_query(path)
     ref_write = _REF_WRITE.fullmatch(path)
     dispatch = _DISPATCH.fullmatch(path)
     if not (ref_write or dispatch):
@@ -542,7 +561,7 @@ def write_outside_campaigns(path):
     Whether this write goes to a repository other than a campaign repository
     or, for /generate, to a template other than the campaign template.
     """
-    if request.method == "GET":
+    if request.method == "GET" or graphql_query(path):
         return False
     match = _REPO_PATH.fullmatch(path)
     if not match:
@@ -1416,6 +1435,13 @@ def proxy(url):
         if name in request.headers
     }
     headers["Authorization"] = "token " + session["githubToken"]
+    # A GraphQL query goes upstream as parsed, so GitHub reads the same query
+    # graphql_query checked, whatever duplicate keys the raw body held.
+    body = (
+        json.dumps(request.get_json(force=True, silent=True))
+        if parsed.path == "/graphql"
+        else request.get_data()
+    )
 
     # Timeout protects gunicorn workers from being parked indefinitely by a
     # hung upstream connection: 10s to connect, 60s between reads.
@@ -1425,7 +1451,7 @@ def proxy(url):
             request.method,
             url,
             headers=headers,
-            data=request.get_data(),
+            data=body,
             timeout=(10, 60),
             allow_redirects=False,
         )

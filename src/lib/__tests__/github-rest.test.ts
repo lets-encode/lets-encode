@@ -6,6 +6,7 @@ import {
   routeSessionVia,
   getRepoAccess,
   getRepoFile,
+  getRepoFilesBatch,
   getPullRequest,
   getPullRequestState,
   getPullRequestDetails,
@@ -319,6 +320,99 @@ test("JSON reads reuse a cached ETag body after a 304 response", async (t) => {
   const first = await getRepoAccess("token", "etag-owner", "etag-repo");
   const second = await getRepoAccess("token", "etag-owner", "etag-repo");
   assert.deepEqual(second, first);
+});
+
+test("concurrent reads of one URL share a single request", async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    return Response.json({ content: btoa("text"), encoding: "base64" });
+  });
+  const reads = await Promise.all([
+    getRepoFile("token", "shared-owner", "repo", "a.csv"),
+    getRepoFile("token", "shared-owner", "repo", "a.csv"),
+    getRepoFile("token", "shared-owner", "repo", "b.csv"),
+  ]);
+  assert.deepEqual(reads, ["text", "text", "text"]);
+  assert.equal(calls, 2);
+  await getRepoFile("token", "shared-owner", "repo", "a.csv");
+  assert.equal(calls, 3);
+});
+
+test("getRepoFilesBatch reads every repo's files in one GraphQL query", async (t) => {
+  const bodies: Array<{ query: string; variables: Record<string, string> }> =
+    [];
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      assert.equal(String(input), "https://api.github.com/graphql");
+      assert.equal(init?.method, "POST");
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({
+        data: {
+          r0: {
+            isPrivate: true,
+            viewerPermission: "WRITE",
+            defaultBranchRef: {
+              target: {
+                oid: "sha0",
+                f0: { object: { text: "tasks", isTruncated: false } },
+                f1: null,
+              },
+            },
+          },
+          r1: null,
+          r2: {
+            isPrivate: false,
+            viewerPermission: "READ",
+            defaultBranchRef: null,
+          },
+        },
+        errors: [{ type: "NOT_FOUND", message: "Could not resolve" }],
+      });
+    },
+  );
+  const read = await getRepoFilesBatch(
+    "token",
+    [
+      { owner: "o", repo: "a" },
+      { owner: "o", repo: "gone" },
+      { owner: "o", repo: "empty" },
+    ],
+    ["tracking/task.csv", "tracking/lock.csv"],
+  );
+  assert.deepEqual(read, [
+    {
+      headSha: "sha0",
+      isPrivate: true,
+      canPush: true,
+      files: { "tracking/task.csv": "tasks", "tracking/lock.csv": null },
+    },
+    null,
+    {
+      headSha: "",
+      isPrivate: false,
+      canPush: false,
+      files: { "tracking/task.csv": null, "tracking/lock.csv": null },
+    },
+  ]);
+  assert.equal(bodies.length, 1);
+  // Names and paths travel as variables, not inside the document.
+  assert.equal(bodies[0].variables.n1, "gone");
+  assert.equal(bodies[0].variables.p0, "tracking/task.csv");
+  assert.doesNotMatch(bodies[0].query, /gone|tracking/);
+});
+
+test("getRepoFilesBatch returns null without a token", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async () =>
+    Response.json({}),
+  );
+  assert.equal(
+    await getRepoFilesBatch("", [{ owner: "o", repo: "a" }], []),
+    null,
+  );
+  assert.equal(fetch.mock.callCount(), 0);
 });
 
 test("commitFiles builds one tree and advances the requested branch from the supplied base", async (t) => {

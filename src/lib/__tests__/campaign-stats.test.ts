@@ -255,8 +255,9 @@ test("nextTask: nothing open → null", () => {
 });
 
 // A minimal forge for the listing loader: a topic search result plus a
-// per-repo file reader. Repo ids must be unique per test — loadCampaignStats
-// caches by id for the session.
+// per-repo file reader, without batch reads unless `getRepoFilesBatch` is
+// given. Repo ids must be unique per test — loadCampaignStats caches by id
+// for the session.
 const summary = (id: number, name: string): RepoSummary => ({
   id,
   full_name: `o/${name}`,
@@ -275,10 +276,12 @@ const fakeForge = (
     repo: string,
     path: string,
   ) => Promise<string | null>,
+  getRepoFilesBatch: ForgeClient["getRepoFilesBatch"] = async () => null,
 ): ForgeClient =>
   ({
     searchReposByTopic: async () => repos,
     getRepoFile,
+    getRepoFilesBatch,
     getUserLogin: async () => null,
     getRepoHead: async () => ({ sha: "h" }),
   }) as unknown as ForgeClient;
@@ -339,6 +342,62 @@ test("the campaign slug comes from config campaign.name, not the repo name", asy
   assert.equal(
     (await loadAllCampaignStats(bare, "topic")).stats[0].name,
     "bare-repo",
+  );
+});
+
+test("loadAllCampaignStats reads all repositories in one batch when it can", async () => {
+  const perFile: string[] = [];
+  const f = fakeForge(
+    [summary(9401, "one"), summary(9402, "two"), summary(9403, "gone")],
+    async (_o, repo, path) => {
+      perFile.push(`${repo}/${path}`);
+      return null;
+    },
+    async (repos, paths) =>
+      repos.map(({ repo }) =>
+        repo === "gone"
+          ? null
+          : {
+              headSha: `${repo}-head`,
+              isPrivate: false,
+              canPush: false,
+              files: Object.fromEntries(
+                paths.map((p) => [
+                  p,
+                  p === "config.yaml"
+                    ? `campaign:\n  name: "${repo}-slug"\n`
+                    : null,
+                ]),
+              ),
+            },
+      ),
+  );
+  const listing = await loadAllCampaignStats(f, "topic");
+  assert.deepEqual(
+    listing.stats.map((s) => [s.name, s.headSha]),
+    [
+      ["one-slug", "one-head"],
+      ["two-slug", "two-head"],
+      ["gone", "h"],
+    ],
+  );
+  // Only the repo the batch could not read is read file by file.
+  assert.ok(perFile.length > 0);
+  assert.ok(perFile.every((p) => p.startsWith("gone/")));
+});
+
+test("loadAllCampaignStats falls back to per-file reads when the batch fails", async () => {
+  const f = fakeForge(
+    [summary(9501, "a")],
+    async () => null,
+    async () => {
+      throw new Error("That GitHub endpoint is not relayed");
+    },
+  );
+  const listing = await loadAllCampaignStats(f, "topic");
+  assert.deepEqual(
+    listing.stats.map((s) => s.name),
+    ["a"],
   );
 });
 

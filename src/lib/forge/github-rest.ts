@@ -334,6 +334,47 @@ async function ghGet<T>(
   token?: string,
   { cache = true }: { cache?: boolean } = {},
 ): Promise<{ status: number; ok: boolean; data: T; link: string | null }> {
+  const { status, ok, text, link } = await sharedGet(url, token, cache);
+  let data: unknown = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = null;
+  }
+  return { status, ok, data: data as T, link };
+}
+
+type RawGet = {
+  status: number;
+  ok: boolean;
+  text: string;
+  link: string | null;
+};
+
+// GETs in flight, keyed by cache mode, token and URL. A GET of a URL that is
+// already being read joins that request instead of sending its own.
+const getsInFlight = new Map<string, Promise<RawGet>>();
+
+function sharedGet(
+  url: string,
+  token: string | undefined,
+  cache: boolean,
+): Promise<RawGet> {
+  const key = `${cache}\n${token ?? ""}\n${url}`;
+  const pending = getsInFlight.get(key);
+  if (pending) return pending;
+  const request = rawGet(url, token, cache).finally(() =>
+    getsInFlight.delete(key),
+  );
+  getsInFlight.set(key, request);
+  return request;
+}
+
+async function rawGet(
+  url: string,
+  token: string | undefined,
+  cache: boolean,
+): Promise<RawGet> {
   const cached = cache ? etagCache.get(url) : undefined;
   const headers: Record<string, string> = {
     ...baseHeaders,
@@ -341,26 +382,14 @@ async function ghGet<T>(
   };
   if (cached) headers["If-None-Match"] = cached.etag;
   const res = await githubFetch(url, { headers, cache: "no-store" });
-  if (res.status === 304 && cached) {
-    return {
-      status: 200,
-      ok: true,
-      data: JSON.parse(cached.body) as T,
-      link: cached.link,
-    };
-  }
+  if (res.status === 304 && cached)
+    return { status: 200, ok: true, text: cached.body, link: cached.link };
   const text = await res.text();
   const etag = res.headers.get("ETag");
   const link = res.headers.get("Link");
   if (cache && res.ok && etag) etagCache.set(url, { etag, body: text, link });
   else if (res.status === 404) etagCache.delete(url);
-  let data: unknown = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = null;
-  }
-  return { status: res.status, ok: res.ok, data: data as T, link };
+  return { status: res.status, ok: res.ok, text, link };
 }
 
 /** Waits before each repeat of a GET that failed with a 5xx. */
@@ -656,6 +685,132 @@ export async function getRepoFile(
   if (blob === null)
     throw new Error(`Failed to fetch ${path}: content unavailable`);
   return await blob.text();
+}
+
+/** Text files of one repo, read at its default branch's head commit. */
+export interface RepoFiles {
+  /** The head commit the files were read at; '' for a repo without commits. */
+  headSha: string;
+  isPrivate: boolean;
+  /** Whether the authenticated user can push to the repo. */
+  canPush: boolean;
+  /** Each requested path's text; null where the file does not exist. */
+  files: Record<string, string | null>;
+}
+
+/** The repository permissions that include pushing. */
+const PUSH_PERMISSIONS = new Set(["ADMIN", "MAINTAIN", "WRITE"]);
+
+/** Repos per GraphQL query in getRepoFilesBatch. */
+const FILES_BATCH_SIZE = 20;
+
+/**
+ * Read the same text files from several repos, each at its default branch's
+ * head commit, with one GraphQL query per FILES_BATCH_SIZE repos. The result
+ * follows the order of `repos`; a repo that does not exist or cannot be read
+ * is null. GraphQL requires a token, so an anonymous call returns null.
+ */
+export async function getRepoFilesBatch(
+  token: string,
+  repos: Array<{ owner: string; repo: string }>,
+  paths: string[],
+): Promise<Array<RepoFiles | null> | null> {
+  if (!token) return null;
+  const out: Array<RepoFiles | null> = [];
+  for (let start = 0; start < repos.length; start += FILES_BATCH_SIZE)
+    out.push(
+      ...(await repoFilesQuery(
+        token,
+        repos.slice(start, start + FILES_BATCH_SIZE),
+        paths,
+      )),
+    );
+  return out;
+}
+
+type BlobNode = { text?: string | null; isTruncated?: boolean } | null;
+type CommitNode = { oid?: string } & Record<
+  string,
+  { object: BlobNode } | string | null | undefined
+>;
+
+async function repoFilesQuery(
+  token: string,
+  repos: Array<{ owner: string; repo: string }>,
+  paths: string[],
+): Promise<Array<RepoFiles | null>> {
+  // Owners, names and paths go in as variables, never into the document.
+  const variables: Record<string, string> = {};
+  const declarations: string[] = [];
+  paths.forEach((path, j) => {
+    variables[`p${j}`] = path;
+    declarations.push(`$p${j}: String!`);
+  });
+  const fileFields = paths
+    .map(
+      (_, j) =>
+        `f${j}: file(path: $p${j}) { object { ... on Blob { text isTruncated } } }`,
+    )
+    .join(" ");
+  const repoFields = repos.map(({ owner, repo }, i) => {
+    variables[`o${i}`] = owner;
+    variables[`n${i}`] = repo;
+    declarations.push(`$o${i}: String!`, `$n${i}: String!`);
+    return `r${i}: repository(owner: $o${i}, name: $n${i}) { isPrivate viewerPermission defaultBranchRef { target { ... on Commit { oid ${fileFields} } } } }`;
+  });
+  const query = `query(${declarations.join(", ")}) { ${repoFields.join(" ")} }`;
+  const res = await ghSend<{
+    data?: Record<
+      string,
+      {
+        isPrivate: boolean;
+        viewerPermission: string | null;
+        defaultBranchRef: { target: CommitNode | null } | null;
+      } | null
+    > | null;
+    errors?: Array<{ type?: string; message?: string }>;
+  }>("POST", "/graphql", token, { query, variables });
+  if (res.errors?.some((e) => e.type === "RATE_LIMITED"))
+    throw new RateLimitError({
+      source: "github",
+      anonymous: false,
+      resource: "graphql",
+      limit: null,
+      remaining: null,
+      used: null,
+      resetAt: null,
+      retryAfterSeconds: null,
+    });
+  const data = res.data;
+  if (!data)
+    throw new Error(res.errors?.[0]?.message || "GraphQL query failed");
+  return Promise.all(
+    repos.map(async ({ owner, repo }, i) => {
+      const found = data[`r${i}`];
+      if (!found) return null;
+      const commit = found.defaultBranchRef?.target;
+      const headSha = commit?.oid ?? "";
+      const files: Record<string, string | null> = {};
+      await Promise.all(
+        paths.map(async (path, j) => {
+          const entry = commit?.[`f${j}`];
+          const blob = typeof entry === "object" ? entry?.object : null;
+          if (!blob) files[path] = null;
+          // A binary or large blob comes without its full text.
+          else if (blob.text != null && !blob.isTruncated)
+            files[path] = blob.text;
+          else
+            files[path] = await getRepoFile(token, owner, repo, path, headSha);
+        }),
+      );
+      return {
+        headSha,
+        isPrivate: found.isPrivate,
+        canPush: PUSH_PERMISSIONS.has(found.viewerPermission ?? ""),
+        files,
+      };
+    }),
+  );
 }
 
 /**

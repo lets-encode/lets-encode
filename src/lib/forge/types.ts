@@ -9,6 +9,7 @@ import type {
   RepoData,
   RepoSummary,
   RepoRef,
+  RepoFiles,
   WorkflowRunInfo,
   WorkflowJobInfo,
 } from "./github-rest.ts";
@@ -19,6 +20,7 @@ export type {
   RepoData,
   RepoSummary,
   RepoRef,
+  RepoFiles,
   WorkflowRunInfo,
   WorkflowJobInfo,
 };
@@ -106,6 +108,13 @@ export interface ForgeClient {
     ref?: string,
     maxBytes?: number,
   ): Promise<string | null>;
+  /** The same text files of several repos, each read at its default branch's
+      head, in the order of `repos`; null for a repo that cannot be read. Null
+      when the client cannot read in batches (e.g. anonymously). */
+  getRepoFilesBatch(
+    repos: Array<{ owner: string; repo: string }>,
+    paths: string[],
+  ): Promise<Array<RepoFiles | null> | null>;
 
   getRepoFileBytes(
     owner: string,

@@ -219,10 +219,23 @@
           await loadAllCampaignStats(f, provider.repoTopic, {
             onEach: placeRow,
           });
+        // All heads in one batch read where the client can; else one each.
+        const polled = stats;
+        const heads = await f
+          .getRepoFilesBatch(
+            polled.map((s) => ({ owner: s.owner, repo: s.repo })),
+            [],
+          )
+          .catch((err) => {
+            if (err instanceof RateLimitError) throw err;
+            return null;
+          });
         await Promise.all(
-          stats.map(async (s) => {
-            const { sha } = await f.getRepoHead(s.owner, s.repo);
-            if (sha !== s.headSha) await refreshStats(s);
+          polled.map(async (s, i) => {
+            const sha = heads
+              ? heads[i]?.headSha
+              : (await f.getRepoHead(s.owner, s.repo)).sha;
+            if (sha !== undefined && sha !== s.headSha) await refreshStats(s);
           }),
         );
       },

@@ -369,6 +369,14 @@ class BrokerTest(unittest.TestCase):
             ("PUT", "repos/o/r/topics"),
             ("PUT", "repos/o/r/subscription"),
             ("DELETE", "repos/o/r/git/refs/heads/wip/T1"),
+            (
+                "POST",
+                "graphql",
+                {
+                    "query": "query($o: String!) { repository(owner: $o, name: $o) { id } }",
+                    "variables": {"o": "o"},
+                },
+            ),
         ]
         refused = [
             ("DELETE", "repos/o/r"),
@@ -394,6 +402,24 @@ class BrokerTest(unittest.TestCase):
                 "repos/o/r/actions/workflows/caller.yml/dispatches",
                 {"ref": "main", "inputs": {"x": "1"}},
             ),
+            # GraphQL documents that write, or bodies that are not one query.
+            (
+                "POST",
+                "graphql",
+                {"query": "mutation { addStar(input: {}) { x } }"},
+            ),
+            (
+                "POST",
+                "graphql",
+                {"query": "{ viewer { id } } mutation M { x }"},
+            ),
+            ("POST", "graphql", {"query": "{ viewer { id } }", "extra": 1}),
+            ("POST", "graphql", ["{ viewer { id } }"]),
+            (
+                "POST",
+                "graphql?query=mutation%20M%20%7B%20x%20%7D",
+                {"query": "{ a }"},
+            ),
         ]
         with patch.object(
             broker.requests, "request", return_value=upstream
@@ -417,6 +443,24 @@ class BrokerTest(unittest.TestCase):
                     self.assertEqual(response.status_code, 403, (method, path))
                     self.assertEqual(response.get_json()["source"], "broker")
             request_upstream.assert_not_called()
+
+    def test_proxy_forwards_the_graphql_query_it_checked(self):
+        self.authenticate()
+        upstream = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        with patch.object(
+            broker.requests, "request", return_value=upstream
+        ) as request_upstream:
+            response = self.client.post(
+                "/proxy/api.github.com/graphql",
+                data='{"query": "mutation { x }", "query": "{ viewer { id } }"}',
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            json.loads(request_upstream.call_args.kwargs["data"]),
+            {"query": "{ viewer { id } }"},
+        )
 
     def test_proxy_writes_only_to_campaign_repositories(self):
         self.authenticate()

@@ -5,6 +5,10 @@ parentheses.
 
 ## 2026-10-29
 
+- Logged in, the campaign list reads all campaigns' tables in one GraphQL query.
+- The broker proxy relays GraphQL queries but no mutations.
+- Simultaneous reads of the same GitHub URL share one request.
+- Logged in, the campaign, task and review pages read the tables in one GraphQL query.
 - The score setup of an `omr` piece fills in staves, clefs, signatures and labels from the recognition again.
 
 ## 2026-10-28

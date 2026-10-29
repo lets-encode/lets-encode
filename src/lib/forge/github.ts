@@ -24,6 +24,8 @@ export function createGitHubForge(token: string): ForgeClient {
       gh.commitFiles(token, owner, repo, files, message, opts),
     getRepoFile: (owner, repo, path, ref, maxBytes) =>
       gh.getRepoFile(token, owner, repo, path, ref, maxBytes),
+    getRepoFilesBatch: (repos, paths) =>
+      gh.getRepoFilesBatch(token, repos, paths),
     getRepoFileBytes: (owner, repo, path, ref) =>
       gh.getRepoFileBytes(token, owner, repo, path, ref),
     getRepoFileDownloadUrl: (owner, repo, path, ref) =>
