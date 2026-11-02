@@ -183,7 +183,7 @@ const INCIPIT_OPTIONS = {
   footer: "none",
   svgViewBox: true,
   breaks: "auto",
-};
+} as const;
 
 let toolkitLoading: Promise<VerovioToolkit> | null = null;
 

@@ -1494,3 +1494,6 @@ svg:has(> svg.definition-scale) g.label {
 svg:has(> svg.definition-scale) :is(ellipse, path, polygon, polyline, rect) {
   stroke: currentColor;
 }
+svg:has(> svg.definition-scale) g.placeholder {
+  visibility: hidden;
+}

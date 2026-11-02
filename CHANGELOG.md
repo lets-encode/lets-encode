@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-02
+
+- Verovio is updated to 6.4.
+
 ## 2026-10-29
 
 - The setup rail's footer links are left-aligned in a smaller size, with long campaign names shortened.
