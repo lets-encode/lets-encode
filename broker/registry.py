@@ -129,7 +129,16 @@ def claim():
     if error is not None:
         return jsonify(error=error), 422
     login = session.get("userLogin", "")
-    if store.pending_count(login) >= MAX_PENDING_CLAIMS:
+    store.drop_expired_claim(name)
+    claim_token = secrets.token_urlsafe(24)
+    expires_at = in_minutes_iso(CLAIM_TTL_MINUTES)
+    try:
+        held = store.create_pending(
+            name, claim_token, expires_at, login, MAX_PENDING_CLAIMS
+        )
+    except SlugExists:
+        return jsonify(error="'{}' is already taken".format(name)), 409
+    if not held:
         return (
             jsonify(
                 error="You hold {} names for setups already; give one back"
@@ -138,13 +147,6 @@ def claim():
             ),
             429,
         )
-    store.drop_expired_claim(name)
-    claim_token = secrets.token_urlsafe(24)
-    expires_at = in_minutes_iso(CLAIM_TTL_MINUTES)
-    try:
-        store.create_pending(name, claim_token, expires_at, login)
-    except SlugExists:
-        return jsonify(error="'{}' is already taken".format(name)), 409
     return (
         jsonify(
             name=name,

@@ -60,6 +60,7 @@
   let handleCheck = $state<
     | { state: "idle" }
     | { state: "invalid" }
+    | { state: "reserved" }
     | { state: "checking" }
     | { state: "available" }
     | { state: "held" }
@@ -115,7 +116,9 @@
           repoExists(user.login, h, token),
         ]);
         if (seq !== handleCheckSeq) return;
-        if (slug && slug.status !== "free") {
+        if (slug?.status === "reserved") {
+          handleCheck = { state: "reserved" };
+        } else if (slug && slug.status !== "free") {
           // A pending hold may be this browser's own: an unfinished setup of
           // the same name keeps its claim token in its draft record.
           const draft =
@@ -147,6 +150,7 @@
     wizard.title.trim() !== "" &&
       isValidHandle(wizard.handle.trim()) &&
       handleCheck.state !== "taken" &&
+      handleCheck.state !== "reserved" &&
       handleCheck.state !== "draft" &&
       handleCheck.state !== "checking",
   );
@@ -159,7 +163,11 @@
     if (!h) return "Enter a campaign name.";
     if (!isValidHandle(h)) return "The campaign name is not valid yet.";
     if (handleCheck.state === "checking") return "Checking the name…";
-    if (handleCheck.state === "taken" || handleCheck.state === "draft")
+    if (
+      handleCheck.state === "taken" ||
+      handleCheck.state === "reserved" ||
+      handleCheck.state === "draft"
+    )
       return "Choose a different campaign name.";
     if (!t) return "Enter a title.";
     return "";
@@ -195,7 +203,7 @@
       return;
     }
     if ("token" in result) {
-      wizard.claim = { name, token: result.token };
+      wizard.claim = { name, token: result.token, expiresAt: result.expiresAt };
       // Stored at once, so the reservation is kept with the setup.
       saveDraft(auth.user?.login ?? "", draftSnapshot());
       nextStep();
@@ -289,6 +297,11 @@
             Use the name here — replaces that setup
           </button>
         {/if}
+      {:else if handleCheck.state === "reserved"}
+        <span class="hint hint-err"
+          ><Icon name="warning" size={12} /> This name is reserved and cannot be used
+          for a campaign</span
+        >
       {:else if handleCheck.state === "invalid"}
         <span class="hint hint-err">
           3–40 characters: lowercase letters, digits, and single internal

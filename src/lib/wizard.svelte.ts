@@ -53,6 +53,10 @@ export interface WizardClaim {
   name: string;
   /** The right to register this name, or to give it back. */
   token: string;
+  /** When the hold runs out (ISO time); absent in drafts stored before. */
+  expiresAt?: string;
+  /** The name is registered to the campaign's repository. */
+  registered?: boolean;
 }
 
 /** A page the upload offers, with whether the pages step keeps it. */

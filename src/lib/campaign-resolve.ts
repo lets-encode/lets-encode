@@ -60,7 +60,7 @@ export async function lookupSlug(name: string): Promise<SlugInfo | null> {
 
 /** A held name's token, or why the name could not be held. */
 export type ClaimResult =
-  | { token: string }
+  | { token: string; expiresAt: string }
   | { error: "taken" | "invalid" | "limit" | "unreachable" };
 
 /**
@@ -77,10 +77,13 @@ export async function claimName(name: string): Promise<ClaimResult> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (res.ok)
-      return {
-        token: ((await res.json()) as { claim_token: string }).claim_token,
+    if (res.ok) {
+      const held = (await res.json()) as {
+        claim_token: string;
+        expires_at: string;
       };
+      return { token: held.claim_token, expiresAt: held.expires_at };
+    }
     if (res.status === 409) return { error: "taken" };
     if (res.status === 422) return { error: "invalid" };
     // The login holds the registry's limit of claims (MAX_PENDING_CLAIMS).

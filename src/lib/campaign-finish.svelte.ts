@@ -43,6 +43,8 @@ import {
   wizard,
   clearFinishedSetup,
   currentSetup,
+  draftSnapshot,
+  saveDraft,
   COPYRIGHT_ACKNOWLEDGEMENT,
 } from "./wizard.svelte.ts";
 import { discardDraft } from "./wizard-draft.ts";
@@ -144,7 +146,7 @@ export class CampaignFinisher {
     this.error = null;
     const user = auth.user;
     const f = forge();
-    const claim = wizard.claim;
+    let claim = wizard.claim;
     if (this.busy) return;
     if (!user || !f) {
       this.error =
@@ -191,6 +193,9 @@ export class CampaignFinisher {
         this.detected = await this.measurePages();
       sameSetup();
       const repo = await ensureCampaignRepo(f, user.login, logRepo);
+      // Creating the repository may have renewed the reservation.
+      sameSetup();
+      claim = wizard.claim ?? claim;
       sameSetup();
       if (!committed) {
         const detected = this.detected ?? [];
@@ -422,6 +427,12 @@ export class CampaignFinisher {
         this.log.fail();
         return;
       }
+      // The campaign is reachable under its name from here on; the setup can
+      // only be finished, not discarded.
+      if (setup === currentSetup()) {
+        wizard.claim = { ...claim, registered: true };
+        saveDraft(user.login, draftSnapshot());
+      }
 
       // The topic is what puts a campaign in the listing, so a campaign missing it
       // is not finished and the setup stays open. Retrying runs this step again,
@@ -453,7 +464,9 @@ export class CampaignFinisher {
         this.busy = false;
         return;
       }
-      await goto(`/${repo.name}`);
+      // A failed client-side navigation must not report the finished
+      // campaign as failed: the page is loaded afresh instead.
+      await goto(`/${repo.name}`).catch(() => location.assign(`/${repo.name}`));
       clearFinishedSetup(user.login);
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);

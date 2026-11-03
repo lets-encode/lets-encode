@@ -487,6 +487,8 @@ export interface RepoData {
   default_branch: string;
   permissions?: { push?: boolean };
   private: boolean;
+  /** The template the repository was generated from; null when none. */
+  template_repository?: { full_name: string } | null;
   message?: string;
   errors?: Array<{ message?: string; code?: string }>;
 }

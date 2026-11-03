@@ -285,8 +285,15 @@
     (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
   }
 
-  // Discarding asks once before it lets go of everything collected.
+  // Discarding asks once before it lets go of everything collected. A setup
+  // whose name is registered is a reachable campaign: it can only be finished.
   let confirmingDiscard = $state(false);
+  const registered = $derived(wizard.claim?.registered === true);
+  const registeredNote = $derived(
+    registered
+      ? `The campaign already works at /${wizard.claim?.name}. Finish the setup to add it to the list of campaigns.`
+      : undefined,
+  );
   function discardSetup() {
     const handle = wizard.handle.trim();
     const claim = wizard.claim;
@@ -452,7 +459,8 @@
                 type="button"
                 class="linkish"
                 onclick={() => (confirmingDiscard = true)}
-                disabled={backDisabled}
+                disabled={backDisabled || registered}
+                title={registeredNote}
               >
                 Discard this setup
               </button>
@@ -664,7 +672,8 @@
       aria-expanded={open}
       onclick={(e) =>
         asPopup ? togglePopup("discard", e, 260) : toggleDiscard()}
-      disabled={backDisabled}
+      disabled={backDisabled || registered}
+      title={registeredNote}
     >
       {discardLabel}
     </button>

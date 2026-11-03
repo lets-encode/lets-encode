@@ -15,10 +15,11 @@ import {
   type WizardRepo,
 } from "./wizard.svelte.ts";
 import { readDraft, writeDraft } from "./wizard-draft.ts";
+import { claimName } from "./campaign-resolve.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import { CONFIG_PATH } from "./campaign-tables.ts";
 
-/** The template file whose presence marks a repository generated for a campaign. */
+/** A file of the campaign template: a generated repository has contents once it is there. */
 const TEMPLATE_MARKER = ".github/workflows/caller.yml";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -56,18 +57,18 @@ async function createOrAdoptRepo(
     // no repository behind it gets one more try below.
   }
 
-  const existing = await f.getRepoInfo(owner, name).catch(() => null);
+  // A lookup that fails says nothing about the repository, so its error is
+  // reported rather than taken for "no repository".
+  const existing = await f.getRepoInfo(owner, name);
   if (existing) {
-    // Adopt it only if it came from the campaign template (its marker file may
-    // still be materialising — generation is asynchronous — so wait briefly);
-    // an unrelated repository of the same name must not be committed into.
-    const marker = await f
-      .waitForRepoContents(owner, name, TEMPLATE_MARKER, {
-        attempts: 5,
-        delayMs: 1000,
-      })
-      .catch(() => null);
-    if (marker !== null) {
+    // Adopt it only if GitHub reports it generated from the campaign
+    // template; an unrelated repository of the same name must not be
+    // committed into.
+    const template = `${provider.template.owner}/${provider.template.repo}`;
+    if (
+      existing.template_repository?.full_name.toLowerCase() ===
+      template.toLowerCase()
+    ) {
       // Only the final step writes config.yaml, so a repository that has one
       // holds a finished campaign, which a new setup must not take over.
       if ((await f.getRepoFile(owner, name, CONFIG_PATH)) !== null) {
@@ -115,6 +116,30 @@ export async function ensureCampaignRepo(
   // after creating it; reuse it rather than creating a second one.
   let repo = wizard.repo;
   if (!repo) {
+    // Once the repository exists the name is fixed, so a hold that has run
+    // out is renewed first: a name taken meanwhile can still be changed.
+    if (claim.expiresAt && Date.parse(claim.expiresAt) <= Date.now()) {
+      log({ step: `Renewing the reservation of “${claim.name}”` });
+      const setup = currentSetup();
+      const renewed = await claimName(claim.name);
+      if (setup !== currentSetup())
+        throw new Error(
+          "another setup was opened while this one was being finished",
+        );
+      if (!("token" in renewed)) {
+        throw new Error(
+          renewed.error === "taken"
+            ? `The reservation of “${claim.name}” ran out and the name was taken by another campaign. Go back to the first step and choose another name.`
+            : `The reservation of “${claim.name}” ran out and could not be renewed. Try again.`,
+        );
+      }
+      wizard.claim = {
+        name: claim.name,
+        token: renewed.token,
+        expiresAt: renewed.expiresAt,
+      };
+      saveDraft(userLogin, draftSnapshot());
+    }
     // The repository's "About" carries the campaign's title and description
     // together. GitHub rejects a description longer than 350 characters.
     const about = [wizard.title.trim(), wizard.description.trim()]

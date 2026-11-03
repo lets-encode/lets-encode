@@ -5,49 +5,36 @@ parentheses.
 
 ## 2026-11-03
 
-- A login check that fails at app start is retried instead of showing a valid login as logged out.
-- Logging out clears an earlier login-expired or login-failed message.
-- A 401 from the registry, the image relay or the OMR relay marks the login as expired.
-- Logins started in two tabs at once each return to their own page.
-- The broker refuses a login GitHub does not name.
-- A broker session whose token can no longer be read keeps nothing of its login.
-- The broker checks a campaign repository again ten minutes after it found it.
+- The name step reports reserved names, and a run-out reservation is renewed before the repository is created.
+- Creating a campaign no longer fails on a slow template repository, a failed lookup or a failed navigation.
+- A setup whose name is registered can only be continued, not discarded.
+- The registry enforces its reservation limit atomically and matches reservations only to their own login.
+- A failed login check at app start is retried instead of showing a valid login as logged out.
+- A 401 from the registry or the relays marks the login as expired, and logging out clears old login messages.
+- Logins started in two tabs each return to their own page.
+- The broker drops a login it cannot name or read and re-checks campaign repositories after ten minutes.
+- The broker runs one worker, so its rate limits and relay slots hold as stated.
 - Deleting an OMR page through the relay removes its record.
-- The broker runs one worker process, so its rate limits and relay slots hold as stated.
-- One broker check decides whether a request is signed in.
-- A submission still being processed is followed again after the tab reloads and keeps its controls held.
+- Pending submissions survive a reload and refresh only their own campaign's pages.
 - A submission whose pull request could not be opened shows as failed, not rejected.
-- A settled submission refreshes only the pages of its own campaign.
-- An action started while another one runs starts once that one has finished instead of being dropped.
-- The app records what a pending submission acts on as structured data instead of text keys.
-- A review cell holds only an approval; the unused "changes requested" cell state is removed.
-- A new or rebuilt page task takes no id the campaign history already names.
-- The board shows a task row with an unknown status as pending instead of passing it through.
+- An action started while another one runs is queued instead of dropped.
+- Pending claims, give-backs and review edits are followed until decided and then clear the old task branch.
+- Kept work is used only when the history records it, and drafts are saved only while the claim is held.
+- Review cells hold only approvals, and new page tasks never reuse an id the history names.
 - The board, the task pages and the claim check share one dependency rule.
 - A review with an invalid verdict is recorded against its task.
-- A claim, give-back or review edit still being processed is followed until decided and then clears the old task branch.
-- An editor continues from kept work only when the campaign history records it.
-- A pre-task draft is saved only while the viewer holds the task's claim.
-- A submission whose expired claim another run already released is rejected as an expired claim.
+- The coordinator treats a claim released by another run or with an unreadable expiry as expired.
 - The scheduled run processes left-over submissions before it releases expired claims.
-- A claim whose expiry time cannot be read counts as expired.
-- The coordinator reads claim and release rows as CSV.
-- The coordinator tells submissions made in the app by their task instead of a list of command ids.
-- The Pieces step's piece picker keeps the piece name on a phone.
-- On a phone, the reason Continue waits lies over the setup step and leaves no empty row.
+- The Pieces step keeps the piece name and the reason Continue waits in place on a phone.
 - The zones page and the setup's Pieces step share one box editor.
-- A submission still being processed keeps its task's controls held until it is decided.
-- A command's result states whether it is still pending, had nothing to do or partly failed.
+- Pending submissions hold their task's controls, and command results say when they are pending or partly failed.
 - The app offers a claim only where the campaign automation would grant it.
-- A task view opens fresh when moving to another task or campaign.
-- The task views' per-task reset code and stale-result checks are removed.
-- Back, forward and task links open the task on the campaign board.
-- A login or logout reloads the app's other tabs, keeping unsent comments and change requests.
-- A setup's draft is saved as soon as its name is reserved and stored per account.
+- Task views open fresh on another task or campaign, and back, forward and task links open the task on the board.
+- A login or logout reloads the other tabs, keeping unsent comments and change requests.
+- Setup drafts are stored per account as soon as the name is reserved.
 - A setup step's result no longer lands in another setup opened meanwhile.
-- A submission's outcome is read from the campaign history instead of the bot's comment.
-- The scheduled run leaves a submission to its own run while that run is queued or running.
-- Submissions sent in quick succession are all processed instead of being rejected or failing.
+- Submission outcomes are read from the campaign history instead of the bot's comment.
+- Submissions sent in quick succession are all processed, each by one run.
 
 ## 2026-11-02
 

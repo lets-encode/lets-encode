@@ -108,7 +108,7 @@
           <button type="button" class="btn" onclick={() => (confirming = null)}>
             Cancel
           </button>
-        {:else}
+        {:else if !draft.claim?.registered}
           <button
             type="button"
             class="btn btn-icon btn-danger"
