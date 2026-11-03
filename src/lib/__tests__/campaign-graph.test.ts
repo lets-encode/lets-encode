@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGraph, blockedBy, claimLabel } from "../campaign-graph.ts";
+import {
+  buildGraph,
+  blockedBy,
+  canClaim,
+  claimLabel,
+} from "../campaign-graph.ts";
 import type { GraphData } from "../campaign-graph.ts";
 import type { StateRow, TaskRow } from "../campaign-tables.ts";
 
@@ -279,4 +284,37 @@ test("claimLabel names mei-friend for an encoding only", () => {
   assert.equal(claimLabel("score-setup"), "Claim & open score setup");
   assert.equal(claimLabel("omr-layout"), "Claim & open measure correction");
   assert.equal(claimLabel("measure-zones"), "Claim & open measure correction");
+});
+
+test("canClaim offers only the claims the campaign automation grants", () => {
+  const d: GraphData = {
+    taskDefs: [task("T0001"), subDef("T0001"), task("T0002")],
+    rows: [
+      state("T0001", "", "validation_required", "7"),
+      state("T0001", "S0001", "validation_required", "7", ["pass|8|t"]),
+      // A status the app does not know is shown as pending, never as open.
+      state("T0002", "", "archived"),
+    ],
+    validationColumns: ["validate_status_1", "validate_status_2"],
+    locks: [],
+    passThreshold: 1,
+  };
+  // T0002's unknown status refuses an encoding claim.
+  assert.equal(canClaim(d, "9", "T0002"), false);
+  // The single pass the threshold asks for is in: no review is left to claim.
+  assert.equal(canClaim(d, "9", "T0001", "S0001"), false);
+  assert.equal(
+    canClaim({ ...d, passThreshold: 2 }, "9", "T0001", "S0001"),
+    true,
+  );
+  // The encoder may not review their own work.
+  assert.equal(
+    canClaim({ ...d, passThreshold: 2 }, "7", "T0001", "S0001"),
+    false,
+  );
+  // Nobody signed in claims nothing.
+  assert.equal(
+    canClaim({ ...d, passThreshold: 2 }, "", "T0001", "S0001"),
+    false,
+  );
 });

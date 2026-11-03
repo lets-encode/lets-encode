@@ -5,6 +5,9 @@ parentheses.
 
 ## 2026-11-03
 
+- A submission still being processed keeps its task's controls held until it is decided.
+- A command's result states whether it is still pending, had nothing to do or partly failed.
+- The app offers a claim only where the campaign automation would grant it.
 - A task view opens fresh when moving to another task or campaign.
 - The task views' per-task reset code and stale-result checks are removed.
 - Back, forward and task links open the task on the campaign board.

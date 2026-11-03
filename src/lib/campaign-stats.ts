@@ -5,7 +5,6 @@
 // tables; loadCampaignStats does the fetching and caches per repo id.
 
 import {
-  blockedBy,
   buildGraph,
   isPreTask,
   pageOfLocator,
@@ -48,6 +47,7 @@ import type {
 import type { ForgeClient } from "./forge/types.ts";
 import { RateLimitError } from "./forge/github-rest.ts";
 import { liveLocks } from "./campaign-reaper.ts";
+import { claimRefusal } from "./campaign-claim.ts";
 import { checksOpening } from "./coordinator-policy.ts";
 import type { RepoSummary } from "./forge/github-rest.ts";
 
@@ -103,48 +103,44 @@ export interface CampaignStats {
   headSha: string;
 }
 
-/** Tasks claimable right now (unclaimed, unblocked encoding_required). */
+// Whether anyone (no particular account) may claim the row's task (subtask
+// '') or a review of its subtask now, by the campaign automation's rule.
+const openToClaim = (
+  d: Pick<GraphData, "taskDefs" | "rows" | "validationColumns" | "locks"> &
+    Partial<Pick<GraphData, "passThreshold" | "allowSelfValidation">>,
+  r: StateRow,
+): boolean =>
+  claimRefusal({
+    tasks: d.taskDefs,
+    state: d,
+    locks: d.locks,
+    intent: {
+      task_id: r.task_id,
+      subtask_id: r.subtask_id,
+      kind: r.subtask_id ? "validation" : "encoding",
+    },
+    author: "",
+    allowSelfValidation: d.allowSelfValidation,
+    passThreshold: d.passThreshold,
+  }) === null;
+
+/** Tasks claimable right now. */
 export function readyCount(
   d: Pick<GraphData, "taskDefs" | "rows" | "locks">,
 ): number {
-  return d.rows.filter(
-    (r) =>
-      r.subtask_id === "" &&
-      r.status === "encoding_required" &&
-      !blockedBy(d as GraphData, r.task_id) &&
-      !d.locks.some(
-        (l) =>
-          l.task_id === r.task_id &&
-          l.subtask_id === "" &&
-          l.kind === "encoding",
-      ),
-  ).length;
+  const all = { ...d, validationColumns: [] };
+  return d.rows.filter((r) => r.subtask_id === "" && openToClaim(all, r))
+    .length;
 }
 
-/** Tasks with a validation slot open to claim (a slot neither decided nor locked). */
+/** Tasks with a review open to claim. */
 export function validationReadyCount(
-  d: Pick<GraphData, "rows" | "validationColumns" | "locks">,
+  d: Pick<GraphData, "taskDefs" | "rows" | "validationColumns" | "locks"> &
+    Partial<Pick<GraphData, "passThreshold" | "allowSelfValidation">>,
 ): number {
-  const hasOpenSlot = (r: StateRow): boolean => {
-    const finals = d.validationColumns.filter((c) =>
-      isFinalValidation(r[c] ?? ""),
-    ).length;
-    const held = d.locks.filter(
-      (l) =>
-        l.task_id === r.task_id &&
-        l.subtask_id === r.subtask_id &&
-        l.kind === "validation",
-    ).length;
-    return finals + held < d.validationColumns.length;
-  };
   const tasks = new Set(
     d.rows
-      .filter(
-        (r) =>
-          r.subtask_id !== "" &&
-          r.status === "validation_required" &&
-          hasOpenSlot(r),
-      )
+      .filter((r) => r.subtask_id !== "" && openToClaim(d, r))
       .map((r) => r.task_id),
   );
   return tasks.size;
@@ -463,9 +459,12 @@ async function buildStats(
     total: tasks.length,
     ready: readyCount({ taskDefs, rows: state.rows, locks }),
     toValidate: validationReadyCount({
+      taskDefs,
       rows: state.rows,
       validationColumns: state.validationColumns,
       locks,
+      passThreshold,
+      allowSelfValidation: configFlag(yaml, "allow_self_validation"),
     }),
     nearlyDone: isNearlyDone(done, tasks.length),
     contributorIds,

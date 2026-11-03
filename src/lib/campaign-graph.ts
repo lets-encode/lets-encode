@@ -5,6 +5,7 @@
 // table refresh. No Svelte, no GitHub.
 
 import { isFinalValidation } from "./campaign-tables.ts";
+import { claimRefusal } from "./campaign-claim.ts";
 import type { TaskRow, StateRow, LockRow } from "./campaign-tables.ts";
 
 /**
@@ -264,6 +265,34 @@ const validationLocks = (d: GraphData, task: string, sub: string) =>
   lockIndex(d.locks).get(`${task}|${sub}|validation`) ?? [];
 
 /** The incomplete task this task waits for (task.csv depends_on), or ''. */
+/**
+ * Whether `viewer` may claim the task (`sub` '') or a review of its subtask
+ * `sub` now, by the rule the campaign automation decides claims with.
+ */
+export function canClaim(
+  d: GraphData,
+  viewer: string,
+  task: string,
+  sub = "",
+): boolean {
+  return (
+    viewer !== "" &&
+    claimRefusal({
+      tasks: d.taskDefs,
+      state: d,
+      locks: d.locks,
+      intent: {
+        task_id: task,
+        subtask_id: sub,
+        kind: sub ? "validation" : "encoding",
+      },
+      author: viewer,
+      allowSelfValidation: d.allowSelfValidation,
+      passThreshold: d.passThreshold,
+    }) === null
+  );
+}
+
 export function blockedBy(d: GraphData, task: string): string {
   const dep = taskDef(d, task)?.depends_on;
   if (!dep || taskState(d, dep)?.status === "completed") return "";
@@ -405,11 +434,7 @@ export function buildGraph(
   let nextUpTaken = false;
   for (const def of defs) {
     const task = def.task_id;
-    const state = taskState(d, task);
     const statusKey = mainStatusKey(d, task);
-    const lock = encodingLock(d, task);
-    const encoded = isEncoded(state?.status ?? "");
-    const blocked = blockedBy(d, task);
     const subRows = subRowsOf(d, task);
 
     const slots: NodeSlot[] = subRows.flatMap((row) =>
@@ -422,22 +447,10 @@ export function buildGraph(
           label: `${row.subtask_id}·${slot + 1}`,
           who: s.sub,
           running: s.running,
+          // The slot a claim would take, when the viewer may claim one.
           claimable:
-            viewer !== "" &&
-            encoded &&
-            row.status === "validation_required" &&
-            (d.allowSelfValidation ||
-              (state?.encoder !== viewer && !hasVerdictBy(d, row, viewer))) &&
-            // Reviews of a task run one at a time (mirrors checkClaim).
-            !d.locks.some(
-              (l) => l.task_id === row.task_id && l.kind === "validation",
-            ) &&
             slot === nextUnreservedSlot(d, row) &&
-            // Claimable only while the verdict can still land: passes plus
-            // active locks below the pass threshold (mirrors checkClaim).
-            passesOf(d, row) +
-              validationLocks(d, row.task_id, row.subtask_id).length <
-              d.passThreshold,
+            canClaim(d, viewer, row.task_id, row.subtask_id),
           needsAnother: s.needsAnother ?? false,
           user: s.user,
           ts: s.ts,
@@ -450,11 +463,7 @@ export function buildGraph(
     const mineLock =
       viewer !== "" &&
       d.locks.some((l) => l.task_id === task && l.user_id === viewer);
-    const claimableEncoding =
-      viewer !== "" &&
-      !blocked &&
-      state?.status === "encoding_required" &&
-      !lock;
+    const claimableEncoding = canClaim(d, viewer, task);
     const claimableValidation = slots.some((slot) => slot.claimable);
     const nextUp =
       viewer !== "" &&

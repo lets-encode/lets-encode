@@ -325,7 +325,7 @@
           ),
         refresh,
       );
-      if (result?.ok && !result.warn) {
+      if (result?.ok && result.outcome !== "pending") {
         await goto(reviewHref(s.name, next.locator, next.task));
       }
     }

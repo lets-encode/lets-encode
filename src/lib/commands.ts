@@ -45,7 +45,7 @@ import {
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { usesOmr } from "./campaign-init.ts";
-import { claimLimitReached } from "./campaign-claim.ts";
+import { claimLimitReached, claimRefusal } from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -140,7 +140,10 @@ export type Result = {
   /** The command finished in the background: the runner holds no overlay and
    * the PR + verdict are followed through the verdict sink on the task. */
   background?: boolean;
-  warn?: boolean;
+  /** An ok result that is not plainly done: the submission is still being
+   * processed ("pending"), there was nothing to do ("noop"), or part of the
+   * work failed ("partial"). The banner shows it as a warning. */
+  outcome?: "pending" | "noop" | "partial";
   error?: string;
   message?: string;
   prUrl?: string;
@@ -306,6 +309,7 @@ async function waitForPrProcessed(
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
   },
+  { waitMs = 90_000, maxDelayMs = 3_000 } = {},
 ): Promise<PrProcessingResult> {
   const { forge: f, owner, repo } = ctx;
   ctx.progress({
@@ -342,7 +346,7 @@ async function waitForPrProcessed(
     detail: row?.outcome === "accepted" ? "" : (row?.detail ?? ""),
     verdict,
   });
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + waitMs;
   // Fast cadence, low cap: the PR-state and run reads are ETag-cached, so an
   // unchanged poll answers 304 and does not count against the API rate limit —
   // the cap trades a few extra free polls for catching the close sooner.
@@ -419,14 +423,14 @@ async function waitForPrProcessed(
           : { state: "run_failed", runUrl: html_url };
       }
     }
-    delayMs = Math.min(3_000, Math.ceil(delayMs * 1.5));
+    delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * 1.5));
   }
   const row = await decision();
   if (row) return decided(row, null);
   console.log(
     "[pr] PR",
     pr.number,
-    "not processed within 90s (still in flight)",
+    `not processed within ${waitMs / 1000}s (still in flight)`,
   );
   return { state: "timeout" };
 }
@@ -539,7 +543,7 @@ async function seedFromKeptWork(
 }
 
 // Map the automation's verdict on a PR to a result banner: a rejection is an
-// error (never shown as success), no verdict yet (timeout) is a warning.
+// error (never shown as success), no verdict yet (timeout) is pending.
 function verdictResult(
   result: PrProcessingResult,
   prNumber: number,
@@ -549,7 +553,7 @@ function verdictResult(
   if (result.state === "timeout") {
     return {
       ok: true,
-      warn: true,
+      outcome: "pending",
       prUrl,
       message: `${fallback} Submission #${prNumber} is still being processed — refresh the tables in a moment.`,
     };
@@ -684,6 +688,11 @@ function openAndFinishInBackground(
 // Wait for the automation's verdict on an opened PR and settle the verdict
 // sink entry `id` with it. `ctx` reports no progress: this runs in the
 // background.
+// A background submission is followed until it is decided, so its task's
+// controls hold meanwhile: past the hourly scheduled run that processes a pull
+// request whose own run was lost, polling every 15 s at most once it is slow.
+const SETTLE_WAIT_MS = 70 * 60_000;
+
 async function settleWhenProcessed(
   ctx: CommandContext,
   label: string,
@@ -700,7 +709,10 @@ async function settleWhenProcessed(
   let res: Result;
   let runFailed = false;
   try {
-    const outcome = await waitForPrProcessed(ctx, pr);
+    const outcome = await waitForPrProcessed(ctx, pr, {
+      waitMs: SETTLE_WAIT_MS,
+      maxDelayMs: 15_000,
+    });
     runFailed = outcome.state === "run_failed";
     res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
   } catch (e) {
@@ -719,7 +731,11 @@ async function settleWhenProcessed(
       `${label} processed.`,
     );
   }
-  const state = res.error ? "rejected" : res.warn ? "timeout" : "accepted";
+  const state = res.error
+    ? "rejected"
+    : res.outcome === "pending"
+      ? "timeout"
+      : "accepted";
   console.log("[pending-verdict]", label, "PR", pr.number, state);
   // A pre-task's work is saved on its task branch while the claim lasts; the
   // accepted submission ends the claim, and no later claim deletes it.
@@ -1070,7 +1086,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         pr.html_url,
         `Release #${pr.number} opened for ${target}.`,
       );
-      if (!res.ok || res.warn) return res;
+      if (!res.ok || res.outcome === "pending") return res;
       if (kind === "encoding") await deleteTaskBranch(ctx, task_id);
       return { ...res, message: `You abandoned ${target}.` };
     } catch (e) {
@@ -1117,7 +1133,8 @@ const openEditor: CommandDef<
       const taskDefs = parseTaskCsv(taskCsv ?? "");
       const taskDef = findRow(taskDefs, task_id, "");
       const fragment = taskDef?.fragment;
-      const task = findRow(parseStateCsv(stateCsv ?? "").rows, task_id, "");
+      const state = parseStateCsv(stateCsv ?? "");
+      const task = findRow(state.rows, task_id, "");
       if (!taskDef || !fragment || !task)
         return { error: `Unknown task ${task_id}.` };
 
@@ -1142,17 +1159,21 @@ const openEditor: CommandDef<
           error: `${task_id} starts with a check of the score definition: open the task and claim it there.`,
         };
       if (claiming) {
-        // Someone else's active claim would reject this one; stop before the
-        // task branch, which may hold their work, is touched.
-        if (
-          locks.some(
-            (l) =>
-              l.task_id === task_id &&
-              l.subtask_id === "" &&
-              l.kind === "encoding",
-          )
-        )
+        // A claim the campaign automation would refuse stops here, before
+        // the task branch, which may hold someone else's work, is touched.
+        const refusal = claimRefusal({
+          tasks: taskDefs,
+          state,
+          locks,
+          intent: { task_id, subtask_id: "", kind: "encoding" },
+          author: viewer,
+        });
+        if (refusal === "already_locked")
           return { error: `Someone else holds the claim on ${task_id}.` };
+        if (refusal)
+          return {
+            error: `${task_id} cannot be claimed: ${REASON_TEXT[refusal] ?? refusal}.`,
+          };
         const limited = claimLimitError(locks, viewer, configYaml);
         if (limited) return { error: limited };
       }
@@ -1209,7 +1230,7 @@ const openEditor: CommandDef<
           );
           return {
             ok: true,
-            warn: true,
+            outcome: "pending",
             prUrl,
             message: `Encoding claim #${pr.number} is still being processed. Open it in mei-friend once it is accepted.`,
           };
@@ -1687,7 +1708,7 @@ const reviewEdit: CommandDef<
         pr.html_url,
         `Review edit #${pr.number} opened for ${target}.`,
       );
-      if (!res.ok || res.warn) return res;
+      if (!res.ok || res.outcome === "pending") return res;
       // The edit starts from the reviewed submission, not from an earlier
       // branch of the viewer's.
       await deleteTaskBranch(ctx, task_id);
@@ -1817,7 +1838,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
     const row = comments.find((c) => c.comment_id === comment_id);
     if (!row) return { error: `Unknown comment ${comment_id}.` };
     if (row.resolved === "true")
-      return { ok: true, warn: true, message: "Already resolved." };
+      return { ok: true, outcome: "noop", message: "Already resolved." };
     // A resolved comment takes its replies with it (the automation enforces
     // the same on its side).
     const resolved = resolveCommentThread(comments, comment_id);
@@ -1968,7 +1989,7 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
       }
       return {
         ok: true,
-        warn: true,
+        outcome: "pending",
         message:
           "Reaper dispatched; the run hasn’t finished yet — refresh the tables in a moment.",
       };
@@ -2162,7 +2183,8 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
     // expired claims, never from a branch of an earlier claim. The branch is
     // deleted only once the claim is accepted: until then, an expired claim's
     // work on it may still be being kept.
-    if (result.ok && !result.warn) await deleteTaskBranch(ctx, task_id);
+    if (result.ok && result.outcome !== "pending")
+      await deleteTaskBranch(ctx, task_id);
     return result;
   },
 };

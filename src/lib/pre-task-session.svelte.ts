@@ -32,6 +32,7 @@ import {
   piecePreparationsOf,
 } from "./campaign-tables.ts";
 import { liveLocks } from "./campaign-reaper.ts";
+import { canClaim } from "./campaign-graph.ts";
 import { CampaignResolution } from "./campaign-resolution.svelte.ts";
 import { CommandRunner, viewerId } from "./command-runner.svelte.ts";
 import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
@@ -183,19 +184,19 @@ export class PreTaskSession {
     // Opening the editor claims the task, the same way opening a score in
     // mei-friend does — a read-only look is served by the console's score
     // preview, so reaching the editor means intent to edit. Fire once per
-    // task, and only when the claim can actually be granted: never while
-    // someone else holds the task or a dependency still blocks it — that PR
+    // task, and only when the campaign automation would grant the claim and
+    // no submission on the task is still being processed — any other claim
     // would only come back rejected.
     $effect(() => {
       const d = this.data;
+      const t = this.tables;
       if (
         d &&
-        !this.runner.busy &&
+        t &&
+        !this.busy &&
         this.#autoClaimedFor !== taskId() &&
-        d.status === "encoding_required" &&
         !d.holdsLock &&
-        !d.encodingLockUser &&
-        !d.blockedBy
+        canClaim({ ...t, locks: liveLocks(t.locks) }, this.viewer, taskId())
       ) {
         this.#autoClaimedFor = taskId();
         this.claim();
@@ -315,8 +316,9 @@ export class PreTaskSession {
         // reload would discard the work the volunteer may retry from.
         if (result.error) return;
         if (opts.overviewOnSuccess) {
-          if (result.ok && !result.warn) await goto(`/${this.#name()}`);
-          // Still processing (warn): keep the editor and its work as they are.
+          if (result.ok && result.outcome !== "pending")
+            await goto(`/${this.#name()}`);
+          // Still processing: keep the editor and its work as they are.
           return;
         }
         // A background command changed nothing yet — the settle listener

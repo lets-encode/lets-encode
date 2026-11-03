@@ -362,7 +362,7 @@ test("a closed PR without a recorded decision fails closed", async () => {
   );
 
   assert.equal(result.error, "Submission #13 was rejected.");
-  assert.equal(result.warn, undefined);
+  assert.equal(result.outcome, undefined);
 });
 
 test("a volunteer encoding submission cleans the encode branch in their fork", async (t) => {
@@ -419,7 +419,7 @@ test("a poll failure leaves a claim as still-processing, not rejected", async ()
 
   assert.equal(result.error, undefined);
   assert.equal(result.ok, true);
-  assert.equal(result.warn, true);
+  assert.equal(result.outcome, "pending");
   assert.match(result.message ?? "", /still being processed/);
 });
 

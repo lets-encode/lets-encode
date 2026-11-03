@@ -248,7 +248,8 @@
       async (result) => {
         if (result.error) return;
         if (opts.overviewOnSuccess) {
-          if (result.ok && !result.warn) await goto(`/${campaign}`);
+          if (result.ok && result.outcome !== "pending")
+            await goto(`/${campaign}`);
           return;
         }
         // A background command changed nothing yet — the settle listener
@@ -291,7 +292,7 @@
         { task_id, subtask_id, comment },
         c,
       );
-      if (!edit.ok || edit.warn) return edit;
+      if (!edit.ok || edit.outcome === "pending") return edit;
       return invoke(
         commands.openEditor,
         { task_id, campaign, base: location.origin },

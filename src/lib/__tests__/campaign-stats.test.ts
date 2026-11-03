@@ -108,6 +108,7 @@ test("readyCount: locked and blocked tasks are not claimable", () => {
 test("validationReadyCount: tasks with an undecided, unlocked validation slot", () => {
   // T0003 and T0004 each have one verdict and one open slot.
   const d = {
+    taskDefs,
     rows: state.rows,
     validationColumns: state.validationColumns,
     locks,

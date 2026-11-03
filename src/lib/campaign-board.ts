@@ -6,6 +6,7 @@
 import {
   buildGraph,
   blockedBy,
+  canClaim,
   handle,
   taskDescription,
   taskName,
@@ -411,7 +412,7 @@ export function buildBoard(
       locator: def.locator,
       statusKey: n.statusKey,
       waitsFor: depDef ? taskName(depDef.locator) : dep,
-      claimable: viewer !== "" && column === "ready" && !lock,
+      claimable: canClaim(d, viewer, n.task),
       submittedByViewer:
         viewer !== "" && findRow(d.rows, n.task, "")?.encoder === viewer,
       keptFrom:

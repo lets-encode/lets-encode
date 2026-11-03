@@ -40,7 +40,7 @@
 <div class="live" role="status">
   {#if result && (result.error || (result.ok && !result.background))}
     <div
-      class="banner {result.error ? 'err' : result.warn ? 'warn' : 'ok'}"
+      class="banner {result.error ? 'err' : result.outcome ? 'warn' : 'ok'}"
       class:bar
       class:collapsed
     >

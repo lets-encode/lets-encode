@@ -744,7 +744,10 @@
       unset = false;
       return {
         ok: true,
-        warn: result.failed.length > 0 || result.labelErrors.length > 0,
+        outcome:
+          result.failed.length > 0 || result.labelErrors.length > 0
+            ? "partial"
+            : undefined,
         message: `${total - result.failed.length} of ${total} staves are transcribed.${failed}${labels}${filled}`,
       };
     } catch (e) {

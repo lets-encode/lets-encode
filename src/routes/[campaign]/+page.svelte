@@ -843,7 +843,7 @@
     const result = await run((c) =>
       invoke(commands.claimValidation, { task_id, subtask_id }, c),
     );
-    if (!result?.ok || result.warn) return;
+    if (!result?.ok || result.outcome === "pending") return;
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
