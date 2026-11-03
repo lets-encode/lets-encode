@@ -52,6 +52,7 @@
     type SidePanelState,
   } from "$lib/side-panels.ts";
   import { markHidden } from "$lib/scroll-edges.ts";
+  import { keepUnsent, takeUnsent } from "$lib/unsent-text.ts";
   import Icon from "./Icon.svelte";
   import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
@@ -261,6 +262,35 @@
     draft = "";
     open = false;
     fieldOpen = false;
+  });
+
+  // An unsent comment is kept across a reload the app makes (unsent-text.ts);
+  // the field opens with it again, on the comment it replied to.
+  $effect(() =>
+    keepUnsent(`comment:${repoId}/${task}`, () =>
+      draft.trim() ? { text: draft, parent: replyTo?.comment_id ?? "" } : null,
+    ),
+  );
+  let keptParent = $state("");
+  $effect(() => {
+    if (!repoId) return;
+    const kept = takeUnsent<{ text: string; parent: string }>(
+      `comment:${repoId}/${task}`,
+      auth.user?.login ?? null,
+    );
+    if (!kept) return;
+    untrack(() => {
+      draft = kept.text;
+      keptParent = kept.parent;
+      openField();
+    });
+  });
+  $effect(() => {
+    if (!keptParent) return;
+    const parent = comments.find((c) => c.comment_id === keptParent);
+    if (!parent) return;
+    replyTo = parent;
+    keptParent = "";
   });
 
   // What opening the docked panel adds below the header and the task box; a

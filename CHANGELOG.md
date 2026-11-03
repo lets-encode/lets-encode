@@ -3,6 +3,18 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-03
+
+- A task view opens fresh when moving to another task or campaign.
+- The task views' per-task reset code and stale-result checks are removed.
+- Back, forward and task links open the task on the campaign board.
+- A login or logout reloads the app's other tabs, keeping unsent comments and change requests.
+- A setup's draft is saved as soon as its name is reserved and stored per account.
+- A setup step's result no longer lands in another setup opened meanwhile.
+- A submission's outcome is read from the campaign history instead of the bot's comment.
+- The scheduled run leaves a submission to its own run while that run is queued or running.
+- Submissions sent in quick succession are all processed instead of being rejected or failing.
+
 ## 2026-11-02
 
 - State from another task, campaign or account no longer carries over into the open view.

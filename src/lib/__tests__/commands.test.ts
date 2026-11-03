@@ -8,6 +8,7 @@ import {
   type CommandContext,
 } from "../commands.ts";
 import { envelopeFromPrBody } from "../command-envelope.ts";
+import { HISTORY_COLUMNS, HISTORY_PATH } from "../campaign-tables.ts";
 import type { ForgeClient, OpenedChangeRequest } from "../forge/types.ts";
 import { fakeForge, type ForgeOverrides } from "./fake-forge.ts";
 
@@ -96,9 +97,32 @@ function claimForge(
   });
 }
 
+// The forge with history.csv recording the coordinator's acceptance of pull
+// request `pr`, which is how a processed PR's decision is read.
+function withDecision(forge: ForgeClient, pr: number): ForgeClient {
+  const history =
+    `${HISTORY_COLUMNS.join(",")}\n` +
+    `2026-01-01T00:00:00Z,T0001,,9001,claim_encoding,accepted,,,,,${pr}\n`;
+  return new Proxy(forge, {
+    get(target, property) {
+      if (property !== "getRepoFile")
+        return target[property as keyof ForgeClient];
+      return (owner: string, repo: string, path: string, ref?: string) =>
+        path === HISTORY_PATH
+          ? Promise.resolve(history)
+          : target.getRepoFile(owner, repo, path, ref);
+    },
+  });
+}
+
 // Submit T0001 as a volunteer encoding from a fork, with the schema download
-// unavailable, and wait for the background settlement of its PR.
-function runEncoding(t: TestContext, overrides: ForgeOverrides) {
+// unavailable, and wait for the background settlement of its PR; `decided`
+// is the PR the coordinator accepts.
+function runEncoding(
+  t: TestContext,
+  overrides: ForgeOverrides,
+  decided?: number,
+) {
   offline(t);
   const forge = fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
@@ -117,7 +141,7 @@ function runEncoding(t: TestContext, overrides: ForgeOverrides) {
     const result = await invoke(
       commands.submitEncoding,
       { task_id: "T0001" },
-      context(forge),
+      context(decided ? withDecision(forge, decided) : forge),
     );
     return { result, verdict: await settled };
   });
@@ -220,7 +244,11 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
   });
 
   const result = await withImmediateTimeouts(() =>
-    invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
+    invoke(
+      commands.claimTask,
+      { task_id: "P0001" },
+      context(withDecision(forge, 12)),
+    ),
   );
   const envelope = envelopeFromPrBody(openedBody);
 
@@ -257,6 +285,33 @@ test("a failed automation run surfaces as an error while the PR stays open", asy
   assert.match(result.error ?? "", /example\.test\/run\/7/);
 });
 
+test("a decision recorded before its run failed stands", async () => {
+  const forge = claimForge(23, {
+    pr: { headSha: "abc124" },
+    getPullRequestState: async () => "open",
+    listWorkflowRuns: async () => [
+      {
+        id: 8,
+        status: "completed",
+        conclusion: "failure",
+        created_at: new Date().toISOString(),
+        html_url: "https://example.test/run/8",
+      },
+    ],
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.claimTask,
+      { task_id: "P0001" },
+      context(withDecision(forge, 23)),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.error, undefined);
+});
+
 test("a skipped automation run is explained and its PR closed by the console", async () => {
   let closed = 0;
   const forge = claimForge(22, {
@@ -289,7 +344,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
   assert.equal(closed, 1);
 });
 
-test("a closed PR without a coordinator verdict fails closed", async () => {
+test("a closed PR without a recorded decision fails closed", async () => {
   const forge = claimForge(13, {
     pr: {
       head: {
@@ -306,27 +361,28 @@ test("a closed PR without a coordinator verdict fails closed", async () => {
     invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
   );
 
-  assert.equal(
-    result.error,
-    "Submission #13 closed without a coordinator verdict.",
-  );
+  assert.equal(result.error, "Submission #13 was rejected.");
   assert.equal(result.warn, undefined);
 });
 
 test("a volunteer encoding submission cleans the encode branch in their fork", async (t) => {
   let pullHead = "";
   let deleted: string[] = [];
-  const { result, verdict } = await runEncoding(t, {
-    createPullRequest: async (_owner, _repo, options) => {
-      pullHead = options.head;
-      return { number: 14, html_url: "https://example.test/pr/14" };
+  const { result, verdict } = await runEncoding(
+    t,
+    {
+      createPullRequest: async (_owner, _repo, options) => {
+        pullHead = options.head;
+        return { number: 14, html_url: "https://example.test/pr/14" };
+      },
+      getPullRequestState: async () => "closed",
+      getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+      deleteBranch: async (owner, repo, branch) => {
+        deleted = [owner, repo, branch];
+      },
     },
-    getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Submission accepted (encoding).",
-    deleteBranch: async (owner, repo, branch) => {
-      deleted = [owner, repo, branch];
-    },
-  });
+    14,
+  );
 
   assert.equal(result.ok, true);
   assert.equal(pullHead, "volunteer:encode-T0001");
@@ -477,7 +533,7 @@ test("openEditor claims first, then starts the task branch from the current scor
     invoke(
       commands.openEditor,
       { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
-      context(forge),
+      context(withDecision(forge, 3)),
     ),
   );
 
@@ -536,7 +592,7 @@ test("openEditor selects the first note of a page task's page", async () => {
     invoke(
       commands.openEditor,
       { task_id: "T0002", campaign: "my-campaign", base: "https://le.test" },
-      context(forge),
+      context(withDecision(forge, 3)),
     ),
   );
 
@@ -594,7 +650,7 @@ test("openEditor starts a fresh task branch from the work kept from expired clai
     invoke(
       commands.openEditor,
       { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
-      context(forge),
+      context(withDecision(forge, 3)),
     ),
   );
 
@@ -684,34 +740,38 @@ test("openEditor without a configured mei-friend address fails before reading th
 
 test("an encoding completed without changes gets a commit so its PR can open", async (t) => {
   const calls: string[] = [];
-  const { verdict } = await runEncoding(t, {
-    getRepoHead: async () => ({
-      sha: "head1",
-      treeSha: "tree1",
-      branch: "main",
-      canPush: true,
-    }),
-    createPullRequest: async () => {
-      calls.push("pr");
-      if (calls.length === 1)
-        throw new Error(
-          "Validation Failed: No commits between main and encode-T0001 (422 POST /pulls)",
-        );
-      return {
-        number: 9,
-        html_url: "https://example.test/pr/9",
-        headSha: "c2",
-      };
+  const { verdict } = await runEncoding(
+    t,
+    {
+      getRepoHead: async () => ({
+        sha: "head1",
+        treeSha: "tree1",
+        branch: "main",
+        canPush: true,
+      }),
+      createPullRequest: async () => {
+        calls.push("pr");
+        if (calls.length === 1)
+          throw new Error(
+            "Validation Failed: No commits between main and encode-T0001 (422 POST /pulls)",
+          );
+        return {
+          number: 9,
+          html_url: "https://example.test/pr/9",
+          headSha: "c2",
+        };
+      },
+      commitFiles: async (_owner, _repo, files, _message, opts) => {
+        calls.push(`commit ${files[0].path} on ${opts?.branch}`);
+        return "c2";
+      },
+      getPullRequestState: async () => "closed",
+      getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+      listWorkflowRuns: async () => [],
+      deleteBranch: async () => {},
     },
-    commitFiles: async (_owner, _repo, files, _message, opts) => {
-      calls.push(`commit ${files[0].path} on ${opts?.branch}`);
-      return "c2";
-    },
-    getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Submission accepted (encoding).",
-    listWorkflowRuns: async () => [],
-    deleteBranch: async () => {},
-  });
+    9,
+  );
 
   assert.deepEqual(calls, [
     "pr",

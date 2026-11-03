@@ -5,9 +5,9 @@
 // it through the hooks.
 //
 // Constructed during a component's initialisation: the effects run for the
-// component's lifetime and start over when the campaign or task changes.
+// component's lifetime, which is one campaign and task
+// (routes/[campaign]/+layout.svelte).
 
-import { untrack } from "svelte";
 import { goto } from "$app/navigation";
 import { auth, forge } from "./auth.svelte.ts";
 import type { ForgeClient } from "./forge/types.ts";
@@ -39,8 +39,6 @@ import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
 export interface PreTaskHooks {
   /** Fill the editor's working copy from a fresh load. */
   loaded(d: FacsimileTaskData): void;
-  /** Clear the editor's working copy on a navigation to another campaign or task. */
-  reset(): void;
   /**
    * Continue a granted claim in the same overlay (one step list, one
    * Continue); null when there is nothing to continue with.
@@ -155,19 +153,6 @@ export class PreTaskSession {
       return () => clearInterval(timer);
     });
 
-    // A same-route navigation to another campaign or task starts over: the
-    // loaded task belongs to the previous params, its waiting draft is saved.
-    $effect(() => {
-      void name();
-      void taskId();
-      untrack(() => void this.flushDraft());
-      this.draftState = "";
-      this.data = null;
-      this.loadError = null;
-      this.#attempted = false;
-      hooks.reset();
-    });
-
     // A pending draft is saved when the page is hidden or left.
     $effect(() => {
       const flush = () => {
@@ -259,13 +244,12 @@ export class PreTaskSession {
     const f = forge();
     this.#cancelDraft();
     if (!input || !f) return;
-    const { task_id, ...state } = input;
+    const { task_id: _, ...state } = input;
     this.draftState = "saving";
     const result = await invoke(commands.saveDraft, input, {
       ...this.ctx(f),
       progress: () => {},
     });
-    if (task_id !== this.#taskId()) return;
     if (result.error) {
       this.draftState = result.error;
       return;
@@ -294,10 +278,7 @@ export class PreTaskSession {
   async load() {
     const f = forge();
     if (!f) return;
-    // Results for a task the page has since navigated away from are dropped.
     const task = this.#taskId();
-    const name = this.#name();
-    const stale = () => task !== this.#taskId() || name !== this.#name();
     this.loading = true;
     this.loadError = null;
     try {
@@ -305,17 +286,15 @@ export class PreTaskSession {
         invoke(commands.readFacsimile, { task_id: task }, this.ctx(f)),
         invoke(commands.readTables, {}, this.ctx(f)),
       ]);
-      if (stale()) return;
       this.data = d;
       this.tables = t;
       this.#cancelDraft();
       this.#draftKey = null;
       this.#hooks.loaded(d);
     } catch (e) {
-      if (!stale())
-        this.loadError = `Could not load ${task}: ${(e as Error).message}`;
+      this.loadError = `Could not load ${task}: ${(e as Error).message}`;
     } finally {
-      if (!stale()) this.loading = false;
+      this.loading = false;
     }
   }
 

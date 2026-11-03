@@ -21,7 +21,10 @@
   import { isValidHandle } from "$lib/campaign-handle.ts";
   import {
     wizard,
+    currentSetup,
+    draftSnapshot,
     nextStep,
+    saveDraft,
     MAX_DESCRIPTION_LENGTH,
   } from "$lib/wizard.svelte.ts";
   import type { RepoSummary } from "$lib/forge/types.ts";
@@ -115,7 +118,10 @@
         if (slug && slug.status !== "free") {
           // A pending hold may be this browser's own: an unfinished setup of
           // the same name keeps its claim token in its draft record.
-          const draft = slug.status === "pending" ? readDraft(h) : null;
+          const draft =
+            slug.status === "pending"
+              ? readDraft(auth.user?.login ?? "", h)
+              : null;
           if (draft?.owner === user.login && draft.claim?.name === h) {
             handleCheck = { state: "draft", resumable: draft.repo !== null };
           } else {
@@ -179,10 +185,19 @@
     claiming = true;
     claimError = null;
     releaseNote = null;
+    const setup = currentSetup();
     const result = await claimName(name);
     claiming = false;
+    // A name reserved after another setup was opened belongs to none: it is
+    // given back.
+    if (setup !== currentSetup()) {
+      if ("token" in result) void releaseClaim(name, result.token);
+      return;
+    }
     if ("token" in result) {
       wizard.claim = { name, token: result.token };
+      // Stored at once, so the reservation is kept with the setup.
+      saveDraft(auth.user?.login ?? "", draftSnapshot());
       nextStep();
       return;
     }
@@ -202,7 +217,7 @@
   // belongs to it and the setup must be continued instead.
   function adoptClaim() {
     const h = wizard.handle.trim();
-    const draft = readDraft(h);
+    const draft = readDraft(auth.user?.login ?? "", h);
     if (
       draft?.owner !== auth.user?.login ||
       draft?.claim?.name !== h ||
@@ -219,6 +234,7 @@
     // trap the campaign under a name. An unreleased hold runs out on its own.
     wizard.claim = null;
     claimError = null;
+    saveDraft(auth.user?.login ?? "", draftSnapshot());
     const released = await releaseClaim(claim.name, claim.token);
     releaseNote = released
       ? null
@@ -241,7 +257,7 @@
           () => wizard.handle, (v) => (wizard.handle = v.toLowerCase())
         }
         placeholder="symphony-9-choral"
-        readonly={wizard.claim !== null}
+        readonly={wizard.claim !== null || claiming}
         required
       />
       <span class="hint">Used in the URL and as the Git repository name.</span>

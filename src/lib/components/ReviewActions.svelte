@@ -17,6 +17,8 @@
     MAX_COMMENT_LENGTH,
   } from "$lib/campaign-submit.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { keepUnsent, takeUnsent } from "$lib/unsent-text.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import AbandonButton from "./AbandonButton.svelte";
 
   let {
@@ -86,6 +88,17 @@
 
   $effect(() => {
     asking = failForm !== null;
+  });
+  // An open form is kept across a reload the app makes (unsent-text.ts) and
+  // opens again with what was entered.
+  $effect(() => {
+    const key = `fail:${repoId}/${task}/${sub}`;
+    const kept = takeUnsent<NonNullable<typeof failForm>>(
+      key,
+      auth.user?.login ?? null,
+    );
+    if (kept) untrack(() => (failForm = kept));
+    return keepUnsent(key, () => failForm);
   });
   // A click on a staff or group while the form is open fills the field.
   $effect(() => {

@@ -195,12 +195,12 @@
   // Only the first read shows the loading state; refreshes update in place.
   async function load() {
     const f = readForge();
+    // The title is recorded under the name it was read for.
     const name = campaign;
     if (!loaded) loading = true;
     loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
-      if (name !== campaign) return;
       notInitialised = tables.notInitialised;
       recordCampaignTitle(name, tables.title);
       canPush = tables.canPush;
@@ -216,21 +216,11 @@
       allowSelfValidation = tables.allowSelfValidation;
       loaded = true;
     } catch (e) {
-      if (name === campaign) loadError = campaignLoadFailure(e);
+      loadError = campaignLoadFailure(e);
     } finally {
-      if (name === campaign) loading = false;
+      loading = false;
     }
   }
-
-  // A same-route navigation to another campaign or task starts over.
-  $effect(() => {
-    void campaign;
-    void taskId;
-    loaded = false;
-    loadError = null;
-    anchor = null;
-    selectedMeasure = null;
-  });
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();

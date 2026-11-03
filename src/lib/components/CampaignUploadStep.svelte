@@ -19,6 +19,7 @@
   } from "$lib/prepare-images.ts";
   import {
     wizard,
+    currentSetup,
     nextStep,
     previousStep,
     COPYRIGHT_ACKNOWLEDGEMENT,
@@ -87,6 +88,9 @@
 
     busy = true;
     log.clear();
+    // The read belongs to this setup and to the material added when it began.
+    const setup = currentSetup();
+    const key = uploadKey;
     try {
       let canvases: IiifCanvas[] = [];
       if (manifestUrl) {
@@ -104,6 +108,8 @@
         },
         { brokerUrl: provider.brokerUrl },
       );
+      busy = false;
+      if (setup !== currentSetup()) return;
       // Everything is kept to begin with, so an upload that is all of the source
       // needs no choosing.
       wizard.candidates = prepared.candidates.map((page) => ({
@@ -111,10 +117,9 @@
         include: true,
       }));
       wizard.encodings = prepared.encodings;
-      wizard.uploadKey = uploadKey;
+      wizard.uploadKey = key;
 
       log.done();
-      busy = false;
       nextStep();
     } catch (err) {
       console.error("Upload step failed:", (err as Error).message);

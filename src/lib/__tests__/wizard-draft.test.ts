@@ -61,11 +61,12 @@ const draft = (over: Partial<WizardDraft> = {}): WizardDraft => ({
   ...over,
 });
 
-test("stores a draft under its campaign name and reads it back", () => {
+test("stores a draft under its account and campaign name and reads it back", () => {
   assert.equal(writeDraft(draft()), null);
-  assert.deepEqual([...items.keys()], ["lets-encode:setup:symphony-9"]);
-  assert.deepEqual(readDraft("symphony-9"), draft());
-  assert.equal(readDraft("other"), null);
+  assert.deepEqual([...items.keys()], ["lets-encode:setup:ada/symphony-9"]);
+  assert.deepEqual(readDraft("ada", "symphony-9"), draft());
+  assert.equal(readDraft("ada", "other"), null);
+  assert.equal(readDraft("grace", "symphony-9"), null);
 });
 
 test("rejects records that are unreadable, of another version, or incomplete", () => {
@@ -108,12 +109,28 @@ test("lists the signed-in account’s unfinished setups, most recently changed f
   );
 });
 
+test("moves a setup stored under its name alone to the account's key", () => {
+  items.set("lets-encode:setup:symphony-9", JSON.stringify(draft()));
+  items.set(
+    "lets-encode:setup:other",
+    JSON.stringify(draft({ handle: "other", owner: "grace" })),
+  );
+  assert.deepEqual(
+    resumableDrafts("ada").map((d) => d.handle),
+    ["symphony-9"],
+  );
+  assert.deepEqual(readDraft("ada", "symphony-9"), draft());
+  assert.equal(items.has("lets-encode:setup:symphony-9"), false);
+  // Another account's record is left for that account to move.
+  assert.equal(items.has("lets-encode:setup:other"), true);
+});
+
 test("a finished setup leaves nothing to continue", () => {
   // The wizard discards the record once the campaign is committed, so there is
   // no trace of it here afterwards.
   writeDraft(draft());
-  discardDraft("symphony-9");
-  assert.equal(readDraft("symphony-9"), null);
+  discardDraft("ada", "symphony-9");
+  assert.equal(readDraft("ada", "symphony-9"), null);
   assert.deepEqual(resumableDrafts("ada"), []);
   assert.deepEqual([...items.keys()], []);
 });

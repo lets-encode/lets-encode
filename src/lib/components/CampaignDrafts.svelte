@@ -43,12 +43,12 @@
     confirming = null;
     busy = draft.handle;
     try {
-      await resumeDraft(draft.handle);
+      await resumeDraft(draft.owner, draft.handle);
       await goto("/new");
     } catch (err) {
       // A row whose record is gone — finished or discarded in another tab —
       // has nothing left to continue.
-      if (!readDraft(draft.handle))
+      if (!readDraft(draft.owner, draft.handle))
         drafts = drafts.filter((d) => d.handle !== draft.handle);
       console.error("Continuing a setup failed:", (err as Error).message);
       error = `Could not continue “${draft.handle}”: ${(err as Error).message}`;
@@ -57,7 +57,7 @@
   }
 
   async function discard(draft: WizardDraft) {
-    discardDraft(draft.handle);
+    discardDraft(draft.owner, draft.handle);
     drafts = drafts.filter((d) => d.handle !== draft.handle);
     confirming = null;
     // Give the name back, so it is free again straight away instead of staying

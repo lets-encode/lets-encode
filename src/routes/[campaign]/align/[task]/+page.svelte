@@ -50,9 +50,6 @@
       loaded(d) {
         pins = pinsOf(d.alignment);
       },
-      reset() {
-        pins = [];
-      },
     },
   );
   const runner = session.runner;

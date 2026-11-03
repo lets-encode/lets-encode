@@ -18,6 +18,7 @@
   import { resolvePages } from "$lib/prepare-images.ts";
   import {
     wizard,
+    currentSetup,
     draftSnapshot,
     keepDraftImages,
     saveDraft,
@@ -323,6 +324,8 @@
     busy = true;
     failed = false;
     log.clear();
+    // The pages belong to this setup; another one opened meanwhile is left alone.
+    const setup = currentSetup();
     try {
       // The chosen pages are fetched and rendered at committing size here; the
       // final step commits them to the repository it creates.
@@ -337,13 +340,21 @@
             { brokerUrl: provider.brokerUrl },
           )
         : [];
+      if (setup !== currentSetup()) {
+        busy = false;
+        return;
+      }
       // Only a run that had pages to choose from replaces what the step already
       // produced. A continued setup, whose files cannot be picked again, keeps
       // the images it already holds.
       if (wizard.candidates.length) {
         wizard.images = images;
         log.step("Keeping the pages in this browser", { timed: false });
-        await keepDraftImages(wizard.handle);
+        await keepDraftImages(user.login, wizard.handle);
+        if (setup !== currentSetup()) {
+          busy = false;
+          return;
+        }
       }
       saveDraft(user.login, draftSnapshot());
 

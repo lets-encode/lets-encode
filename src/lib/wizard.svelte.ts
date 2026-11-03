@@ -211,8 +211,15 @@ export function previousStep(): void {
   draftStatus.resumeNotice = null;
 }
 
+// Counts the setups put into the wizard: emptying it or continuing another
+// setup starts a new one. A step's work that ends after that compares the
+// count it started with, and leaves the new setup alone.
+let setupCount = 0;
+export const currentSetup = (): number => setupCount;
+
 /** Discard everything collected and return to the first step. */
 export function resetWizard(): void {
+  setupCount++;
   savedHandle = null;
   draftStatus.savedAt = null;
   draftStatus.imagesError = null;
@@ -297,16 +304,24 @@ export function draftSnapshot(): DraftSnapshot {
 }
 
 /**
- * Store what has been entered, under the campaign's name. Nothing is stored
- * while the name step is open, so a draft always has a name to be listed and
- * continued under.
+ * Store what has been entered, under the campaign's name. On the name step a
+ * draft is stored under a name once it is reserved, so a draft always has a
+ * name to be listed and continued under; without a reservation only the
+ * record already stored under the same name is updated (the release of its
+ * reservation), not one per name typed.
  */
 export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
   const name = snapshot.handle.trim();
-  if (!owner || !name || snapshot.entries.step === "name") return;
+  if (!owner || !name) return;
+  if (
+    snapshot.entries.step === "name" &&
+    !snapshot.claim &&
+    savedHandle !== name
+  )
+    return;
   if (savedHandle && savedHandle !== name) {
-    discardDraft(savedHandle);
-    if (wizard.images.length) void keepDraftImages(name);
+    discardDraft(owner, savedHandle);
+    if (wizard.images.length) void keepDraftImages(owner, name);
   }
   savedHandle = name;
   draftStatus.saveError = writeDraft({
@@ -326,10 +341,13 @@ export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
  * continued setup has them. A browser that refuses is reported through
  * draftStatus; the setup goes on without them.
  */
-export async function keepDraftImages(handle: string): Promise<void> {
+export async function keepDraftImages(
+  owner: string,
+  handle: string,
+): Promise<void> {
   const name = handle.trim();
   if (!name) return;
-  draftStatus.imagesError = await storeDraftImages(name, wizard.images);
+  draftStatus.imagesError = await storeDraftImages(owner, name, wizard.images);
 }
 
 /**
@@ -339,6 +357,7 @@ export async function keepDraftImages(handle: string): Promise<void> {
 export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   const entries = draft.entries;
   if (!entries) return;
+  setupCount++;
   wizard.handle = draft.handle;
   wizard.claim = draft.claim ?? null;
   wizard.title = entries.title;
@@ -385,15 +404,18 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
  * finished or discarded in another tab since. Throws with a message that names
  * what went wrong.
  */
-export async function resumeDraft(handle: string): Promise<void> {
-  const stored = readDraft(handle);
+export async function resumeDraft(
+  owner: string,
+  handle: string,
+): Promise<void> {
+  const stored = readDraft(owner, handle);
   if (!stored)
     throw new Error("it has since been finished or discarded in this browser");
   const paths = stored.entries.imagePaths;
   // Images that are not stored any more can be uploaded again: applyDraft puts
   // a setup without its images on the upload step.
   const images = paths.length
-    ? ((await readDraftImages(stored.handle, paths)) ?? [])
+    ? ((await readDraftImages(owner, stored.handle, paths)) ?? [])
     : [];
   applyDraft(stored, images);
 }
@@ -404,7 +426,7 @@ export async function resumeDraft(handle: string): Promise<void> {
  * next one. Emptying it is also what stops a later save from storing the finished
  * setup again — saveDraft keeps nothing without a name.
  */
-export function clearFinishedSetup(): void {
-  discardDraft(wizard.handle.trim());
+export function clearFinishedSetup(owner: string): void {
+  discardDraft(owner, wizard.handle.trim());
   resetWizard();
 }

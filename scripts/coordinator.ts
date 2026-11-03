@@ -117,6 +117,7 @@ import {
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
+  listWorkflowRuns,
 } from "../src/lib/forge/github-rest.ts";
 import type {
   FileChange,
@@ -178,7 +179,7 @@ function coAuthored(message: string): string {
   return `${message}\n\nCo-authored-by: ${authorLogin} <${author}+${authorLogin}@users.noreply.github.com>`;
 }
 
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 10;
 // The scheduled catch-up pass (runCatchUp) picks up open pull requests older
 // than the minimum age — a run of their own may still be under way before
 // that — and younger than the maximum, processing at most CATCHUP_MAX_PRS
@@ -338,23 +339,30 @@ async function keepExpiredWork(
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
 
+// A write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
+const REFUSED_WRITE = /\((?:401|403|404) [A-Z]+ /;
+
 // Run one optimistic decide-and-apply pass, retrying when it throws — most
 // often the non-fast-forward commit failing because the branch head moved.
-// Every error is retried (up to MAX_ATTEMPTS): each attempt re-reads the
-// tables before writing, so retrying a transient read failure is equally safe.
-// Runs for different pull requests execute concurrently, so a random pause
-// before each retry spreads competing writers apart.
+// Every error is retried (up to MAX_ATTEMPTS) but a write GitHub refused for
+// good (401, 403 or 404): each attempt re-reads the tables before writing, so
+// retrying a transient read failure is equally safe.
+// Runs for different pull requests execute concurrently — several at once when
+// operations are submitted in quick succession — so a random pause that grows
+// with each retry (up to 8 s) spreads competing writers apart until each has
+// committed.
 async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
   for (let i = 0; ; i++) {
     try {
       return await attempt();
     } catch (e) {
-      if (i === MAX_ATTEMPTS - 1) throw e;
+      if (i === MAX_ATTEMPTS - 1 || REFUSED_WRITE.test((e as Error).message))
+        throw e;
       console.warn(
         `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
       );
       await new Promise((resolve) =>
-        setTimeout(resolve, 200 + Math.random() * 800),
+        setTimeout(resolve, Math.random() * Math.min(8_000, 500 * 2 ** i)),
       );
     }
   }
@@ -1458,8 +1466,13 @@ async function runReap(): Promise<void> {
 // Process the bound pull request. `open` is the campaign's open pull request
 // list when the caller already holds it. Returns false when the pull request
 // was left alone: it is closed, its head moved past the bound sha (the run for
-// the newer push decides it), or it is not a campaign operation.
-async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
+// the newer push decides it), it is not a campaign operation, or — with
+// `capped` — its author has more than MAX_OPEN_PRS_PER_AUTHOR open, which
+// leaves it to the scheduled pass.
+async function processPullRequest(
+  open?: OpenPullRequest[],
+  { capped = true } = {},
+): Promise<boolean> {
   const readStart = Date.now();
   const [{ body, files, createdAt, state, headSha: currentHeadSha }, openPrs] =
     await Promise.all([
@@ -1498,15 +1511,11 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
   const openByAuthor = openPrs.filter(
     (pr) => !pr.draft && String(pr.user.id) === author,
   ).length;
-  if (openByAuthor > MAX_OPEN_PRS_PER_AUTHOR) {
-    await commentAndClosePr(
-      token,
-      owner,
-      repo,
-      prNumber,
-      `❌ Submission rejected: ${explainReason("too_many_open_prs")}. No changes were made.`,
+  if (capped && openByAuthor > MAX_OPEN_PRS_PER_AUTHOR) {
+    console.log(
+      `PR #${prNumber}: ${authorLabel} has ${openByAuthor} open pull requests; left open for the scheduled pass.`,
     );
-    return true;
+    return false;
   }
   const kind = classifyPullRequest(changedPaths);
   if (kind === "claim") await runClaim(files, envelope);
@@ -1518,8 +1527,12 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
 
 // Only a completed run closes a pull request, so one whose run was lost —
 // cancelled, failed, refused by the caller's guard, or never delivered —
-// stays open. The scheduled pass processes those, oldest first, one after
-// another; a failure on one is logged and the next is still processed.
+// stays open, as does one its own run left to this pass (over the per-author
+// limit). The scheduled pass processes those, oldest first, one after
+// another, without the per-author limit; a failure on one is logged and the
+// next is still processed. A pull request whose own run is still queued or
+// running is left to that run, so no pull request is decided by two runs at
+// once.
 // Drafts and pull requests from non-user accounts are left alone, as the
 // caller's guard leaves them; a pull request that is no campaign operation
 // is left alone too and does not count against the pass's budget.
@@ -1541,8 +1554,7 @@ async function runCatchUp(): Promise<void> {
     console.log("No open pull requests to catch up on.");
     return;
   }
-  // The open list shrinks as pull requests are closed, so the per-author cap
-  // sees the count as it stands when each one is processed.
+  // The open list shrinks as pull requests are closed.
   let remaining = open;
   let processed = 0;
   for (const pr of due) {
@@ -1559,11 +1571,21 @@ async function runCatchUp(): Promise<void> {
       headSha: pr.head.sha,
       headRef: pr.head.ref,
     });
-    console.log(
-      `Catch-up: processing open PR #${pr.number} by ${authorLabel}.`,
-    );
     try {
-      if (await processPullRequest(remaining)) {
+      const runs = await listWorkflowRuns(token, owner, repo, "caller.yml", {
+        event: "pull_request_target",
+        headSha: pr.head.sha,
+      });
+      if (runs.some((run) => run.status !== "completed")) {
+        console.log(
+          `Catch-up: PR #${pr.number} has a run of its own under way; left to it.`,
+        );
+        continue;
+      }
+      console.log(
+        `Catch-up: processing open PR #${pr.number} by ${authorLabel}.`,
+      );
+      if (await processPullRequest(remaining, { capped: false })) {
         processed++;
         remaining = remaining.filter((p) => p.number !== pr.number);
       }

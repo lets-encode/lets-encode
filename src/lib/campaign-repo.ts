@@ -9,10 +9,12 @@ import type { ForgeClient, RepoData } from "./forge/types.ts";
 import { provider } from "./forge/config.ts";
 import {
   wizard,
+  currentSetup,
   draftSnapshot,
   saveDraft,
   type WizardRepo,
 } from "./wizard.svelte.ts";
+import { readDraft, writeDraft } from "./wizard-draft.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import { CONFIG_PATH } from "./campaign-tables.ts";
 
@@ -120,6 +122,7 @@ export async function ensureCampaignRepo(
       .join(" — ")
       .slice(0, 350);
     log({ step: "Creating the repository" });
+    const setup = currentSetup();
     const created = await createOrAdoptRepo(f, userLogin, claim.name, about);
     repo = {
       owner: created.owner.login,
@@ -128,6 +131,15 @@ export async function ensureCampaignRepo(
       html_url: created.html_url,
       id: created.id,
     };
+    // Another setup opened meanwhile: the repository is recorded on this
+    // setup's draft only, and the finish stops.
+    if (setup !== currentSetup()) {
+      const draft = readDraft(userLogin, claim.name);
+      if (draft) writeDraft({ ...draft, repo });
+      throw new Error(
+        "another setup was opened while this one was being finished",
+      );
+    }
     wizard.repo = repo;
     // The repository exists from here on, whatever happens next. The draft is
     // stored on a debounce as entries change, which is too late for this: a

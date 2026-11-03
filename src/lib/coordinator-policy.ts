@@ -447,8 +447,8 @@ export function rejectedSubmission(
 }
 
 // Open non-draft pull requests one author may have on a campaign, counting
-// the one being processed; beyond it a pull request is closed unprocessed and
-// without a history row.
+// the one being processed; beyond it a pull request's own run leaves it open,
+// and the scheduled pass processes it.
 export const MAX_OPEN_PRS_PER_AUTHOR = 10;
 
 // Explanations of the rejection codes, for the pull request comment and the
@@ -499,7 +499,6 @@ export const REASON_TEXT: Record<string, string> = {
     "a parent comment must be a top-level comment, and only replies carry one",
   unknown_comment: "no such comment",
   already_resolved: "the comment is already resolved",
-  too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open submissions on this campaign`,
 };
 
 /** The longest detail a rejection comment carries, in characters. */

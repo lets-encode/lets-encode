@@ -250,9 +250,6 @@
         }
         resetHistory();
       },
-      reset() {
-        pages = [];
-      },
       // A claim of an OMR layout task whose score carries no zones yet
       // continues into layout detection in the same overlay.
       afterClaim(f, d) {
@@ -299,10 +296,6 @@
   // The step in view when the viewer switched their review to editing.
   let editFrom: LayoutStep | null = null;
   let stepsSeen = $state<number[]>([1]);
-  $effect(() => {
-    void taskId;
-    untrack(() => (stepsSeen = [layoutStep]));
-  });
   $effect(() => {
     const step = layoutStep;
     untrack(() => {
@@ -1199,13 +1192,6 @@
   let triedKey = $state("");
   let runningKey = $state<string | null>(null);
   let transcription = $state<{ text: string; error: boolean } | null>(null);
-  $effect(() => {
-    void taskId;
-    recognition = null;
-    recognisedKey = "";
-    triedKey = "";
-    transcription = null;
-  });
   // A run starts once per set of boxes; after a failure, on request.
   $effect(() => {
     if (
@@ -1223,7 +1209,6 @@
     const d = data;
     if (!f || !d || runningKey !== null) return;
     const key = staffKey;
-    const task = taskId;
     triedKey = key;
     runningKey = key;
     transcription = { text: "Starting the transcription", error: false };
@@ -1252,11 +1237,10 @@
         existing,
         pipeline: omrModels.staffPipeline,
         progress: (step) => {
-          if (task === taskId) transcription = { text: step, error: false };
+          transcription = { text: step, error: false };
         },
         readLabels: false,
       });
-      if (task !== taskId) return;
       recognition = result;
       recognisedKey = key;
       const total = result.record.pages.reduce(
@@ -1272,11 +1256,10 @@
           }
         : { text: `All ${total} staves are transcribed.`, error: false };
     } catch (e) {
-      if (task === taskId)
-        transcription = {
-          text: `The transcription failed: ${(e as Error).message}`,
-          error: true,
-        };
+      transcription = {
+        text: `The transcription failed: ${(e as Error).message}`,
+        error: true,
+      };
     } finally {
       runningKey = null;
     }

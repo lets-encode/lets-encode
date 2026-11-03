@@ -46,11 +46,15 @@ async function inStore<T>(
   }
 }
 
+// A setup's images are stored under its account and name.
+const imagesKey = (owner: string, handle: string) => `${owner}/${handle}`;
+
 /**
- * Store a setup's page images under its name, replacing any stored before.
- * Returns the browser's message when it refused the write, null when stored.
+ * Store a setup's page images, replacing any stored before. Returns the
+ * browser's message when it refused the write, null when stored.
  */
 export async function storeDraftImages(
+  owner: string,
   handle: string,
   images: PageImage[],
 ): Promise<string | null> {
@@ -58,7 +62,7 @@ export async function storeDraftImages(
     await inStore("readwrite", (store) =>
       store.put(
         images.map(({ path, blob }) => ({ path, blob })),
-        handle,
+        imagesKey(owner, handle),
       ),
     );
     return null;
@@ -72,12 +76,13 @@ export async function storeDraftImages(
  * of them is there; null when any is missing or the store cannot be read.
  */
 export async function readDraftImages(
+  owner: string,
   handle: string,
   paths: string[],
 ): Promise<PageImage[] | null> {
   try {
     const stored = await inStore<PageImage[] | undefined>("readonly", (store) =>
-      store.get(handle),
+      store.get(imagesKey(owner, handle)),
     );
     if (!stored) return null;
     const byPath = new Map(stored.map((image) => [image.path, image.blob]));
@@ -93,7 +98,30 @@ export async function readDraftImages(
   }
 }
 
+/**
+ * Move the page images stored under a setup's name alone (before drafts were
+ * kept per account) to `owner`'s key. Best-effort, in the background.
+ */
+export function moveUnkeyedDraftImages(owner: string, handle: string): void {
+  void (async () => {
+    try {
+      const stored = await inStore<unknown>("readonly", (store) =>
+        store.get(handle),
+      );
+      if (stored === undefined) return;
+      await inStore("readwrite", (store) =>
+        store.put(stored, imagesKey(owner, handle)),
+      );
+      await inStore("readwrite", (store) => store.delete(handle));
+    } catch {
+      // A failed move leaves the images where they were.
+    }
+  })();
+}
+
 /** Remove a setup's stored page images, if any. */
-export function discardDraftImages(handle: string): void {
-  inStore("readwrite", (store) => store.delete(handle)).catch(() => {});
+export function discardDraftImages(owner: string, handle: string): void {
+  inStore("readwrite", (store) => store.delete(imagesKey(owner, handle))).catch(
+    () => {},
+  );
 }

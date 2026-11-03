@@ -246,19 +246,16 @@
   async function loadScoreHead() {
     if (scoreHeadState !== "idle") return;
     scoreHeadState = "loading";
-    const name = campaign;
     try {
       const f = readForge();
       // The first task's fragment is the piece the campaign opens on.
       const mei = taskDefs[0]?.fragment
         ? await f.getRepoFile(owner, repo, taskDefs[0].fragment)
         : null;
-      // A read for a campaign left meanwhile is dropped.
-      if (name !== campaign) return;
       scoreHead = mei ? parseMeiHeader(mei) : null;
       scoreHeadState = mei ? "done" : "error";
     } catch {
-      if (name === campaign) scoreHeadState = "error";
+      scoreHeadState = "error";
     }
   }
 
@@ -668,14 +665,13 @@
   // A background poll's failed read keeps the shown tables and throws.
   async function load(background = false) {
     const f = readForge();
-    // Tables for a name the page has since navigated away from are dropped.
+    // The title is recorded under the name it was read for.
     const name = campaign;
     readAs = auth.user?.login ?? null;
     if (!loaded) loading = true;
     if (!background) loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
-      if (name !== campaign) return;
       headSha = tables.headSha;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
@@ -710,9 +706,9 @@
       loaded = true;
     } catch (e) {
       if (background) throw e;
-      if (name === campaign) loadError = campaignLoadFailure(e);
+      loadError = campaignLoadFailure(e);
     } finally {
-      if (name === campaign) loading = false;
+      loading = false;
     }
   }
 
@@ -732,20 +728,6 @@
       },
       onStatus: (status) => (refreshStatus = status),
     });
-  });
-
-  // A same-route navigation to another campaign starts over: the resolved
-  // repo and the loaded tables belong to the previous name.
-  $effect(() => {
-    void campaign;
-    resolved = null;
-    notFound = false;
-    resolveError = null;
-    slugState = null;
-    loaded = false;
-    loadError = null;
-    scoreHead = null;
-    scoreHeadState = "idle";
   });
 
   // Resolve the campaign name to its repo before anything reads the tables. The
@@ -769,15 +751,15 @@
   });
 
   async function resolve() {
-    // Results for a name the page has since navigated away from are dropped.
     const name = campaign;
     let info: SlugInfo | null;
     try {
       info = await lookupSlug(name);
     } catch (e) {
-      if (name === campaign) resolveError = campaignLoadFailure(e);
+      resolveError = campaignLoadFailure(e);
       return;
     }
+    // A free name opens the setup for it, unless the page was left meanwhile.
     if (name !== campaign) return;
     if (info?.status === "free") {
       await goto(`/new?slug=${encodeURIComponent(name)}`, {
@@ -801,10 +783,9 @@
     try {
       r = await resolveCampaign(readForge(), name, info);
     } catch (e) {
-      if (name === campaign) resolveError = campaignLoadFailure(e);
+      resolveError = campaignLoadFailure(e);
       return;
     }
-    if (name !== campaign) return;
     if (r) resolved = r;
     else notFound = true;
   }
@@ -1067,6 +1048,21 @@
     const last = readLastTask(campaign);
     if (last && locks.some((l) => l.task_id === last && l.user_id === viewer))
       detailTask = last;
+  });
+
+  // After the first load, a change of ?task= (a link, back or forward) opens
+  // that task, or the campaign when it is gone.
+  let urlTask = page.url.searchParams.get("task");
+  $effect(() => {
+    const task = page.url.searchParams.get("task");
+    if (task === urlTask) return;
+    urlTask = task;
+    if (!deepLinked) return;
+    const found = task && findRow(taskDefs, task, "") ? task : null;
+    if (found === detailTask) return;
+    detailTask = found;
+    pickedLane = null;
+    writeLastTask(campaign, found);
   });
 
   function claimCard(card: BoardCard) {

@@ -14,6 +14,7 @@ import {
   SESSION,
 } from "./forge/github-rest.ts";
 import type { ForgeClient, GitHubUser } from "./forge/types.ts";
+import { reloadKeepingUnsent } from "./unsent-text.ts";
 
 routeSessionVia(`${provider.brokerUrl}/proxy/api.github.com`);
 
@@ -81,6 +82,16 @@ export async function initAuth(): Promise<void> {
     replaceState(location.pathname + (query ? `?${query}` : ""), {});
   }
 
+  // A login or logout in another tab of the app reloads this one, so it acts
+  // and shows as the account the session now belongs to.
+  authChannel?.addEventListener("message", (e: MessageEvent) => {
+    if (auth.status === "loading") return;
+    const login = (e.data as { login: string | null }).login;
+    if (login === (auth.user?.login ?? null)) return;
+    console.log("[auth] the login changed in another tab");
+    reloadKeepingUnsent(auth.user?.login ?? null);
+  });
+
   // Returning to a tab left open re-checks the session, so an expired one is
   // reported before the next action rather than by its failure.
   document.addEventListener("visibilitychange", () => {
@@ -120,7 +131,14 @@ export async function initAuth(): Promise<void> {
     "scope:",
     resolved.scopes,
   );
+  authChannel?.postMessage({ login: resolved.user.login });
 }
+
+// The app's open tabs tell each other the account their session belongs to.
+const authChannel =
+  typeof BroadcastChannel === "undefined"
+    ? null
+    : new BroadcastChannel("lets-encode:auth");
 
 const SESSION_CHECK_INTERVAL_MS = 30 * 60_000;
 
@@ -136,7 +154,7 @@ function checkSession(): void {
     .then((resolved) => {
       if (resolved && resolved.user.login !== auth.user?.login) {
         console.log("[auth] session now belongs to", resolved.user.login);
-        location.reload();
+        reloadKeepingUnsent(auth.user?.login ?? null);
       }
     })
     .catch(() => {});
@@ -161,6 +179,7 @@ export async function logout(): Promise<void> {
   } catch {
     // best-effort; the local session is already cleared
   }
+  authChannel?.postMessage({ login: null });
 }
 
 /** A ForgeClient bound to the current session, or null when anonymous. */

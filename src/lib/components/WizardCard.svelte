@@ -130,6 +130,7 @@
      * behind the other tab, with the button's tooltip repeating it.
      */
     nextReason?: string;
+    /** A step's work is under way: Back, Discard and the other setups wait. */
     backDisabled?: boolean;
     /**
      * Why the step cannot be left right now: disables Back, Next and the
@@ -242,7 +243,7 @@
     const owner = auth.user?.login;
     if (owner) saveDraft(owner, draftSnapshot());
     try {
-      await resumeDraft(handle);
+      await resumeDraft(owner ?? "", handle);
     } catch (err) {
       resumeError = `Could not resume “${handle}”: ${(err as Error).message}`;
     }
@@ -287,7 +288,8 @@
     const handle = wizard.handle.trim();
     const claim = wizard.claim;
     confirmingDiscard = false;
-    if (handle) discardDraft(handle);
+    const owner = auth.user?.login;
+    if (handle && owner) discardDraft(owner, handle);
     resetWizard();
     // Give the name back so it is free again straight away. Best-effort: an
     // unreleased hold runs out on its own.
@@ -447,6 +449,7 @@
                 type="button"
                 class="linkish"
                 onclick={() => (confirmingDiscard = true)}
+                disabled={backDisabled}
               >
                 Discard this setup
               </button>
@@ -459,7 +462,7 @@
               class="linkish other-draft"
               title={`Resume setup of “${name}”`}
               onclick={() => resumeOther(draft.handle)}
-              disabled={resuming !== null}
+              disabled={resuming !== null || backDisabled}
             >
               <span class="resume-text">
                 {resuming === draft.handle
@@ -611,7 +614,7 @@
             type="button"
             class="resume"
             onclick={() => resumeOther(draft.handle)}
-            disabled={resuming !== null}
+            disabled={resuming !== null || backDisabled}
           >
             <span class="resume-text">
               {resuming === draft.handle
@@ -658,6 +661,7 @@
       aria-expanded={open}
       onclick={(e) =>
         asPopup ? togglePopup("discard", e, 260) : toggleDiscard()}
+      disabled={backDisabled}
     >
       {discardLabel}
     </button>
@@ -667,7 +671,12 @@
 {#snippet discardQuestion()}
   <span>Discard everything entered so far?</span>
   <span class="discard-row">
-    <button type="button" class="btn btn-danger" onclick={discardSetup}>
+    <button
+      type="button"
+      class="btn btn-danger"
+      onclick={discardSetup}
+      disabled={backDisabled}
+    >
       Discard for good
     </button>
     <button type="button" class="btn" onclick={closePopups}>Cancel</button>

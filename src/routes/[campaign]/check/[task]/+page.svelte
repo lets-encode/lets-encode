@@ -98,10 +98,6 @@
               setTransposition(keysig, staff, t);
           }
       },
-      reset() {
-        staves = [];
-        loadedDef = null;
-      },
     },
   );
   const runner = session.runner;

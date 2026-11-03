@@ -42,8 +42,10 @@ import { partitionPages, type DetectedPage } from "./pieces.ts";
 import {
   wizard,
   clearFinishedSetup,
+  currentSetup,
   COPYRIGHT_ACKNOWLEDGEMENT,
 } from "./wizard.svelte.ts";
+import { discardDraft } from "./wizard-draft.ts";
 import { ProgressLog } from "./progress-log.svelte.ts";
 import type { FileChange } from "./forge/types.ts";
 import {
@@ -159,6 +161,15 @@ export class CampaignFinisher {
 
     this.busy = true;
     this.log.clear();
+    // The run reads this setup from the wizard as it goes; once another setup
+    // is opened it stops before reading the other one's entries.
+    const setup = currentSetup();
+    const sameSetup = () => {
+      if (setup !== currentSetup())
+        throw new Error(
+          "another setup was opened while this one was being finished",
+        );
+    };
     const logRepo = ({ step, detail }: ProgressUpdate) => {
       if (step) this.log.step(step);
       if (detail) this.log.detail(detail);
@@ -178,7 +189,9 @@ export class CampaignFinisher {
       // that fails leaves nothing behind.
       if (!committed && !this.detected)
         this.detected = await this.measurePages();
+      sameSetup();
       const repo = await ensureCampaignRepo(f, user.login, logRepo);
+      sameSetup();
       if (!committed) {
         const detected = this.detected ?? [];
 
@@ -369,6 +382,7 @@ export class CampaignFinisher {
             contentBase64: await blobToBase64(image.blob),
           });
         }
+        sameSetup();
         this.log.step(`Committing the campaign (${files.length} file(s))`);
         await f.commitFiles(
           repo.owner,
@@ -433,8 +447,14 @@ export class CampaignFinisher {
       // is cleared once the campaign has opened, since emptying the wizard while
       // the step is still on screen would show the first step again.
       this.log.done();
+      // Finished after another setup was opened: only this one's draft goes.
+      if (setup !== currentSetup()) {
+        discardDraft(user.login, claim.name);
+        this.busy = false;
+        return;
+      }
       await goto(`/${repo.name}`);
-      clearFinishedSetup();
+      clearFinishedSetup(user.login);
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
       this.error = `Could not finish the campaign: ${(err as Error).message}`;

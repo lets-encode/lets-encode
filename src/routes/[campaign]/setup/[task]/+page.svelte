@@ -170,9 +170,6 @@
           );
         }
       },
-      reset() {
-        staves = [];
-      },
       // A claim of an OMR piece's setup task continues into the piece's
       // recognition in the same overlay.
       afterClaim(f, d) {
@@ -271,10 +268,6 @@
     };
   });
   let anchorPage = $state<number | null>(null);
-  $effect(() => {
-    void taskId;
-    anchorPage = null;
-  });
   function showAnchorFor(c: CommentRow) {
     const p = commentAnchor(c).page - 1;
     anchorPage = data && p >= 0 && p < data.model.pages.length ? p : null;
@@ -519,10 +512,6 @@
   let unset = $state(false);
   let recognition = $state<PieceRecognition | null>(null);
   let recognisedFor = $state<string | null>(null);
-  $effect(() => {
-    void taskId;
-    recognition = null;
-  });
 
   // While the task is held, its definition (and the recognition record this
   // session made) is saved as a draft after each pause in editing.
@@ -711,8 +700,6 @@
     d: FacsimileTaskData,
   ): Promise<Result> {
     const client = createOmrClient(provider.brokerUrl);
-    // A run finishing after the page moved to another task is dropped.
-    const task = taskId;
     try {
       runner.log.step("Reading the recognition record");
       // A record saved with the work, or kept from an expired claim, comes
@@ -740,10 +727,6 @@
         pipeline: omrModels.staffPipeline,
         progress: (step) => runner.log.step(step),
       });
-      if (task !== taskId)
-        return {
-          error: "The recognition finished after another task was opened.",
-        };
       recognition = result;
       const total = result.record.pages.reduce(
         (n, pg) => n + pg.staves.length,

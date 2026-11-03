@@ -76,6 +76,8 @@ import {
   keptWorkBranch,
   pieceFieldForPath,
   pieceKindForPath,
+  priorDecision,
+  REASON_TEXT,
 } from "./coordinator-policy.ts";
 import {
   firstElementOfPage,
@@ -268,7 +270,14 @@ async function muteOnce(ctx: CommandContext): Promise<void> {
 }
 
 type PrProcessingResult =
-  | { state: "closed"; verdict: string | null }
+  | {
+      state: "decided";
+      accepted: boolean;
+      /** The rejection's reason code from history.csv, '' when accepted. */
+      detail: string;
+      /** The coordinator's comment on the closed PR, null before it closed. */
+      verdict: string | null;
+    }
   | { state: "run_failed"; runUrl: string }
   | { state: "run_skipped" }
   | { state: "timeout" };
@@ -279,9 +288,12 @@ type PrProcessingResult =
 export const RUN_REQUIREMENTS =
   "a submission must change at most four files, must not be a draft, and must come from a user account";
 
-// Wait until the campaign automation has processed a PR (it closes the PR
-// when done) and return its verdict comment. A timeout means the run is still
-// in flight, not failed. Once the PR is closed, a `head` branch
+// Wait until the campaign automation has processed a PR and return its
+// decision. The decision is the history.csv row naming the PR, which the
+// coordinator commits before it comments on and closes the PR; it is read once
+// the PR is closed, its run has ended or the wait runs out. A PR closed
+// without one was rejected without a record (a malformed operation). A
+// timeout means the run is still in flight, not failed. Once the PR is closed, a `head` branch
 // the console created in the user's fork is deleted: the automation deletes
 // the head branches of PRs opened within the campaign repo itself, but it has
 // no rights on a fork, so that half of the cleanup happens here with the
@@ -316,6 +328,20 @@ async function waitForPrProcessed(
         ctx.progress,
       )
     : null;
+  const decision = async () =>
+    priorDecision(
+      parseHistoryCsv((await f.getRepoFile(owner, repo, HISTORY_PATH)) ?? ""),
+      pr.number,
+    );
+  const decided = (
+    row: { outcome: string; detail: string } | null,
+    verdict: string | null,
+  ): PrProcessingResult => ({
+    state: "decided",
+    accepted: row?.outcome === "accepted",
+    detail: row?.outcome === "accepted" ? "" : (row?.detail ?? ""),
+    verdict,
+  });
   const deadline = Date.now() + 90_000;
   // Fast cadence, low cap: the PR-state and run reads are ETag-cached, so an
   // unchanged poll answers 304 and does not count against the API rate limit —
@@ -336,12 +362,28 @@ async function waitForPrProcessed(
       }),
     ]);
     if (state === "closed") {
+      // The row is committed before the PR closes; a read that does not show
+      // it yet is repeated once before the PR counts as rejected.
+      let row = await decision();
+      if (!row) {
+        await sleep(2_000);
+        row = await decision();
+      }
       const verdict = await f.getLastIssueComment(owner, repo, pr.number);
-      console.log("[pr] PR", pr.number, "processed; verdict:", verdict);
-      if (pr.cleanup !== "accepted" || verdict?.startsWith("✅")) {
+      console.log(
+        "[pr] PR",
+        pr.number,
+        "processed:",
+        row?.outcome ?? "no record",
+      );
+      const result = decided(row, verdict);
+      if (
+        pr.cleanup !== "accepted" ||
+        (result.state === "decided" && result.accepted)
+      ) {
         await cleanupForkHeadBranch(ctx, pr.head);
       }
-      return { state: "closed", verdict };
+      return result;
     }
     // A failed run never closes the PR — report the failure rather than
     // letting the wait time out as if the run were merely slow. A skipped
@@ -370,11 +412,17 @@ async function waitForPrProcessed(
         await f.closePullRequest(owner, repo, pr.number);
         return { state: "run_skipped" };
       } else {
-        return { state: "run_failed", runUrl: html_url };
+        // A decision recorded before the run failed stands.
+        const row = await decision();
+        return row
+          ? decided(row, null)
+          : { state: "run_failed", runUrl: html_url };
       }
     }
     delayMs = Math.min(3_000, Math.ceil(delayMs * 1.5));
   }
+  const row = await decision();
+  if (row) return decided(row, null);
   console.log(
     "[pr] PR",
     pr.number,
@@ -518,20 +566,19 @@ function verdictResult(
       prUrl,
     };
   }
-  if (!result.verdict) {
+  if (!result.accepted) {
     return {
-      error: `Submission #${prNumber} closed without a coordinator verdict.`,
+      error:
+        result.verdict ??
+        `Submission #${prNumber} was rejected${result.detail ? `: ${REASON_TEXT[result.detail] ?? result.detail}` : ""}.`,
       prUrl,
     };
   }
-  if (result.verdict.startsWith("❌")) return { error: result.verdict, prUrl };
-  if (!result.verdict.startsWith("✅")) {
-    return {
-      error: `Submission #${prNumber} closed with an unrecognised coordinator verdict.`,
-      prUrl,
-    };
-  }
-  return { ok: true, prUrl, message: result.verdict };
+  return {
+    ok: true,
+    prUrl,
+    message: result.verdict ?? `Submission #${prNumber} was accepted.`,
+  };
 }
 
 /**
