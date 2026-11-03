@@ -4,7 +4,7 @@
 // real time, so it does not depend on how frequently or punctually the reaper
 // runs. See DESIGN.md §5.
 
-import type { LockRow } from "./campaign-tables.ts";
+import type { HistoryRow, LockRow } from "./campaign-tables.ts";
 
 export interface ReapLocksArgs {
   locks: LockRow[];
@@ -22,11 +22,11 @@ export function reapLocks({ locks, now }: ReapLocksArgs): ReapLocksResult {
   const removed: LockRow[] = [];
   for (const lock of locks) {
     const expiresMs = Date.parse(lock.expires);
-    // A lock is stale only if we can read both times and it has expired;
-    // anything with an unparseable `expires` is kept (don't free what we
-    // can't reason about).
+    // A lock with an unparseable `expires` is stale; with an unparseable
+    // `now`, none is.
     const stale =
-      Number.isFinite(expiresMs) && Number.isFinite(nowMs) && nowMs > expiresMs;
+      Number.isFinite(nowMs) &&
+      !(Number.isFinite(expiresMs) && nowMs <= expiresMs);
     (stale ? removed : kept).push(lock);
   }
   return { kept, removed };
@@ -52,3 +52,34 @@ export const claimRanOut = (
       l.kind === key.kind &&
       l.user_id === author,
   );
+
+/**
+ * The locks earlier runs reaped, read from history.csv: per holder, row and
+ * kind, a `reap` row with no accepted claim by that holder after it. A run
+ * that judges a pull request at its opening time no longer finds these in
+ * lock.csv when another run reaped them first.
+ */
+export function reapedLocks(history: HistoryRow[]): LockRow[] {
+  const reaped = new Map<string, LockRow>();
+  for (const row of history) {
+    const kind =
+      row.action === "reap"
+        ? row.detail
+        : row.outcome === "accepted" && row.action.startsWith("claim_")
+          ? row.action.slice("claim_".length)
+          : null;
+    if (kind === null) continue;
+    const key = [row.task_id, row.subtask_id, row.user_id, kind].join("\0");
+    if (row.action === "reap")
+      reaped.set(key, {
+        task_id: row.task_id,
+        subtask_id: row.subtask_id,
+        user_id: row.user_id,
+        timestamp: row.timestamp,
+        kind,
+        expires: "",
+      });
+    else reaped.delete(key);
+  }
+  return [...reaped.values()];
+}

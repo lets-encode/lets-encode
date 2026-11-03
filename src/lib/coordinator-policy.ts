@@ -2,6 +2,7 @@ import {
   COMMENT_COLUMNS,
   parseCsv,
   COMMENT_PATH,
+  LOCK_COLUMNS,
   LOCK_PATH,
   STATE_PATH,
 } from "./campaign-tables.ts";
@@ -114,6 +115,22 @@ export function removedRowFromPatch(patch: string | undefined): string | null {
     else if (line.startsWith("+")) added++;
   }
   return added === 0 && removed.length === 1 ? removed[0] : null;
+}
+
+/** The task, subtask and kind a lock.csv row names, parsed as CSV. */
+export function lockIntentFromRow(row: string): {
+  task_id: string;
+  subtask_id: string;
+  kind: string;
+} {
+  const cells = parseCsv(row)[0] ?? [];
+  const cell = (column: string) =>
+    cells[LOCK_COLUMNS.indexOf(column)]?.trim() ?? "";
+  return {
+    task_id: cell("task_id"),
+    subtask_id: cell("subtask_id"),
+    kind: cell("kind"),
+  };
 }
 
 // The CSV records a unified-diff patch removes and adds, parsed with full CSV
@@ -480,7 +497,7 @@ export const REASON_TEXT: Record<string, string> = {
   no_open_validation_slot: "no review slot is open",
   not_lock_holder: "the author does not hold the required claim",
   claim_expired:
-    "the author's claim had run out when the submission was opened",
+    "the author's claim had run out before the submission was decided",
   mei_invalid: "the submitted MEI failed the machine check",
   splice_invalid:
     "the page passes the machine check on its own but not joined into the score; this is an error of the platform, not of the encoding",

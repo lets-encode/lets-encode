@@ -5,8 +5,8 @@
 // rejected, reaped — is appended to the campaign's history table, except the
 // rejection of a pull request that does not parse as any operation
 // (AUDIT_FREE_REJECTS) and the closing of a pull request over the per-author
-// cap. Scheduled runs reap stale locks and then process any open pull request
-// whose own run was lost (runCatchUp).
+// cap. Scheduled runs process any open pull request whose own run was lost
+// (runCatchUp) and then reap stale locks.
 // See DESIGN.md §4 (the caller) & §6 (PR contract).
 //
 // Runs in the BASE (campaign) repo's context with a write token. The pull
@@ -76,7 +76,8 @@ import {
   recordApplications,
   recordContribution,
 } from "../src/lib/mei-provenance.ts";
-import { reapLocks } from "../src/lib/campaign-reaper.ts";
+import { reapedLocks, reapLocks } from "../src/lib/campaign-reaper.ts";
+import { isPreTask } from "../src/lib/campaign-graph.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
@@ -88,6 +89,7 @@ import {
   isReviewEdit,
   keptWorkBranch,
   keptWorkSince,
+  lockIntentFromRow,
   pieceFieldForPath,
   pieceKindForPath,
   MAX_OPEN_PRS_PER_AUTHOR,
@@ -263,6 +265,14 @@ const expiryRows = (
     outcome: keptWork.has(lock) ? "released_with_work" : "released",
     detail: lock.kind,
   }));
+
+// The locks a decision judged at the pull request's opening time counts as
+// expired: those past their `expires` at that time (`removed`), and those
+// another run reaped at its own, later time.
+const expiredLocks = (
+  removed: LockRow[],
+  historyCsv: string | null,
+): LockRow[] => [...removed, ...reapedLocks(parseHistoryCsv(historyCsv ?? ""))];
 
 // Keep the unsubmitted work of expired encoding claims: the claimer's task
 // branch `encode-<task>` — in the repo their claim's pull request came from —
@@ -533,14 +543,7 @@ async function runClaim(
     return;
   }
   const addedRow = lockFile && addedRowFromPatch(lockFile.patch);
-  const cells = addedRow ? addedRow.split(",") : null;
-  const intent = cells
-    ? {
-        task_id: cells[0]?.trim() ?? "",
-        subtask_id: cells[1]?.trim() ?? "",
-        kind: cells[4]?.trim() ?? "",
-      }
-    : null;
+  const intent = addedRow ? lockIntentFromRow(addedRow) : null;
 
   const verdict = await withRetry(() =>
     attemptClaim(changedPaths, intent, envelope),
@@ -589,7 +592,7 @@ async function attemptRelease(
     intent,
     author,
     changedPaths,
-    expired: removed,
+    expired: expiredLocks(removed, historyCsv),
   });
   if (isAuditFree(verdict)) return verdict;
   const history: HistoryRow = {
@@ -643,12 +646,7 @@ async function runRelease(
   removedRow: string,
   envelope: CommandEnvelope | null,
 ): Promise<void> {
-  const cells = removedRow.split(",");
-  const intent = {
-    task_id: cells[0]?.trim() ?? "",
-    subtask_id: cells[1]?.trim() ?? "",
-    kind: cells[4]?.trim() ?? "",
-  };
+  const intent = lockIntentFromRow(removedRow);
   const verdict = await withRetry(() =>
     attemptRelease(changedPaths, intent, envelope),
   );
@@ -690,12 +688,8 @@ async function attemptReviewEdit(
   const removedRow = removedRowFromPatch(
     prFiles.find((f) => f.filename === LOCK_PATH)?.patch,
   );
-  const cells = removedRow?.split(",") ?? [];
-  const intent = {
-    task_id: cells[0]?.trim() ?? "",
-    subtask_id: cells[1]?.trim() ?? "",
-  };
-  if (!removedRow || cells[4]?.trim() !== "validation" || !intent.subtask_id)
+  const { kind, ...intent } = lockIntentFromRow(removedRow ?? "");
+  if (!removedRow || kind !== "validation" || !intent.subtask_id)
     return { ok: false, reason: "malformed_review_edit" };
   const added = appendedCommentsFromPatch(
     prFiles.find((f) => f.filename === COMMENT_PATH)?.patch,
@@ -720,7 +714,7 @@ async function attemptReviewEdit(
       "stale_after_minutes",
       DEFAULT_STALE_MINUTES,
     ),
-    expired: removed,
+    expired: expiredLocks(removed, historyCsv),
   });
   if (isAuditFree(verdict)) return verdict;
 
@@ -927,19 +921,10 @@ async function decideEncoding(
   // Record the contribution in the assembled score's header — the revision,
   // the contributor, and the editing application — before the machine check,
   // so the updated header is validated with the rest of the file. Encodings
-  // are edited in mei-friend; a zones, layout, score-setup or encoding
-  // alignment submission comes from the console itself, whose <application>
-  // entry every generated score already carries.
-  const consoleCommands = [
-    "campaign.submitZones",
-    "campaign.submitOmrLayout",
-    "campaign.submitScoreSetup",
-    "campaign.submitEncodingAlignment",
-  ];
+  // are edited in mei-friend; a pre-task is edited in the app itself, whose
+  // <application> entry every generated score already carries.
   if (mei != null) {
-    const application = consoleCommands.includes(envelope?.command ?? "")
-      ? undefined
-      : "mei-friend";
+    const application = isPreTask(task.locator) ? undefined : "mei-friend";
     // The expired claims whose unsubmitted work this submission continues
     // are recorded first, each dated at its expiry.
     for (const row of keptWorkSince(pastHistory, task.task_id)) {
@@ -1205,7 +1190,7 @@ async function attemptSubmit(
           prFiles,
           changedPaths,
           now,
-          removed,
+          expiredLocks(removed, historyCsv),
         )
       : await decideEncoding(
           sha,
@@ -1215,7 +1200,7 @@ async function attemptSubmit(
           changedPaths,
           envelope,
           now,
-          removed,
+          expiredLocks(removed, historyCsv),
           parseHistoryCsv(historyCsv ?? ""),
         );
   logPhase("decide", decideStart);
@@ -1623,9 +1608,12 @@ async function sweepOperationBranches(): Promise<void> {
 }
 
 async function run(): Promise<void> {
+  // The catch-up pass runs before the reaper: it judges each pull request
+  // at its opening time, and the reaper would first remove the locks that
+  // expired since.
   if (eventName === "schedule" || eventName === "workflow_dispatch") {
-    await runReap();
     await runCatchUp();
+    await runReap();
     return sweepOperationBranches();
   }
   if (eventName !== "pull_request_target") {

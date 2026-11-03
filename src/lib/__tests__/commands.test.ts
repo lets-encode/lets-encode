@@ -667,7 +667,8 @@ test("openEditor starts a fresh task branch from the work kept from expired clai
 
 test("openEditor keeps the holder's work on an existing task branch", async () => {
   const files = editorFiles(
-    lockHeader + "T0001,,9001,2026-09-01T00:00:00Z,encoding\n",
+    lockHeader +
+      "T0001,,9001,2026-09-01T00:00:00Z,encoding,2999-01-01T00:00:00Z\n",
   );
   const calls: string[] = [];
   const forge = fakeForge({
@@ -703,7 +704,8 @@ test("openEditor keeps the holder's work on an existing task branch", async () =
 
 test("openEditor leaves the task branch alone while someone else holds the claim", async () => {
   const files = editorFiles(
-    lockHeader + `T0001,,4242,${new Date().toISOString()},encoding\n`,
+    lockHeader +
+      `T0001,,4242,${new Date().toISOString()},encoding,2999-01-01T00:00:00Z\n`,
   );
   const forge = fakeForge({
     getRepoFile: async (_owner, _repo, path, ref) =>

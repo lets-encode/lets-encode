@@ -12,6 +12,7 @@ import {
   isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkSince,
+  lockIntentFromRow,
   touchesCampaignPaths,
   pieceFieldForPath,
   pieceKindForPath,
@@ -46,6 +47,24 @@ test("claim intent accepts exactly one added row and no removals", () => {
   assert.equal(addedRowFromPatch("@@\n+one\n+two"), null);
   assert.equal(addedRowFromPatch("@@\n-old\n+new"), null);
   assert.equal(addedRowFromPatch(undefined), null);
+});
+
+test("a lock row's intent is parsed as CSV", () => {
+  assert.deepEqual(lockIntentFromRow("T0001,,42,time,encoding,"), {
+    task_id: "T0001",
+    subtask_id: "",
+    kind: "encoding",
+  });
+  assert.deepEqual(lockIntentFromRow('"T0001",S0001,"4,2",time,validation'), {
+    task_id: "T0001",
+    subtask_id: "S0001",
+    kind: "validation",
+  });
+  assert.deepEqual(lockIntentFromRow(""), {
+    task_id: "",
+    subtask_id: "",
+    kind: "",
+  });
 });
 
 test("release intent is exactly one removed row and no additions", () => {

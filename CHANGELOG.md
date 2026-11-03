@@ -5,6 +5,11 @@ parentheses.
 
 ## 2026-11-03
 
+- A submission whose expired claim another run already released is rejected as an expired claim.
+- The scheduled run processes left-over submissions before it releases expired claims.
+- A claim whose expiry time cannot be read counts as expired.
+- The coordinator reads claim and release rows as CSV.
+- The coordinator tells submissions made in the app by their task instead of a list of command ids.
 - The Pieces step's piece picker keeps the piece name on a phone.
 - On a phone, the reason Continue waits lies over the setup step and leaves no empty row.
 - The zones page and the setup's Pieces step share one box editor.
