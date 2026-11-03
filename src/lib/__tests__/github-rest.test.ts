@@ -661,7 +661,13 @@ test("deleteBranch keeps a crafted branch name inside the ref path", async (t) =
   assert.equal(urls.length, 1);
 });
 
-test("openChangePr removes its prepared branch when PR creation fails", async (t) => {
+// A change PR on lifecycle-owner/score whose creation request fails with
+// `failure`; `open` is what GitHub lists as open PRs from the branch.
+async function failedChangePr(
+  t: TestContext,
+  failure: Response,
+  open: unknown[],
+) {
   let deleted = false;
   gitDataMock(t, {
     extra: (url, method) => {
@@ -678,15 +684,9 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
       }
       if (url.endsWith("/git/refs") && method === "POST")
         return Response.json({}, { status: 201 });
-      if (url.endsWith("/pulls") && method === "POST") {
-        return Response.json(
-          {
-            message: "Validation Failed",
-            errors: [{ message: "No commits between main and work" }],
-          },
-          { status: 422 },
-        );
-      }
+      if (url.endsWith("/pulls") && method === "POST") return failure;
+      if (url.includes("/pulls?state=open&head=") && method === "GET")
+        return Response.json(open);
       if (url.endsWith("/git/refs/heads/work") && method === "DELETE") {
         deleted = true;
         return new Response(null, { status: 204 });
@@ -694,18 +694,42 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
       return undefined;
     },
   });
+  const result = openChangePr("token", "lifecycle-owner", "score", {
+    branch: "work",
+    files: [{ path: "tracking/lock.csv", content: "lock" }],
+    message: "Prepare claim",
+    title: "Claim",
+    body: "Claim body",
+  });
+  return { result, deleted: () => deleted };
+}
 
-  await assert.rejects(
-    openChangePr("token", "lifecycle-owner", "score", {
-      branch: "work",
-      files: [{ path: "tracking/lock.csv", content: "lock" }],
-      message: "Prepare claim",
-      title: "Claim",
-      body: "Claim body",
-    }),
-    /No commits between main and work/,
+test("openChangePr removes its prepared branch when PR creation fails", async (t) => {
+  const { result, deleted } = await failedChangePr(
+    t,
+    Response.json(
+      {
+        message: "Validation Failed",
+        errors: [{ message: "No commits between main and work" }],
+      },
+      { status: 422 },
+    ),
+    [],
   );
-  assert.equal(deleted, true);
+  await assert.rejects(result, /No commits between main and work/);
+  assert.equal(deleted(), true);
+});
+
+test("openChangePr returns the PR whose creation response was lost and keeps its branch", async (t) => {
+  const { result, deleted } = await failedChangePr(
+    t,
+    new Response("", { status: 502 }),
+    [{ number: 7, html_url: "https://example.test/pr/7", head: { sha: "s1" } }],
+  );
+  const pr = await result;
+  assert.equal(pr.number, 7);
+  assert.equal(pr.headSha, "s1");
+  assert.equal(deleted(), false);
 });
 
 test("403 and 429 responses are rate limits only when GitHub or the broker reports one", async (t) => {

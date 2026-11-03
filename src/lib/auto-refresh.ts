@@ -97,6 +97,8 @@ export function startAutoRefresh(
 ): () => void {
   let timer: unknown = null;
   let running = false;
+  // The tab became visible while a poll was running: one more poll follows it.
+  let resumePending = false;
   let stopped = false;
   let pausedUntil = 0;
   let status = REFRESH_OK;
@@ -121,8 +123,13 @@ export function startAutoRefresh(
 
   async function tick(resumed: boolean): Promise<void> {
     clear();
-    if (stopped || env.hidden() || running) return;
-    if (env.now() < pausedUntil) return schedule();
+    if (stopped || env.hidden()) return;
+    if (running) {
+      if (resumed) resumePending = true;
+      return;
+    }
+    // A poll due during a rate-limit pause runs when the pause ends.
+    if (env.now() < pausedUntil) return schedule(0, resumed);
     if (opts.held?.() || env.pointerDown())
       return schedule(HELD_RETRY_MS, resumed);
     running = true;
@@ -161,7 +168,10 @@ export function startAutoRefresh(
     } finally {
       running = false;
       if (!stopped) opts.onStatus?.(status);
-      schedule();
+      if (resumePending) {
+        resumePending = false;
+        schedule(0, true);
+      } else schedule();
     }
   }
 

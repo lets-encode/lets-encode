@@ -9,6 +9,7 @@ import { provider } from "./forge/config.ts";
 import { replaceState } from "$app/navigation";
 import { createForge } from "./forge/index.ts";
 import {
+  clearRequestCaches,
   onSessionRejected,
   routeSessionVia,
   SESSION,
@@ -203,6 +204,7 @@ export function login(
 export async function logout(): Promise<void> {
   console.log("[auth] logging out");
   clear();
+  clearRequestCaches();
   auth.expired = false;
   auth.error = null;
   auth.checkFailed = null;

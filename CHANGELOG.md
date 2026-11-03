@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-03
 
+- Requests recover from lost responses, stale forks and server errors, and logging out forgets cached reads.
+- Polling no longer drops the refresh when a tab is shown again.
 - Setup drafts are kept per account, survive leaving the page and no longer return from another tab.
 - Pieces follow their pages when other pages are chosen and are set up again after a new upload.
 - The name step reports reserved names, and a run-out reservation is renewed before the repository is created.

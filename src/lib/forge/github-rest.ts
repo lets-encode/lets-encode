@@ -394,7 +394,9 @@ async function rawGet(
     ...authHeaders(token),
   };
   if (cached) headers["If-None-Match"] = cached.etag;
-  const res = await githubFetch(url, { headers, cache: "no-store" });
+  const res = await retryingGet(() =>
+    githubFetch(url, { headers, cache: "no-store" }),
+  );
   if (res.status === 304 && cached)
     return { status: 200, ok: true, text: cached.body, link: cached.link };
   const text = await res.text();
@@ -407,6 +409,17 @@ async function rawGet(
 
 /** Waits before each repeat of a GET that failed with a 5xx. */
 const GET_RETRY_DELAYS_MS = [500, 1500];
+
+// A GET is safe to repeat, so a 5xx is retried after each delay in turn.
+async function retryingGet(send: () => Promise<Response>): Promise<Response> {
+  let res = await send();
+  for (const delayMs of GET_RETRY_DELAYS_MS) {
+    if (res.status < 500) break;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    res = await send();
+  }
+  return res;
+}
 
 /**
  * A GitHub JSON request without ETag caching — the write path, plus reads that
@@ -428,15 +441,7 @@ async function ghSend<T>(
       cache: "no-store",
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  let res = await send();
-  // A GET is safe to repeat, so a 5xx is retried after each delay in turn.
-  if (method === "GET") {
-    for (const delayMs of GET_RETRY_DELAYS_MS) {
-      if (res.status < 500) break;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      res = await send();
-    }
-  }
+  const res = await (method === "GET" ? retryingGet(send) : send());
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data as { message?: string; error?: string };
@@ -1017,6 +1022,17 @@ const knownForks = new Map<
 >();
 
 /**
+ * Forget what was read with the session's account: response bodies kept for
+ * conditional requests, push permissions and forks. Run when the account
+ * logs out, so the reads that follow are made afresh.
+ */
+export function clearRequestCaches(): void {
+  etagCache.clear();
+  repoHeadInfoCache.clear();
+  knownForks.clear();
+}
+
+/**
  * Ensure the authenticated user has a fork of `owner/repo`, waiting until it's
  * ready (forking is async). Returns the fork's { owner, repo }. Used when a
  * volunteer without push access proposes work — they fork and PR upstream.
@@ -1033,13 +1049,18 @@ export async function ensureFork(
   const headers = { ...baseHeaders, ...authHeaders(token) };
   const known = knownForks.get(`${owner}/${repo}`);
   if (known) {
-    await ghSend(
-      "POST",
-      `/repos/${known.owner}/${known.repo}/merge-upstream`,
-      token,
-      { branch: known.branch },
-    );
-    return { owner: known.owner, repo: known.repo };
+    // A fork deleted or renamed since is looked up again below.
+    try {
+      await ghSend(
+        "POST",
+        `/repos/${known.owner}/${known.repo}/merge-upstream`,
+        token,
+        { branch: known.branch },
+      );
+      return { owner: known.owner, repo: known.repo };
+    } catch {
+      knownForks.delete(`${owner}/${repo}`);
+    }
   }
   // Only the default branch — the fork doesn't need copies of upstream's
   // in-flight claim branches.
@@ -1060,6 +1081,12 @@ export async function ensureFork(
       `${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`,
       { headers, cache: "no-store" },
     );
+    // A 404 means the fork is still being populated; any other failure is
+    // reported.
+    if (!r.ok && r.status !== 404)
+      throw new Error(
+        `Fork ${forkOwner}/${forkRepo} could not be read (${r.status}).`,
+      );
     if (r.ok) {
       await ghSend(
         "POST",
@@ -1378,24 +1405,30 @@ export interface OpenPullRequest {
   head: { sha: string; ref: string; repo: { full_name: string } | null };
 }
 
-/** The repository's newest open pull requests, newest first; 100 at most. */
+/** The repository's open pull requests, newest first; 1,000 at most. */
 export async function listOpenPullRequests(
   token: string,
   owner: string,
   repo: string,
 ): Promise<OpenPullRequest[]> {
-  const { ok, data } = await ghGet<
-    Array<OpenPullRequest> | { message?: string }
-  >(
-    `${apiRoot(token)}/repos/${owner}/${repo}/pulls?state=open&per_page=100&sort=created&direction=desc`,
-    token,
-  );
-  if (!ok || !Array.isArray(data)) {
-    throw new Error(
-      (data as { message?: string })?.message || "Failed to list pull requests",
+  const prs: OpenPullRequest[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const { ok, data } = await ghGet<
+      Array<OpenPullRequest> | { message?: string }
+    >(
+      `${apiRoot(token)}/repos/${owner}/${repo}/pulls?state=open&per_page=100&sort=created&direction=desc&page=${page}`,
+      token,
     );
+    if (!ok || !Array.isArray(data)) {
+      throw new Error(
+        (data as { message?: string })?.message ||
+          "Failed to list pull requests",
+      );
+    }
+    prs.push(...data);
+    if (data.length < 100) break;
   }
-  return data.map((pr) => ({
+  return prs.map((pr) => ({
     number: pr.number,
     created_at: pr.created_at,
     draft: Boolean(pr.draft),
@@ -1993,16 +2026,52 @@ export async function openChangePr(
     return { ...pr, head: { owner: target.owner, repo: target.repo, branch } };
   } catch (error) {
     if (branchCreated) {
-      try {
-        await deleteBranch(token, target.owner, target.repo, branch);
-      } catch (cleanupError) {
-        console.warn(
-          `Could not clean up branch ${target.owner}/${target.repo}:${branch}: ${(cleanupError as Error).message}`,
-        );
+      // A pull request whose creation response was lost exists all the
+      // same: it is returned, and its branch kept. The branch is deleted
+      // only once GitHub shows no pull request from it.
+      const opened = await findOpenPullRequest(
+        token,
+        owner,
+        repo,
+        `${target.owner}:${branch}`,
+      ).catch(() => undefined);
+      if (opened)
+        return {
+          ...opened,
+          head: { owner: target.owner, repo: target.repo, branch },
+        };
+      if (opened === null) {
+        try {
+          await deleteBranch(token, target.owner, target.repo, branch);
+        } catch (cleanupError) {
+          console.warn(
+            `Could not clean up branch ${target.owner}/${target.repo}:${branch}: ${(cleanupError as Error).message}`,
+          );
+        }
       }
     }
     throw error;
   }
+}
+
+// The open pull request whose head is `head` ("owner:branch"), or null.
+async function findOpenPullRequest(
+  token: string,
+  owner: string,
+  repo: string,
+  head: string,
+): Promise<{ number: number; html_url: string; headSha: string } | null> {
+  const prs = await ghSend<
+    Array<{ number: number; html_url: string; head?: { sha?: string } }>
+  >(
+    "GET",
+    `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(head)}`,
+    token,
+  );
+  const pr = prs[0];
+  return pr
+    ? { number: pr.number, html_url: pr.html_url, headSha: pr.head?.sha ?? "" }
+    : null;
 }
 
 /** Manually trigger a workflow_dispatch run of `workflow` (a filename) on `ref`. */

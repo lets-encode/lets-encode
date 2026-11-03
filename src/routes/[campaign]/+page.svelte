@@ -923,10 +923,12 @@
       holds: holdsEncoding(task),
       msg,
     });
+    // A return uses up this browser's record of the hand-off, whatever it
+    // reports.
+    const handedOff = takeHandOff(campaign, task);
     if (status === "failed") {
       // mei-friend's own message only for a hand-off this browser made: the
       // return URL is a link anyone can build.
-      const handedOff = takeHandOff(campaign, task);
       editorError =
         msg && handedOff
           ? {
@@ -955,7 +957,7 @@
     }
     // A return this browser did not hand off may come from a link someone
     // else built, so it waits for the volunteer.
-    if (!takeHandOff(campaign, task)) {
+    if (!handedOff) {
       editorError =
         status === "complete"
           ? {
