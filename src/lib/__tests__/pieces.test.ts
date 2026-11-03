@@ -4,6 +4,7 @@ import {
   copyMetadata,
   createEncodedPiece,
   createPiece,
+  followPages,
   formatRanges,
   initialPieces,
   nextPieceId,
@@ -303,5 +304,19 @@ test("startFromEncoding moves a file from its encoded piece to a facsimile piece
     startFromEncoding(pieces, 0, "fugue.mei"),
     pieces,
     "an encoded piece is left alone",
+  );
+});
+
+test("followPages moves regions with their pages and drops those on pages left out", () => {
+  const zone = (surface: number) => ({ surface, ...box(0, 0, 10, 10) });
+  const pieces = [facsimilePiece("P1", [zone(0), zone(1), zone(2)])];
+  const [moved] = followPages(
+    pieces,
+    ["page-1", "page-2", "page-3"],
+    ["page-3", "page-1"],
+  );
+  assert.deepEqual(
+    moved.zones.map((z) => z.surface),
+    [1, 0],
   );
 });

@@ -5,36 +5,21 @@ parentheses.
 
 ## 2026-11-03
 
+- Setup drafts are kept per account, survive leaving the page and no longer return from another tab.
+- Pieces follow their pages when other pages are chosen and are set up again after a new upload.
 - The name step reports reserved names, and a run-out reservation is renewed before the repository is created.
-- Creating a campaign no longer fails on a slow template repository, a failed lookup or a failed navigation.
-- A setup whose name is registered can only be continued, not discarded.
-- The registry enforces its reservation limit atomically and matches reservations only to their own login.
-- A failed login check at app start is retried instead of showing a valid login as logged out.
-- A 401 from the registry or the relays marks the login as expired, and logging out clears old login messages.
-- Logins started in two tabs each return to their own page.
-- The broker drops a login it cannot name or read and re-checks campaign repositories after ten minutes.
-- The broker runs one worker, so its rate limits and relay slots hold as stated.
-- Deleting an OMR page through the relay removes its record.
-- Pending submissions survive a reload and refresh only their own campaign's pages.
-- A submission whose pull request could not be opened shows as failed, not rejected.
-- An action started while another one runs is queued instead of dropped.
-- Pending claims, give-backs and review edits are followed until decided and then clear the old task branch.
-- Kept work is used only when the history records it, and drafts are saved only while the claim is held.
-- Review cells hold only approvals, and new page tasks never reuse an id the history names.
-- The board, the task pages and the claim check share one dependency rule.
-- A review with an invalid verdict is recorded against its task.
-- The coordinator treats a claim released by another run or with an unreadable expiry as expired.
-- The scheduled run processes left-over submissions before it releases expired claims.
-- The Pieces step keeps the piece name and the reason Continue waits in place on a phone.
-- The zones page and the setup's Pieces step share one box editor.
-- Pending submissions hold their task's controls, and command results say when they are pending or partly failed.
+- Creating a campaign is more robust, and a registered setup can only be continued, not discarded.
+- A failed login check is retried, and a broker 401 marks the login as expired.
+- Login and logout reload the other tabs, keeping unsent text, and two-tab logins return to their own page.
+- The broker and registry fix several session, reservation and relay edge cases and run one worker.
+- Pending submissions are followed until decided, survive a reload and hold their task's controls.
+- Submission outcomes are read from the campaign history, and failed openings show as failed.
 - The app offers a claim only where the campaign automation would grant it.
-- Task views open fresh on another task or campaign, and back, forward and task links open the task on the board.
-- A login or logout reloads the other tabs, keeping unsent comments and change requests.
-- Setup drafts are stored per account as soon as the name is reserved.
-- A setup step's result no longer lands in another setup opened meanwhile.
-- Submission outcomes are read from the campaign history instead of the bot's comment.
-- Submissions sent in quick succession are all processed, each by one run.
+- The coordinator processes every submission once and treats reaped or unreadable claims as expired.
+- Kept work, task ids and review cells follow the campaign history.
+- Task views open fresh on another task or campaign, and links open the task on the board.
+- The zones page and the setup's Pieces step share one box editor.
+- The Pieces step keeps the piece name and Continue's reason in place on a phone.
 
 ## 2026-11-02
 

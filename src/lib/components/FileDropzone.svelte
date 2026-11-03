@@ -71,11 +71,15 @@
     e.dataTransfer?.types.includes("Files") ?? false;
   function onWindowDragEnter(e: DragEvent) {
     if (wizardLayout.dropZone || !carriesFiles(e)) return;
+    // The count runs only while the overlay is up, the only time a leave is
+    // counted too.
+    if (overlay === null) {
+      const card = root?.closest("section")?.getBoundingClientRect();
+      if (!card) return;
+      overlay = `top: ${card.top + 10}px; left: ${card.left + 10}px; width: ${card.width - 20}px; height: ${card.height - 20}px`;
+      depth = 0;
+    }
     depth++;
-    if (overlay !== null) return;
-    const card = root?.closest("section")?.getBoundingClientRect();
-    if (!card) return;
-    overlay = `top: ${card.top + 10}px; left: ${card.left + 10}px; width: ${card.width - 20}px; height: ${card.height - 20}px`;
   }
   function onWindowDragLeave() {
     if (overlay === null) return;

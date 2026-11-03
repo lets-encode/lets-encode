@@ -51,15 +51,18 @@
   onDestroy(() => finisher.cancel());
   const busy = $derived(finisher.busy);
 
-  // Seed the pieces the first time the step is opened; returning from a later
-  // step must not discard edits.
+  // Seed the pieces the first time the step is opened, and again after a new
+  // upload has dropped them; returning from a later step must not discard
+  // edits.
   const seeded = !wizard.pieces.length;
   if (seeded) {
     wizard.pieces = initialPieces(
       wizard.encodings.map((encoding) => encoding.name),
       wizard.images.length > 0,
     );
+    wizard.piecesUpload = wizard.uploadKey;
   }
+  onDestroy(() => (wizard.piecesRedone = false));
 
   // The pages the editor draws on: object URLs over the prepared page images,
   // with the pixel size the regions are expressed in. A superseded set is
@@ -548,6 +551,11 @@
   {/if}
 
   {#snippet pinned()}
+    {#if wizard.piecesRedone}
+      <p class="msg-warn" role="status">
+        The upload changed, so the pieces were set up again.
+      </p>
+    {/if}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
     {:else if last && !finisher.busy && auth.user}

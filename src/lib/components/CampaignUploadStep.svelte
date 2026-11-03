@@ -65,10 +65,14 @@
     return parts.join(" · ") || "adding material";
   });
 
-  // What the pages already read were read from. A file is identified by name and
-  // size, which is what the dropzone treats as one file too.
+  // What the pages already read were read from. A file is identified by name,
+  // size and modification time, so a changed file of the same name and size
+  // is read again.
   const uploadKey = $derived(
-    [...wizard.files.map((f) => `${f.name}:${f.size}`), manifestUrl].join("|"),
+    [
+      ...wizard.files.map((f) => `${f.name}:${f.size}:${f.lastModified}`),
+      manifestUrl,
+    ].join("|"),
   );
 
   async function continueToNextStep() {
@@ -118,6 +122,11 @@
       }));
       wizard.encodings = prepared.encodings;
       wizard.uploadKey = key;
+      // Pieces set up for another upload are set up again from this one.
+      if (wizard.pieces.length && key !== wizard.piecesUpload) {
+        wizard.pieces = [];
+        wizard.piecesRedone = true;
+      }
 
       log.done();
       nextStep();

@@ -38,6 +38,12 @@ export interface DraftEntries {
   copyrightAccepted: boolean;
   /** Paths of the prepared page images, in page order; the bytes are in IndexedDB. */
   imagePaths: string[];
+  /** The byte size of each of those images; absent in drafts stored before. */
+  imageSizes?: number[];
+  /** The candidate each image was prepared from; absent in drafts stored before. */
+  imageCandidates?: string[];
+  /** The upload the pieces were set up for; absent in drafts stored before. */
+  piecesUpload?: string;
   encodings: EncodingSource[];
   source: SourceMetadata;
   pieces: Piece[];

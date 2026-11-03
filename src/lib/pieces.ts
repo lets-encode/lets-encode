@@ -299,6 +299,25 @@ export function partitionPages(
 }
 
 /**
+ * The pieces with their regions moved to where their pages now are. `before`
+ * and `after` name the page at each page index, by the id of the candidate it
+ * was prepared from; a region on a page no longer chosen is removed.
+ */
+export function followPages(
+  pieces: Piece[],
+  before: string[],
+  after: string[],
+): Piece[] {
+  return pieces.map((piece) => ({
+    ...piece,
+    zones: piece.zones.flatMap((zone) => {
+      const surface = after.indexOf(before[zone.surface] ?? "");
+      return surface < 0 ? [] : [{ ...zone, surface }];
+    }),
+  }));
+}
+
+/**
  * The pieces a fresh campaign starts with: one per uploaded encoding, plus a
  * single facsimile piece covering the pages when there are any — or, with
  * nothing uploaded at all, a single physical piece to be encoded straight from

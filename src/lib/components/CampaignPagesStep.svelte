@@ -16,6 +16,7 @@
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { resolvePages } from "$lib/prepare-images.ts";
+  import { followPages } from "$lib/pieces.ts";
   import {
     wizard,
     currentSetup,
@@ -348,7 +349,11 @@
       // produced. A continued setup, whose files cannot be picked again, keeps
       // the images it already holds.
       if (wizard.candidates.length) {
+        // Regions marked on the pieces stay on their pages.
+        const ids = chosen.map((page) => page.id);
+        wizard.pieces = followPages(wizard.pieces, wizard.imageCandidates, ids);
         wizard.images = images;
+        wizard.imageCandidates = ids;
         log.step("Keeping the pages in this browser", { timed: false });
         await keepDraftImages(user.login, wizard.handle);
         if (setup !== currentSetup()) {

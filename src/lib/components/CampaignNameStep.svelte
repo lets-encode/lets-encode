@@ -9,6 +9,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { replaceState } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
@@ -42,15 +43,16 @@
   });
 
   // Arriving with a chosen name (/new?slug=, from the landing's start card):
-  // prefill the name field once, so later edits to it are not overwritten.
-  // Names are lowercase, so the field lowercases what is entered.
-  let slugApplied = false;
+  // prefill the name field unless a name is held already, and drop the
+  // parameter, so a return to this step does not apply it again. Names are
+  // lowercase, so the field lowercases what is entered.
   $effect(() => {
     const chosen = page.url.searchParams.get("slug");
-    if (chosen && !slugApplied) {
-      slugApplied = true;
-      wizard.handle = chosen.toLowerCase();
-    }
+    if (!chosen) return;
+    if (!wizard.claim) wizard.handle = chosen.toLowerCase();
+    const url = new URL(page.url);
+    url.searchParams.delete("slug");
+    replaceState(url, page.state);
   });
 
   // Live availability check: against the campaign repos already fetched (public

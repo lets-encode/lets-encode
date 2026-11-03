@@ -73,12 +73,15 @@ export async function storeDraftImages(
 
 /**
  * The page images stored for a setup, in the order of `paths`, when every one
- * of them is there; null when any is missing or the store cannot be read.
+ * of them is there and has the byte size `sizes` records for it; null when any
+ * is missing or of another size (stored for another choice of pages under the
+ * same paths), or the store cannot be read.
  */
 export async function readDraftImages(
   owner: string,
   handle: string,
   paths: string[],
+  sizes?: number[],
 ): Promise<PageImage[] | null> {
   try {
     const stored = await inStore<PageImage[] | undefined>("readonly", (store) =>
@@ -87,9 +90,9 @@ export async function readDraftImages(
     if (!stored) return null;
     const byPath = new Map(stored.map((image) => [image.path, image.blob]));
     const images: PageImage[] = [];
-    for (const path of paths) {
+    for (const [i, path] of paths.entries()) {
       const blob = byPath.get(path);
-      if (!blob) return null;
+      if (!blob || (sizes && blob.size !== sizes[i])) return null;
       images.push({ path, blob });
     }
     return images;

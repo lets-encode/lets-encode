@@ -58,6 +58,7 @@
     WIZARD_STEPS,
     draftSnapshot,
     draftStatus,
+    goToStep,
     isSkipped,
     piecesSummary,
     resetWizard,
@@ -405,7 +406,7 @@
               class="rail-step"
               disabled={!done || backDisabled || navBlocked !== undefined}
               title={done ? navBlocked : undefined}
-              onclick={() => (wizard.step = s.id)}
+              onclick={() => goToStep(s.id)}
               aria-current={active ? "step" : undefined}
             >
               <span class="rail-chain">
@@ -537,7 +538,7 @@
                   disabled={!done || backDisabled || navBlocked !== undefined}
                   title={(done && navBlocked) || value || undefined}
                   aria-label={s.label}
-                  onclick={() => (wizard.step = s.id)}
+                  onclick={() => goToStep(s.id)}
                   aria-current={active ? "step" : undefined}
                 >
                   <span class="hit">
