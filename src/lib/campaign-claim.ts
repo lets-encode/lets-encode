@@ -9,7 +9,7 @@
 // `now`) and `expires` is `now` plus the lock lifetime, never values the fork
 // supplied.
 
-import { findRow, isFinalValidation, LOCK_PATH } from "./campaign-tables.ts";
+import { findRow, isPassVerdict, LOCK_PATH } from "./campaign-tables.ts";
 import { claimRanOut } from "./campaign-reaper.ts";
 import type { ParsedState, TaskRow, LockRow } from "./campaign-tables.ts";
 
@@ -102,6 +102,16 @@ export function checkClaim({
 }
 
 /**
+ * The task a task depends on (its task.csv `depends_on`) while that task is
+ * not completed; '' otherwise. `statusOf` gives a task row's status.
+ */
+export const waitsFor = (
+  dependsOn: string | undefined,
+  statusOf: (task_id: string) => string | undefined,
+): string =>
+  dependsOn && statusOf(dependsOn) !== "completed" ? dependsOn : "";
+
+/**
  * Why `author` may not claim `intent` with the tables as they are, as the
  * rejection code checkClaim gives; null when the claim would be granted. The
  * coordinator decides claims with it, and the app offers a claim only where
@@ -134,10 +144,13 @@ export function claimRefusal({
 
   // Dependency gate: a task chained after another (task.csv depends_on) opens
   // only once that task has completed.
-  const dependsOn = findRow(tasks, intent.task_id, "")?.depends_on;
-  if (dependsOn && findRow(state.rows, dependsOn, "")?.status !== "completed") {
+  if (
+    waitsFor(
+      findRow(tasks, intent.task_id, "")?.depends_on,
+      (t) => findRow(state.rows, t, "")?.status,
+    )
+  )
     return "dependency_incomplete";
-  }
 
   const activeSameKind = locks.filter(
     (l) =>
@@ -156,31 +169,24 @@ export function claimRefusal({
     const taskRow = findRow(state.rows, intent.task_id, "");
     if (!allowSelfValidation && author === taskRow?.encoder)
       return "self_validation";
-    // One verdict per person: a validator who already recorded pass/fail on
+    // One verdict per person: a validator who already recorded a pass on
     // this subtask cannot claim another of its slots. The same config flag
     // lifts it — a single-person campaign fills every slot themselves.
     const hasVerdict = state.validationColumns.some((c) => {
       const cell = row[c] ?? "";
-      return isFinalValidation(cell) && cell.split("|")[1] === author;
+      return isPassVerdict(cell) && cell.split("|")[1] === author;
     });
     if (!allowSelfValidation && hasVerdict) return "already_validated";
 
-    // Open slot = (final pass/fail cells) + (active validation locks) < slots.
-    const finals = state.validationColumns.filter((c) =>
-      isFinalValidation(row[c] ?? ""),
-    ).length;
-    if (finals + activeSameKind.length >= state.validationColumns.length) {
-      return "no_open_validation_slot";
-    }
     // A verdict can only land while the subtask needs more passes: once
-    // recorded passes plus active locks reach the pass threshold, a further
-    // claim's verdict would arrive after completion and be rejected.
+    // recorded passes plus active locks reach the pass threshold (at most
+    // the slot count), a further claim's verdict would arrive after
+    // completion and be rejected.
     const slots = state.validationColumns.length;
     const needed = Math.min(passThreshold ?? slots, slots);
-    const passes = state.validationColumns.filter((c) => {
-      const cell = row[c] ?? "";
-      return isFinalValidation(cell) && cell.startsWith("pass|");
-    }).length;
+    const passes = state.validationColumns.filter((c) =>
+      isPassVerdict(row[c] ?? ""),
+    ).length;
     if (passes + activeSameKind.length >= needed)
       return "no_open_validation_slot";
     if (activeSameKind.some((l) => l.user_id === author))

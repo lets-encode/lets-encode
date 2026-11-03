@@ -6,7 +6,7 @@
 // added, removed, reordered or rewired; every started task must be carried
 // over verbatim. No GitHub.
 
-import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { findRow, isPassVerdict } from "./campaign-tables.ts";
 import type {
   LockRow,
   ParsedState,
@@ -27,7 +27,7 @@ export function taskStarted(
   return state.rows
     .filter((r) => r.task_id === task && r.subtask_id !== "")
     .some((r) =>
-      state.validationColumns.some((c) => isFinalValidation(r[c] ?? "")),
+      state.validationColumns.some((c) => isPassVerdict(r[c] ?? "")),
     );
 }
 
@@ -140,10 +140,17 @@ export function checkPlan(
   return { ok: true, stateRows };
 }
 
-/** The next free `T####` id after every id the plan already uses. */
-export function nextTaskId(rows: TaskRow[]): string {
-  const max = rows.reduce((n, r) => {
-    const m = /^T(\d+)$/.exec(r.task_id);
+/**
+ * The next free `T####` id after every id the plan uses and every id in
+ * `used` (the task ids history.csv names): the id of a dropped task, which
+ * comments may still name, is not given out again.
+ */
+export function nextTaskId(
+  rows: TaskRow[],
+  used: Iterable<string> = [],
+): string {
+  const max = [...rows.map((r) => r.task_id), ...used].reduce((n, id) => {
+    const m = /^T(\d+)$/.exec(id);
     return m ? Math.max(n, Number(m[1])) : n;
   }, 0);
   return `T${String(max + 1).padStart(4, "0")}`;
@@ -152,7 +159,8 @@ export function nextTaskId(rows: TaskRow[]): string {
 /**
  * Rebuild one piece's page tasks (locator `surface-N`) for the pages that
  * carry measures, in page order: the existing task ids are reused in order,
- * extra pages get the next free ids, and ids left over are dropped. A page
+ * extra pages get the next free ids (nextTaskId, past the ids in `used`), and
+ * ids left over are dropped. A page
  * without measures gets no task. Each rebuilt task keeps the first existing
  * page task's dependency and subtask rows, except where the later page tasks
  * depend on the first one: then every rebuilt task after the first depends on
@@ -167,6 +175,7 @@ export function replanPageTasks(
   locks: LockRow[],
   fragment: string,
   measuredSurfaces: string[],
+  used: string[] = [],
 ): { tasks: TaskRow[]; stateRows: StateRow[] } | null {
   const isPageRow = (r: TaskRow) =>
     r.fragment === fragment && /^surface-\d+$/.test(r.locator);
@@ -183,7 +192,7 @@ export function replanPageTasks(
   const chained = pageTasks.slice(1).some((t) => t.depends_on === ids[0]);
   const rebuilt: TaskRow[] = [];
   measuredSurfaces.forEach((locator, i) => {
-    const id = ids[i] ?? nextTaskId([...current, ...rebuilt]);
+    const id = ids[i] ?? nextTaskId([...current, ...rebuilt], used);
     for (const row of template) {
       const dependsOn =
         chained && i > 0 && row.subtask_id === "" ? ids[0] : row.depends_on;

@@ -5,6 +5,14 @@ parentheses.
 
 ## 2026-11-03
 
+- A review cell holds only an approval; the unused "changes requested" cell state is removed.
+- A new or rebuilt page task takes no id the campaign history already names.
+- The board shows a task row with an unknown status as pending instead of passing it through.
+- The board, the task pages and the claim check share one dependency rule.
+- A review with an invalid verdict is recorded against its task.
+- A claim, give-back or review edit still being processed is followed until decided and then clears the old task branch.
+- An editor continues from kept work only when the campaign history records it.
+- A pre-task draft is saved only while the viewer holds the task's claim.
 - A submission whose expired claim another run already released is rejected as an expired claim.
 - The scheduled run processes left-over submissions before it releases expired claims.
 - A claim whose expiry time cannot be read counts as expired.

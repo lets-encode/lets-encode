@@ -45,7 +45,7 @@ import {
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { usesOmr } from "./campaign-init.ts";
-import { claimLimitReached, claimRefusal } from "./campaign-claim.ts";
+import { claimLimitReached, claimRefusal, waitsFor } from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -74,6 +74,7 @@ import type {
 import {
   checksOpening,
   keptWorkBranch,
+  keptWorkSince,
   pieceFieldForPath,
   pieceKindForPath,
   priorDecision,
@@ -491,10 +492,26 @@ export interface FileSource {
   ref: string;
 }
 
+// The campaign branch `wip-<task_id>` when history.csv records work kept
+// from expired claims of the task since its last accepted submission; null
+// otherwise, whether or not the branch exists.
+async function keptWorkRef(
+  ctx: CommandContext,
+  task_id: string,
+): Promise<string | null> {
+  const { forge: f, owner, repo } = ctx;
+  const history = parseHistoryCsv(
+    (await f.getRepoFile(owner, repo, HISTORY_PATH)) ?? "",
+  );
+  return keptWorkSince(history, task_id).length > 0
+    ? keptWorkBranch(task_id)
+    : null;
+}
+
 // Where the viewer's work on a task stands: their task branch
 // `encode-<task_id>` when it carries the task's score, else the work kept
-// from expired claims (campaign branch `wip-<task_id>`) when there is any;
-// null when the work starts from `main`.
+// from expired claims (keptWorkRef) when there is any; null when the work
+// starts from `main`.
 async function workSource(
   ctx: CommandContext,
   task: TaskRow,
@@ -506,13 +523,13 @@ async function workSource(
     (await f.getRepoFile(own.owner, own.repo, task.fragment, own.ref)) != null
   )
     return own;
-  const kept = { owner, repo, ref: keptWorkBranch(task.task_id) };
-  if ((await f.getRepoFile(owner, repo, task.fragment, kept.ref)) != null)
-    return kept;
+  const ref = await keptWorkRef(ctx, task.task_id);
+  if (ref && (await f.getRepoFile(owner, repo, task.fragment, ref)) != null)
+    return { owner, repo, ref };
   return null;
 }
 
-// Commit the work kept from the task's expired claims (`wip-<task_id>`) onto
+// Commit the work kept from the task's expired claims (keptWorkRef) onto
 // the viewer's fresh task branch: the score and the side files it carries.
 // Returns whether there was any.
 async function seedFromKeptWork(
@@ -522,11 +539,11 @@ async function seedFromKeptWork(
   ref: string,
 ): Promise<boolean> {
   const { forge: f, owner, repo } = ctx;
+  const kept = await keptWorkRef(ctx, task.task_id);
+  if (!kept) return false;
   const paths = [task.fragment, ...sideFilesOf(task)];
   const contents = await Promise.all(
-    paths.map((path) =>
-      f.getRepoFile(owner, repo, path, keptWorkBranch(task.task_id)),
-    ),
+    paths.map((path) => f.getRepoFile(owner, repo, path, kept)),
   );
   const files = paths.flatMap((path, i) =>
     contents[i] == null ? [] : [{ path, content: contents[i]! }],
@@ -737,8 +754,8 @@ async function settleWhenProcessed(
       ? "timeout"
       : "accepted";
   console.log("[pending-verdict]", label, "PR", pr.number, state);
-  // A pre-task's work is saved on its task branch while the claim lasts; the
-  // accepted submission ends the claim, and no later claim deletes it.
+  // The task branch holds work of a claim the accepted PR ended or work from
+  // before the claim it started.
   if (state === "accepted" && pr.taskBranch)
     await deleteTaskBranch(ctx, pr.taskBranch);
   verdictSink.settle(
@@ -747,6 +764,30 @@ async function settleWhenProcessed(
     res.error ?? res.message ?? `${label} processed.`,
     runFailed,
   );
+}
+
+// Follow a PR whose verdict did not land within the wait in the background:
+// the task's controls hold under `key` until the verdict lands, and an
+// accepted one deletes the viewer's task branch `encode-<taskBranch>`.
+function followInBackground(
+  ctx: CommandContext,
+  label: string,
+  key: string,
+  pr: { number: number; html_url: string; headSha?: string },
+  taskBranch?: string,
+): void {
+  const id = verdictSink.begin({
+    label,
+    prNumber: pr.number,
+    prUrl: pr.html_url,
+    key,
+    repoId: ctx.repoId,
+    state: "processing",
+  });
+  void settleWhenProcessed({ ...ctx, progress: () => {} }, label, id, {
+    ...pr,
+    taskBranch,
+  });
 }
 
 /**
@@ -835,6 +876,14 @@ async function claimAndWait(
       verdict = { state: "timeout" };
     }
     const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
+    if (verdict.state === "timeout")
+      followInBackground(
+        ctx,
+        `${kind === "validation" ? "Review" : "Encoding"} claim of ${target}`,
+        `claim:${target}`,
+        pr,
+        kind === "encoding" ? task_id : undefined,
+      );
     return verdictResult(
       verdict,
       pr.number,
@@ -1086,6 +1135,14 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         pr.html_url,
         `Release #${pr.number} opened for ${target}.`,
       );
+      if (verdict.state === "timeout")
+        followInBackground(
+          ctx,
+          `Release of ${target}`,
+          `release:${target}`,
+          pr,
+          kind === "encoding" ? task_id : undefined,
+        );
       if (!res.ok || res.outcome === "pending") return res;
       if (kind === "encoding") await deleteTaskBranch(ctx, task_id);
       return { ...res, message: `You abandoned ${target}.` };
@@ -1211,22 +1268,12 @@ const openEditor: CommandDef<
         prUrl = pr.html_url;
         const verdict = await waitForPrProcessed(ctx, pr);
         if (verdict.state === "timeout") {
-          // The claim is followed in the background; its controls hold on
-          // the task until the verdict lands.
-          const label = `Encoding claim of ${task_id}`;
-          const id = verdictSink.begin({
-            label,
-            prNumber: pr.number,
-            prUrl: pr.html_url,
-            key: `claim:${task_id}`,
-            repoId: ctx.repoId,
-            state: "processing",
-          });
-          void settleWhenProcessed(
-            { ...ctx, progress: () => {} },
-            label,
-            id,
+          followInBackground(
+            ctx,
+            `Encoding claim of ${task_id}`,
+            `claim:${task_id}`,
             pr,
+            task_id,
           );
           return {
             ok: true,
@@ -1708,6 +1755,14 @@ const reviewEdit: CommandDef<
         pr.html_url,
         `Review edit #${pr.number} opened for ${target}.`,
       );
+      if (verdict.state === "timeout")
+        followInBackground(
+          ctx,
+          `Review edit of ${target}`,
+          `review-edit:${target}`,
+          pr,
+          task_id,
+        );
       if (!res.ok || res.outcome === "pending") return res;
       // The edit starts from the reviewed submission, not from an earlier
       // branch of the viewer's.
@@ -2108,11 +2163,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       task.fragment,
       model.pages.map((page) => page.image),
     );
-    const blockedBy =
-      task.depends_on &&
-      findRow(state.rows, task.depends_on, "")?.status !== "completed"
-        ? task.depends_on
-        : "";
+    const blockedBy = waitsFor(
+      task.depends_on,
+      (t) => findRow(state.rows, t, "")?.status,
+    );
     return {
       model,
       imageUrls,
@@ -2657,20 +2711,33 @@ export type DraftInput = {
 // `encode-<task_id>` as the files its submission would carry, so the work
 // survives leaving the editor and is kept when the claim expires. A missing
 // branch is created from the campaign's head and first given the work kept
-// from expired claims, whose side files the state may not repeat.
+// from expired claims, whose side files the state may not repeat. A draft is
+// saved only while the viewer holds the task's encoding claim: the end of a
+// claim deletes the branch, and a later save would bring it back.
 const saveDraft: CommandDef<DraftInput, Result> = {
   id: "campaign.saveDraft",
   version: 1,
   log: "none",
   async run(input, ctx) {
-    const { forge: f, owner, repo } = ctx;
+    const { forge: f, owner, repo, viewer } = ctx;
     try {
-      const task = findRow(
-        parseTaskCsv((await f.getRepoFile(owner, repo, TASK_PATH)) ?? ""),
-        input.task_id,
-        "",
-      );
+      const [taskCsv, lockCsv] = await Promise.all([
+        f.getRepoFile(owner, repo, TASK_PATH),
+        f.getRepoFile(owner, repo, LOCK_PATH),
+      ]);
+      const task = findRow(parseTaskCsv(taskCsv ?? ""), input.task_id, "");
       if (!task) return { error: `Unknown task ${input.task_id}.` };
+      const holdsLock = liveLocks(parseLockCsv(lockCsv ?? "")).some(
+        (l) =>
+          l.task_id === task.task_id &&
+          l.subtask_id === "" &&
+          l.kind === "encoding" &&
+          l.user_id === viewer,
+      );
+      if (!holdsLock)
+        return {
+          error: `The draft was not saved: you hold no claim on ${task.task_id}.`,
+        };
       const files: FileChange[] = [];
       if (input.scoreDef) {
         const { content } = await setupScore(ctx, task, input.scoreDef);

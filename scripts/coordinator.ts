@@ -4,9 +4,9 @@
 // applies the result with optimistic concurrency. Every outcome — accepted,
 // rejected, reaped — is appended to the campaign's history table, except the
 // rejection of a pull request that does not parse as any operation
-// (AUDIT_FREE_REJECTS) and the closing of a pull request over the per-author
-// cap. Scheduled runs process any open pull request whose own run was lost
-// (runCatchUp) and then reap stale locks.
+// (AUDIT_FREE_REJECTS). Scheduled runs process any open pull request whose
+// own run was lost or that its run left open over the per-author cap
+// (runCatchUp), and then reap stale locks.
 // See DESIGN.md §4 (the caller) & §6 (PR contract).
 //
 // Runs in the BASE (campaign) repo's context with a write token. The pull
@@ -1023,6 +1023,7 @@ async function decideEncoding(
           verdict.locks,
           task.fragment,
           measuredSurfaceIds(mei!),
+          pastHistory.map((h) => h.task_id),
         )
       : null;
   const newState = replan
@@ -1066,7 +1067,20 @@ async function decideValidation(
   if (!diff || !state.validationColumns.includes(diff.column))
     return { ok: false, reason: "malformed_validation" };
   const status = validationVerdict(diff.value);
-  if (!status) return { ok: false, reason: "invalid_verdict" };
+  if (!status)
+    return {
+      ok: false,
+      reason: "invalid_verdict",
+      history: {
+        timestamp: now,
+        task_id: diff.task_id,
+        subtask_id: diff.subtask_id,
+        user_id: author,
+        action: "submit_validation",
+        outcome: "rejected",
+        detail: "invalid_verdict",
+      },
+    };
 
   // The comment table when the PR touches it (a fail's mandatory comment) or
   // for a pass (it resolves the task's change requests), the config always
@@ -1206,16 +1220,10 @@ async function attemptSubmit(
   logPhase("decide", decideStart);
   if (isAuditFree(outcome)) return outcome;
 
+  // Every decision other than an audit-free rejection carries its history
+  // row, naming the task.
   const history: HistoryRow = {
-    ...(outcome.history ?? {
-      timestamp: now,
-      task_id: "",
-      subtask_id: "",
-      user_id: author,
-      action: `submit_${kind}`,
-      outcome: "rejected",
-      detail: outcome.reason ?? "rejected",
-    }),
+    ...outcome.history!,
     ...historyColumns(envelope),
     pr: String(prNumber),
   };

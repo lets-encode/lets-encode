@@ -99,9 +99,14 @@ function claimForge(
 
 // The forge with history.csv recording the coordinator's acceptance of pull
 // request `pr`, which is how a processed PR's decision is read.
-function withDecision(forge: ForgeClient, pr: number): ForgeClient {
+function withDecision(
+  forge: ForgeClient,
+  pr: number,
+  earlier = "",
+): ForgeClient {
   const history =
     `${HISTORY_COLUMNS.join(",")}\n` +
+    earlier +
     `2026-01-01T00:00:00Z,T0001,,9001,claim_encoding,accepted,,,,,${pr}\n`;
   return new Proxy(forge, {
     get(target, property) {
@@ -423,6 +428,42 @@ test("a poll failure leaves a claim as still-processing, not rejected", async ()
   assert.match(result.message ?? "", /still being processed/);
 });
 
+test("a claim still pending is followed and its accepted verdict deletes the task branch", async () => {
+  const deleted: string[] = [];
+  let polls = 0;
+  const forge = claimForge(18, {
+    getPullRequestState: async () => {
+      if (polls++ === 0) throw new Error("network down");
+      return "closed";
+    },
+    getLastIssueComment: async () => "✅ Claim accepted.",
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    deleteBranch: async (owner, _repo, branch) => {
+      if (branch.startsWith("encode-")) deleted.push(`${owner}:${branch}`);
+    },
+  });
+  const verdict = captureVerdict();
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.claimTask,
+      { task_id: "T0001" },
+      context(withDecision(forge, 18)),
+    ),
+  );
+
+  assert.equal(result.outcome, "pending");
+  assert.deepEqual(deleted, []);
+  assert.equal((await verdict).state, "accepted");
+  assert.deepEqual(deleted, ["volunteer:encode-T0001"]);
+});
+
 test("resolving a comment flips its replies in the PR payload too", async () => {
   const commentCsv =
     "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n" +
@@ -483,6 +524,36 @@ test("a rejected volunteer encoding keeps its fork branch for correction", async
   assert.equal(verdict.state, "rejected");
   assert.match(verdict.message, /invalid_mei/);
   assert.equal(deleted, false);
+});
+
+test("saveDraft saves nothing while the viewer holds no claim on the task", async () => {
+  const files = editorFiles(
+    lockHeader +
+      "T0001,,4242,2026-09-01T00:00:00Z,encoding,2999-01-01T00:00:00Z\n",
+  );
+  let wrote = false;
+  const forge = fakeForge({
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    createBranch: async () => {
+      wrote = true;
+    },
+    commitFiles: async () => {
+      wrote = true;
+      return "c1";
+    },
+  });
+
+  const result = await invoke(
+    commands.saveDraft,
+    { task_id: "T0001", pins: [] },
+    context(forge),
+  );
+
+  assert.equal(
+    result.error,
+    "The draft was not saved: you hold no claim on T0001.",
+  );
+  assert.equal(wrote, false);
 });
 
 // What opening the editor reads: the task and its state, and the lock table.
@@ -602,7 +673,9 @@ test("openEditor selects the first note of a page task's page", async () => {
   assert.equal(url.searchParams.get("speed"), "false");
 });
 
-test("openEditor starts a fresh task branch from the work kept from expired claims", async () => {
+// Open T0001 in the editor with a kept-work branch `wip-T0001`; `earlier`
+// are history rows before the viewer's claim. Returns the commits made.
+async function openWithKeptWorkBranch(earlier: string) {
   const files = editorFiles(lockHeader);
   const commits: {
     owner: string;
@@ -650,11 +723,18 @@ test("openEditor starts a fresh task branch from the work kept from expired clai
     invoke(
       commands.openEditor,
       { task_id: "T0001", campaign: "my-campaign", base: "https://le.test" },
-      context(withDecision(forge, 3)),
+      context(withDecision(forge, 3, earlier)),
     ),
   );
 
   assert.equal(result.ok, true);
+  return commits;
+}
+
+test("openEditor starts a fresh task branch from the work kept from expired claims", async () => {
+  const commits = await openWithKeptWorkBranch(
+    "2025-12-31T00:00:00Z,T0001,,4242,reap,released_with_work,encoding,,,,\n",
+  );
   assert.deepEqual(commits, [
     {
       owner: "volunteer",
@@ -663,6 +743,10 @@ test("openEditor starts a fresh task branch from the work kept from expired clai
       branch: "encode-T0001",
     },
   ]);
+});
+
+test("openEditor ignores a kept-work branch the history does not record", async () => {
+  assert.deepEqual(await openWithKeptWorkBranch(""), []);
 });
 
 test("openEditor keeps the holder's work on an existing task branch", async () => {

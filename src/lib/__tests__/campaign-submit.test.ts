@@ -822,7 +822,7 @@ test("validation: rejects when no open slot remains", () => {
   const state = parseStateCsv(
     STATE_HEADER +
       "T0001,,validation_required,bob,t,\n" +
-      "T0001,S0001,validation_required,,,fail|dave|t\n",
+      "T0001,S0001,validation_required,,,pass|dave|t\n",
   );
   const v = val({
     state,

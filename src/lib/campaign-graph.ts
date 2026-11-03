@@ -4,8 +4,8 @@
 // state.csv, lock.csv and config.yaml, so the projection re-derives on every
 // table refresh. No Svelte, no GitHub.
 
-import { isFinalValidation } from "./campaign-tables.ts";
-import { claimRefusal } from "./campaign-claim.ts";
+import { isPassVerdict } from "./campaign-tables.ts";
+import { claimRefusal, waitsFor } from "./campaign-claim.ts";
 import type { TaskRow, StateRow, LockRow } from "./campaign-tables.ts";
 
 /**
@@ -42,17 +42,11 @@ export type StatusKey =
   | "review"
   | "open";
 
-const STATUS_KEYS = new Set<string>([
-  "completed",
+// The statuses state.csv holds on a task row.
+const TASK_STATUSES = new Set<string>([
   "encoding_required",
-  "encoding",
-  "claimed",
   "validation_required",
-  "pending",
-  "blocked",
-  "pass",
-  "review",
-  "open",
+  "completed",
 ]);
 
 /** One validation slot on its task node. */
@@ -264,7 +258,6 @@ const encodingLock = (d: GraphData, task: string) =>
 const validationLocks = (d: GraphData, task: string, sub: string) =>
   lockIndex(d.locks).get(`${task}|${sub}|validation`) ?? [];
 
-/** The incomplete task this task waits for (task.csv depends_on), or ''. */
 /**
  * Whether `viewer` may claim the task (`sub` '') or a review of its subtask
  * `sub` now, by the rule the campaign automation decides claims with.
@@ -293,11 +286,9 @@ export function canClaim(
   );
 }
 
-export function blockedBy(d: GraphData, task: string): string {
-  const dep = taskDef(d, task)?.depends_on;
-  if (!dep || taskState(d, dep)?.status === "completed") return "";
-  return dep;
-}
+/** The incomplete task this task waits for (task.csv depends_on), or ''. */
+export const blockedBy = (d: GraphData, task: string): string =>
+  waitsFor(taskDef(d, task)?.depends_on, (t) => taskState(d, t)?.status);
 
 const isEncoded = (status: string) =>
   status === "validation_required" || status === "completed";
@@ -305,8 +296,7 @@ const isEncoded = (status: string) =>
 const cellsOf = (d: GraphData, row: StateRow) =>
   d.validationColumns.map((c) => row[c] ?? "");
 const passesOf = (d: GraphData, row: StateRow) =>
-  cellsOf(d, row).filter((c) => isFinalValidation(c) && c.startsWith("pass|"))
-    .length;
+  cellsOf(d, row).filter(isPassVerdict).length;
 
 // Validation locks do not carry a slot number. Assign them in table order to
 // the still-empty validation cells, which is the same order submissions fill.
@@ -322,11 +312,11 @@ const nextUnreservedSlot = (d: GraphData, row: StateRow): number =>
     (cell, slot) => cell === "" && !validationLockForSlot(d, row, slot),
   );
 
-// Whether `viewer` already recorded a final verdict on this subtask row. One
+// Whether `viewer` already recorded a pass on this subtask row. One
 // verdict per person (unless self-validation is allowed), matching checkClaim.
 const hasVerdictBy = (d: GraphData, row: StateRow, viewer: string): boolean =>
   cellsOf(d, row).some(
-    (cell) => isFinalValidation(cell) && cell.split("|")[1] === viewer,
+    (cell) => isPassVerdict(cell) && cell.split("|")[1] === viewer,
   );
 
 // The main node's status key: blocked wins, then a held encoding lock, then
@@ -339,7 +329,7 @@ function mainStatusKey(d: GraphData, task: string): StatusKey {
   if (status === "encoding_required" && encodingLock(d, task)) {
     return isPreTask(taskDef(d, task)?.locator ?? "") ? "claimed" : "encoding";
   }
-  if (STATUS_KEYS.has(status)) return status as StatusKey;
+  if (TASK_STATUSES.has(status)) return status as StatusKey;
   return "pending";
 }
 
@@ -353,8 +343,8 @@ interface SlotState {
   needsAnother?: boolean;
 }
 
-// The slot's state from its validate_status cell: a final verdict renders
-// solid, active locks occupy separate empty slots, and the rest are open.
+// The slot's state from its validate_status cell: a pass renders solid,
+// active locks occupy separate empty slots, and the rest are open.
 // `viewer` tailors the open-slot text: the encoder — and a validator who
 // already recorded a verdict on the subtask — sees that another volunteer is
 // needed rather than a claim prompt.
@@ -366,11 +356,11 @@ function slotState(
   logins: Logins = {},
 ): SlotState {
   const cell = cellsOf(d, row)[slot] ?? "";
-  if (isFinalValidation(cell)) {
-    const [verdict, user, ts] = cell.split("|");
+  if (isPassVerdict(cell)) {
+    const [, user, ts] = cell.split("|");
     return {
-      key: verdict as StatusKey,
-      sub: `@${handle(logins, user)} · ${verdict === "pass" ? "approved" : "changes requested"}`,
+      key: "pass",
+      sub: `@${handle(logins, user)} · approved`,
       running: false,
       user,
       ts,

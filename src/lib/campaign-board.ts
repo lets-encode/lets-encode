@@ -18,7 +18,7 @@ import type {
   NodeSlot,
   StatusKey,
 } from "./campaign-graph.ts";
-import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
+import { findRow, isPassVerdict, pieceIdLabel } from "./campaign-tables.ts";
 import {
   checksOpening,
   keptWorkSince,
@@ -136,14 +136,14 @@ function taskCounts(comments: CommentRow[], task: string): TaskCounts {
 
 const countsTotal = (c: TaskCounts): number => c.fails + c.comments;
 
-/** When a task was finished: its last final verdict, else its encoding time. */
+/** When a task was finished: its last pass verdict, else its encoding time. */
 function finishedAt(d: GraphData, task: string): string {
   let last = "";
   for (const row of d.rows) {
     if (row.task_id !== task || row.subtask_id === "") continue;
     for (const column of d.validationColumns) {
       const cell = row[column] ?? "";
-      if (isFinalValidation(cell)) {
+      if (isPassVerdict(cell)) {
         const ts = cell.split("|")[2];
         if (ts > last) last = ts;
       }

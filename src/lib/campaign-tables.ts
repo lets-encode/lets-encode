@@ -361,9 +361,12 @@ export function findRow<T extends { task_id: string; subtask_id: string }>(
   return rows.find((r) => r.task_id === task_id && r.subtask_id === subtask_id);
 }
 
-/** True if a validate_status cell holds a final outcome (pass/fail) rather than being open. */
-export function isFinalValidation(cell: string): boolean {
-  return /^(pass|fail)\|[^|]+\|[^|]+$/.test(cell);
+/**
+ * True if a validate_status cell holds a pass verdict (`pass|<uid>|<ts>`).
+ * A fail verdict is no cell value: it resets the task's cells.
+ */
+export function isPassVerdict(cell: string): boolean {
+  return /^pass\|[^|]+\|[^|]+$/.test(cell);
 }
 
 /**

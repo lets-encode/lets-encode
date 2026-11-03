@@ -19,7 +19,7 @@ import {
   passThresholdOf,
   configString,
   findRow,
-  isFinalValidation,
+  isPassVerdict,
   parseCommentCsv,
   parseHistoryCsv,
   parseLockCsv,
@@ -577,7 +577,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       (l) => l.kind === "validation" && l.task_id === task,
     );
     const dots = cells.map((cell) =>
-      isFinalValidation(cell) ? ("pass" as const) : ("open" as const),
+      isPassVerdict(cell) ? ("pass" as const) : ("open" as const),
     );
     return {
       campaign: stats.title,

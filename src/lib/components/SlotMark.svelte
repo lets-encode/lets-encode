@@ -1,6 +1,6 @@
 <!--
   The mark of one review slot: the green hand for an approval, a dot for a
-  change request, a held review or an empty slot. Its label names the state
+  held review or an empty slot. Its label names the state
   and, when given, the reviewer.
 -->
 <script module lang="ts">
@@ -8,7 +8,6 @@
   export const slotLabel = (key: string): string =>
     ({
       pass: "approved",
-      fail: "changes requested",
       review: "in review",
     })[key] ?? key;
 </script>
@@ -37,10 +36,6 @@
   .hand-pass {
     height: 14px;
     flex: none;
-  }
-  .dot.fail {
-    background: var(--danger-solid);
-    border-color: var(--danger-solid);
   }
   .dot.review {
     background: var(--info-bg);

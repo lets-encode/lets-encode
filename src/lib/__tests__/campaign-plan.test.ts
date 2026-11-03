@@ -161,6 +161,10 @@ test("nextTaskId continues after the highest T#### in use", () => {
   assert.equal(nextTaskId(withPre), "T0001");
 });
 
+test("nextTaskId skips the ids the history names", () => {
+  assert.equal(nextTaskId(twoTasks, ["T0005", "", "P0001"]), "T0006");
+});
+
 const pieceTasks = parseTaskCsv(
   TASK_HEADER +
     "P0001,,sources/score.mei,omr-layout,,,\n" +
@@ -226,6 +230,19 @@ test("replanPageTasks: an extra measured page gets the next free id", () => {
     "T0005:surface-4",
     "T0004:",
   ]);
+});
+
+test("replanPageTasks: an extra page takes no id of a dropped task the history names", () => {
+  const r = replanPageTasks(
+    pieceTasks,
+    pieceState,
+    [],
+    "sources/score.mei",
+    ["surface-1", "surface-2", "surface-3", "surface-4"],
+    ["T0006"],
+  );
+  assert.ok(r);
+  assert.equal(locatorsOf(r.tasks)[5], "T0007:surface-4");
 });
 
 test("replanPageTasks: page tasks chained to the first page task stay chained", () => {

@@ -15,7 +15,7 @@ import {
   serializeCommentCsv,
   appendComments,
   findRow,
-  isFinalValidation,
+  isPassVerdict,
   configNumber,
   configPieces,
   configPieceRegions,
@@ -114,7 +114,7 @@ test("parseStateCsv: exposes validation columns and keyed task/subtask rows", ()
 test("parseStateCsv: multiple validation columns", () => {
   const { validationColumns } = parseStateCsv(
     "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2,validate_status_3\n" +
-      "T0001,S0001,completed,,,pass|a|t,pass|b|t,fail|c|t\n",
+      "T0001,S0001,completed,,,pass|a|t,pass|b|t,pass|c|t\n",
   );
   assert.deepEqual(validationColumns, [
     "validate_status_1",
@@ -272,15 +272,15 @@ test("comment.csv: rows round-trip, and appending creates the header when missin
   assert.equal(older[0].fragment, "");
 });
 
-test("isFinalValidation: only pass/fail are final", () => {
-  assert.equal(isFinalValidation("pass|alice|t"), true);
-  assert.equal(isFinalValidation("fail|alice|t"), true);
-  assert.equal(isFinalValidation(""), false);
-  assert.equal(isFinalValidation("pass"), false);
-  assert.equal(isFinalValidation("pass||t"), false);
-  assert.equal(isFinalValidation("fail|alice|"), false);
-  assert.equal(isFinalValidation("pass|alice|t|extra"), false);
-  assert.equal(isFinalValidation("pending|alice|t"), false);
+test("isPassVerdict: only a complete pass cell is a verdict", () => {
+  assert.equal(isPassVerdict("pass|alice|t"), true);
+  assert.equal(isPassVerdict("fail|alice|t"), false);
+  assert.equal(isPassVerdict(""), false);
+  assert.equal(isPassVerdict("pass"), false);
+  assert.equal(isPassVerdict("pass||t"), false);
+  assert.equal(isPassVerdict("pass|alice|"), false);
+  assert.equal(isPassVerdict("pass|alice|t|extra"), false);
+  assert.equal(isPassVerdict("pending|alice|t"), false);
 });
 
 test("configPieces: reads the pieces configToYaml writes, in order", () => {

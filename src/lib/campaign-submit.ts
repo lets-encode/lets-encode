@@ -18,7 +18,7 @@ import { alignmentPath } from "./encoding-align.ts";
 import { omrRecordPath } from "./omr-record.ts";
 import {
   findRow,
-  isFinalValidation,
+  isPassVerdict,
   COMMENT_PATH,
   LOCK_PATH,
   STATE_PATH,
@@ -335,10 +335,9 @@ export function checkValidation({
   const nextRow = findRow(next.rows, intent.task_id, intent.subtask_id)!;
   nextRow[slot] = `${intent.verdict}|${author}|${now}`;
 
-  const passCount = next.validationColumns.filter((c) => {
-    const cell = nextRow[c] ?? "";
-    return isFinalValidation(cell) && cell.startsWith("pass|");
-  }).length;
+  const passCount = next.validationColumns.filter((c) =>
+    isPassVerdict(nextRow[c] ?? ""),
+  ).length;
   if (passCount >= passThreshold) nextRow.status = "completed";
 
   // The task completes when its last subtask does.

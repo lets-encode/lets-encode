@@ -1540,6 +1540,7 @@
             {rows}
             {validationColumns}
             {locks}
+            {history}
             {logins}
             {pieceNames}
             busy={runner.busy}

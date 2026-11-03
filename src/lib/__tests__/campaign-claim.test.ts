@@ -301,21 +301,6 @@ test("pass threshold below the slot count counts active locks as prospective pas
   );
 });
 
-test("a fail verdict does not count toward the pass threshold", () => {
-  const state = parseStateCsv(
-    STATE_HEADER_2 +
-      "T0001,,validation_required,bob,t,,\n" +
-      "T0001,S0001,validation_required,,,fail|carol|t,\n",
-  );
-  const v = claim({
-    state,
-    intent: validationIntent,
-    author: "dave",
-    passThreshold: 1,
-  });
-  assert.equal(v.ok, true);
-});
-
 test("locks on other subtasks do not block a claim", () => {
   // A validation lock on S0001 is irrelevant to an encoding claim on the task
   // row, and vice versa — the composite key separates them.

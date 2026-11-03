@@ -13,6 +13,7 @@
   import type { Logins } from "$lib/campaign-graph.ts";
   import { nextTaskId, taskStarted } from "$lib/campaign-plan.ts";
   import type {
+    HistoryRow,
     LockRow,
     StateRow,
     TaskRow,
@@ -25,6 +26,7 @@
     rows,
     validationColumns,
     locks,
+    history,
     logins,
     pieceNames,
     busy,
@@ -35,6 +37,8 @@
     rows: StateRow[];
     validationColumns: string[];
     locks: LockRow[];
+    /** history.csv: a new task takes no id it names. */
+    history: HistoryRow[];
     logins: Logins;
     pieceNames: PieceNames;
     busy: boolean;
@@ -120,7 +124,10 @@
 
   function addTask() {
     const flat = groups.flatMap((g) => [g.task, ...g.subs]);
-    const id = nextTaskId(flat);
+    const id = nextTaskId(flat, [
+      ...taskDefs.map((t) => t.task_id),
+      ...history.map((h) => h.task_id),
+    ]);
     const fragment = fragments[0] ?? "sources/score.mei";
     groups = [
       ...groups,
