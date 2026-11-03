@@ -24,6 +24,7 @@
   } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { REASON_TEXT } from "$lib/coordinator-policy.ts";
+  import { encodingClaimOf } from "$lib/campaign-claim.ts";
   import {
     buildRecord,
     cardPill,
@@ -117,17 +118,7 @@
   // A submission's run state takes the status pill's place while it shows.
   const runState = $derived(pendingVerdicts.forTask(card.task, repoId));
   /** The viewer's encoding claim on the task, if any. */
-  const myEncodingLock = $derived(
-    viewer === ""
-      ? undefined
-      : locks.find(
-          (l) =>
-            l.task_id === card.task &&
-            l.subtask_id === "" &&
-            l.kind === "encoding" &&
-            l.user_id === viewer,
-        ),
-  );
+  const myEncodingLock = $derived(encodingClaimOf(locks, card.task, viewer));
   const mineEncoding = $derived(myEncodingLock !== undefined);
   const record = $derived(buildRecord(card, viewer, logins));
   /** The validation slot the viewer may claim right now, if any. */

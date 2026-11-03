@@ -45,7 +45,12 @@ import {
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { usesOmr } from "./campaign-init.ts";
-import { claimLimitReached, claimRefusal, waitsFor } from "./campaign-claim.ts";
+import {
+  claimLimitReached,
+  claimRefusal,
+  encodingClaimOf,
+  waitsFor,
+} from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -1219,13 +1224,7 @@ const openEditor: CommandDef<
         return { error: `Unknown task ${task_id}.` };
 
       const locks = liveLocks(parseLockCsv(lockCsv ?? ""));
-      const mine = locks.some(
-        (l) =>
-          l.task_id === task_id &&
-          l.subtask_id === "" &&
-          l.kind === "encoding" &&
-          l.user_id === viewer,
-      );
+      const mine = encodingClaimOf(locks, task_id, viewer) !== undefined;
       const claiming = task.status === "encoding_required" && !mine;
       if (
         claiming &&
@@ -2750,13 +2749,12 @@ const saveDraft: CommandDef<DraftInput, Result> = {
       ]);
       const task = findRow(parseTaskCsv(taskCsv ?? ""), input.task_id, "");
       if (!task) return { error: `Unknown task ${input.task_id}.` };
-      const holdsLock = liveLocks(parseLockCsv(lockCsv ?? "")).some(
-        (l) =>
-          l.task_id === task.task_id &&
-          l.subtask_id === "" &&
-          l.kind === "encoding" &&
-          l.user_id === viewer,
-      );
+      const holdsLock =
+        encodingClaimOf(
+          liveLocks(parseLockCsv(lockCsv ?? "")),
+          task.task_id,
+          viewer,
+        ) !== undefined;
       if (!holdsLock)
         return {
           error: `The draft was not saved: you hold no claim on ${task.task_id}.`,

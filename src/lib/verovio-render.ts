@@ -58,10 +58,18 @@ export function getVerovio(): Promise<VerovioToolkit> {
   return loading;
 }
 
-async function loadVerovio(): Promise<VerovioToolkit> {
+/**
+ * A toolkit of its own, for work that loads documents while the shared one
+ * may hold a score preview's: a toolkit holds one loaded document.
+ */
+export async function createToolkit(): Promise<VerovioToolkit> {
   const [{ default: createVerovioModule }, { VerovioToolkit }] =
     await Promise.all([import("verovio/wasm"), import("verovio/esm")]);
-  const tk = new VerovioToolkit(await createVerovioModule());
+  return new VerovioToolkit(await createVerovioModule());
+}
+
+async function loadVerovio(): Promise<VerovioToolkit> {
+  const tk = await createToolkit();
   tk.setOptions({
     footer: "none",
     svgViewBox: true,

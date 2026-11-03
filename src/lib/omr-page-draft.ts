@@ -53,7 +53,17 @@ import { namedPieceStaves, pageChecks } from "./omr-page-checks.ts";
 import { recordApplications } from "./mei-provenance.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { checkMei } from "./mei-check.ts";
-import { getVerovio } from "./verovio-render.ts";
+import { createToolkit } from "./verovio-render.ts";
+import type { VerovioToolkit } from "verovio/esm";
+
+// The transcription is converted in a toolkit of its own, leaving the shared
+// one to the score preview whose document it holds.
+let converter: Promise<VerovioToolkit> | null = null;
+const getConverter = (): Promise<VerovioToolkit> =>
+  (converter ??= createToolkit().catch((err) => {
+    converter = null;
+    throw err;
+  }));
 
 /** The Musibot models the OMR preparation runs, pinned by version. */
 export interface OmrModels {
@@ -181,7 +191,7 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     placementsOf(staves),
     start,
   );
-  const tk = await getVerovio();
+  const tk = await getConverter();
   if (!tk.loadData(stitched.musicxml))
     throw new Error("Verovio could not read the transcription.");
   const draft = insertPageDraft(

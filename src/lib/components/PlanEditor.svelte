@@ -6,7 +6,7 @@
   new task table to the console, which runs the savePlan command.
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
   import { taskDescription, handle } from "$lib/campaign-graph.ts";
@@ -61,6 +61,16 @@
 
   // The draft: a deep copy of the task table, grouped, taken once on entry.
   let groups = $state<Group[]>(buildDraft());
+  const flatRows = (gs: Group[]) => gs.flatMap((g) => [g.task, ...g.subs]);
+  const entered = JSON.stringify(flatRows(untrack(() => groups)));
+  const edited = $derived(JSON.stringify(flatRows(groups)) !== entered);
+  // Leaving with edits not saved asks first.
+  let askingDiscard = $state(false);
+  /** Leave the editor: at once without edits, else after the question. */
+  export function close() {
+    if (edited) askingDiscard = true;
+    else oncancel();
+  }
   function buildDraft(): Group[] {
     return taskDefs
       .filter((t) => t.subtask_id === "")
@@ -246,7 +256,7 @@
         ? "Click again to leave this task where it is."
         : `Click to move task ${picked} here.`;
 
-  const save = () => onsave(groups.flatMap((g) => [g.task, ...g.subs]));
+  const save = () => onsave(flatRows(groups));
 </script>
 
 <div class="plan">
@@ -261,9 +271,19 @@
     <button type="button" class="btn" onclick={addTask} disabled={busy}
       ><Icon name="plus" />Add task</button
     >
-    <button type="button" class="btn" onclick={oncancel} disabled={busy}
-      >Cancel</button
-    >
+    {#if askingDiscard}
+      <span class="pnote">Discard the changes to the plan?</span>
+      <button type="button" class="btn btn-danger" onclick={oncancel}
+        >Discard changes</button
+      >
+      <button type="button" class="btn" onclick={() => (askingDiscard = false)}
+        >Keep editing</button
+      >
+    {:else}
+      <button type="button" class="btn" onclick={close} disabled={busy}
+        >Cancel</button
+      >
+    {/if}
     <button type="button" class="btn btn-primary" onclick={save} disabled={busy}
       >Save the plan</button
     >

@@ -51,6 +51,7 @@
     preTaskHref,
     reviewHref,
   } from "$lib/campaign-graph.ts";
+  import { encodingClaimOf } from "$lib/campaign-claim.ts";
   import {
     buildBoard,
     cardSummary,
@@ -189,6 +190,7 @@
   // view (?score=) over it, and the side panel showing the ?task= task or the
   // campaign. Everything else derives from the tracking tables.
   let manage = $state(false);
+  let planEditor = $state<ReturnType<typeof PlanEditor>>();
   // The side panel's size (side-panels.ts).
   let sidePanel = $state(readSidePanel());
   // The board row's rail takes its wide form only while four lanes fit
@@ -667,16 +669,20 @@
 
   // Read the tracking tables (and privacy/config) for the console. Only the
   // first read shows the loading state; refreshes update the tables in place.
-  // A background poll's failed read keeps the shown tables and throws.
+  // A background poll's failed read keeps the shown tables and throws. Of
+  // reads that overlap, only the latest one started is shown.
+  let loadSeq = 0;
   async function load(background = false) {
     const f = readForge();
     // The title is recorded under the name it was read for.
     const name = campaign;
+    const seq = ++loadSeq;
     readAs = auth.user?.login ?? null;
     if (!loaded) loading = true;
     if (!background) loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
+      if (seq !== loadSeq) return;
       headSha = tables.headSha;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
@@ -710,10 +716,11 @@
       }
       loaded = true;
     } catch (e) {
+      if (seq !== loadSeq) return;
       if (background) throw e;
       loadError = campaignLoadFailure(e);
     } finally {
-      loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
 
@@ -726,7 +733,8 @@
     if (!owner || !repo) return;
     return startAutoRefresh({
       interval: () => (auth.user ? 10_000 : 300_000),
-      held: () => !loaded || loading || runner.busy || manage,
+      // The plan editor holds polling while it is open, not under the score view.
+      held: () => !loaded || loading || runner.busy || (manage && !scoreView),
       poll: async () => {
         const { sha } = await readForge().getRepoHead(owner, repo);
         if (sha !== headSha) await load(true);
@@ -915,14 +923,7 @@
     if (editorError && editorError.task !== task) editorError = null;
   }
   const holdsEncoding = (task: string) =>
-    viewer !== "" &&
-    locks.some(
-      (l) =>
-        l.task_id === task &&
-        l.subtask_id === "" &&
-        l.kind === "encoding" &&
-        l.user_id === viewer,
-    );
+    encodingClaimOf(locks, task, viewer) !== undefined;
   function handleEditorReturn(task: string, status: string, msg: string) {
     console.log("[editor-return]", task, status, {
       holds: holdsEncoding(task),
@@ -1517,7 +1518,8 @@
               type="button"
               class="btn backlink"
               title="Back to the board"
-              onclick={() => (manage = false)}
+              onclick={() =>
+                planEditor ? planEditor.close() : (manage = false)}
               ><Icon name="arrow-left" /> Board</button
             >
             <span class="bcsep">/</span>
@@ -1544,6 +1546,7 @@
             >
           </div>
           <PlanEditor
+            bind:this={planEditor}
             {taskDefs}
             {rows}
             {validationColumns}

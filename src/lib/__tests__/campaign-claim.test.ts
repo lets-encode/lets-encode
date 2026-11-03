@@ -7,7 +7,12 @@ import {
   parseLockCsv,
 } from "../campaign-tables.ts";
 import type { LockRow } from "../campaign-tables.ts";
-import { boundaryCheck, checkClaim, checkRelease } from "../campaign-claim.ts";
+import {
+  boundaryCheck,
+  checkClaim,
+  checkRelease,
+  encodingClaimOf,
+} from "../campaign-claim.ts";
 import type { CheckClaimArgs } from "../campaign-claim.ts";
 
 // A relaxed view of the claim result for assertions, where the branch-specific
@@ -346,4 +351,22 @@ test("release: the holder gives back their own lock", () => {
     release({ intent: { task_id: "T0001", subtask_id: "", kind: "x" } }).reason,
     "invalid_kind",
   );
+});
+
+test("encodingClaimOf finds only the viewer's encoding claim on the task row", () => {
+  const lock = (kind: string, subtask_id: string, user_id: string) => ({
+    task_id: "T0001",
+    subtask_id,
+    user_id,
+    timestamp: "t",
+    kind,
+    expires: "e",
+  });
+  const locks = [
+    lock("validation", "S0001", "bob"),
+    lock("encoding", "", "carol"),
+  ];
+  assert.equal(encodingClaimOf(locks, "T0001", "bob"), undefined);
+  assert.equal(encodingClaimOf(locks, "T0001", "carol"), locks[1]);
+  assert.equal(encodingClaimOf(locks, "T0001", ""), undefined);
 });

@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-03
 
+- Approve waits while a change request is being written, and the plan editor asks before dropping unsaved edits.
+- The campaign page and list keep only their latest reads, and page drafts no longer use the score preview's toolkit.
 - Pre-task pages undo instrument names, approve a setup only after both steps were opened and tint comments in review.
 - The pre-task editors ask before the tab closes while a draft is not yet saved.
 - OMR runs are followed until they settle, stop when their page is left and retry relay refusals like image downloads.

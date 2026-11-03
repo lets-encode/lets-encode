@@ -101,6 +101,22 @@ export function checkClaim({
   };
 }
 
+/** The encoding claim `viewer` holds on the task among `locks`, if any. */
+export const encodingClaimOf = (
+  locks: LockRow[],
+  task_id: string,
+  viewer: string,
+): LockRow | undefined =>
+  viewer === ""
+    ? undefined
+    : locks.find(
+        (l) =>
+          l.task_id === task_id &&
+          l.subtask_id === "" &&
+          l.kind === "encoding" &&
+          l.user_id === viewer,
+      );
+
 /**
  * The task a task depends on (its task.csv `depends_on`) while that task is
  * not completed; '' otherwise. `statusOf` gives a task row's status.

@@ -12,7 +12,7 @@ import type { HistoryRow, TaskRow } from "./campaign-tables.ts";
 import { parseFacsimileMei } from "./mei-facsimile.ts";
 import type { MeasureBox } from "./mei-facsimile.ts";
 import { resolveFacsimileImageUrls } from "./facsimile-images.ts";
-import { renderPage } from "./verovio-render.ts";
+import { createToolkit, renderPage } from "./verovio-render.ts";
 
 export interface PagePreview {
   /** Download URL of the page image; '' = none reachable. */
@@ -222,9 +222,7 @@ function getIncipitToolkit(): Promise<VerovioToolkit> {
 }
 
 async function loadToolkit(): Promise<VerovioToolkit> {
-  const [{ default: createVerovioModule }, { VerovioToolkit }] =
-    await Promise.all([import("verovio/wasm"), import("verovio/esm")]);
-  const tk = new VerovioToolkit(await createVerovioModule());
+  const tk = await createToolkit();
   tk.setOptions(INCIPIT_OPTIONS);
   return tk;
 }

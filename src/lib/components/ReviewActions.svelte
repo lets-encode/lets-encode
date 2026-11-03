@@ -126,6 +126,13 @@
     failForm ? withStaff(failForm.staff, "").length : 0,
   );
   const noteTooLong = $derived(noteLength > MAX_COMMENT_LENGTH);
+  // A change request being written holds Approve, which would drop it.
+  const approveHeld = $derived(
+    approveBlock ??
+      (failForm?.body.trim()
+        ? "Send or discard the change request first."
+        : null),
+  );
 
   async function submitFail(edit: boolean) {
     if (!failForm || !failForm.body.trim() || noteTooLong) return;
@@ -159,8 +166,8 @@
         type="button"
         class="btn btn-primary btn-finish approve"
         onclick={() => onvalidate(sub, "pass")}
-        disabled={runner.busy || processing || approveBlock !== null}
-        title={approveBlock ?? "Approve the submitted work."}>Approve</button
+        disabled={runner.busy || processing || approveHeld !== null}
+        title={approveHeld ?? "Approve the submitted work."}>Approve</button
       >
     {/if}
     <button
