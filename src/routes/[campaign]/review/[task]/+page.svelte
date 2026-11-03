@@ -8,7 +8,7 @@
   new comment. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
-  import { untrack, type Snippet } from "svelte";
+  import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
@@ -158,9 +158,6 @@
   }
   // The side panel's tab: the comments, until a measure is selected.
   let panelTab = $state<"selection" | "comments">("comments");
-  $effect(() => {
-    if (selectedMeasure) untrack(() => (panelTab = "selection"));
-  });
   // A new comment carries the selected measure as its anchor.
   const selectedAnchor = (): CommentAnchorInput | undefined =>
     selectedMeasure
@@ -466,6 +463,7 @@
       selection={measureSelection}
       selectionLabel="Selection"
       selectionActive={!!selectedMeasure}
+      selected={selectedMeasure}
       footer={reviewSub !== undefined ? reviewFooter : undefined}
       bind:tab={panelTab}
       composerHint={selectedMeasure

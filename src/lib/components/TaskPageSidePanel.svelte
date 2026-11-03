@@ -6,7 +6,7 @@
   tools, a selection or a footer gets the score-workspace panel (SidePanel).
 -->
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CampaignTables, Result } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
@@ -36,6 +36,7 @@
     selection,
     selectionLabel,
     selectionActive = false,
+    selected = null,
     tab = $bindable("selection"),
     compose,
     footer,
@@ -72,6 +73,8 @@
     selectionLabel?: string;
     /** Something is selected (SidePanel). */
     selectionActive?: boolean;
+    /** The selected item: each new one shows the selection tab. */
+    selected?: unknown;
     tab?: "selection" | "comments";
     /** Each change opens the comment field (SidePanel). */
     compose?: number;
@@ -91,6 +94,10 @@
     ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
+
+  $effect(() => {
+    if (selected) untrack(() => (tab = "selection"));
+  });
 
   // The pieces the tasks address, in the campaign page's order, so the colour
   // slot matches the piece's tint there.

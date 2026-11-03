@@ -6,7 +6,8 @@
   new task table to the console, which runs the savePlan command.
 -->
 <script lang="ts">
-  import { tick, untrack } from "svelte";
+  import { untrack } from "svelte";
+  import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
   import { taskDescription, handle } from "$lib/campaign-graph.ts";
@@ -185,76 +186,23 @@
     groups = next;
   }
 
-  // Reordering by a task's handle: dragged, the task takes the place of each
-  // row the pointer crosses. A click picks the task and a click on another
-  // task's handle moves it there; the arrow keys move it by one.
+  // Reordering by a task's handle (HandleReorder). A picked task is found
+  // again by its id, so removing or moving a task keeps the pick.
   let rowList = $state<HTMLDivElement | null>(null);
-  let dragging = $state<number | null>(null);
-  // The picked task's id, so removing or moving a task keeps the pick.
-  let picked = $state<string | null>(null);
-  const pickedIndex = $derived(
-    picked === null ? -1 : groups.findIndex((g) => g.task.task_id === picked),
-  );
-  let gesture: { x: number; y: number; moved: boolean } | null = null;
-  let swallowClick = false;
-  function handleDown(i: number, e: PointerEvent) {
-    if (e.button !== 0) return;
-    gesture = { x: e.clientX, y: e.clientY, moved: false };
-    dragging = i;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function handleMove(e: PointerEvent) {
-    if (!gesture || dragging === null || !rowList) return;
-    if (!gesture.moved) {
-      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
-      gesture.moved = true;
-      picked = null;
-    }
-    const rows = [...rowList.querySelectorAll<HTMLElement>(".prow")];
-    const over = rows.findIndex((row) => {
-      const box = row.getBoundingClientRect();
-      return e.clientY >= box.top && e.clientY < box.bottom;
-    });
-    if (over >= 0 && over !== dragging) {
-      moveTask(dragging, over);
-      dragging = over;
-    }
-    const box = rowList.getBoundingClientRect();
-    if (e.clientY < box.top + 40) rowList.scrollTop -= 10;
-    else if (e.clientY > box.bottom - 40) rowList.scrollTop += 10;
-  }
-  function handleUp() {
-    swallowClick = !!gesture?.moved;
-    gesture = null;
-    dragging = null;
-  }
-  function handleClick(i: number) {
-    if (swallowClick) {
-      swallowClick = false;
-      return;
-    }
-    if (pickedIndex < 0) picked = groups[i].task.task_id;
-    else {
-      moveTask(pickedIndex, i);
-      picked = null;
-    }
-  }
-  async function handleKey(i: number, e: KeyboardEvent) {
-    const to =
-      e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : null;
-    if (e.key === "Escape") picked = null;
-    if (to === null || to < 0 || to >= groups.length) return;
-    e.preventDefault();
-    moveTask(i, to);
-    await tick();
-    rowList?.querySelectorAll<HTMLElement>(".grip")[to]?.focus();
-  }
+  const reorder = new HandleReorder({
+    rows: () => [...(rowList?.querySelectorAll<HTMLElement>(".prow") ?? [])],
+    scroller: () => rowList,
+    handle: (i) => rowList?.querySelectorAll<HTMLElement>(".grip")[i],
+    count: () => groups.length,
+    keyOf: (i) => groups[i].task.task_id,
+    move: moveTask,
+  });
   const handleTitle = (i: number) =>
-    pickedIndex < 0
+    reorder.picked < 0
       ? "Drag to move this task. Or click it, then click the task whose place it takes. The arrow keys move it up and down."
-      : pickedIndex === i
+      : reorder.picked === i
         ? "Click again to leave this task where it is."
-        : `Click to move task ${picked} here.`;
+        : `Click to move task ${groups[reorder.picked].task.task_id} here.`;
 
   const save = () => onsave(flatRows(groups));
 </script>
@@ -299,24 +247,24 @@
       <div
         class="prow"
         class:locked={!g.editable}
-        class:dragged={dragging === i && pickedIndex < 0}
-        class:picked={pickedIndex === i}
+        class:dragged={reorder.dragging === i && reorder.picked < 0}
+        class:picked={reorder.picked === i}
         role="row"
         tabindex="-1"
       >
         <button
           type="button"
           class="grip"
-          class:target={pickedIndex >= 0 && pickedIndex !== i}
+          class:target={reorder.picked >= 0 && reorder.picked !== i}
           aria-label={`Task ${g.task.task_id}: move`}
-          aria-pressed={pickedIndex === i}
+          aria-pressed={reorder.picked === i}
           title={handleTitle(i)}
-          onpointerdown={(e) => handleDown(i, e)}
-          onpointermove={handleMove}
-          onpointerup={handleUp}
-          onpointercancel={handleUp}
-          onclick={() => handleClick(i)}
-          onkeydown={(e) => handleKey(i, e)}><Icon name="grip" /></button
+          onpointerdown={(e) => reorder.down(i, e)}
+          onpointermove={(e) => reorder.pointerMove(e)}
+          onpointerup={() => reorder.up()}
+          onpointercancel={() => reorder.up()}
+          onclick={() => reorder.click(i)}
+          onkeydown={(e) => reorder.key(i, e)}><Icon name="grip" /></button
         >
         <div class="pcell-task">
           {#if g.editable}

@@ -428,9 +428,6 @@
   let panelTab = $state<"selection" | "comments">("selection");
   // A comment button counts up to open the panel's comment field.
   let compose = $state(0);
-  $effect(() => {
-    if (selected) untrack(() => (panelTab = "selection"));
-  });
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the pages overflow and the desk scrolls horizontally.
@@ -3390,11 +3387,12 @@
         {selection}
         selectionLabel="Selection"
         selectionActive={!!selectedItem}
+        {selected}
         bind:tab={panelTab}
         {compose}
-        footer={data.status === "encoding_required"
+        footer={session.footerMode === "edit"
           ? footer
-          : session.reviewSub !== undefined
+          : session.footerMode === "review"
             ? reviewFooter
             : undefined}
         bar={inSheet ? sheetBar : undefined}

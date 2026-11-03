@@ -96,6 +96,7 @@
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import ReviewActions from "$lib/components/ReviewActions.svelte";
+  import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
@@ -1002,14 +1003,14 @@
   // Removing or moving a staff by other means drops a staff picked to move.
   function removeStaff(i: number) {
     if (staves.length <= 1) return;
-    picked = null;
+    reorder.drop();
     groups = removeStaffFromGroups(groups, i);
     clearMark();
     staves = staves.filter((_, n) => n !== i);
   }
   function moveStaff(from: number, to: number) {
     if (from === to || to < 0 || to >= staves.length) return;
-    picked = null;
+    reorder.drop();
     groups = moveStaffInGroups(groups, staves.length, from, to);
     clearMark();
     reorderStaves(from, to);
@@ -1021,105 +1022,49 @@
     staves = next;
   }
 
-  // Reordering by a staff's handle (its number): dragged, the staff takes
-  // the place of each row the pointer crosses, and the list scrolls near its
-  // container's edges. A click picks the staff and a click on another
-  // staff's handle moves it there; the arrow keys move it by one.
+  // Reordering by a staff's handle, its number (HandleReorder). A drag's
+  // groups follow one move from the row it began on, as a click move would:
+  // each row crossed starts again from the groups' ranges then.
   let staffList = $state<HTMLOListElement | null>(null);
-  let dragging = $state<number | null>(null);
-  let picked = $state<number | null>(null);
-  // A drag's groups follow one move from the row it began on, as a click
-  // move would: each row crossed starts again from the groups' ranges then.
-  let gesture: {
-    x: number;
-    y: number;
-    moved: boolean;
-    origin: number;
-    groups: { g: StaffGroupModel; start: number; end: number }[];
-  } | null = null;
-  let swallowClick = false;
-  function handleDown(i: number, e: PointerEvent) {
-    if (e.button !== 0) return;
-    gesture = {
-      x: e.clientX,
-      y: e.clientY,
-      moved: false,
-      origin: i,
-      groups: groups.map((g) => ({ g, start: g.start, end: g.end })),
-    };
-    dragging = i;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function handleMove(e: PointerEvent) {
-    if (!gesture || dragging === null || !staffList) return;
-    if (!gesture.moved) {
-      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
-      gesture.moved = true;
-      picked = null;
-    }
-    const rows = [...staffList.children] as HTMLElement[];
-    const over = rows.findIndex((row) => {
-      const box = row.getBoundingClientRect();
-      return e.clientY >= box.top && e.clientY < box.bottom;
-    });
-    if (over >= 0 && over !== dragging) {
-      for (const { g, start, end } of gesture.groups) {
+  let dragGroups: { g: StaffGroupModel; start: number; end: number }[] = [];
+  const reorder = new HandleReorder({
+    rows: () => [...(staffList?.children ?? [])] as HTMLElement[],
+    scroller: () => {
+      let scroller = staffList?.parentElement ?? null;
+      while (
+        scroller &&
+        !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+      )
+        scroller = scroller.parentElement;
+      return scroller;
+    },
+    handle: (i) => staffList?.querySelectorAll<HTMLElement>(".staffgrip")[i],
+    count: () => staves.length,
+    keyOf: (i) => String(i),
+    move: moveStaff,
+    dragStart: () =>
+      (dragGroups = groups.map((g) => ({ g, start: g.start, end: g.end }))),
+    dragMove: (origin, from, to) => {
+      for (const { g, start, end } of dragGroups) {
         g.start = start;
         g.end = end;
       }
       groups = moveStaffInGroups(
-        gesture.groups.map(({ g }) => g),
+        dragGroups.map(({ g }) => g),
         staves.length,
-        gesture.origin,
-        over,
+        origin,
+        to,
       );
       clearMark();
-      reorderStaves(dragging, over);
-      dragging = over;
-    }
-    let scroller = staffList.parentElement;
-    while (
-      scroller &&
-      !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
-    )
-      scroller = scroller.parentElement;
-    if (!scroller) return;
-    const box = scroller.getBoundingClientRect();
-    if (e.clientY < box.top + 40) scroller.scrollTop -= 10;
-    else if (e.clientY > box.bottom - 40) scroller.scrollTop += 10;
-  }
-  function handleUp() {
-    swallowClick = !!gesture?.moved;
-    gesture = null;
-    dragging = null;
-  }
-  function handleClick(i: number) {
-    if (swallowClick) {
-      swallowClick = false;
-      return;
-    }
-    if (picked === null) picked = i;
-    else {
-      moveStaff(picked, i);
-      picked = null;
-    }
-  }
-  async function handleKey(i: number, e: KeyboardEvent) {
-    const to =
-      e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : null;
-    if (e.key === "Escape") picked = null;
-    if (to === null || to < 0 || to >= staves.length) return;
-    e.preventDefault();
-    moveStaff(i, to);
-    await tick();
-    staffList?.querySelectorAll<HTMLElement>(".staffgrip")[to]?.focus();
-  }
+      reorderStaves(from, to);
+    },
+  });
   const handleTitle = (i: number) =>
-    picked === null
+    reorder.picked < 0
       ? "Drag to move this staff. Or click it, then click the staff whose place it takes. The arrow keys move it up and down."
-      : picked === i
+      : reorder.picked === i
         ? "Click again to leave this staff where it is."
-        : `Click to move staff ${picked + 1} here.`;
+        : `Click to move staff ${reorder.picked + 1} here.`;
 
   // ------------------------------------------------------------------------
   // Preview
@@ -1627,28 +1572,29 @@
                     class="staffrow"
                     class:transposing={!unpitched(staff) && transposes(staff)}
                     class:pointed={pointedStaff === i}
-                    class:dragged={dragging === i && picked === null}
-                    class:picked={picked === i}
+                    class:dragged={reorder.dragging === i && reorder.picked < 0}
+                    class:picked={reorder.picked === i}
                     {...pointAt(i)}
                   >
                     {#if canEdit && staves.length > 1}
                       <button
                         type="button"
                         class="grip staffgrip"
-                        class:target={picked !== null && picked !== i}
+                        class:target={reorder.picked >= 0 &&
+                          reorder.picked !== i}
                         style:grid-row="2 / span {transValue(staff) ===
                           'other' && !unpitched(staff)
                           ? 2
                           : 1}"
                         aria-label={`Staff ${i + 1}: move`}
-                        aria-pressed={picked === i}
+                        aria-pressed={reorder.picked === i}
                         title={handleTitle(i)}
-                        onpointerdown={(e) => handleDown(i, e)}
-                        onpointermove={handleMove}
-                        onpointerup={handleUp}
-                        onpointercancel={handleUp}
-                        onclick={() => handleClick(i)}
-                        onkeydown={(e) => handleKey(i, e)}
+                        onpointerdown={(e) => reorder.down(i, e)}
+                        onpointermove={(e) => reorder.pointerMove(e)}
+                        onpointerup={() => reorder.up()}
+                        onpointercancel={() => reorder.up()}
+                        onclick={() => reorder.click(i)}
+                        onkeydown={(e) => reorder.key(i, e)}
                       >
                         <Icon name="grip" />
                       </button>
@@ -2257,9 +2203,9 @@
         selectionActive={canEdit}
         bind:tab={panelTab}
         bind:open={sheetOpen}
-        footer={data.status === "encoding_required"
+        footer={session.footerMode === "edit"
           ? footer
-          : session.reviewSub !== undefined
+          : session.footerMode === "review"
             ? reviewFooter
             : undefined}
         onanchor={showAnchorFor}

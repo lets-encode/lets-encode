@@ -431,9 +431,9 @@
         selectionActive
         bind:tab={panelTab}
         bind:open={sheetOpen}
-        footer={data.status === "encoding_required"
+        footer={session.footerMode === "edit"
           ? footer
-          : session.reviewSub !== undefined
+          : session.footerMode === "review"
             ? reviewFooter
             : undefined}
         onanchor={() => {}}

@@ -142,6 +142,15 @@ export class PreTaskSession {
       ? buildRecord(this.card, this.viewer).find((r) => r.mine)?.sub
       : undefined,
   );
+  /** What the side panel's footer holds: the editor's actions while the
+      task is encoded, the viewer's verdict while they hold its review. */
+  footerMode = $derived<"edit" | "review" | null>(
+    this.data?.status === "encoding_required"
+      ? "edit"
+      : this.reviewSub !== undefined
+        ? "review"
+        : null,
+  );
 
   constructor(name: () => string, taskId: () => string, hooks: PreTaskHooks) {
     this.#name = name;

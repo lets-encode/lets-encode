@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-03
 
+- The setup's staff list and the plan editor share one reorder control, and the task pages share their panel tab and footer rules.
 - Approve waits while a change request is being written, and the plan editor asks before dropping unsaved edits.
 - The campaign page and list keep only their latest reads, and page drafts no longer use the score preview's toolkit.
 - Pre-task pages undo instrument names, approve a setup only after both steps were opened and tint comments in review.
