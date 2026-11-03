@@ -3,20 +3,22 @@
   material pane: a toolbar naming the piece being marked, and the pages in a
   grid under it.
 
-  A sibling of the measure zone editor: the same SVG rectangle model (draw on
-  the background, drag to move, corner handle to resize, arrow keys to nudge),
-  but the rectangles are far coarser — one per stretch of a page a piece
-  occupies — and each is coloured and labelled by its piece. Regions drawn while
-  a piece is selected belong to that piece, so a piece can span several pages
-  and two pieces can share one, as long as their regions do not overlap.
+  Edited with the box editor the measure zone editor uses
+  (box-editor.svelte.ts: draw on the background or click two corners, drag
+  to move, corner handle to resize, arrow keys to nudge), but the rectangles
+  are far coarser — one per stretch of a page a piece occupies — and each is
+  coloured and labelled by its piece. Regions drawn while a piece is selected
+  belong to that piece, so a piece can span several pages and two pieces can
+  share one, as long as their regions do not overlap.
 
   Coordinates are the page image's own pixels, which is what the detector
   returns boxes in, so no rescaling is needed when the boxes are partitioned.
 
   On touch the toolbar holds a piece picker, a Draw toggle and Select
-  several. In Draw one finger draws, moves and resizes, and two fingers pan
-  and zoom; a second finger landing mid-edit undoes the edit it interrupted.
-  Out of Draw a finger or a pen scrolls and nothing is edited.
+  several. In Draw a tap selects a region, the selected region drags and
+  resizes, a drag on the page draws, and two fingers pan and zoom; a second
+  finger landing mid-edit undoes the edit it interrupted. Out of Draw a
+  finger or a pen scrolls, and a double tap on a region turns Draw on.
 
   Several regions of one page can be selected together: Shift+click adds or
   removes one, Shift+drag selects every region its rectangle touches, and
@@ -24,19 +26,8 @@
   copies and is deleted as a whole. Undo and redo restore the regions.
 -->
 <script lang="ts">
-  import {
-    arrowShift,
-    boundingBox,
-    boxesTouch,
-    copyPlace,
-    drawnBox,
-    drawStarted,
-    movedBox,
-    movedBoxes,
-    nudgedEdges,
-    pagePoint,
-    resizedBox,
-  } from "$lib/box-geometry.ts";
+  import { drawnBox, type Box } from "$lib/box-geometry.ts";
+  import { BoxEditor } from "$lib/box-editor.svelte.ts";
   import {
     overlappingPiece,
     pieceColour,
@@ -97,223 +88,103 @@
   let svgWidths = $state<number[]>([]);
   let failed = $state<Record<number, boolean>>({});
 
-  // The region being drawn, moved or resized, addressed by page, piece and
-  // index within that piece so the reference survives a re-render.
-  type Corner = "nw" | "ne" | "sw" | "se";
-  type Drag = {
-    kind: "draw" | "move" | "resize";
-    page: number;
-    piece: number;
-    zone: number;
-    sx: number;
-    sy: number;
-    origin: PieceZone;
-    /** Which corner a resize grabbed. */
-    corner?: Corner;
-    /** A draw creates its zone only once the pointer has moved a few
-        millimetres on screen, so a plain click leaves nothing behind. */
-    started?: boolean;
-    /** A background press that cleared a selection only deselects; it never
-        sets a corner. */
-    deselected?: boolean;
-    /** A Cmd/Ctrl move drags a copy: the index of the region it copies. */
-    copyOf?: number;
-    /** A move of a group: each region and where it started. */
-    members?: { zone: PieceZone; origin: PieceZone }[];
-    /** A Cmd/Ctrl move of a group: the regions it copies. */
-    copied?: PieceZone[];
-    /** A group moves only once the pointer has travelled a few millimetres. */
-    moved?: boolean;
-  };
-  let drag: Drag | null = null;
-  // A Shift+drag's rectangle, in page pixels: every region it touches joins
-  // the regions selected when it began (base). A Shift+click without a drag
-  // adds the region it was on (hit) or takes it out.
-  let marquee = $state.raw<{
-    surface: number;
-    sx: number;
-    sy: number;
-    x: number;
-    y: number;
-    moved: boolean;
-    base: PieceZone[];
-    hit: PieceZone | null;
-  } | null>(null);
-  // The first corner of a region drawn by two clicks instead of a drag, in
-  // page pixels. A second click on the same page for the same piece completes
-  // the region; a second click on the same spot clears the corner.
-  let firstCorner = $state<{
-    surface: number;
-    piece: number;
-    x: number;
-    y: number;
-  } | null>(null);
-
-  // What a finger does on the pages; a mouse or pen always edits. A finger
-  // starts by scrolling, so reaching the next page draws nothing.
-  let touchMode = $state<"draw" | "scroll">("scroll");
-  // Fingers down on the pages. A second one turns the touch into a pan and
-  // zoom, and no finger edits again until all have lifted.
-  const fingers = new Set<number>();
-  let gestureHeld = false;
-
-  /** Whether this press may start an edit, keeping count of the fingers. */
-  function mayEdit(e: PointerEvent): boolean {
-    if (e.pointerType === "mouse") return true;
-    if (e.pointerType === "touch") fingers.add(e.pointerId);
-    return !gestureHeld && touchMode === "draw";
-  }
-  function holdGesture() {
-    gestureHeld = true;
-    cancelDrag();
-  }
-  function releaseFinger(e: PointerEvent) {
-    if (e.pointerType !== "touch") return;
-    fingers.delete(e.pointerId);
-    if (!fingers.size) gestureHeld = false;
-  }
-
-  /** Undo the edit in progress: a drawn region goes, a moved one returns. */
-  function cancelDrag() {
-    if (marquee) {
-      selectRegions(marquee.base);
-      marquee = null;
-    }
-    if (!drag) return;
-    const { kind, piece, zone, origin, started, copyOf, members, copied } =
-      drag;
-    drag = null;
-    if (members) {
-      if (copied) dropCopies(members, copied);
-      else members.forEach((m) => Object.assign(m.zone, m.origin));
-    } else if (copyOf !== undefined) {
-      pieces[piece].zones.splice(zone, 1);
-      selectedZone = { piece, zone: copyOf };
-    } else if (kind === "draw") {
-      if (started) {
-        pieces[piece].zones.splice(zone, 1);
-        selectedZone = null;
-      }
-    } else {
-      Object.assign(pieces[piece].zones[zone], origin);
-    }
-  }
   // Arrow keys move a region NUDGE page pixels, NUDGE_FAR with Shift.
   const NUDGE = 4;
   const NUDGE_FAR = 20;
-  let selectedZone = $state<{ piece: number; zone: number } | null>(null);
-  // Several regions of one page selected together, `selectedZone` among
-  // them. Held as the regions, since removing one changes the indices;
-  // empty while one region or none is selected.
-  let group = $state.raw<PieceZone[]>([]);
-  // Select several: a click or tap on a region adds it to the selection or
-  // takes it out.
-  let pickMode = $state(false);
-  // Selecting a region outside the group ends the group; selecting nothing
-  // also ends Select several.
-  $effect(() => {
-    const s = selectedZone;
-    untrack(() => {
-      if (!s || !group.includes(pieces[s.piece]?.zones[s.zone])) group = [];
-      if (!s) pickMode = false;
-    });
-  });
-  // Undo and redo: a snapshot of every piece's regions, by piece id, taken
-  // when a pointer release, key release or click leaves them changed. Adding
-  // or removing a piece starts the history again: a new piece can take a
-  // removed piece's id.
-  const HISTORY_LIMIT = 100;
-  type Snapshot = Record<string, PieceZone[]>;
-  const snapshot = (): Snapshot =>
-    Object.fromEntries(
-      pieces.map((piece) => [piece.id, piece.zones.map((z) => ({ ...z }))]),
-    );
-  let history = $state.raw<Snapshot[]>([]);
-  let historyIndex = $state(-1);
-  const canUndo = $derived(historyIndex > 0);
-  const canRedo = $derived(historyIndex < history.length - 1);
-  function commit() {
-    if (drag) return;
-    const now = snapshot();
-    const last = history[historyIndex];
-    if (JSON.stringify(now) === JSON.stringify(last)) return;
-    const ids = (snap: Snapshot) => Object.keys(snap).join("\n");
-    if (!last || ids(now) !== ids(last)) {
-      history = [now];
-      historyIndex = 0;
-      return;
-    }
-    history = [
-      ...history.slice(
-        Math.max(0, historyIndex + 2 - HISTORY_LIMIT),
-        historyIndex + 1,
-      ),
-      now,
-    ];
-    historyIndex = history.length - 1;
-  }
-  $effect(() => untrack(commit));
-  function restore(i: number) {
-    historyIndex = i;
-    for (const piece of pieces) {
-      const zones = history[i][piece.id];
-      if (zones) piece.zones = zones.map((z) => ({ ...z }));
-    }
-    selectedZone = null;
-    firstCorner = null;
-  }
-  function undo() {
-    if (canUndo && !drag) restore(historyIndex - 1);
-  }
-  function redo() {
-    if (canRedo && !drag) restore(historyIndex + 1);
-  }
 
-  // The group's regions with their piece and index; empty without a group.
-  const members = $derived.by(() => {
-    if (group.length < 2) return [];
-    const found = pieces.flatMap((piece, p) =>
-      piece.zones
-        .map((zone, z) => ({ zone, p, z }))
-        .filter(({ zone }) => group.includes(zone)),
-    );
-    return found.length > 1 ? found : [];
+  // The selection, the gestures and the undo history of the regions
+  // (box-editor.svelte.ts). A page's items are its regions of every piece;
+  // a snapshot holds every piece's regions by piece id.
+  type Snapshot = Record<string, PieceZone[]>;
+  const ed = new BoxEditor<PieceZone, Snapshot>({
+    items: (surface) => zonesOn(surface).map(({ zone }) => zone),
+    box: (zone) => zone,
+    page: (surface) => pages[surface],
+    surface: (surface) => svgEls[surface],
+    screenWidth: (surface) => svgWidths[surface] || 400,
+    canEdit: () => true,
+    canDraw: () => pieces[selectedPiece]?.kind === "facsimile",
+    shown: () => true,
+    touch: () => wizardLayout.coarse,
+    scope: () => selectedPiece,
+    // A region is drawn for the selected piece; a copy belongs to the piece
+    // of the region it copies.
+    add: (surface, box, like) => {
+      const zones = pieces[like ? locate(like)!.piece : selectedPiece].zones;
+      zones.push({
+        surface,
+        ulx: box.ulx,
+        uly: box.uly,
+        lrx: box.lrx,
+        lry: box.lry,
+      });
+      return zones[zones.length - 1];
+    },
+    remove: (_, zone) => {
+      const at = locate(zone);
+      if (at) pieces[at.piece].zones.splice(at.zone, 1);
+    },
+    minSize: (surface) => minSizeOn(surface),
+    dropBelow: (surface) => minSizeOn(surface),
+    nudge: { near: NUDGE, far: NUDGE_FAR },
+    snap: (surface, box, own, keepSize) =>
+      keepSize ? snapWhole(box, surface, own) : snapEdges(box, surface, own),
+    // Regions of two pieces cannot overlap.
+    accept: (surface, edited) => {
+      const clash = firstClash(edited);
+      notice = clash === -1 ? null : overlapNotice(clash, surface);
+      return clash === -1;
+    },
+    changed: () => {
+      notice = null;
+      ed.commit();
+    },
+    scroller: () => body,
+    snapshot: () =>
+      Object.fromEntries(
+        pieces.map((piece) => [piece.id, piece.zones.map((z) => ({ ...z }))]),
+      ),
+    restore: (snap) => {
+      for (const piece of pieces) {
+        const zones = snap[piece.id];
+        if (zones) piece.zones = zones.map((z) => ({ ...z }));
+      }
+    },
   });
-  const inSelection = (p: number, z: number) =>
-    (selectedZone?.piece === p && selectedZone.zone === z) ||
-    members.some((m) => m.p === p && m.z === z);
-  // The selected regions: the group, or the one region.
-  const selectedRegions = (): PieceZone[] =>
-    members.length
-      ? members.map((m) => m.zone)
-      : selectedZone
-        ? [pieces[selectedZone.piece]?.zones[selectedZone.zone]].filter(Boolean)
-        : [];
+  $effect(() => ed.listen());
+  // Adding or removing a piece starts the history again: a new piece can
+  // take a removed piece's id.
+  const pieceIds = $derived(pieces.map((piece) => piece.id).join("\n"));
+  $effect(() => {
+    void pieceIds;
+    untrack(() => ed.resetHistory());
+  });
+  // A change of the regions made outside the editor (the pieces form) is an
+  // undo step too.
+  $effect(() => {
+    if (ed.dragging) return;
+    JSON.stringify(pieces.map((piece) => piece.zones));
+    untrack(() => ed.commit());
+  });
+
+  // A region's piece and index.
   const locate = (zone: PieceZone) => {
     const piece = pieces.findIndex((pc) => pc.zones.includes(zone));
     return piece < 0
       ? null
       : { piece, zone: pieces[piece].zones.indexOf(zone) };
   };
-  // Select the regions `list`; the selected region stays selected where it
-  // is in the list.
-  function selectRegions(list: PieceZone[]) {
-    const now = selectedZone
-      ? pieces[selectedZone.piece]?.zones[selectedZone.zone]
-      : undefined;
-    const primary = now && list.includes(now) ? now : list[list.length - 1];
-    group = list.length > 1 ? list : [];
-    selectedZone = primary ? locate(primary) : null;
-  }
-  // Add a region to the selection, or take it out. A selection holds the
-  // regions of one page.
-  function toggleRegion(p: number, z: number) {
-    const zone = pieces[p].zones[z];
-    const now = selectedRegions().filter((r) => r.surface === zone.surface);
-    selectRegions(
-      now.includes(zone) ? now.filter((r) => r !== zone) : [...now, zone],
-    );
-  }
+  // The selected region by piece and index, and the group's regions with
+  // theirs; empty without a group.
+  const selectedZone = $derived(ed.selected ? locate(ed.selected.item) : null);
+  const members = $derived(
+    ed.group.flatMap((zone) => {
+      const at = locate(zone);
+      return at ? [{ zone, p: at.piece, z: at.zone }] : [];
+    }),
+  );
+  const inSelection = (p: number, z: number) =>
+    ed.inSelection(pieces[p].zones[z]);
   // The first piece another piece's region of `zones` overlaps; -1 for none.
   const firstClash = (zones: PieceZone[]) => {
     for (const zone of zones) {
@@ -322,48 +193,6 @@
     }
     return -1;
   };
-  // Remove regions; nothing stays selected.
-  function removeRegions(zones: PieceZone[]) {
-    for (const zone of zones) {
-      const at = locate(zone);
-      if (at) pieces[at.piece].zones.splice(at.zone, 1);
-    }
-    selectedZone = null;
-  }
-  // Undo a Cmd/Ctrl move of a group: its copies go, and the regions it
-  // copied are selected again.
-  function dropCopies(
-    moving: NonNullable<Drag["members"]>,
-    copied: PieceZone[],
-  ) {
-    removeRegions(moving.map((m) => m.zone));
-    selectRegions(copied);
-  }
-  // Copies of the selected group beside it (copyPlace), selected in its
-  // place, unless they would overlap another piece's region.
-  function duplicateGroup() {
-    if (!members.length) return;
-    const surface = members[0].zone.surface;
-    const page = pages[surface];
-    if (!page) return;
-    const boxes = copyPlace(
-      members.map((m) => m.zone),
-      page,
-    );
-    const copies = members.map((m, i) => {
-      const zones = pieces[m.p].zones;
-      zones.push({ surface, ...boxes[i] });
-      return zones[zones.length - 1];
-    });
-    const clash = firstClash(copies);
-    notice = clash === -1 ? null : overlapNotice(clash, surface);
-    if (clash === -1) selectRegions(copies);
-    else {
-      const keep = members.map((m) => m.zone);
-      removeRegions(copies);
-      selectRegions(keep);
-    }
-  }
   // What the last edit did or refused to do, shown until the next one.
   let notice = $state<string | null>(null);
 
@@ -380,210 +209,20 @@
   const minSizeOn = (surface: number) =>
     Math.max(pages[surface]?.width ?? 0, 1) * 0.02;
 
-  function svgXY(
-    e: { clientX: number; clientY: number },
-    surface: number,
-  ): { x: number; y: number } {
-    const svg = svgEls[surface];
-    const page = pages[surface];
-    if (!svg || !page) return { x: 0, y: 0 };
-    return pagePoint(e, svg.getBoundingClientRect(), page);
-  }
-
-  function backgroundPointerDown(e: PointerEvent, surface: number) {
-    if (!mayEdit(e)) return;
-    // A Shift+drag selects the regions it touches, adding them to the
-    // selection.
-    if (e.shiftKey) {
-      startMarquee(e, surface, null);
-      return;
-    }
-    const deselected = selectedZone !== null;
-    selectedZone = null;
-    const piece = pieces[selectedPiece];
-    if (!piece || piece.kind !== "facsimile") return;
-    const { x, y } = svgXY(e, surface);
-    drag = {
-      kind: "draw",
-      page: surface,
-      piece: selectedPiece,
-      zone: -1,
-      sx: x,
-      sy: y,
-      origin: { surface, ulx: x, uly: y, lrx: x, lry: y },
-      started: false,
-      deselected,
-    };
-  }
-
-  function cornerClick(surface: number, p: number, x: number, y: number) {
-    const first = firstCorner;
-    firstCorner = null;
-    if (!first || first.surface !== surface || first.piece !== p) {
-      firstCorner = { surface, piece: p, x, y };
-      return;
-    }
-    const minSize = minSizeOn(surface);
-    const zone: PieceZone = {
-      surface,
-      ...drawnBox(first.x, first.y, x, y, minSize),
-    };
-    if (zone.lrx - zone.ulx < minSize || zone.lry - zone.uly < minSize) return;
-    snapToNeighbours(zone, surface, () => false);
-    const clash = overlappingPiece(pieces, p, zone);
-    notice = clash === -1 ? null : overlapNotice(clash, surface);
-    if (clash !== -1) return;
-    pieces[p].zones.push(zone);
-    selectedZone = { piece: p, zone: pieces[p].zones.length - 1 };
-  }
-
-  function zonePointerDown(
-    e: PointerEvent,
-    surface: number,
-    p: number,
-    z: number,
-  ) {
-    e.stopPropagation();
-    if (!mayEdit(e)) return;
-    firstCorner = null;
-    // With Shift a click adds the region to the selection or takes it out,
-    // and a drag selects with a rectangle; in Select several a click adds a
-    // region.
-    if (e.shiftKey || (pickMode && !inSelection(p, z))) {
-      if (e.shiftKey) startMarquee(e, surface, pieces[p].zones[z]);
-      else toggleRegion(p, z);
-      return;
-    }
-    const origin = { ...pieces[p].zones[z] };
-    // Cmd (Mac) or Ctrl drags a copy of the region; the original stays.
-    const copy = /Mac|iPhone|iPad/.test(navigator.userAgent)
-      ? e.metaKey
-      : e.ctrlKey;
-    const { x, y } = svgXY(e, surface);
-    // A region of a group moves the whole group, or with Cmd/Ctrl a copy of
-    // it.
-    const pressed = pieces[p].zones[z];
-    if (members.some((m) => m.zone === pressed)) {
-      const together = members.map((m) => m.zone);
-      const moving = copy
-        ? members.map((m) => {
-            const zones = pieces[m.p].zones;
-            zones.push({ ...m.zone });
-            return zones[zones.length - 1];
-          })
-        : together;
-      group = moving;
-      selectedZone = locate(moving[together.indexOf(pressed)]);
-      drag = {
-        kind: "move",
-        page: surface,
-        piece: selectedZone!.piece,
-        zone: selectedZone!.zone,
-        sx: x,
-        sy: y,
-        origin,
-        members: moving.map((zone, i) => ({
-          zone,
-          origin: { ...together[i] },
-        })),
-        copied: copy ? together : undefined,
-      };
-      return;
-    }
-    const zone = copy ? pieces[p].zones.push({ ...origin }) - 1 : z;
-    selectedZone = { piece: p, zone };
-    drag = {
-      kind: "move",
-      page: surface,
-      piece: p,
-      zone,
-      sx: x,
-      sy: y,
-      origin,
-      copyOf: copy ? z : undefined,
-    };
-  }
-
-  function handlePointerDown(
-    e: PointerEvent,
-    surface: number,
-    p: number,
-    z: number,
-    corner: Corner,
-  ) {
-    e.stopPropagation();
-    if (!mayEdit(e)) return;
-    firstCorner = null;
-    selectedZone = { piece: p, zone: z };
-    const { x, y } = svgXY(e, surface);
-    drag = {
-      kind: "resize",
-      page: surface,
-      piece: p,
-      zone: z,
-      sx: x,
-      sy: y,
-      origin: { ...pieces[p].zones[z] },
-      corner,
-    };
-  }
-
-  // A Shift press on a page, on region `hit` or the background (null).
-  function startMarquee(
-    e: PointerEvent,
-    surface: number,
-    hit: PieceZone | null,
-  ) {
-    const { x, y } = svgXY(e, surface);
-    marquee = {
-      surface,
-      sx: x,
-      sy: y,
-      x,
-      y,
-      moved: false,
-      base: selectedRegions().filter((r) => r.surface === surface),
-      hit,
-    };
-  }
-  function marqueeTo(e: { clientX: number; clientY: number }) {
-    const m = marquee!;
-    const page = pages[m.surface];
-    if (!page) return;
-    const { x, y } = svgXY(e, m.surface);
-    if (
-      !m.moved &&
-      !drawStarted(x - m.sx, y - m.sy, page, svgWidths[m.surface] || 400)
-    )
-      return;
-    marquee = { ...m, x, y, moved: true };
-    const area = drawnBox(m.sx, m.sy, x, y, 0);
-    const hits = zonesOn(m.surface)
-      .map(({ zone }) => zone)
-      .filter((zone) => boxesTouch(area, zone) && !m.base.includes(zone));
-    selectRegions([...m.base, ...hits]);
-  }
-
   // An edge within a few screen pixels of another region's edge snaps to it,
   // so regions sit exactly side by side instead of overlapping by a stray
-  // pixel, which would reject the region.
-  function snapToNeighbours(
-    zone: PieceZone,
-    surface: number,
-    skip: (other: PieceZone) => boolean,
-  ) {
+  // pixel, which would reject the region. `own` are the regions being edited.
+  function snapEdges(box: Box, surface: number, own: PieceZone[]): Box {
     const page = pages[surface];
-    if (!page) return;
+    if (!page) return box;
     const tolerance = 6 * (page.width / (svgWidths[surface] || 400));
     const xs: number[] = [];
     const ys: number[] = [];
-    pieces.forEach((pc) =>
-      pc.zones.forEach((o) => {
-        if (o.surface !== surface || skip(o)) return;
-        xs.push(o.ulx, o.lrx);
-        ys.push(o.uly, o.lry);
-      }),
-    );
+    for (const { zone: o } of zonesOn(surface)) {
+      if (own.includes(o)) continue;
+      xs.push(o.ulx, o.lrx);
+      ys.push(o.uly, o.lry);
+    }
     const snap = (v: number, edges: number[]) => {
       let best = v;
       let dist = tolerance;
@@ -596,326 +235,30 @@
       }
       return best;
     };
-    zone.ulx = snap(zone.ulx, xs);
-    zone.lrx = snap(zone.lrx, xs);
-    zone.uly = snap(zone.uly, ys);
-    zone.lry = snap(zone.lry, ys);
-  }
-
-  // Dragging near the pane's edge scrolls it, so a region can be drawn or
-  // moved past what is in view; the edit follows the pointer as it scrolls.
-  const EDGE = 40;
-  let lastPointer: { clientX: number; clientY: number } | null = null;
-  let edgeScroll = 0;
-  function scrollAtEdge() {
-    edgeScroll = 0;
-    if (!drag || !lastPointer || !body) return;
-    const box = body.getBoundingClientRect();
-    const step = (inside: number) => Math.ceil((EDGE - inside) / 4);
-    const { clientX: x, clientY: y } = lastPointer;
-    const dy =
-      y < box.top + EDGE
-        ? -step(y - box.top)
-        : y > box.bottom - EDGE
-          ? step(box.bottom - y)
-          : 0;
-    const dx =
-      x < box.left + EDGE
-        ? -step(x - box.left)
-        : x > box.right - EDGE
-          ? step(box.right - x)
-          : 0;
-    const top = body.scrollTop;
-    const left = body.scrollLeft;
-    body.scrollTop += dy;
-    body.scrollLeft += dx;
-    if (body.scrollTop !== top || body.scrollLeft !== left)
-      applyDrag(lastPointer);
-    edgeScroll = requestAnimationFrame(scrollAtEdge);
-  }
-
-  function pointerMove(e: PointerEvent) {
-    if (marquee) marqueeTo(e);
-    if (!drag) return;
-    lastPointer = { clientX: e.clientX, clientY: e.clientY };
-    applyDrag(lastPointer);
-    if (!edgeScroll) edgeScroll = requestAnimationFrame(scrollAtEdge);
-  }
-
-  function applyDrag(e: { clientX: number; clientY: number }) {
-    if (!drag) return;
-    const page = pages[drag.page];
-    if (!page) return;
-    const { x, y } = svgXY(e, drag.page);
-    if (drag.kind === "draw" && !drag.started) {
-      // No region until the pointer has dragged a few millimetres.
-      if (
-        !drawStarted(
-          x - drag.sx,
-          y - drag.sy,
-          page,
-          svgWidths[drag.page] || 400,
-        )
-      )
-        return;
-      firstCorner = null;
-      const piece = pieces[drag.piece];
-      piece.zones.push({ ...drag.origin });
-      drag.zone = piece.zones.length - 1;
-      drag.started = true;
-      selectedZone = { piece: drag.piece, zone: drag.zone };
-    }
-    if (drag.members) {
-      if (
-        !drag.moved &&
-        !drawStarted(
-          x - drag.sx,
-          y - drag.sy,
-          page,
-          svgWidths[drag.page] || 400,
-        )
-      )
-        return;
-      drag.moved = true;
-      const moved = movedBoxes(
-        drag.members.map((m) => m.origin),
-        x - drag.sx,
-        y - drag.sy,
-        page,
-      );
-      const own = drag.members.map((m) => m.zone);
-      const { dx, dy } = snapShift(
-        { surface: drag.page, ...boundingBox(moved) },
-        drag.page,
-        (o) => own.includes(o),
-      );
-      drag.members.forEach((m, i) =>
-        Object.assign(m.zone, movedBox(moved[i], dx, dy, page)),
-      );
-      return;
-    }
-    const zone = pieces[drag.piece].zones[drag.zone];
-    const minSize = minSizeOn(drag.page);
-    if (drag.kind === "move") {
-      Object.assign(
-        zone,
-        movedBox(drag.origin, x - drag.sx, y - drag.sy, page),
-      );
-      const { dx, dy } = snapShift(zone, drag.page, (o) => o === zone);
-      zone.ulx += dx;
-      zone.lrx += dx;
-      zone.uly += dy;
-      zone.lry += dy;
-    } else if (drag.kind === "draw") {
-      Object.assign(zone, drawnBox(drag.sx, drag.sy, x, y, minSize));
-      snapToNeighbours(zone, drag.page, (o) => o === zone);
-    } else {
-      // Resizing moves the grabbed corner's two edges.
-      Object.assign(
-        zone,
-        resizedBox(drag.origin, drag.corner ?? "se", x, y, minSize),
-      );
-      snapToNeighbours(zone, drag.page, (o) => o === zone);
-    }
+    return {
+      ulx: snap(box.ulx, xs),
+      uly: snap(box.uly, ys),
+      lrx: snap(box.lrx, xs),
+      lry: snap(box.lry, ys),
+    };
   }
 
   // Snapping shifts a moved region or group, keeping its size: whichever
   // edge of `box` snaps decides the shift.
-  function snapShift(
-    box: PieceZone,
-    surface: number,
-    skip: (other: PieceZone) => boolean,
-  ) {
-    const snapped = { ...box };
-    snapToNeighbours(snapped, surface, skip);
+  function snapWhole(box: Box, surface: number, own: PieceZone[]): Box {
+    const to = snapEdges(box, surface, own);
+    const dx = to.ulx !== box.ulx ? to.ulx - box.ulx : to.lrx - box.lrx;
+    const dy = to.uly !== box.uly ? to.uly - box.uly : to.lry - box.lry;
     return {
-      dx:
-        snapped.ulx !== box.ulx ? snapped.ulx - box.ulx : snapped.lrx - box.lrx,
-      dy:
-        snapped.uly !== box.uly ? snapped.uly - box.uly : snapped.lry - box.lry,
+      ulx: box.ulx + dx,
+      uly: box.uly + dy,
+      lrx: box.lrx + dx,
+      lry: box.lry + dy,
     };
-  }
-
-  function pointerUp(e: PointerEvent) {
-    releaseFinger(e);
-    if (marquee) {
-      const m = marquee;
-      marquee = null;
-      const at = !m.moved && m.hit ? locate(m.hit) : null;
-      if (at) toggleRegion(at.piece, at.zone);
-    }
-    if (drag?.members) {
-      const { members: moving, copied, moved, page, piece, zone } = drag;
-      drag = null;
-      notice = null;
-      // A press that never moved: in Select several it takes the region out
-      // of the selection, otherwise it selects that region alone; a Cmd/Ctrl
-      // click leaves no copies behind.
-      if (!moved) {
-        if (copied) dropCopies(moving, copied);
-        else if (pickMode) toggleRegion(piece, zone);
-        else selectRegions([pieces[piece].zones[zone]]);
-        return;
-      }
-      const clash = firstClash(moving.map((m) => m.zone));
-      if (clash === -1) return;
-      notice = overlapNotice(clash, page);
-      if (copied) dropCopies(moving, copied);
-      else moving.forEach((m) => Object.assign(m.zone, m.origin));
-      return;
-    }
-    if (!drag) return;
-    const {
-      kind,
-      page,
-      piece,
-      zone: z,
-      origin,
-      started,
-      deselected,
-      sx,
-      sy,
-      copyOf,
-    } = drag;
-    drag = null;
-    // A draw that never crossed the drag threshold was a plain click.
-    if (kind === "draw" && !started) {
-      if (!deselected) cornerClick(page, piece, sx, sy);
-      return;
-    }
-    notice = null;
-    const zone = pieces[piece].zones[z];
-    // A copy left where the original is was a Cmd/Ctrl click: no copy.
-    if (
-      copyOf !== undefined &&
-      zone.ulx === origin.ulx &&
-      zone.uly === origin.uly
-    ) {
-      pieces[piece].zones.splice(z, 1);
-      selectedZone = { piece, zone: copyOf };
-      return;
-    }
-    // A region pressed in Select several without moving it leaves the
-    // selection.
-    if (
-      kind === "move" &&
-      pickMode &&
-      zone.ulx === origin.ulx &&
-      zone.uly === origin.uly
-    ) {
-      toggleRegion(piece, z);
-      return;
-    }
-    const minSize = minSizeOn(page);
-    // A tiny rectangle was a click on the background, not a region.
-    if (
-      kind === "draw" &&
-      (zone.lrx - zone.ulx < minSize || zone.lry - zone.uly < minSize)
-    ) {
-      pieces[piece].zones.splice(z, 1);
-      selectedZone = null;
-      return;
-    }
-    const clash = overlappingPiece(pieces, piece, zone);
-    if (clash === -1) return;
-    notice = overlapNotice(clash, page);
-    if (kind === "draw" || copyOf !== undefined) {
-      pieces[piece].zones.splice(z, 1);
-      selectedZone = copyOf === undefined ? null : { piece, zone: copyOf };
-    } else {
-      Object.assign(zone, origin);
-    }
   }
 
   const overlapNotice = (clash: number, surface: number) =>
     `Regions cannot overlap: ${labelFor(clash)} already covers part of that area on page ${surface + 1}.`;
-
-  function zoneKeydown(
-    e: KeyboardEvent,
-    surface: number,
-    p: number,
-    z: number,
-  ) {
-    // A region of a group: the keys act on the whole group.
-    const inGroup = members.some((m) => m.p === p && m.z === z);
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      // With Shift the key adds the region to the selection or takes it out.
-      if (e.shiftKey) toggleRegion(p, z);
-      else {
-        group = [];
-        selectedZone = { piece: p, zone: z };
-      }
-      return;
-    }
-    if (e.key === "Backspace" || e.key === "Delete") {
-      e.preventDefault();
-      if (inGroup) {
-        removeRegions(members.map((m) => m.zone));
-        notice = null;
-      } else removeZone(p, z);
-      return;
-    }
-    const page = pages[surface];
-    const shift = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE);
-    if (!shift || !page) return;
-    e.preventDefault();
-    if (inGroup) {
-      const zones = members.map((m) => m.zone);
-      const before = zones.map((zone) => ({ ...zone }));
-      const moved = movedBoxes(zones, shift.dx, shift.dy, page);
-      zones.forEach((zone, i) => Object.assign(zone, moved[i]));
-      const clash = firstClash(zones);
-      notice = clash === -1 ? null : overlapNotice(clash, surface);
-      if (clash !== -1)
-        zones.forEach((zone, i) => Object.assign(zone, before[i]));
-      return;
-    }
-    selectedZone = { piece: p, zone: z };
-    const zone = pieces[p].zones[z];
-    const moved = {
-      surface,
-      ...movedBox(zone, shift.dx, shift.dy, page),
-    };
-    const clash = overlappingPiece(pieces, p, moved);
-    notice = clash === -1 ? null : overlapNotice(clash, surface);
-    if (clash === -1) Object.assign(zone, moved);
-  }
-
-  // Arrow keys on a focused corner handle move that corner.
-  function handleKeydown(
-    e: KeyboardEvent,
-    surface: number,
-    p: number,
-    z: number,
-    corner: string,
-  ) {
-    const page = pages[surface];
-    const shift = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE);
-    if (!shift || !page) return;
-    e.preventDefault();
-    const zone = pieces[p].zones[z];
-    const resized = {
-      surface,
-      ...nudgedEdges(
-        zone,
-        corner,
-        shift.dx,
-        shift.dy,
-        minSizeOn(surface),
-        page,
-      ),
-    };
-    const clash = overlappingPiece(pieces, p, resized);
-    notice = clash === -1 ? null : overlapNotice(clash, surface);
-    if (clash === -1) Object.assign(zone, resized);
-  }
-
-  function removeZone(p: number, z: number) {
-    pieces[p].zones.splice(z, 1);
-    selectedZone = null;
-    notice = null;
-  }
 
   const labelFor = (p: number) =>
     pieces[p].meta.title.trim() || pieceIdLabel(pieces[p].id);
@@ -938,49 +281,32 @@
 
 <svelte:window
   onkeydown={(e) => {
-    const typing = (e.target as Element).closest(
-      "input, textarea, select, [contenteditable]",
-    );
-    // Cmd/Ctrl+Z undoes; add Shift (or Ctrl+Y) to redo.
-    if (!typing && (e.ctrlKey || e.metaKey) && /^[zy]$/i.test(e.key)) {
-      e.preventDefault();
-      if (e.shiftKey || e.key.toLowerCase() === "y") redo();
-      else undo();
-      return;
-    }
-    if (e.key !== "Escape") return;
-    if (firstCorner) firstCorner = null;
-    else if (members.length) selectedZone = null;
-  }}
-  onkeyup={commit}
-  onclick={commit}
-  onpointermove={pointerMove}
-  onpointerup={(e) => {
-    pointerUp(e);
-    commit();
-  }}
-  onpointercancel={(e) => {
-    releaseFinger(e);
-    cancelDrag();
+    if (ed.keydown(e) || e.key !== "Escape") return;
+    if (
+      !(e.target as Element).closest(
+        "input, textarea, select, [contenteditable]",
+      )
+    )
+      ed.select(0, null);
   }}
 />
 
 <div class="material-card">
-  <div class="material-toolbar">
+  <div class="material-toolbar" class:touch={wizardLayout.coarse}>
     <span class="undoredo">
       <button
         type="button"
         class="btn btn-icon"
-        onclick={undo}
-        disabled={!canUndo}
+        onclick={() => ed.undo()}
+        disabled={!ed.canUndo}
         aria-label="Undo"
         title="Undo the last change (Ctrl/Cmd+Z)"><Icon name="undo" /></button
       >
       <button
         type="button"
         class="btn btn-icon"
-        onclick={redo}
-        disabled={!canRedo}
+        onclick={() => ed.redo()}
+        disabled={!ed.canRedo}
         aria-label="Redo"
         title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
       >
@@ -1011,29 +337,24 @@
       {/if}
       <button
         type="button"
-        class="tbtn tbtn-icon"
-        class:on={touchMode === "draw"}
-        aria-pressed={touchMode === "draw"}
+        class="tbtn tbtn-icon mode"
+        class:on={ed.drawMode}
+        class:drawhint={ed.drawHint && !ed.drawMode}
+        aria-pressed={ed.drawMode}
         aria-label="Draw"
         title="Draw: a finger drag draws a new region. Off, a drag scrolls the pages."
-        onclick={() => {
-          if (touchMode === "scroll") touchMode = "draw";
-          else {
-            // A finger that scrolls edits nothing, so no region stays selected.
-            touchMode = "scroll";
-            selectedZone = null;
-          }
-        }}><Icon name="touch-box" size={16} /></button
+        onclick={() => ed.setDrawMode(!ed.drawMode)}
+        ><Icon name="touch-box" size={16} /></button
       >
       <button
         type="button"
-        class="tbtn tbtn-icon"
-        class:on={pickMode}
-        aria-pressed={pickMode}
+        class="tbtn tbtn-icon mode"
+        class:on={ed.pickMode}
+        aria-pressed={ed.pickMode}
         aria-label="Select several"
-        disabled={touchMode !== "draw"}
+        disabled={!ed.drawMode}
         title="A tap on a region adds it to the selection or takes it out"
-        onclick={() => (pickMode = !pickMode)}
+        onclick={() => (ed.pickMode = !ed.pickMode)}
         ><Icon name="select-several" size={16} /></button
       >
     {:else}
@@ -1065,14 +386,18 @@
     <p class="msg-warn notice" role="status">{notice}</p>
   {/if}
   <span class="vh" role="status"
-    >{firstCorner
-      ? `First corner set on page ${firstCorner.surface + 1}. Click the opposite corner to give the region to ${labelFor(firstCorner.piece)}.`
-      : ""}</span
+    >{ed.armed
+      ? `The corner is picked up. ${wizardLayout.coarse ? "Tap" : "Click"} where it should go.`
+      : ed.corner
+        ? `First corner set on page ${ed.corner.p + 1}. Click the opposite corner to give the region to ${labelFor(ed.corner.scope as number)}.`
+        : ed.drawHint
+          ? "Turn on Draw, or tap the region twice, to select it."
+          : ""}</span
   >
 
   <div
     class="material-body"
-    class:drawing={touchMode === "draw"}
+    class:drawing={ed.drawMode}
     bind:this={body}
     bind:clientWidth={bodyW}
     bind:clientHeight={bodyH}
@@ -1084,7 +409,7 @@
       },
       follow: true,
       onpinchend: () => (fit = nearFit(zoom, fitPage)),
-      onpinchstart: holdGesture,
+      onpinchstart: () => ed.hold(),
     })}
   >
     <div class="material-grid" style="--per-row: {perRow}; width: {zoom}%">
@@ -1103,7 +428,8 @@
             style="aspect-ratio: {page.width} / {page.height}"
             role="application"
             aria-label={`Page ${i + 1}: piece regions`}
-            onpointerdown={(e) => backgroundPointerDown(e, i)}
+            onpointerdowncapture={(e) => ed.placeArmed(e, i)}
+            onpointerdown={(e) => ed.pageDown(e, i)}
           >
             <image
               href={page.url}
@@ -1142,8 +468,8 @@
                 width={Math.max(0, zone.lrx - zone.ulx)}
                 height={Math.max(0, zone.lry - zone.uly)}
                 {rx}
-                onpointerdown={(e) => zonePointerDown(e, i, p, z)}
-                onkeydown={(e) => zoneKeydown(e, i, p, z)}
+                onpointerdown={(e) => ed.boxDown(e, i, zone)}
+                onkeydown={(e) => ed.boxKeydown(e, i, zone)}
               />
               {#if wizardLayout.coarse && !members.length && selectedZone?.piece === p && selectedZone?.zone === z}
                 <!-- Press areas around the corner handles, up to 44px but no
@@ -1159,11 +485,11 @@
                   <circle
                     class="handle-hit"
                     aria-hidden="true"
+                    data-control
                     cx={h.cx}
                     cy={h.cy}
                     r={hitR}
-                    onpointerdown={(e) =>
-                      handlePointerDown(e, i, p, z, h.corner)}
+                    onpointerdown={(e) => ed.boxDown(e, i, zone, h.corner)}
                   />
                 {/each}
               {/if}
@@ -1199,16 +525,17 @@
                    drawn in screen pixels via the inverse-scale transform. -->
                 <g
                   class="delbtn"
+                  data-control
                   role="button"
                   tabindex={0}
                   aria-label={`${label}: remove region`}
                   transform={`translate(${btnX}, ${btnY}) scale(${1 / scale})`}
                   onpointerdown={(e) => e.stopPropagation()}
-                  onclick={() => removeZone(p, z)}
+                  onclick={() => ed.deleteSelection()}
                   onkeydown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
                       e.preventDefault();
-                      removeZone(p, z);
+                      ed.deleteSelection();
                     }
                   }}
                 >
@@ -1222,6 +549,9 @@
                   <circle
                     class="handle"
                     class:nesw={h.corner === "ne" || h.corner === "sw"}
+                    class:armed={ed.armed?.item === zone &&
+                      ed.armed.edges === h.corner}
+                    data-control
                     style="--piece: {pieceColour(p)}"
                     vector-effect="non-scaling-stroke"
                     role="button"
@@ -1230,14 +560,14 @@
                     cx={h.cx}
                     cy={h.cy}
                     r={(wizardLayout.coarse ? 7 : 5) / scale}
-                    onpointerdown={(e) =>
-                      handlePointerDown(e, i, p, z, h.corner)}
-                    onkeydown={(e) => handleKeydown(e, i, p, z, h.corner)}
+                    onpointerdown={(e) => ed.boxDown(e, i, zone, h.corner)}
+                    onkeydown={(e) => ed.edgeKeydown(e, i, zone, h.corner)}
                   />
                 {/each}
               {/if}
             {/each}
-            {#if marquee?.surface === i && marquee.moved}
+            {#if ed.marquee?.p === i && ed.marquee.moved}
+              {@const marquee = ed.marquee}
               {@const m = drawnBox(
                 marquee.sx,
                 marquee.sy,
@@ -1254,11 +584,12 @@
                 height={m.lry - m.uly}
               />
             {/if}
-            {#if firstCorner?.surface === i}
+            {#if ed.corner?.p === i}
+              {@const firstCorner = ed.corner}
               {@const r = 9 / scale}
               <path
                 class="corner"
-                style="--piece: {pieceColour(firstCorner.piece)}"
+                style="--piece: {pieceColour(firstCorner.scope as number)}"
                 vector-effect="non-scaling-stroke"
                 d={`M${firstCorner.x - r} ${firstCorner.y}H${firstCorner.x + r}M${firstCorner.x} ${firstCorner.y - r}V${firstCorner.y + r}`}
               />
@@ -1278,24 +609,21 @@
         <button
           type="button"
           class="btn"
-          onclick={duplicateGroup}
+          onclick={() => ed.duplicate()}
           title={`Copy the ${members.length} regions below or beside them`}
           ><Icon name="copy" />Duplicate</button
         >
         <button
           type="button"
           class="btn btn-danger"
-          onclick={() => {
-            removeRegions(members.map((m) => m.zone));
-            notice = null;
-          }}
+          onclick={() => ed.deleteSelection()}
           title={`Delete the ${members.length} regions`}
           ><Icon name="trash" />Delete</button
         >
         <button
           type="button"
           class="btn"
-          onclick={() => (selectedZone = null)}
+          onclick={() => ed.select(0, null)}
           title="Deselect the regions"><Icon name="close" />Deselect</button
         >
       </div>
@@ -1406,9 +734,22 @@
       display: none;
     }
   }
-  /* Phone width: the picker keeps as much of the piece name as it can. */
+  /* Phone width: the picker, Draw and Select several fill the first row,
+     so the picker shows the piece name; undo, redo and the zoom take the
+     second. */
   @container material (max-width: 479px) {
+    .material-toolbar.touch {
+      flex-wrap: wrap;
+      row-gap: 6px;
+      padding-block: 8px;
+    }
+    .touch .pchip,
+    .touch .mode {
+      order: -1;
+    }
     .pchip {
+      flex: 1 1 calc(100% - 2 * 32px - 2 * 10px);
+      max-width: none;
       gap: 5px;
       padding: 0 8px;
     }
@@ -1486,6 +827,10 @@
   }
   .handle.nesw {
     cursor: nesw-resize;
+  }
+  /* A picked-up corner (armed) fills with its piece's colour. */
+  .handle.armed {
+    fill: var(--piece);
   }
   .handle-hit {
     fill: transparent;

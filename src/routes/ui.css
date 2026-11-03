@@ -307,6 +307,23 @@ button.pill:disabled {
   color: var(--st);
   background: var(--st-tint);
 }
+/* The Draw toggle after a tap on a box while draw mode is off: its fill
+   blinks twice in the accent tint. */
+.tbtn.drawhint {
+  color: var(--accent);
+  background: var(--accent-tint-strong);
+  animation: drawhint 0.4s ease-out 4 alternate;
+}
+@keyframes drawhint {
+  from {
+    background: var(--card);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tbtn.drawhint {
+    animation: none;
+  }
+}
 /* A .tbtn holding only a glyph. */
 .tbtn-icon {
   display: inline-flex;

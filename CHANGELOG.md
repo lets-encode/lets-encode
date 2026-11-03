@@ -5,6 +5,9 @@ parentheses.
 
 ## 2026-11-03
 
+- The Pieces step's piece picker keeps the piece name on a phone.
+- On a phone, the reason Continue waits lies over the setup step and leaves no empty row.
+- The zones page and the setup's Pieces step share one box editor.
 - A submission still being processed keeps its task's controls held until it is decided.
 - A command's result states whether it is still pending, had nothing to do or partly failed.
 - The app offers a claim only where the campaign automation would grant it.

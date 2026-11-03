@@ -100,19 +100,12 @@
   } from "$lib/omr-layout-cache.ts";
   import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
   import {
-    arrowShift,
-    boxesTouch,
     centreInRegions,
-    copyPlace,
     drawnBox,
-    drawStarted,
     movedBox,
-    movedBoxes,
-    nudgedEdges,
-    pagePoint,
     regionsView,
-    resizedBox,
   } from "$lib/box-geometry.ts";
+  import { BoxEditor } from "$lib/box-editor.svelte.ts";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -167,7 +160,7 @@
     () => taskId,
     {
       loaded(d) {
-        selected = null;
+        ed.clear();
         anchor = { page: 0, frac: 0 };
         rawLayouts = {};
         seen = { staves: [], grandstaves: [], measures: [] };
@@ -248,7 +241,7 @@
             tick().then(() => desk?.scrollTo({ top: 0 }));
           }
         }
-        resetHistory();
+        ed.resetHistory();
       },
       // A claim of an OMR layout task whose score carries no zones yet
       // continues into layout detection in the same overlay.
@@ -333,11 +326,10 @@
   }
   // Each step starts at the top of the first page.
   function setLayoutStep(step: LayoutStep) {
-    if (step === 4) selected = null;
     layoutStep = step;
     step4Pages = false;
     step4Top.names = step4Top.pages = 0;
-    leaveDrawMode();
+    ed.setDrawMode(false);
     showPage(0);
   }
   // A page's boxes in a layer, for the geometry code shared by all.
@@ -354,7 +346,40 @@
   // The layout model's raw output per page index, kept from a detection run
   // in this session for the submission; outside the edit history.
   let rawLayouts = $state<Record<number, CocoLayout>>({});
-  let selected = $state<{ p: number; z: number } | null>(null);
+  // The selection, the gestures and the undo history of the active layer's
+  // boxes. In page pixels: a box is at least MIN_BOX each way, a drawn box
+  // under DROP_BELOW was a click on the page, and an arrow key moves NUDGE
+  // (NUDGE_FAR with Shift).
+  const MIN_BOX = 5;
+  const DROP_BELOW = 8;
+  const NUDGE = 2;
+  const NUDGE_FAR = 10;
+  const ed = new BoxEditor<{ box: MeasureBox }, EditPage[]>({
+    items: (p) => (pages[p] ? items(p) : []),
+    box: (item) => item.box,
+    page: (p) => pages[p],
+    surface: (p) => svgEls[p],
+    screenWidth: (p) => canvasW[p] || pages[p]?.width || 0,
+    canEdit: () => canEdit,
+    canDraw: () => canEdit && showBoxes,
+    shown: () => showBoxes,
+    touch: () => coarse,
+    scope: () => tool,
+    add: (p, box) => items(p)[addBox(p, tool, box)],
+    remove: (p, item) => {
+      const list = items(p);
+      const z = list.indexOf(item);
+      if (z >= 0) list.splice(z, 1);
+    },
+    minSize: () => MIN_BOX,
+    dropBelow: () => DROP_BELOW,
+    nudge: { near: NUDGE, far: NUDGE_FAR },
+    changed: settle,
+    snapshot: () => clonePages(pages),
+    restore: (s) => (pages = clonePages(s)),
+  });
+  $effect(() => ed.listen());
+  const selected = $derived(ed.selected);
   /** The selected measure's number, prefilling a change request; '' for none. */
   const selectedLabel = $derived.by(() => {
     const zone =
@@ -372,61 +397,18 @@
     m2: anchorCell(selectedLabel),
   });
   // Several boxes of one page and the active layer selected together (by
-  // Shift+click, Shift+drag or Select several), `selected` among them. Held
-  // as the items, since a re-sort changes their indices; empty while one box
-  // or none is selected.
-  let group = $state.raw<{ box: MeasureBox }[]>([]);
-  // Select several, on a touch screen: a tap on a box adds it to the
-  // selection or takes it out.
-  let pickMode = $state(false);
-  // Selecting a box outside the group ends the group.
-  $effect(() => {
-    const s = selected;
-    untrack(() => {
-      if (!s || !group.includes(items(s.p)[s.z])) group = [];
-    });
-  });
-  // The group's indices on the selected box's page; empty without a group.
-  const groupZs = $derived.by(() => {
-    if (!selected || group.length < 2) return [];
-    const list = items(selected.p);
-    const zs = group.map((i) => list.indexOf(i)).filter((z) => z >= 0);
-    return zs.length > 1 ? zs : [];
-  });
-  const inSelection = (p: number, z: number) =>
-    selected?.p === p && (selected.z === z || groupZs.includes(z));
-  // The selected boxes as items: the group, or the one box.
-  const selectionItems = (): { box: MeasureBox }[] => {
-    if (!selected) return [];
-    const list = items(selected.p);
-    return groupZs.length
-      ? groupZs.map((z) => list[z])
-      : [list[selected.z]].filter(Boolean);
-  };
-  // Select the boxes `list` of page `p`. The selected box stays the one the
-  // panel and the keys start from where it is in the list.
-  function selectItems(p: number, list: { box: MeasureBox }[]) {
-    const now = selected?.p === p ? items(p)[selected.z] : undefined;
-    const primary = now && list.includes(now) ? now : list[list.length - 1];
-    group = list.length > 1 ? list : [];
-    selected = primary ? { p, z: items(p).indexOf(primary) } : null;
-  }
-  // Add a box to the selection, or take it out.
-  function toggleInSelection(p: number, z: number) {
-    const item = items(p)[z];
-    const now = selected?.p === p ? selectionItems() : [];
-    selectItems(
-      p,
-      now.includes(item) ? now.filter((i) => i !== item) : [...now, item],
-    );
-  }
+  // Shift+click, Shift+drag or Select several), as their indices on the
+  // selected box's page; empty while one box or none is selected.
+  const groupZs = $derived(
+    selected ? ed.group.map((i) => items(selected.p).indexOf(i)) : [],
+  );
+  const inSelection = (p: number, z: number) => ed.inSelection(items(p)[z]);
 
   // On a touch screen a finger drag on the page scrolls it: a tap selects a
   // box, the selected box and its handles drag, and new boxes are drawn only
   // in draw mode.
   const coarseQuery = new MediaQuery("(pointer: coarse)", false);
   const coarse = $derived(coarseQuery.current);
-  let drawMode = $state(false);
   // The side panel's tab; selecting a box shows its controls.
   let panelTab = $state<"selection" | "comments">("selection");
   // A comment button counts up to open the panel's comment field.
@@ -691,7 +673,7 @@
     const next = spreads[Math.max(0, Math.min(spreads.length - 1, row))];
     if (!next) return;
     showPage(next.pages[0]);
-    selected = null;
+    ed.select(0, null);
   }
 
   // Every measure in reading order with what its label is computed from.
@@ -773,7 +755,7 @@
     const z = pages[p].zones.findIndex(
       (zone) => (zone.override ?? zone.label) === c.measure_start,
     );
-    selected = z >= 0 ? { p, z } : null;
+    ed.select(p, z >= 0 ? pages[p].zones[z] : null);
   }
   // A new comment carries the selected measure as its anchor.
   const commentAnchor = (): CommentAnchorInput | undefined =>
@@ -810,78 +792,8 @@
     desk.scrollTop += (top + bottom) / 2 - (d.top + d.height / 2);
     deskScrolled();
   }
-  // Select a box on a touch screen: a tap, after which it can be dragged.
-  // With draw mode off an editor's tap selects nothing, as in the wizard's
-  // pieces step, and marks the Draw toggle for DRAW_HINT_MS; a second tap on
-  // the same box within DOUBLE_TAP_MS turns draw mode on and selects the box.
-  // In draw mode the same double tap on a box turns it off again
-  // (doubleTapOn).
-  const DRAW_HINT_MS = 1600;
-  const DOUBLE_TAP_MS = 350;
-  let drawHint = $state(false);
-  let drawHintTimer: ReturnType<typeof setTimeout> | undefined;
-  // The pending scroll frame and draw hint end with the page.
-  $effect(() => () => {
-    cancelAnimationFrame(scrollFrame);
-    clearTimeout(drawHintTimer);
-  });
-  let lastTap: { p: number; z: number; t: number } | null = null;
-  // The last tap in draw mode on the page outside a box, in page pixels.
-  let lastPageTap: { p: number; x: number; y: number; t: number } | null = null;
-  const DOUBLE_TAP_PX = 24;
-  function leaveDrawMode() {
-    drawMode = false;
-    corner = null;
-    selected = null;
-    lastTap = null;
-  }
-  function tapSelect(p: number, z: number) {
-    // The tap that put down a picked-up corner selects nothing.
-    if (justPlaced) {
-      justPlaced = false;
-      return;
-    }
-    if (!coarse) return;
-    // A press that started a drag was handled when it ended (pointerUp).
-    if (boxPressed) {
-      boxPressed = false;
-      return;
-    }
-    // In Select several a tap adds the box to the selection or takes it out.
-    if (pickMode) {
-      toggleInSelection(p, z);
-      return;
-    }
-    if (canEdit && !drawMode) {
-      const t = performance.now();
-      const double =
-        lastTap?.p === p && lastTap.z === z && t - lastTap.t < DOUBLE_TAP_MS;
-      lastTap = double ? null : { p, z, t };
-      if (double) {
-        drawMode = true;
-        drawHint = false;
-        selected = { p, z };
-        corner = null;
-        return;
-      }
-      drawHint = true;
-      clearTimeout(drawHintTimer);
-      drawHintTimer = setTimeout(() => (drawHint = false), DRAW_HINT_MS);
-      return;
-    }
-    selected = { p, z };
-    corner = null;
-    if (canEdit) doubleTapOn(p, z);
-  }
-  // In draw mode, a tap on a box within DOUBLE_TAP_MS of a tap on the same
-  // box: the double tap that ends draw mode. Any other tap is recorded.
-  function doubleTapOn(p: number, z: number): boolean {
-    const t = performance.now();
-    const double =
-      lastTap?.p === p && lastTap.z === z && t - lastTap.t < DOUBLE_TAP_MS;
-    lastTap = double ? null : { p, z, t };
-    return double;
-  }
+  // The pending scroll frame ends with the page.
+  $effect(() => () => cancelAnimationFrame(scrollFrame));
   /** Select the box before (-1) or after (1) the selected one in reading
       order, across pages; `reveal` scrolls it into view. Keyboard focus on
       a box moves with the selection. */
@@ -899,8 +811,7 @@
     const focused = (document.activeElement as Element | null)?.closest(
       ".zone, .staff",
     );
-    group = [];
-    selected = { p, z };
+    ed.selectItems(p, [items(p)[z]]);
     if (reveal) revealBox(p, z);
     if (focused) focusBox(p, z);
   }
@@ -1051,12 +962,12 @@
     define(unit: NamingUnit, name: string, parts: string, added?: number) {
       applyName(unit, name, parts, added);
       followSystems(unit);
-      commit();
+      ed.commit();
     },
     assign(unit: NamingUnit, instrument: string, parts: number[]) {
       applyAssign(unit, instrument, parts);
       followSystems(unit);
-      commit();
+      ed.commit();
     },
     abbr(id: string, abbr: string) {
       named = {
@@ -1084,7 +995,7 @@
           if (to) box.staff = to;
         }
       named = r.named;
-      commit();
+      ed.commit();
     },
   };
 
@@ -1151,7 +1062,7 @@
           }
         }
         count += followSystems();
-        if (count) commit();
+        if (count) ed.commit();
         return {
           ok: true,
           message: `${count} of the unnamed staves and grand staves were named from the printed names and the systems before them. Check every name.`,
@@ -1275,10 +1186,10 @@
       : undefined;
 
   // While the task is held, its boxes are saved as a draft after each pause
-  // in editing. A drag in progress (dragging) defers it to the drag's end,
+  // in editing. A drag in progress (ed.dragging) defers it to the drag's end,
   // so the score is not serialised on every pointer move.
   $effect(() => {
-    if (dragging || !session.canEdit || pages.length === 0) return;
+    if (ed.dragging || !session.canEdit || pages.length === 0) return;
     session.draft(
       omr
         ? {
@@ -1426,7 +1337,7 @@
       }
       seedLayout();
       setLayoutStep(1);
-      resetHistory();
+      ed.resetHistory();
       return {
         ok: true,
         message: `Layout detected: ${staves} staves, ${grandstaves} grand staves and ${measures} measures on ${pages.length} page(s).`,
@@ -1471,12 +1382,8 @@
   // ------------------------------------------------------------------------
   // Undo / redo
   //
-  // History holds full snapshots of the page zones. Each committed edit pushes
-  // a snapshot; undo/redo move within the stack and restore one. `selected` is
-  // a transient pointer, not part of a snapshot, so it is cleared on restore.
-  let history = $state<EditPage[][]>([]);
-  let historyIndex = $state(-1);
-
+  // The editor's history (ed) holds full copies of the pages. `selected` is
+  // not part of one, so it is cleared on restore.
   function clonePages(src: EditPage[]): EditPage[] {
     return src.map((pg) => ({
       ...pg,
@@ -1484,53 +1391,6 @@
       staves: pg.staves.map((s) => ({ ...s, box: { ...s.box } })),
       grandstaves: pg.grandstaves.map((g) => ({ box: { ...g.box } })),
     }));
-  }
-
-  // Discard any history and start a fresh baseline (after a load/reload).
-  function resetHistory() {
-    history = [clonePages(pages)];
-    historyIndex = 0;
-  }
-
-  // Record the current pages as a new entry, dropping any redo tail. The
-  // history holds full snapshots, so it is capped: the oldest entries fall
-  // off once the limit is reached.
-  const HISTORY_LIMIT = 100;
-  function commit() {
-    history = history.slice(
-      Math.max(0, historyIndex + 2 - HISTORY_LIMIT),
-      historyIndex + 1,
-    );
-    history.push(clonePages(pages));
-    historyIndex = history.length - 1;
-  }
-
-  // After a geometry change: re-sort the page's layer, keep the same box
-  // selected across the re-sort (its index may change) so further edits need
-  // no extra click, then record the step.
-  function commitGeometry(p: number, z: number) {
-    const item = items(p)[z];
-    if (tool === "measures") resort(p);
-    else resortStaves(p, tool);
-    selected = { p, z: items(p).indexOf(item) };
-    commit();
-  }
-
-  const canUndo = $derived(canEdit && historyIndex > 0);
-  const canRedo = $derived(canEdit && historyIndex < history.length - 1);
-
-  function undo() {
-    if (!canUndo) return;
-    historyIndex--;
-    pages = clonePages(history[historyIndex]);
-    selected = null;
-  }
-
-  function redo() {
-    if (!canRedo) return;
-    historyIndex++;
-    pages = clonePages(history[historyIndex]);
-    selected = null;
   }
 
   // ------------------------------------------------------------------------
@@ -1551,20 +1411,20 @@
     const next = !zone.sb;
     zone.sbOverride = next === rowStarts(p).has(zone.box) ? null : next;
     zone.sb = next;
-    commit();
+    ed.commit();
   }
   // Each section counts its measures from 1.
   function toggleSection(p: number, z: number) {
     if (!canEdit || sectionLocked(p, z)) return;
     pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
     renumber();
-    commit();
+    ed.commit();
   }
   function togglePickup(p: number, z: number) {
     if (!canEdit) return;
     pages[p].zones[z].pickup = !pages[p].zones[z].pickup;
     renumber();
-    commit();
+    ed.commit();
   }
 
   // Repeat barlines at the measure's start or end, the ending it belongs to
@@ -1581,12 +1441,12 @@
       zone.rptBoth = !zone.rptBoth;
       if (zone.rptBoth) zone.rptEnd = false;
     }
-    commit();
+    ed.commit();
   }
   function setEnding(p: number, z: number, ending: string) {
     if (!canEdit) return;
     pages[p].zones[z].ending = ending || undefined;
-    commit();
+    ed.commit();
   }
   function toggleSign(p: number, z: number, sign: MeasureSign) {
     if (!canEdit) return;
@@ -1595,7 +1455,7 @@
     zone.signs = MEASURE_SIGNS.filter((s) =>
       s === sign ? !on : zone.signs?.includes(s),
     );
-    commit();
+    ed.commit();
   }
   const SIGN_NAME: Record<MeasureSign, string> = {
     segno: "Segno",
@@ -1671,63 +1531,6 @@
     return Math.max(least, Math.min(full, byW, byH));
   };
 
-  type Drag = {
-    kind: "move" | "resize" | "draw";
-    layer: Layer;
-    p: number;
-    z: number;
-    sx: number;
-    sy: number;
-    orig: MeasureBox;
-    moved: boolean;
-    // For a resize: which edges follow the pointer — "n", "s", "e", "w" or a
-    // corner's pair ("nw", "se", …).
-    edges: string;
-    // A draw creates its box only once the pointer has moved a few
-    // millimetres on screen, so a plain click leaves nothing behind.
-    started: boolean;
-    // A background press that cleared a selection only deselects; it never
-    // sets a corner.
-    deselected: boolean;
-    // A Cmd/Ctrl move drags a copy: the index of the box it copies.
-    copyOf: number | null;
-    // A move of a group: each box and where it started.
-    members: { item: { box: MeasureBox }; orig: MeasureBox }[] | null;
-    // A Cmd/Ctrl move of a group: the boxes it copies.
-    copied: { box: MeasureBox }[] | null;
-  };
-  let drag: Drag | null = null;
-  // The press on a box started a drag, which handled it when it ended; the
-  // tap after it does nothing more (tapSelect).
-  let boxPressed = false;
-  // A Shift+drag's rectangle, in page pixels: every box it touches joins the
-  // boxes selected when it began (base). A Shift+click without a drag adds
-  // the box it was on (hit) or takes it out.
-  let marquee = $state.raw<{
-    p: number;
-    sx: number;
-    sy: number;
-    x: number;
-    y: number;
-    moved: boolean;
-    base: { box: MeasureBox }[];
-    hit: number | null;
-  } | null>(null);
-  // A drag has moved and not yet ended (the draft effect waits for it).
-  let dragging = $state(false);
-  // The first corner of a box drawn by two clicks instead of a drag, in page
-  // pixels. A second click on the same page and layer completes the box.
-  let corner = $state<{ p: number; layer: Layer; x: number; y: number } | null>(
-    null,
-  );
-  // In page pixels: a box is at least MIN_BOX each way, a drawn box under
-  // DROP_BELOW was a background click, and an arrow key moves NUDGE
-  // (NUDGE_FAR with Shift).
-  const MIN_BOX = 5;
-  const DROP_BELOW = 8;
-  const NUDGE = 2;
-  const NUDGE_FAR = 10;
-
   // The cursor class for a resize handle: a corner gets the diagonal arrows,
   // a side the axis arrows.
   const resizeCursor = (edges: string) =>
@@ -1766,151 +1569,14 @@
     { edges: "se", side: "bottom-right corner" },
   ];
 
-  const svgXY = (e: PointerEvent, p: number) =>
-    pagePoint(e, svgEls[p].getBoundingClientRect(), pages[p]);
-
-  // Start a move (from the zone body) or resize (from an edge or corner
-  // handle) drag. A click on the zone body selects it even read-only; the
-  // handles only exist in edit mode.
-  function startZoneDrag(
-    e: PointerEvent,
-    p: number,
-    z: number,
-    kind: "move" | "resize",
-    edges = "",
-  ) {
-    boxPressed = false;
-    // On a touch screen an unselected box lets the finger scroll the page;
-    // a tap selects it (tapSelect).
-    if (coarse && !inSelection(p, z)) return;
-    // With Shift a click adds the box to the selection or takes it out, and
-    // a drag selects with a rectangle; in Select several a click adds a box.
-    if (
-      kind === "move" &&
-      canEdit &&
-      (e.shiftKey || (pickMode && !inSelection(p, z)))
-    ) {
-      e.stopPropagation();
-      corner = null;
-      if (e.shiftKey) startMarquee(e, p, z);
-      else toggleInSelection(p, z);
-      return;
-    }
-    if (kind === "move") selected = { p, z };
-    corner = null;
-    // The page behind the box must not take the press as a deselect.
-    e.stopPropagation();
-    if (!canEdit) return;
-    selected = { p, z };
-    const copy = kind === "move" && (mac ? e.metaKey : e.ctrlKey);
-    const orig = { ...items(p)[z].box };
-    const { x, y } = svgXY(e, p);
-    // A box of a group moves the whole group, or with Cmd/Ctrl a copy of it.
-    const together =
-      kind === "move" && groupZs.includes(z)
-        ? groupZs.map((m) => items(p)[m])
-        : null;
-    let at = z;
-    let members: Drag["members"] = null;
-    if (together) {
-      const pressed = items(p)[z];
-      const moving = copy
-        ? together.map(({ box }) => items(p)[addBox(p, tool, { ...box })])
-        : together;
-      members = moving.map((item, i) => ({
-        item,
-        orig: { ...together[i].box },
-      }));
-      at = items(p).indexOf(moving[together.indexOf(pressed)]);
-      group = moving;
-      selected = { p, z: at };
-    } else if (copy) at = addBox(p, tool, { ...orig });
-    drag = {
-      kind,
-      layer: tool,
-      p,
-      z: at,
-      sx: x,
-      sy: y,
-      orig,
-      moved: false,
-      edges,
-      started: true,
-      deselected: false,
-      copyOf: copy ? z : null,
-      members,
-      copied: copy && together ? together : null,
-    };
-    boxPressed = true;
-    if (kind === "resize") loupeAt(e, drag, x, y);
-  }
-
-  // A Shift press on page p, on box `hit` or the background (null).
-  function startMarquee(e: PointerEvent, p: number, hit: number | null) {
-    const { x, y } = svgXY(e, p);
-    marquee = {
-      p,
-      sx: x,
-      sy: y,
-      x,
-      y,
-      moved: false,
-      base: selected?.p === p ? selectionItems() : [],
-      hit,
-    };
-  }
-  function marqueeTo(e: PointerEvent) {
-    const m = marquee!;
-    const { x, y } = svgXY(e, m.p);
-    const pg = pages[m.p];
-    if (
-      !m.moved &&
-      !drawStarted(x - m.sx, y - m.sy, pg, canvasW[m.p] || pg.width)
-    )
-      return;
-    marquee = { ...m, x, y, moved: true };
-    const area = drawnBox(m.sx, m.sy, x, y, 0);
-    const hits = items(m.p).filter(
-      (i) => boxesTouch(area, i.box) && !m.base.includes(i),
-    );
-    selectItems(m.p, [...m.base, ...hits]);
-  }
-
+  // A key on a focused box (ed.boxKeydown). A move can re-sort the page's
+  // boxes; the keyboard focus stays on the box.
   function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      e.stopPropagation();
-      // With Shift the key adds the box to the selection or takes it out.
-      if (e.shiftKey && canEdit) toggleInSelection(p, z);
-      else {
-        group = [];
-        selected = { p, z };
-      }
-      focusBox(p, z);
-      return;
-    }
-    if (!canEdit || !e.key.startsWith("Arrow")) return;
+    const item = items(p)[z];
+    if (!ed.boxKeydown(e, p, item)) return;
     e.stopPropagation();
-    selected = { p, z };
-    nudge(e, p, z);
-    // A move can re-sort the page's boxes; focus follows the selection.
-    if (selected) focusBox(selected.p, selected.z);
-  }
-
-  // Move a box by an arrow key's step.
-  function nudge(e: KeyboardEvent, p: number, z: number) {
-    e.preventDefault();
-    const { dx, dy } = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE)!;
-    // A box of a group moves the whole group.
-    const zs = groupZs.includes(z) ? groupZs : [z];
-    const moved = movedBoxes(
-      zs.map((m) => items(p)[m].box),
-      dx,
-      dy,
-      pages[p],
-    );
-    zs.forEach((m, i) => Object.assign(items(p)[m].box, moved[i]));
-    commitGeometry(p, z);
+    const at = items(p).indexOf(item);
+    if (at >= 0) focusBox(p, at);
   }
 
   // Arrow keys on a focused resize handle move that handle's edges.
@@ -1920,54 +1586,10 @@
     z: number,
     edges: string,
   ) {
-    if (!canEdit || !e.key.startsWith("Arrow")) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const box = items(p)[z].box;
-    const { dx, dy } = arrowShift(e.key, e.shiftKey ? NUDGE_FAR : NUDGE)!;
-    Object.assign(box, nudgedEdges(box, edges, dx, dy, MIN_BOX, pages[p]));
-    commitGeometry(p, z);
+    if (ed.edgeKeydown(e, p, items(p)[z], edges)) e.stopPropagation();
   }
 
-  function backgroundPointerDown(e: PointerEvent, p: number) {
-    // A touch on a box selects it on the tap (tapSelect), also in draw mode.
-    if (coarse && (e.target as Element).closest(".zone, .staff")) return;
-    const deselected = selected !== null;
-    // On a touch screen outside draw mode, or with the boxes hidden, the
-    // finger scrolls; a tap on the page deselects (backgroundTapEnd).
-    if (coarse && (!drawMode || !showBoxes)) {
-      bgTap = { x: e.clientX, y: e.clientY };
-      return;
-    }
-    // A Shift+drag selects the boxes it touches, adding them to the
-    // selection.
-    if (e.shiftKey && canEdit && showBoxes) {
-      startMarquee(e, p, null);
-      return;
-    }
-    selected = null;
-    if (!canEdit || !showBoxes) return;
-    const { x, y } = svgXY(e, p);
-    const box = { ulx: x, uly: y, lrx: x, lry: y };
-    drag = {
-      kind: "draw",
-      layer: tool,
-      p,
-      z: -1,
-      sx: x,
-      sy: y,
-      orig: box,
-      moved: false,
-      edges: "",
-      started: false,
-      deselected,
-      copyOf: null,
-      members: null,
-      copied: null,
-    };
-  }
-
-  // Add a box to a page's layer and select it; returns its index.
+  // Add a box to a page's layer; returns its index.
   function addBox(p: number, layer: Layer, box: MeasureBox): number {
     if (layer !== "measures") pages[p][layer].push({ box });
     else
@@ -1980,241 +1602,21 @@
         mdiv: false,
         pickup: false,
       });
-    const z = items(p, layer).length - 1;
-    selected = { p, z };
-    return z;
+    return items(p, layer).length - 1;
   }
 
-  // A plain click on the page: the first sets a corner, the second on the same
-  // page and layer completes the box spanning the two. A second click on the
-  // same spot clears the corner.
-  function cornerClick(p: number, layer: Layer, x: number, y: number) {
-    const first = corner;
-    corner = null;
-    if (!first || first.p !== p || first.layer !== layer) {
-      corner = { p, layer, x, y };
-      return;
-    }
-    const box = drawnBox(first.x, first.y, x, y, MIN_BOX);
-    if (box.lrx - box.ulx < DROP_BELOW || box.lry - box.uly < DROP_BELOW)
-      return;
-    commitGeometry(p, addBox(p, layer, box));
-  }
-
-  // A tap on the page outside a box, on a touch screen outside draw mode,
-  // deselects; a scroll ends in pointercancel instead.
-  let bgTap: { x: number; y: number } | null = null;
-  function backgroundTapEnd(e: PointerEvent) {
-    const tap = bgTap;
-    bgTap = null;
-    if (
-      tap &&
-      Math.hypot(e.clientX - tap.x, e.clientY - tap.y) < 10 &&
-      !(e.target as Element).closest(".zone, .staff")
-    )
-      selected = null;
+  // Page p's boxes changed: re-sort the active layer and record the step.
+  function settle(p: number) {
+    if (tool === "measures") resort(p);
+    else resortStaves(p, tool);
+    ed.commit();
   }
 
   // While a finger (or any pointer on a touch screen) holds a resize handle
-  // or draws a box, a magnifier above it shows the edge or corner under the
-  // finger: its page coordinates and the finger's screen point.
-  let loupe = $state<{
-    p: number;
-    x: number;
-    y: number;
-    cx: number;
-    cy: number;
-  } | null>(null);
+  // or draws a box, a magnifier above it (ed.loupe) shows the edge or corner
+  // under the finger.
   const LOUPE_PX = 120;
   const LOUPE_ZOOM = 2;
-  const loupeAt = (e: PointerEvent, d: Drag, x: number, y: number) => {
-    if (e.pointerType === "mouse" && !coarse) return;
-    // A resize centres on the box's dragged edge or corner, which can sit a
-    // few pixels from the finger when the press starts.
-    if (d.kind === "resize") {
-      const b = items(d.p, d.layer)[d.z].box;
-      if (d.edges.includes("w")) x = b.ulx;
-      else if (d.edges.includes("e")) x = b.lrx;
-      if (d.edges.includes("n")) y = b.uly;
-      else if (d.edges.includes("s")) y = b.lry;
-    }
-    loupe = { p: d.p, x, y, cx: e.clientX, cy: e.clientY };
-  };
-
-  function pointerMove(e: PointerEvent) {
-    if (marquee) marqueeTo(e);
-    if (!drag) return;
-    const { x, y } = svgXY(e, drag.p);
-    const dx = x - drag.sx;
-    const dy = y - drag.sy;
-    const pg = pages[drag.p];
-    if (!drag.started) {
-      if (!drawStarted(dx, dy, pg, canvasW[drag.p] || pg.width)) return;
-      corner = null;
-      drag.z = addBox(drag.p, drag.layer, { ...drag.orig });
-      drag.started = true;
-    }
-    if (Math.abs(dx) + Math.abs(dy) > 2) drag.moved = true;
-    if (!dragging) dragging = true;
-    if (drag.members) {
-      const moved = movedBoxes(
-        drag.members.map((m) => m.orig),
-        dx,
-        dy,
-        pg,
-      );
-      drag.members.forEach((m, i) => Object.assign(m.item.box, moved[i]));
-      return;
-    }
-    const box = items(drag.p, drag.layer)[drag.z].box;
-    Object.assign(
-      box,
-      drag.kind === "move"
-        ? movedBox(drag.orig, dx, dy, pg)
-        : drag.kind === "draw"
-          ? drawnBox(drag.sx, drag.sy, x, y, MIN_BOX)
-          : resizedBox(drag.orig, drag.edges, x, y, MIN_BOX),
-    );
-    if (drag.kind !== "move") loupeAt(e, drag, x, y);
-  }
-
-  // The drag under way is undone when a second finger turns the gesture into
-  // a pinch, the pointer is cancelled, Esc is pressed or the window loses
-  // focus.
-  function cancelDrag() {
-    loupe = null;
-    dragging = false;
-    if (marquee) {
-      selectItems(marquee.p, marquee.base);
-      marquee = null;
-    }
-    if (!drag) return;
-    const { kind, layer, p, z, started, orig, copyOf, members, copied } = drag;
-    drag = null;
-    if (!started) return;
-    if (members && copied) dropCopies(p, layer, members, copied, copyOf!);
-    else if (members) members.forEach((m) => Object.assign(m.item.box, m.orig));
-    else if (copyOf !== null) {
-      items(p, layer).splice(z, 1);
-      selected = { p, z: copyOf };
-    } else if (kind === "draw") {
-      items(p, layer).splice(z, 1);
-      selected = null;
-    } else Object.assign(items(p, layer)[z].box, orig);
-  }
-
-  function pointerUp() {
-    loupe = null;
-    dragging = false;
-    if (marquee) {
-      const m = marquee;
-      marquee = null;
-      if (!m.moved && m.hit !== null) toggleInSelection(m.p, m.hit);
-    }
-    if (!drag) return;
-    const {
-      kind,
-      layer,
-      p,
-      z,
-      moved,
-      started,
-      deselected,
-      sx,
-      sy,
-      copyOf,
-      edges,
-      members,
-      copied,
-    } = drag;
-    drag = null;
-    // A corner or edge pressed and released without moving is picked up
-    // (armed); pressed again it is put down.
-    if (kind === "resize" && !moved) {
-      armed =
-        armed?.p === p && armed.z === z && armed.edges === edges
-          ? null
-          : { p, z, edges };
-      return;
-    }
-    // A press on a box that never moved: in Select several it takes the box
-    // out of the selection, in draw mode on a touch screen the second tap of
-    // a double tap ends draw mode, and on a group it selects that box alone;
-    // a Cmd/Ctrl click of a group leaves no copies behind.
-    if (kind === "move" && !moved && copyOf === null) {
-      if (pickMode) toggleInSelection(p, z);
-      else if (coarse && drawMode && doubleTapOn(p, z)) leaveDrawMode();
-      else if (members) selectItems(p, [items(p)[z]]);
-      return;
-    }
-    if (members && copied && !moved) {
-      dropCopies(p, layer, members, copied, copyOf!);
-      return;
-    }
-    // A Cmd/Ctrl click that never moved leaves no copy behind.
-    if (copyOf !== null && !moved) {
-      items(p, layer).splice(z, 1);
-      selected = { p, z: copyOf };
-      return;
-    }
-    // A draw that never crossed the threshold was a plain click. On a touch
-    // screen a second tap on the page within DOUBLE_TAP_MS and
-    // DOUBLE_TAP_PX of the first ends draw mode.
-    if (!started) {
-      if (kind === "draw" && coarse) {
-        const t = performance.now();
-        const k = (canvasW[p] || pages[p].width) / pages[p].width;
-        if (
-          lastPageTap?.p === p &&
-          t - lastPageTap.t < DOUBLE_TAP_MS &&
-          Math.hypot(sx - lastPageTap.x, sy - lastPageTap.y) * k < DOUBLE_TAP_PX
-        ) {
-          lastPageTap = null;
-          leaveDrawMode();
-          return;
-        }
-        lastPageTap = { p, x: sx, y: sy, t };
-      }
-      if (kind === "draw" && !deselected) cornerClick(p, layer, sx, sy);
-      return;
-    }
-    if (kind === "draw") {
-      const box = items(p, layer)[z].box;
-      // A tiny drawn box was just a background click — drop it.
-      if (box.lrx - box.ulx < DROP_BELOW || box.lry - box.uly < DROP_BELOW) {
-        items(p, layer).splice(z, 1);
-        selected = null;
-        return;
-      }
-    }
-    if (kind !== "draw" && !moved) return; // plain select / handle click, no move
-    commitGeometry(p, z);
-  }
-
-  // Resizing without dragging: a picked-up corner or edge (armed) goes to
-  // the next press on its page, which does nothing else. A new selection, a
-  // step change or Esc puts it down.
-  let armed = $state<{ p: number; z: number; edges: string } | null>(null);
-  let justPlaced = false;
-  const selKey = $derived(selected ? `${selected.p}-${selected.z}` : "");
-  $effect(() => {
-    void selKey;
-    void tool;
-    untrack(() => (armed = null));
-  });
-  function placeArmed(e: PointerEvent, p: number) {
-    const a = armed;
-    if (!a) return;
-    armed = null;
-    if (a.p !== p || !items(p)[a.z]) return;
-    e.stopPropagation();
-    e.preventDefault();
-    justPlaced = true;
-    const { x, y } = svgXY(e, p);
-    const box = items(p)[a.z].box;
-    Object.assign(box, resizedBox({ ...box }, a.edges, x, y, MIN_BOX));
-    commitGeometry(p, a.z);
-  }
 
   // A new box of the active layer without drawing it: the selected box's
   // size beside it (a staff below it, a measure to its right), or without a
@@ -2247,51 +1649,9 @@
       };
     }
     const hadFocus = !!document.activeElement?.closest(".zone, .staff");
-    commitGeometry(p, addBox(p, tool, box));
+    ed.select(p, items(p)[addBox(p, tool, box)]);
+    settle(p);
     if (hadFocus && selected) focusBox(selected.p, selected.z);
-  }
-
-  // Undo a Cmd/Ctrl move of a group: its copies go, and the boxes it copied
-  // are selected again, `copyOf` the one pressed.
-  function dropCopies(
-    p: number,
-    layer: Layer,
-    members: NonNullable<Drag["members"]>,
-    copied: { box: MeasureBox }[],
-    copyOf: number,
-  ) {
-    const list = items(p, layer);
-    for (const { item } of members) list.splice(list.indexOf(item), 1);
-    group = copied;
-    selected = { p, z: copyOf };
-  }
-
-  // Copies of the selected group beside it (copyPlace), selected in its
-  // place, to move where they belong.
-  function duplicateSelection() {
-    if (!canEdit || !selected || !groupZs.length) return;
-    const p = selected.p;
-    const origs = groupZs.map((z) => ({ ...items(p)[z].box }));
-    const copies = copyPlace(origs, pages[p]).map(
-      (box) => items(p)[addBox(p, tool, box)],
-    );
-    group = copies;
-    commitGeometry(p, items(p).indexOf(copies[copies.length - 1]));
-  }
-
-  function deleteSelected() {
-    if (!selected) return;
-    deleteZones(selected.p, groupZs.length ? groupZs : [selected.z]);
-  }
-
-  // Remove boxes of the active layer.
-  function deleteZones(p: number, zs: number[]) {
-    if (!canEdit) return;
-    [...zs].sort((a, b) => b - a).forEach((z) => items(p).splice(z, 1));
-    if (tool === "measures") resort(p);
-    else resortStaves(p, tool);
-    selected = null;
-    commit();
   }
 
   // The page's keys. Text fields keep their own keys; undo, redo and Esc
@@ -2303,37 +1663,17 @@
     if (e.defaultPrevented) return;
     const target = e.target as HTMLElement;
     if (target.closest("input, textarea, select, [contenteditable]")) return;
-    if (drag || marquee) {
-      if (e.key === "Escape") cancelDrag();
-      return;
-    }
-    // Cmd/Ctrl+Z undoes; add Shift (or Ctrl+Y) to redo.
-    if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
-      e.preventDefault();
-      if (e.shiftKey) redo();
-      else undo();
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) {
-      e.preventDefault();
-      redo();
-      return;
-    }
-    if (
-      e.key === "Escape" &&
-      (armed || corner || helpOpen || viewOpen || selected)
-    ) {
-      if (armed) armed = null;
-      else if (corner) corner = null;
-      else if (helpOpen) helpOpen = false;
+    if (ed.keydown(e)) return;
+    if (e.key === "Escape" && (helpOpen || viewOpen || selected)) {
+      if (helpOpen) helpOpen = false;
       else if (viewOpen) viewOpen = false;
-      else selected = null;
+      else ed.select(0, null);
       return;
     }
     if (target !== document.body && !target.closest(".desk")) return;
     if ((e.key === "Delete" || e.key === "Backspace") && selected) {
       e.preventDefault();
-      deleteSelected();
+      ed.deleteSelection();
     } else if (
       (e.key === "a" || e.key === "A" || e.key === "d" || e.key === "D") &&
       !e.ctrlKey &&
@@ -2353,7 +1693,7 @@
       newBox();
     } else if (e.key.startsWith("Arrow") && canEdit && selectedItem) {
       // A selected box takes the arrow keys; without one, ← → turn pages.
-      nudge(e, selectedItem.p, selectedItem.z);
+      ed.nudge(e, selectedItem.p, selectedItem.item);
     } else if (e.key === "ArrowRight") {
       go(1);
     } else if (e.key === "ArrowLeft") {
@@ -2399,9 +1739,7 @@
   const showBoxes = $derived(boxesOn && !step4);
   function toggleBoxes() {
     boxesOn = !boxesOn;
-    selected = null;
-    corner = null;
-    armed = null;
+    ed.clear();
   }
 
   // Intersections of every pair of boxes on the layer the current tool edits.
@@ -2607,7 +1945,7 @@
                   "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
                 ],
                 [
-                  `To select several boxes, choose Select several (the squares with a tick) and tap them; tap a selected box to take it out. Drag one of them to move them all; Duplicate copies them below or beside them.`,
+                  `To select several boxes, choose Select several (the squares with a tick) in draw mode and tap them; tap a selected box to take it out. Drag one of them to move them all; Duplicate copies them below or beside them.`,
                 ],
               ]
             : canEdit
@@ -2674,14 +2012,7 @@
   <title>{taskTitle} · {session.pieceName || campaign} · Let's Encode!</title>
 </svelte:head>
 
-<svelte:window
-  onpointerdown={closeViewOutside}
-  onpointermove={pointerMove}
-  onpointerup={pointerUp}
-  onpointercancel={cancelDrag}
-  onblur={cancelDrag}
-  onkeydown={keydown}
-/>
+<svelte:window onpointerdown={closeViewOutside} onkeydown={keydown} />
 
 {#if runner.busy && runner.overlay}
   <LoadingOverlay
@@ -2735,7 +2066,7 @@
         {#if !inSheet}
           <div
             class="ctoolbar vtoolbar"
-            class:drawing={canEdit && coarse && drawMode}
+            class:drawing={canEdit && coarse && ed.drawMode}
           >
             {@render toolbarItems()}
           </div>
@@ -2831,7 +2162,7 @@
             zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
             fit = null;
           },
-          onpinchstart: cancelDrag,
+          onpinchstart: () => ed.hold(),
         })}
       >
         {#if step4}
@@ -2901,12 +2232,11 @@
                         viewBox={`0 0 ${pg.width} ${pg.height}`}
                         class:staves={tool === "staves"}
                         class:grandstaves={tool === "grandstaves"}
-                        class:pan={coarse && (!drawMode || !showBoxes)}
+                        class:pan={coarse && (!ed.drawMode || !showBoxes)}
                         role="application"
                         aria-label={`Page ${p + 1}, ${tool === "staves" ? "staff boxes" : tool === "grandstaves" ? "grand staves" : "measures"}`}
-                        onpointerdowncapture={(e) => placeArmed(e, p)}
-                        onpointerdown={(e) => backgroundPointerDown(e, p)}
-                        onpointerup={backgroundTapEnd}
+                        onpointerdowncapture={(e) => ed.placeArmed(e, p)}
+                        onpointerdown={(e) => ed.pageDown(e, p)}
                       >
                         <!-- Pages far from the view keep their size but draw nothing. -->
                         {#if nearPages.includes(p)}
@@ -2936,9 +2266,7 @@
                               y={staff.box.uly}
                               width={staff.box.lrx - staff.box.ulx}
                               height={staff.box.lry - staff.box.uly}
-                              onpointerdown={(e) =>
-                                startZoneDrag(e, p, s, "move")}
-                              onclick={() => tapSelect(p, s)}
+                              onpointerdown={(e) => ed.boxDown(e, p, staff)}
                               onkeydown={(e) => zoneKeydown(e, p, s)}
                             />
                           {/each}
@@ -2967,9 +2295,7 @@
                               y={zone.box.uly}
                               width={zone.box.lrx - zone.box.ulx}
                               height={zone.box.lry - zone.box.uly}
-                              onpointerdown={(e) =>
-                                startZoneDrag(e, p, z, "move")}
-                              onclick={() => tapSelect(p, z)}
+                              onpointerdown={(e) => ed.boxDown(e, p, zone)}
                               onkeydown={(e) => zoneKeydown(e, p, z)}
                             >
                               {#if zoneTitle(p, z)}
@@ -3167,7 +2493,8 @@
                               height={o.lry - o.uly}
                             />
                           {/each}
-                          {#if corner?.p === p && corner.layer === tool}
+                          {#if ed.corner?.p === p && ed.corner.scope === tool}
+                            {@const corner = ed.corner}
                             {@const r = labelFont(p, pg.width) * 0.9}
                             <path
                               class="corner"
@@ -3175,7 +2502,8 @@
                               d={`M${corner.x - r} ${corner.y}H${corner.x + r}M${corner.x} ${corner.y - r}V${corner.y + r}`}
                             />
                           {/if}
-                          {#if marquee?.p === p && marquee.moved}
+                          {#if ed.marquee?.p === p && ed.marquee.moved}
+                            {@const marquee = ed.marquee}
                             {@const m = drawnBox(
                               marquee.sx,
                               marquee.sy,
@@ -3252,16 +2580,16 @@
         <button
           type="button"
           class="btn btn-icon"
-          onclick={() => undo()}
-          disabled={!canUndo}
+          onclick={() => ed.undo()}
+          disabled={!ed.canUndo}
           aria-label="Undo"
           title="Undo the last change (Ctrl/Cmd+Z)"><Icon name="undo" /></button
         >
         <button
           type="button"
           class="btn btn-icon"
-          onclick={() => redo()}
-          disabled={!canRedo}
+          onclick={() => ed.redo()}
+          disabled={!ed.canRedo}
           aria-label="Redo"
           title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
         >
@@ -3347,11 +2675,11 @@
         </span>{/if}
       <span class="tspacer"></span>
       <span class="vh" role="status"
-        >{armed
-          ? `The ${HANDLES.find((h) => h.edges === armed?.edges)?.side} is picked up. ${coarse ? "Tap" : "Click"} where it should go.`
-          : corner
-            ? `First corner set on page ${corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
-            : drawHint
+        >{ed.armed
+          ? `The ${HANDLES.find((h) => h.edges === ed.armed?.edges)?.side} is picked up. ${coarse ? "Tap" : "Click"} where it should go.`
+          : ed.corner
+            ? `First corner set on page ${ed.corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
+            : ed.drawHint
               ? `Turn on Draw, or tap the ${boxName} twice, to select it.`
               : ""}</span
       >
@@ -3415,7 +2743,7 @@
     {#snippet sheetBar()}
       <div
         class="ctoolbar vtoolbar insheet"
-        class:drawing={canEdit && coarse && drawMode}
+        class:drawing={canEdit && coarse && ed.drawMode}
       >
         {@render toolbarItems()}
       </div>
@@ -3458,18 +2786,17 @@
         <div
           class="selbody"
           aria-hidden="true"
-          onpointerdown={(ev) => startZoneDrag(ev, p, z, "move")}
+          onpointerdown={(ev) => ed.boxDown(ev, p, items(p)[z])}
         ></div>
         {#each HANDLES as h (h.edges)}
           <div
             class="hd hd-{h.edges} {resizeCursor(h.edges)}"
-            class:armed={armed?.p === p &&
-              armed.z === z &&
-              armed.edges === h.edges}
+            class:armed={ed.armed?.item === items(p)[z] &&
+              ed.armed.edges === h.edges}
             role="button"
             tabindex={0}
             aria-label={`${name}: resize (${h.side})`}
-            onpointerdown={(ev) => startZoneDrag(ev, p, z, "resize", h.edges)}
+            onpointerdown={(ev) => ed.boxDown(ev, p, items(p)[z], h.edges)}
             onkeydown={(ev) => resizeKeydown(ev, p, z, h.edges)}
           ></div>
         {/each}
@@ -3521,12 +2848,12 @@
       <button
         type="button"
         class="tbtn tbtn-icon"
-        class:on={drawMode}
-        class:drawhint={drawHint && !drawMode}
-        aria-pressed={drawMode}
+        class:on={ed.drawMode}
+        class:drawhint={ed.drawHint && !ed.drawMode}
+        aria-pressed={ed.drawMode}
         aria-label="Draw"
         title={`Draw: a finger drag draws a new ${boxName}. Off, a drag scrolls the pages.`}
-        onclick={() => (drawMode ? leaveDrawMode() : (drawMode = true))}
+        onclick={() => ed.setDrawMode(!ed.drawMode)}
         ><Icon name="touch-box" size={16} /></button
       >
     {/snippet}
@@ -3581,7 +2908,7 @@
         maxlength={MAX_ANCHOR_LENGTH}
         value={zone.override ?? zone.label}
         oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
-        onchange={() => commit()}
+        onchange={() => ed.commit()}
         title="Type to override the automatic number, e.g. 10a. The following measures count on from it."
       />
     {/snippet}
@@ -3596,11 +2923,12 @@
       <button
         type="button"
         class="tbtn tbtn-icon"
-        class:on={pickMode}
-        aria-pressed={pickMode}
+        class:on={ed.pickMode}
+        aria-pressed={ed.pickMode}
+        disabled={!ed.drawMode}
         aria-label="Select several"
         title="A tap on a box adds it to the selection or takes it out"
-        onclick={() => (pickMode = !pickMode)}
+        onclick={() => (ed.pickMode = !ed.pickMode)}
         ><Icon name="select-several" size={16} /></button
       >
     {/snippet}
@@ -3624,14 +2952,14 @@
             <button
               type="button"
               class="btn"
-              onclick={duplicateSelection}
+              onclick={() => ed.duplicate()}
               title={`Copy the ${groupZs.length} ${boxNames} below or beside them (${MOD}drag one of them copies them to where you drop it)`}
               ><Icon name="copy" />Duplicate</button
             >
             <button
               type="button"
               class="btn btn-danger"
-              onclick={deleteSelected}
+              onclick={() => ed.deleteSelection()}
               aria-label={`Delete the ${groupZs.length} ${boxNames}`}
               title={`Delete the ${groupZs.length} ${boxNames}`}
               ><Icon name="trash" />Delete</button
@@ -3640,7 +2968,7 @@
               <button
                 type="button"
                 class="btn"
-                onclick={() => (selected = null)}
+                onclick={() => ed.select(0, null)}
                 title={`Deselect the ${boxNames}`}
                 ><Icon name="close" />Deselect</button
               >
@@ -3700,7 +3028,7 @@
                 <button
                   type="button"
                   class="btn btn-danger"
-                  onclick={() => deleteZones(p, [z])}
+                  onclick={() => ed.deleteSelection()}
                   aria-label={`Delete the ${boxName}`}
                   title={`Delete the ${boxName}`}
                   ><Icon name="trash" />Delete</button
@@ -3720,7 +3048,7 @@
                 <button
                   type="button"
                   class="btn"
-                  onclick={() => (selected = null)}
+                  onclick={() => ed.select(0, null)}
                   title={`Deselect the ${boxName}`}
                   ><Icon name="close" />Deselect</button
                 >
@@ -3872,9 +3200,9 @@
         </div>
       {:else}
         <p class="selnone">
-          {#if coarse && canEdit && pickMode}
+          {#if coarse && canEdit && ed.pickMode}
             Tap boxes to select them.
-          {:else if coarse && canEdit && !drawMode}
+          {:else if coarse && canEdit && !ed.drawMode}
             <!-- One inline run: the flex .selnone drops the spaces around a
                  bare icon. -->
             <span
@@ -4067,7 +3395,8 @@
       />
     {/if}
 
-    {#if loupe && pages[loupe.p]}
+    {#if ed.loupe && pages[ed.loupe.p]}
+      {@const loupe = ed.loupe}
       {@const pg = pages[loupe.p]}
       {@const scale = canvasW[loupe.p] ? canvasW[loupe.p] / pg.width : 1}
       {@const span = LOUPE_PX / (LOUPE_ZOOM * scale)}
@@ -4143,23 +3472,6 @@
     font-size: 12.5px;
     color: var(--ink-soft);
     font-variant-numeric: tabular-nums;
-  }
-  /* The Draw toggle after a tap on a box while draw mode is off: its fill
-     blinks twice in the accent tint. */
-  .tbtn.drawhint {
-    color: var(--accent);
-    background: var(--accent-tint-strong);
-    animation: drawhint 0.4s ease-out 4 alternate;
-  }
-  @keyframes drawhint {
-    from {
-      background: var(--card);
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .tbtn.drawhint {
-      animation: none;
-    }
   }
   @media (orientation: portrait) and (max-width: 1100px) {
     /* The steps fill one row. */

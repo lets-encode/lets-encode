@@ -144,6 +144,9 @@
   } = $props();
   const reasonId = $props.id();
   const reasonShown = $derived(nextDisabled && !!nextReason);
+  // The reason's height; on a phone it lies over the body, which scrolls
+  // that much further.
+  let noteH = $state(0);
 
   const sidebar = $derived(wizardLayout.sidebar);
   const short = $derived(wizardLayout.short);
@@ -687,6 +690,7 @@
   {@const solo = !material}
   <section
     class="card"
+    style:--note-h="{noteH}px"
     class:solo
     class:hug={solo}
     class:wide={solo && step === "upload"}
@@ -812,7 +816,7 @@
             id={reasonId}
             role="status"
             title={reasonShown ? nextReason : undefined}
-            >{reasonShown ? nextReason : ""}</span
+            bind:offsetHeight={noteH}>{reasonShown ? nextReason : ""}</span
           >
         {/if}
         {#if onBack}
@@ -1728,10 +1732,35 @@
       padding-bottom: 12px;
     }
     .footer {
+      position: relative;
       flex-wrap: wrap;
     }
     .footer > :global(*:not(.btn)) {
       flex: 1 1 100%;
+    }
+    /* Why Continue waits lies over the foot of the body, in full, so it
+       takes no height: the body keeps its size whether it shows or not, and
+       its content scrolls clear of it. */
+    .card-body {
+      padding-bottom: calc(18px + var(--note-h));
+    }
+    .inpane :global(.material-body) {
+      padding-bottom: var(--note-h);
+    }
+    .footer > .footnote {
+      position: absolute;
+      /* Above the body's fade at its foot. */
+      z-index: 2;
+      left: 0;
+      right: 0;
+      bottom: 100%;
+      padding: 6px var(--pad-x);
+      white-space: normal;
+      background: var(--card);
+      border-top: 1px solid var(--line);
+    }
+    .footer > .footnote:empty {
+      display: none;
     }
     .footer > :global(.btn-primary) {
       flex: 1;
