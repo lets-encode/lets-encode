@@ -91,7 +91,7 @@ export class PreTaskSession {
   // verdict lands, since a repeat would only be rejected.
   submitting = $derived.by(() =>
     pendingVerdicts.isProcessing(
-      `encode:${this.#taskId()}`,
+      { kind: "encode", task: this.#taskId() },
       this.campaign.repoId,
     ),
   );
@@ -203,12 +203,13 @@ export class PreTaskSession {
       }
     });
 
-    // A settled background verdict changed the tables; reload the read-only
-    // view so it shows the recorded state. An edit session only refreshes
-    // the tables — a reload would discard the volunteer's unsubmitted work.
+    // A settled background verdict on this campaign changed the tables;
+    // reload the read-only view so it shows the recorded state. An edit
+    // session only refreshes the tables — a reload would discard the
+    // volunteer's unsubmitted work.
     $effect(() =>
-      pendingVerdicts.onSettled(() => {
-        if (this.runner.busy) return;
+      pendingVerdicts.onSettled((entry) => {
+        if (entry.repoId !== this.campaign.repoId || this.runner.busy) return;
         if (!this.canEdit) {
           this.data = null;
           this.#attempted = false;

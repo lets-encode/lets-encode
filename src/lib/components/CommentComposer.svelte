@@ -52,7 +52,7 @@
   // Pending from Send until the comment PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
   const posting = $derived(
-    sending || pendingVerdicts.isProcessing(`comment:${task}`, repoId),
+    sending || pendingVerdicts.isProcessing({ kind: "comment", task }, repoId),
   );
 
   async function postComment() {

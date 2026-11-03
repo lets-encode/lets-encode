@@ -6,7 +6,22 @@
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { commandContext, viewerId } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+
+  // Submissions this tab was following before a reload are followed again
+  // once the session is known.
+  $effect(() => {
+    const f = auth.status === "authenticated" ? forge() : null;
+    if (f)
+      pendingVerdicts.resume(viewerId(), (target) => commandContext(f, target));
+  });
+
+  // A failure: the run failed or the PR never opened, so no verdict was
+  // reached.
+  const failed = (e: { runFailed: boolean; prNumber: number }) =>
+    e.runFailed || !e.prNumber;
 
   // The verdict comments open with their own ✅/❌; the card carries a state
   // mark, so the duplicate symbol is dropped from the text.
@@ -26,7 +41,7 @@
       <p class="overlay-title">
         {rejected.every((e) => e.runFailed)
           ? "Run failed"
-          : rejected.some((e) => e.runFailed)
+          : rejected.some(failed)
             ? "Failed"
             : "Rejected"}
       </p>

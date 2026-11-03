@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   commands,
   invoke,
+  resumeFollowing,
   setVerdictSink,
   type CommandContext,
 } from "../commands.ts";
@@ -462,6 +463,24 @@ test("a claim still pending is followed and its accepted verdict deletes the tas
   assert.deepEqual(deleted, []);
   assert.equal((await verdict).state, "accepted");
   assert.deepEqual(deleted, ["volunteer:encode-T0001"]);
+});
+
+test("a submission followed again after a reload settles with its verdict", async () => {
+  const forge = claimForge(19, {
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+  });
+  const verdict = captureVerdict();
+
+  resumeFollowing(
+    context(withDecision(forge, 19)),
+    "Encoding claim of T0001",
+    "entry-1",
+    { number: 19, html_url: "https://example.test/pr/19" },
+    Date.now(),
+  );
+
+  assert.equal((await verdict).state, "accepted");
 });
 
 test("resolving a comment flips its replies in the PR payload too", async () => {

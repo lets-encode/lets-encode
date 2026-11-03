@@ -602,6 +602,42 @@ function verdictResult(
   };
 }
 
+/** What a background PR acts on; the UI holds its controls while it is processed. */
+export interface PendingKey {
+  kind:
+    | "claim"
+    | "release"
+    | "review-edit"
+    | "encode"
+    | "validate"
+    | "comment"
+    | "resolve";
+  /** The task; '' for a campaign comment. */
+  task: string;
+  /** The subtask of a review claim, give-back or verdict; '' otherwise. */
+  sub?: string;
+  /** The comment a resolution acts on. */
+  comment?: string;
+}
+
+/** Whether two keys name the same action on the same target. */
+export const sameKey = (a: PendingKey, b: PendingKey): boolean =>
+  a.kind === b.kind &&
+  a.task === b.task &&
+  (a.sub ?? "") === (b.sub ?? "") &&
+  (a.comment ?? "") === (b.comment ?? "");
+
+/** An opened PR whose verdict is followed. */
+export interface FollowedPr {
+  number: number;
+  html_url: string;
+  headSha?: string;
+  head?: { owner: string; repo: string; branch: string };
+  cleanup?: "always" | "accepted";
+  /** The task whose branch `encode-<task>` is deleted once the PR is accepted. */
+  taskBranch?: string;
+}
+
 /**
  * Where background verdicts are reported. The UI store
  * (pending-verdicts.svelte.ts) registers itself through setVerdictSink when it
@@ -609,18 +645,16 @@ function verdictResult(
  * directly — it uses Svelte runes, which only exist under the Svelte compiler.
  */
 export interface PendingVerdictSink {
+  /** A new entry: 'processing' with `pr`, else 'opening' until attachPr. */
   begin(entry: {
     label: string;
-    /** 0 while the PR is still being opened (state 'opening'). */
-    prNumber: number;
-    prUrl: string;
-    key?: string;
-    /** The campaign repo the submission acts on. */
-    repoId?: number;
-    state?: "opening" | "processing";
+    key: PendingKey;
+    /** The campaign repo the submission acts on, and the acting account. */
+    target: { repoId: number; owner: string; repo: string; viewer: string };
+    pr?: FollowedPr;
   }): string;
   /** The background-opened PR exists now; the entry moves to 'processing'. */
-  attachPr(id: string, prNumber: number, prUrl: string): void;
+  attachPr(id: string, pr: FollowedPr): void;
   /** `runFailed`: the automation run failed before reaching a verdict. */
   settle(
     id: string,
@@ -655,26 +689,10 @@ export function setVerdictSink(sink: PendingVerdictSink): void {
 function openAndFinishInBackground(
   ctx: CommandContext,
   label: string,
-  /** Structured id of the acted-on target, so UIs can hold its controls while the verdict is pending. */
-  key: string | undefined,
-  open: (bg: CommandContext) => Promise<{
-    number: number;
-    html_url: string;
-    headSha?: string;
-    head?: { owner: string; repo: string; branch: string };
-    cleanup?: "always" | "accepted";
-    /** The task whose branch `encode-<task>` is deleted once the submission is accepted. */
-    taskBranch?: string;
-  }>,
+  key: PendingKey,
+  open: (bg: CommandContext) => Promise<FollowedPr>,
 ): Result {
-  const id = verdictSink.begin({
-    label,
-    prNumber: 0,
-    prUrl: "",
-    key,
-    repoId: ctx.repoId,
-    state: "opening",
-  });
+  const id = verdictSink.begin({ label, key, target: ctx });
   const background: CommandContext = { ...ctx, progress: () => {} };
   void (async () => {
     let pr;
@@ -694,7 +712,7 @@ function openAndFinishInBackground(
       );
       return;
     }
-    verdictSink.attachPr(id, pr.number, pr.html_url);
+    verdictSink.attachPr(id, pr);
     await settleWhenProcessed(background, label, id, pr);
   })();
   // No banner: the task's run state (TaskRunState.svelte) is the visible
@@ -714,20 +732,14 @@ async function settleWhenProcessed(
   ctx: CommandContext,
   label: string,
   id: string,
-  pr: {
-    number: number;
-    html_url: string;
-    headSha?: string;
-    head?: { owner: string; repo: string; branch: string };
-    cleanup?: "always" | "accepted";
-    taskBranch?: string;
-  },
+  pr: FollowedPr,
+  waitMs = SETTLE_WAIT_MS,
 ): Promise<void> {
   let res: Result;
   let runFailed = false;
   try {
     const outcome = await waitForPrProcessed(ctx, pr, {
-      waitMs: SETTLE_WAIT_MS,
+      waitMs,
       maxDelayMs: 15_000,
     });
     runFailed = outcome.state === "run_failed";
@@ -772,22 +784,33 @@ async function settleWhenProcessed(
 function followInBackground(
   ctx: CommandContext,
   label: string,
-  key: string,
-  pr: { number: number; html_url: string; headSha?: string },
+  key: PendingKey,
+  pr: FollowedPr,
   taskBranch?: string,
 ): void {
-  const id = verdictSink.begin({
+  const followed = { ...pr, taskBranch };
+  const id = verdictSink.begin({ label, key, target: ctx, pr: followed });
+  void settleWhenProcessed({ ...ctx, progress: () => {} }, label, id, followed);
+}
+
+/**
+ * Go on following entry `id`'s PR after a reload, until SETTLE_WAIT_MS after
+ * `openedAt` (epoch milliseconds).
+ */
+export function resumeFollowing(
+  ctx: CommandContext,
+  label: string,
+  id: string,
+  pr: FollowedPr,
+  openedAt: number,
+): void {
+  void settleWhenProcessed(
+    { ...ctx, progress: () => {} },
     label,
-    prNumber: pr.number,
-    prUrl: pr.html_url,
-    key,
-    repoId: ctx.repoId,
-    state: "processing",
-  });
-  void settleWhenProcessed({ ...ctx, progress: () => {} }, label, id, {
-    ...pr,
-    taskBranch,
-  });
+    id,
+    pr,
+    Math.max(0, openedAt + SETTLE_WAIT_MS - Date.now()),
+  );
 }
 
 /**
@@ -880,7 +903,7 @@ async function claimAndWait(
       followInBackground(
         ctx,
         `${kind === "validation" ? "Review" : "Encoding"} claim of ${target}`,
-        `claim:${target}`,
+        { kind: "claim", task: task_id, sub: subtask_id },
         pr,
         kind === "encoding" ? task_id : undefined,
       );
@@ -1139,7 +1162,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         followInBackground(
           ctx,
           `Release of ${target}`,
-          `release:${target}`,
+          { kind: "release", task: task_id, sub: subtask_id },
           pr,
           kind === "encoding" ? task_id : undefined,
         );
@@ -1271,7 +1294,7 @@ const openEditor: CommandDef<
           followInBackground(
             ctx,
             `Encoding claim of ${task_id}`,
-            `claim:${task_id}`,
+            { kind: "claim", task: task_id },
             pr,
             task_id,
           );
@@ -1460,7 +1483,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
     return openAndFinishInBackground(
       ctx,
       `Encoding of ${task_id}`,
-      `encode:${task_id}`,
+      { kind: "encode", task: task_id },
       async () => {
         await muteOnce(ctx);
         const [{ branch: base, canPush }, taskCsv] = await Promise.all([
@@ -1605,7 +1628,7 @@ const submitValidation: CommandDef<
     return openAndFinishInBackground(
       ctx,
       label,
-      `validate:${task_id}/${subtask_id}`,
+      { kind: "validate", task: task_id, sub: subtask_id },
       async () => {
         await muteOnce(ctx);
         const state = parseStateCsv(
@@ -1759,7 +1782,7 @@ const reviewEdit: CommandDef<
         followInBackground(
           ctx,
           `Review edit of ${target}`,
-          `review-edit:${target}`,
+          { kind: "review-edit", task: task_id, sub: subtask_id },
           pr,
           task_id,
         );
@@ -1836,7 +1859,7 @@ const submitComment: CommandDef<
     return openAndFinishInBackground(
       ctx,
       `Comment on ${target}`,
-      `comment:${input.task_id}`,
+      { kind: "comment", task: input.task_id },
       async () => {
         await muteOnce(ctx);
         const commentCsv =
@@ -1902,7 +1925,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
     return openAndFinishInBackground(
       ctx,
       `Resolution of comment ${comment_id}`,
-      `resolve:${comment_id}`,
+      { kind: "resolve", task: row.task_id, comment: comment_id },
       async () => {
         await muteOnce(ctx);
         const body = `Resolves comment ${comment_id} on ${row.task_id || "the campaign"}. Opened from the campaign console.`;
@@ -2386,7 +2409,7 @@ async function submitFacsimile(
     return openAndFinishInBackground(
       ctx,
       label,
-      `encode:${task_id}`,
+      { kind: "encode", task: task_id },
       async () => {
         console.log("[zones] opening PR", { task_id });
         const pr = await f.openChangePr(owner, repo, {
@@ -2574,7 +2597,7 @@ const submitScoreSetup: CommandDef<
       return openAndFinishInBackground(
         ctx,
         `Score setup of ${task_id}`,
-        `encode:${task_id}`,
+        { kind: "encode", task: task_id },
         async () => {
           console.log("[setup] opening PR", { task_id });
           const pr = await f.openChangePr(owner, repo, {
@@ -2660,7 +2683,7 @@ const submitEncodingAlignment: CommandDef<
       return openAndFinishInBackground(
         ctx,
         `Encoding alignment of ${task_id}`,
-        `encode:${task_id}`,
+        { kind: "encode", task: task_id },
         async () => {
           console.log("[align] opening PR", { task_id });
           const pr = await f.openChangePr(owner, repo, {

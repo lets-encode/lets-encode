@@ -805,12 +805,12 @@
     }
   });
 
-  // Background verdicts refresh the tables when they land — unless a command
-  // overlay is up, whose own after-refresh will catch the change, or the
-  // campaign isn't resolved (nothing to refresh).
+  // Background verdicts on this campaign refresh the tables when they land —
+  // unless a command overlay is up, whose own after-refresh will catch the
+  // change, or the campaign isn't resolved (nothing to refresh).
   $effect(() =>
-    pendingVerdicts.onSettled(() => {
-      if (!runner.busy && owner && repo) load();
+    pendingVerdicts.onSettled((entry) => {
+      if (entry.repoId === repoId && !runner.busy && owner && repo) load();
     }),
   );
 
@@ -855,7 +855,8 @@
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
     // A claim still being processed holds the editor until its verdict lands.
-    if (pendingVerdicts.isProcessing(`claim:${task_id}`, repoId)) return;
+    if (pendingVerdicts.isProcessing({ kind: "claim", task: task_id }, repoId))
+      return;
     actedOn(task_id);
     const result = await run((c) =>
       invoke(

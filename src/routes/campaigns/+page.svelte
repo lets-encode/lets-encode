@@ -258,15 +258,13 @@
     );
   }
 
-  // Background verdicts settle against a campaign the viewer has work in;
-  // refresh those campaigns' rows so the settled task moves group.
+  // A background verdict refreshes its campaign's row, so the settled task
+  // moves group.
   $effect(() =>
-    pendingVerdicts.onSettled(() => {
+    pendingVerdicts.onSettled((entry) => {
       if (runner.busy) return;
-      const mine = new Set(
-        tasks.filter((t) => t.group !== "done").map((t) => t.campaignSlug),
-      );
-      for (const s of stats) if (mine.has(s.name)) refreshStats(s);
+      const s = stats.find((x) => x.repoId === entry.repoId);
+      if (s) refreshStats(s);
     }),
   );
 
@@ -278,7 +276,11 @@
   });
   const openEditor = async (t: MyTask) => {
     const s = stats.find((x) => x.name === t.campaignSlug);
-    if (s && pendingVerdicts.isProcessing(`claim:${t.task}`, s.repoId)) return;
+    if (
+      s &&
+      pendingVerdicts.isProcessing({ kind: "claim", task: t.task }, s.repoId)
+    )
+      return;
     const result = await run(t, (c) =>
       invoke(commands.openEditor, editorInput(t.campaignSlug, t.task), c),
     );

@@ -5,6 +5,11 @@ parentheses.
 
 ## 2026-11-03
 
+- A submission still being processed is followed again after the tab reloads and keeps its controls held.
+- A submission whose pull request could not be opened shows as failed, not rejected.
+- A settled submission refreshes only the pages of its own campaign.
+- An action started while another one runs starts once that one has finished instead of being dropped.
+- The app records what a pending submission acts on as structured data instead of text keys.
 - A review cell holds only an approval; the unused "changes requested" cell state is removed.
 - A new or rebuilt page task takes no id the campaign history already names.
 - The board shows a task row with an unknown status as pending instead of passing it through.

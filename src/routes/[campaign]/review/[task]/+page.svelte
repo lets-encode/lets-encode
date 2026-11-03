@@ -226,11 +226,12 @@
     if (auth.status !== "loading" && owner && repo && !loaded) load();
   });
 
-  // Background verdicts refresh the tables when they land — unless a command
-  // overlay is up, whose own after-refresh will catch the change.
+  // Background verdicts on this campaign refresh the tables when they land —
+  // unless a command overlay is up, whose own after-refresh will catch the
+  // change.
   $effect(() =>
-    pendingVerdicts.onSettled(() => {
-      if (!runner.busy && owner && repo) load();
+    pendingVerdicts.onSettled((entry) => {
+      if (entry.repoId === repoId && !runner.busy && owner && repo) load();
     }),
   );
 

@@ -215,7 +215,7 @@
     if (footHeight) footShownHeight = footHeight;
   });
   const posting = $derived(
-    pendingVerdicts.isProcessing(`comment:${task}`, repoId),
+    pendingVerdicts.isProcessing({ kind: "comment", task }, repoId),
   );
   // Until the viewer sets a width, the panel beside the content keeps its
   // default share of the window as the window changes.

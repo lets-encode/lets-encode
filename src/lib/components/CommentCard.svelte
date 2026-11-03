@@ -64,7 +64,10 @@
   // foreground command, then its background entry in the verdict store.
   const resolvePending = $derived(
     resolving ||
-      pendingVerdicts.isProcessing(`resolve:${comment.comment_id}`, repoId),
+      pendingVerdicts.isProcessing(
+        { kind: "resolve", task: comment.task_id, comment: comment.comment_id },
+        repoId,
+      ),
   );
 
   async function resolve() {
