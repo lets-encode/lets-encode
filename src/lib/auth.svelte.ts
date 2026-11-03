@@ -32,7 +32,8 @@ type Status = "loading" | "authenticated" | "anonymous";
  * Reactive auth state, shared across the app. `token` is not a credential: it
  * is the SESSION sentinel when logged in (API calls then ride the broker
  * session cookie) and null when anonymous. `expired` is set when a session
- * that was active is rejected by the broker.
+ * that was active is rejected by the broker. `checkFailed` is why the login
+ * check at app start failed while it is being retried.
  */
 export const auth = $state<{
   token: string | null;
@@ -40,6 +41,7 @@ export const auth = $state<{
   scope: string;
   error: string | null;
   expired: boolean;
+  checkFailed: string | null;
   status: Status;
 }>({
   token: null,
@@ -47,6 +49,7 @@ export const auth = $state<{
   scope: "",
   error: null,
   expired: false,
+  checkFailed: null,
   status: "loading",
 });
 
@@ -67,8 +70,10 @@ const AUTH_ERRORS: Record<string, string> = {
 
 /**
  * On app start: ask the API (via the broker proxy) who the session belongs to.
- * A 401 from the proxy means there is no session — anonymous. Also surfaces
- * any ?auth_error the broker redirected back with after a failed login.
+ * A 401 from the proxy means there is no session — anonymous. Any other
+ * failure leaves the app anonymous while the check is retried (retryCheck).
+ * Also surfaces any ?auth_error the broker redirected back with after a
+ * failed login.
  */
 export async function initAuth(): Promise<void> {
   const params = new URLSearchParams(location.search);
@@ -111,10 +116,9 @@ export async function initAuth(): Promise<void> {
     // response was not JSON: the broker mount is not served on this origin
     // and a page (the SPA fallback) came back instead of session data.
     clear();
-    auth.error =
-      e instanceof SyntaxError
-        ? `the session service at ${provider.brokerUrl} is not answering on this server.`
-        : (e as Error).message;
+    if (e instanceof SyntaxError)
+      auth.error = `the session service at ${provider.brokerUrl} is not answering on this server.`;
+    else retryCheck(e as Error, 0);
     return;
   }
   if (!resolved) {
@@ -141,6 +145,31 @@ const authChannel =
     : new BroadcastChannel("lets-encode:auth");
 
 const SESSION_CHECK_INTERVAL_MS = 30 * 60_000;
+
+// The waits between retries of a failed login check at app start; the last
+// one repeats.
+const CHECK_RETRY_MS = [10_000, 30_000, 60_000, 5 * 60_000];
+
+/**
+ * Show why the login check failed and retry it after CHECK_RETRY_MS[attempt].
+ * A session found then reloads the tab as that account; a 401 ends the
+ * retries with the app anonymous.
+ */
+function retryCheck(error: Error, attempt: number): void {
+  console.warn("[auth] the login check failed:", error.message);
+  auth.checkFailed = error.message.replace(/\.$/, "");
+  const wait = CHECK_RETRY_MS[Math.min(attempt, CHECK_RETRY_MS.length - 1)];
+  setTimeout(() => {
+    if (auth.status !== "anonymous" || auth.checkFailed === null) return;
+    createForge(SESSION)
+      .getAuthenticatedUser()
+      .then((resolved) => {
+        auth.checkFailed = null;
+        if (resolved) reloadKeepingUnsent(null);
+      })
+      .catch((e: Error) => retryCheck(e, attempt + 1));
+  }, wait);
+}
 
 /**
  * Ask the broker for the session's user; a rejection marks the session
@@ -174,6 +203,9 @@ export function login(
 export async function logout(): Promise<void> {
   console.log("[auth] logging out");
   clear();
+  auth.expired = false;
+  auth.error = null;
+  auth.checkFailed = null;
   try {
     await fetch(`${provider.brokerUrl}/logout`, { method: "POST" });
   } catch {

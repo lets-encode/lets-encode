@@ -56,7 +56,10 @@ export interface ForgeClient {
   changeRequestWebUrl(owner: string, repo: string, number: number): string;
   /** An account's page on the forge's website. */
   userWebUrl(login: string): string;
-  /** The authenticated user + the scopes their token actually holds, or null. */
+  /**
+   * The authenticated user + the scopes their token actually holds; null when
+   * the token is rejected (401). Throws on any other failure.
+   */
   getAuthenticatedUser(): Promise<{ user: GitHubUser; scopes: string } | null>;
   /** Resolve a numeric account id to its current login, or null. Memoised. */
   getUserLogin(id: number): Promise<string | null>;

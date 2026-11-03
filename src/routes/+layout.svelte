@@ -201,6 +201,11 @@
 </header>
 
 {#snippet body()}
+  {#if auth.checkFailed}
+    <div class="banner bar err" role="alert">
+      <span>Could not check the login: {auth.checkFailed}. Retrying…</span>
+    </div>
+  {/if}
   {#if auth.error}
     <div class="banner bar err" role="alert">
       <span>Login failed: {auth.error}</span>

@@ -89,6 +89,13 @@ MAX_PENDING_CLAIMS = 10
 
 GITHUB_API = "https://api.github.com"
 
+
+def signed_in():
+    """Whether the session belongs to a login: it holds the GitHub token and
+    the login it was issued to."""
+    return bool(session.get("githubToken")) and bool(session.get("userLogin"))
+
+
 # The slug database sits next to the session files in the (gitignored, never
 # served) instance folder unless DB_PATH says otherwise. The entire registry
 # state is this one file — back it up by copying it.
@@ -114,7 +121,7 @@ def claim():
     there is a campaign to register it against. The returned token is the right
     to activate the name later (POST /register) or to give it back
     (DELETE /claim/<name>). Occupied name → 409, invalid name → 422."""
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     body = request.get_json(silent=True) or {}
     name = str(body.get("name") or "").strip()
@@ -154,7 +161,7 @@ def release(name):
     """Give a claimed name back, so a campaign renamed before its repo exists
     does not leave its first name held. 404 if the name is not claimed under
     this token."""
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     body = request.get_json(silent=True) or {}
     if not store.release(
@@ -231,7 +238,7 @@ def register():
     has taken the name since. Idempotent: a repeat with the same
     (forge, repo_id) succeeds (200). A different repo on an occupied name is a
     genuine collision (409). Invalid name → 422."""
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     body = request.get_json(silent=True) or {}
     name = str(body.get("name") or "").strip()

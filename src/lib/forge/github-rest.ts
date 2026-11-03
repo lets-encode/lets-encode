@@ -34,6 +34,19 @@ export function onSessionRejected(callback: () => void): void {
   sessionRejected = callback;
 }
 
+/**
+ * fetch() for the broker's own endpoints (the registry and the relays): a 401
+ * means the broker session has ended, as for a proxied SESSION call.
+ */
+export async function brokerFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(input, init);
+  if (res.status === 401) sessionRejected?.();
+  return res;
+}
+
 function apiRoot(token?: string): string {
   if (token === SESSION) {
     if (!sessionApiBase)
@@ -515,7 +528,8 @@ export async function getAuthenticatedUser(
     headers: { ...baseHeaders, ...authHeaders(token) },
     cache: "no-store",
   });
-  if (!res.ok) return null;
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`the server answered ${res.status}`);
   const user: GitHubUser = await res.json();
   const scopes = res.headers.get("X-OAuth-Scopes") ?? "";
   return { user, scopes };

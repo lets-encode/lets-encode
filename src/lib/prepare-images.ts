@@ -19,6 +19,7 @@
 // pure logic can be tested outside a browser. The broker's base URL is passed in
 // rather than read from config, keeping this module free of SvelteKit's env.
 
+import { brokerFetch } from "./forge/github-rest.ts";
 import { pad2 } from "./pieces.ts";
 
 /** A page image ready to commit: repo-relative path and its bytes. */
@@ -512,7 +513,7 @@ export async function prepareCandidates(
   const renderPdf = options.renderPdf ?? pdfToImages;
   const downscale = options.downscale ?? downscaleImage;
   const toMei = options.toMei ?? encodingToMei;
-  const doFetch = options.fetchFn ?? fetch;
+  const doFetch = options.fetchFn ?? brokerFetch;
   const previewEdge = options.previewEdge ?? PREVIEW_IMAGE_EDGE;
 
   const candidates: PageCandidate[] = [];
@@ -603,7 +604,7 @@ export async function resolvePages(
   options: PrepareImagesOptions = {},
 ): Promise<PageImage[]> {
   const renderPdf = options.renderPdf ?? pdfToImages;
-  const doFetch = options.fetchFn ?? fetch;
+  const doFetch = options.fetchFn ?? brokerFetch;
   const pacer = createPacer(options.wait ?? sleep);
 
   // Opening a PDF is the expensive part of rendering one page of it, so the
@@ -682,7 +683,7 @@ export async function fetchIiifCanvases(
     wait?: (ms: number) => Promise<void>;
   } = {},
 ): Promise<IiifCanvas[]> {
-  const doFetch = options.fetchFn ?? fetch;
+  const doFetch = options.fetchFn ?? brokerFetch;
   const wait = options.wait ?? sleep;
   // A request the relay refused is re-attempted, as a canvas's is.
   const fetchManifest = async (): Promise<Response> => {

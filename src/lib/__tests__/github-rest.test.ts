@@ -22,6 +22,9 @@ import {
   RateLimitError,
   getGitHubRequestTelemetry,
   resetGitHubRequestTelemetry,
+  getAuthenticatedUser,
+  brokerFetch,
+  onSessionRejected,
 } from "../forge/github-rest.ts";
 
 before(() => routeSessionVia("/auth/proxy/api.github.com"));
@@ -912,4 +915,33 @@ test("getPullRequest keeps the diff error when the commit does not sit on the ba
     getPullRequest("token", "owner", "repo", 7),
     /diff is temporarily unavailable/,
   );
+});
+
+test("the login check is null only for a 401 and throws for any other failure", async (t) => {
+  let status = 401;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("{}", { status }),
+  );
+  assert.equal(await getAuthenticatedUser(SESSION), null);
+  status = 502;
+  await assert.rejects(getAuthenticatedUser(SESSION), /answered 502/);
+});
+
+test("a 401 from a broker endpoint reports the session as rejected", async (t) => {
+  let rejected = 0;
+  onSessionRejected(() => rejected++);
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (input: RequestInfo | URL) =>
+      new Response("{}", {
+        status: String(input).endsWith("/claim") ? 401 : 200,
+      }),
+  );
+  await brokerFetch("/registry/api/slug/x");
+  assert.equal(rejected, 0);
+  await brokerFetch("/registry/claim", { method: "POST" });
+  assert.equal(rejected, 1);
 });

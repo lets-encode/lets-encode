@@ -10,6 +10,7 @@
 // registry is a failure, never a miss. There is no name-search fallback.
 
 import { provider, registryUrl } from "./forge/config.ts";
+import { brokerFetch } from "./forge/github-rest.ts";
 import type { ForgeClient } from "./forge/types.ts";
 
 /** A campaign name resolved to its repo's stable id and current owner/name. */
@@ -36,10 +37,13 @@ export interface SlugInfo {
 export async function lookupSlug(name: string): Promise<SlugInfo | null> {
   let res: Response;
   try {
-    res = await fetch(`${registryUrl}/api/slug/${encodeURIComponent(name)}`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
+    res = await brokerFetch(
+      `${registryUrl}/api/slug/${encodeURIComponent(name)}`,
+      {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      },
+    );
   } catch {
     throw new Error("The campaign registry could not be reached.");
   }
@@ -68,7 +72,7 @@ export type ClaimResult =
  */
 export async function claimName(name: string): Promise<ClaimResult> {
   try {
-    const res = await fetch(`${registryUrl}/claim`, {
+    const res = await brokerFetch(`${registryUrl}/claim`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
@@ -102,7 +106,7 @@ export async function releaseClaim(
   token: string,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await brokerFetch(
       `${registryUrl}/claim/${encodeURIComponent(name)}`,
       {
         method: "DELETE",
@@ -140,7 +144,7 @@ export async function registerCampaign(
   claimToken: string,
 ): Promise<RegisterResult> {
   try {
-    const res = await fetch(`${registryUrl}/register`, {
+    const res = await brokerFetch(`${registryUrl}/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

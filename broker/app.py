@@ -168,7 +168,10 @@ class SessionFiles(FileSystemCache):
                 str(value["githubToken"]).encode()
             ).decode()
         except InvalidToken:
-            del opened["githubToken"]
+            # Without its token the session is no login: what it recorded
+            # for that login goes too.
+            for key in ("githubToken", "userLogin", "campaignRepos"):
+                opened.pop(key, None)
         return opened
 
     def _prune(self):
@@ -241,9 +244,9 @@ if proxy_hops:
 
 
 # Rate-limit counters live in the storage RATELIMIT_STORAGE_URI names. The
-# default memory:// keeps them in-process: with several gunicorn workers the
-# effective limit is the stated limit times the worker count, and counters
-# reset on restart. Point the URI at redis/memcached to share counters.
+# default memory:// keeps them in-process (gunicorn_config.py runs one worker),
+# and counters reset on restart. Point the URI at redis/memcached to share
+# counters between processes.
 def client_network():
     """
     The client's address as the rate limits key on it: an IPv6 address by its
@@ -306,10 +309,10 @@ def relay_fetch_only():
 # path is passed through unchanged by the production reverse proxy and by the
 # Vite dev proxy.
 try:
-    from .registry import GITHUB_API, registry
+    from .registry import GITHUB_API, registry, signed_in
 except ImportError:
     # Run as a top-level module (flask --app app run, gunicorn app:app).
-    from registry import GITHUB_API, registry
+    from registry import GITHUB_API, registry, signed_in
 app.register_blueprint(registry, url_prefix="/registry")
 
 # The registry's admin routes serve only when ADMIN_TOKEN and
@@ -498,7 +501,10 @@ def write_beyond_the_app(path):
 # generated from the campaign template, or a fork whose parent is one. The
 # template itself takes /generate only. Repositories found to be campaign
 # repositories, and those /generate created, are kept in the session as
-# "campaignRepos" (lower-case owner/name).
+# "campaignRepos" (lower-case owner/name → when found) for
+# CAMPAIGN_REPO_CHECK_S; a name is looked up again after that, since a
+# renamed repository's old name can come to name another repository.
+CAMPAIGN_REPO_CHECK_S = 600
 CAMPAIGN_TEMPLATE = (
     getenv("CAMPAIGN_TEMPLATE") or "lets-encode/campaign-template"
 ).lower()
@@ -527,14 +533,25 @@ def generated_from_template(repository):
 
 
 def remember_campaign_repo(full_name):
-    known = session.get("campaignRepos", [])
-    if full_name.lower() not in known:
-        session["campaignRepos"] = [*known, full_name.lower()]
+    now = time.time()
+    known = session.get("campaignRepos")
+    session["campaignRepos"] = {
+        **{
+            name: found
+            for name, found in (
+                known if isinstance(known, dict) else {}
+            ).items()
+            if now - found < CAMPAIGN_REPO_CHECK_S
+        },
+        full_name.lower(): now,
+    }
 
 
 def campaign_repository(full_name):
     """Whether the proxy may write to `full_name`. May raise RequestException."""
-    if full_name.lower() in session.get("campaignRepos", []):
+    known = session.get("campaignRepos")
+    found = known.get(full_name.lower()) if isinstance(known, dict) else None
+    if found is not None and time.time() - found < CAMPAIGN_REPO_CHECK_S:
         return True
     repository = fetch_repository(full_name)
     if repository is None:
@@ -787,7 +804,7 @@ def in_relay_slot(view):
 
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
-        if "githubToken" not in session:
+        if not signed_in():
             return view(*args, **kwargs)
         login = session.get("userLogin")
         with relay_use.lock:
@@ -927,14 +944,21 @@ AUTH_ERROR_CODES = {"access_denied": "denied", "mismatching_state": "state"}
 @limiter.limit("300 per minute", key_func=lambda: "all")
 def login():
     # Remember where the SPA wants the user back, then hand off to GitHub.
-    # authlib generates and session-stores the OAuth `state` parameter.
-    session["return_to"] = safe_return_path(request.args.get("return_to"))
-    return github.authorize_redirect(oauth_callback_url())
+    # authlib generates and session-stores the OAuth `state` parameter; the
+    # return path is kept under it, so logins started in two tabs each come
+    # back where they started.
+    redirect_uri = oauth_callback_url()
+    rv = github.create_authorization_url(redirect_uri)
+    github.save_authorize_data(redirect_uri=redirect_uri, **rv)
+    session["return_to:" + rv["state"]] = safe_return_path(
+        request.args.get("return_to")
+    )
+    return redirect(rv["url"])
 
 
 @app.route("/authorize")
 def authorize():
-    return_to = session.pop("return_to", "/")
+    return_to = session.pop("return_to:" + request.args.get("state", ""), "/")
     try:
         token = github.authorize_access_token()
     except Exception as e:
@@ -956,13 +980,17 @@ def authorize():
             with_auth_error(return_to, AUTH_ERROR_CODES.get(error, "failed"))
         )
     resp = github.get("user", token=token)
-    if not resp.ok:
+    login = resp.json().get("login") if resp.ok else None
+    if not (isinstance(login, str) and login):
         return redirect(with_auth_error(return_to, "user"))
-    # Replace the pre-login session ID after authentication so an ID fixed by
-    # an attacker cannot become an authenticated session.
-    app.session_interface.regenerate(session)
+    # What the session recorded for an earlier login does not carry over; the
+    # OAuth data of logins still under way in other tabs stays. Replace the
+    # pre-login session ID after authentication so an ID fixed by an attacker
+    # cannot become an authenticated session.
+    session.pop("campaignRepos", None)
     session["githubToken"] = token["access_token"]
-    session["userLogin"] = resp.json().get("login", "")
+    session["userLogin"] = login
+    app.session_interface.regenerate(session)
     return redirect(return_to)
 
 
@@ -1032,7 +1060,7 @@ def iiif_fetch():
     session gates who may use the relay, nothing more — and redirects are
     followed manually so each hop is re-checked against the address rules.
     """
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     target = request.args.get("url", "")
     if not target:
@@ -1127,7 +1155,7 @@ def omr_api(path):
     Relay one Musibot API call, attaching the institutional token. JSON in,
     JSON out; the upstream status is passed through.
     """
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     if not MUSIBOT_TOKEN:
         return (
@@ -1204,6 +1232,8 @@ def omr_api(path):
         created = json_field(response, "page_id")
         if isinstance(created, str):
             relay_store.add_page(created, login)
+    elif response.ok and request.method == "DELETE":
+        relay_store.remove_page(page_id)
     elif response.ok and starts_run:
         started = str(json_field(response, "execution_id"))
         if re.fullmatch(r"0|[1-9][0-9]{0,17}", started):
@@ -1236,7 +1266,7 @@ def omr_blob():
     handed out. Only URLs on the service's own host are relayed, and a body
     in either direction is capped.
     """
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     url = request.args.get("url", "")
     parsed = urlsplit(url)
@@ -1359,7 +1389,7 @@ def proxy(url):
     # token, and gating it prevents abuse as an open relay. Anonymous reads
     # (e.g. the public campaign listing) go directly to the API from the
     # browser instead.
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     # The server has already percent-decoded the path. Quoting it again keeps
     # a literal %, ? or # in a file name inside the path GitHub receives.

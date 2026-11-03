@@ -6,6 +6,8 @@
 //
 // Browser and Node: fetch only, no DOM.
 
+import { brokerFetch } from "./forge/github-rest.ts";
+
 /** A pipeline or model of the service, identified by name and version. */
 export interface OmrPipeline {
   name: string;
@@ -101,7 +103,7 @@ export function createOmrClient(
   options: OmrClientOptions = {},
 ): OmrClient {
   const base = `${brokerUrl.replace(/\/$/, "")}/omr`;
-  const doFetch = options.fetch ?? fetch;
+  const doFetch = options.fetch ?? brokerFetch;
   const sleep =
     options.sleep ??
     ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));

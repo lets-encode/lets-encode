@@ -63,7 +63,7 @@ class BrokerTest(unittest.TestCase):
 
     def known_campaigns(self, *names):
         with self.client.session_transaction() as current:
-            current["campaignRepos"] = list(names)
+            current["campaignRepos"] = {name: time.time() for name in names}
 
     def test_return_path_is_same_origin_and_auth_error_preserves_query(self):
         self.assertEqual(
@@ -87,11 +87,11 @@ class BrokerTest(unittest.TestCase):
             (RuntimeError("x"), "failed"),
         ):
             with self.client.session_transaction() as current:
-                current["return_to"] = "/campaign/my-campaign?view=table"
+                current["return_to:s1"] = "/campaign/my-campaign?view=table"
             with patch.object(
                 broker.github, "authorize_access_token", side_effect=error
             ):
-                response = self.client.get("/authorize")
+                response = self.client.get("/authorize?state=s1")
             location = urlsplit(response.headers["Location"])
             self.assertEqual(location.path, "/campaign/my-campaign")
             self.assertEqual(
@@ -191,7 +191,7 @@ class BrokerTest(unittest.TestCase):
             )
             # Another key reads the session without its token.
             other = broker.SessionFiles(directory, "other-secret")
-            self.assertEqual(other.get("in"), {"userLogin": "a"})
+            self.assertEqual(other.get("in"), {})
 
     def test_expired_sessions_have_their_tokens_revoked(self):
         def run_now(target, args, daemon):
@@ -1016,6 +1016,8 @@ class BrokerTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200, path)
             upstream.assert_called_once()
         self.assertEqual(self.relay_store.used("alice", "omr_runs"), 1)
+        # The deleted page's record went with it.
+        self.assertIsNone(self.relay_store.page_creator("p1"))
 
         # An execution not started on the page through the relay, and every
         # call on another login's page, are refused before anything reaches
@@ -1181,6 +1183,57 @@ class BrokerTest(unittest.TestCase):
         self.assertNotEqual(before, after)
         with self.client.session_transaction() as current:
             self.assertEqual(current["githubToken"], "fresh-token")
+
+    def test_two_logins_started_at_once_each_return_where_they_started(self):
+        def state_of(response):
+            query = parse_qs(urlsplit(response.headers["Location"]).query)
+            return query["state"][0]
+
+        first = state_of(self.client.get("/login?return_to=/a"))
+        second = state_of(self.client.get("/login?return_to=/b"))
+        token = {"access_token": "fresh-token"}
+        user = SimpleNamespace(ok=True, json=lambda: {"login": "alice"})
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                response = self.client.get(f"/authorize?state={first}")
+        self.assertEqual(urlsplit(response.headers["Location"]).path, "/a")
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                response = self.client.get(f"/authorize?state={second}")
+        self.assertEqual(urlsplit(response.headers["Location"]).path, "/b")
+
+    def test_a_login_github_does_not_name_is_refused(self):
+        self.client.get("/login?return_to=/a")
+        token = {"access_token": "fresh-token"}
+        user = SimpleNamespace(ok=True, json=lambda: {"login": ""})
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                response = self.client.get("/authorize")
+        location = urlsplit(response.headers["Location"])
+        self.assertEqual(parse_qs(location.query), {"auth_error": ["user"]})
+        with self.client.session_transaction() as current:
+            self.assertNotIn("githubToken", current)
+
+    def test_a_campaign_repo_is_looked_up_again_after_a_while(self):
+        with broker.app.test_request_context():
+            broker.session["githubToken"] = "server-side-token"
+            broker.session["campaignRepos"] = {
+                "o/fresh": time.time(),
+                "o/stale": time.time() - broker.CAMPAIGN_REPO_CHECK_S - 1,
+            }
+            with patch.object(
+                broker, "fetch_repository", return_value=None
+            ) as lookup:
+                self.assertTrue(broker.campaign_repository("o/fresh"))
+                lookup.assert_not_called()
+                self.assertFalse(broker.campaign_repository("o/stale"))
+                lookup.assert_called_once_with("o/stale")
 
     def test_logout_revokes_then_clears_the_session(self):
         self.authenticate()

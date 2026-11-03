@@ -5,6 +5,16 @@ parentheses.
 
 ## 2026-11-03
 
+- A login check that fails at app start is retried instead of showing a valid login as logged out.
+- Logging out clears an earlier login-expired or login-failed message.
+- A 401 from the registry, the image relay or the OMR relay marks the login as expired.
+- Logins started in two tabs at once each return to their own page.
+- The broker refuses a login GitHub does not name.
+- A broker session whose token can no longer be read keeps nothing of its login.
+- The broker checks a campaign repository again ten minutes after it found it.
+- Deleting an OMR page through the relay removes its record.
+- The broker runs one worker process, so its rate limits and relay slots hold as stated.
+- One broker check decides whether a request is signed in.
 - A submission still being processed is followed again after the tab reloads and keeps its controls held.
 - A submission whose pull request could not be opened shows as failed, not rejected.
 - A settled submission refreshes only the pages of its own campaign.

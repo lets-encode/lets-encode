@@ -217,11 +217,12 @@ they are reported separately from GitHub primary or secondary limits.
   with the request's host. The proxy must send `X-Forwarded-Host` (Apache's
   `mod_proxy` does by default) and `PROXY_FIX_X_FOR` must be set; otherwise the
   host is the proxy's upstream address and every write is answered 403.
-- **Rate-limit counters are per worker by default** — the limiter's `memory://`
-  storage is in-process, so with gunicorn's 2 workers the effective limits are
-  twice the stated ones, and counters reset on restart. Set
-  `RATELIMIT_STORAGE_URI` to a shared store (redis/memcached) for exact,
-  restart-surviving limits.
+- **Rate-limit counters and relay slots are per worker process** — the
+  limiter's `memory://` storage and the relay slots are in-process, so
+  `gunicorn_config.py` runs one worker (with threads); counters reset on
+  restart. With more workers each counts separately; `RATELIMIT_STORAGE_URI`
+  set to a shared store (redis/memcached) shares the limiter's counters, not
+  the relay slots.
 - **Nothing may rewrite the session cookie** — the production cookie name uses
   the `__Host-` prefix, which browsers reject outright unless the cookie is
   `Secure`, scoped to `Path=/`, and carries no `Domain` attribute. A proxy that
