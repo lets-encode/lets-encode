@@ -285,11 +285,10 @@
     openMeiFriend(result);
   };
   // A submission on the task still being processed holds its row's actions.
-  const processing = (t: MyTask) =>
-    pendingVerdicts.taskProcessing(
-      t.task,
-      stats.find((x) => x.name === t.campaignSlug)?.repoId,
-    );
+  const processing = (t: MyTask) => {
+    const s = stats.find((x) => x.name === t.campaignSlug);
+    return s ? pendingVerdicts.taskProcessing(t.task, s.repoId) : false;
+  };
   // Claim a campaign row's suggested next task. Encoding claims open
   // mei-friend (a pre-task claims in its own editor instead); a clean review
   // claim lands on the place the review happens.

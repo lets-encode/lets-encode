@@ -771,7 +771,7 @@
     <!-- Every step draws the frame, so the one place to report that this setup
          is no longer being kept for later — or why it opened where it did — is
          here. -->
-    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned}
+    {#if draftStatus.resumeNotice || draftStatus.saveError || draftStatus.imagesError || pinned}
       <div class="pinned">
         {#if draftStatus.resumeNotice}
           <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
@@ -780,6 +780,11 @@
           <p class="msg-warn" role="status">
             This setup can't be saved in your browser, so it won't be offered
             for continuing if you leave: {draftStatus.saveError}
+          </p>
+        {:else if draftStatus.imagesError}
+          <p class="msg-warn" role="status">
+            The page images can't be kept in your browser, so continuing this
+            setup later needs them uploaded again: {draftStatus.imagesError}
           </p>
         {/if}
         {@render pinned?.()}

@@ -104,12 +104,14 @@ class PendingVerdictStore {
 
   /** The entry acting on `taskId` — processing first, else the latest
    * settled one still on screen; null when the task has none. Drives the
-   * task-anchored run state (TaskRunState.svelte). */
-  forTask(taskId: string): PendingVerdict | null {
+   * task-anchored run state (TaskRunState.svelte). Task ids repeat across
+   * campaigns, so the lookup names the campaign's `repoId`. */
+  forTask(taskId: string, repoId: number): PendingVerdict | null {
     if (!taskId) return null;
     const mine = this.entries.filter(
       (e) =>
         taskOf(e.key) === taskId &&
+        e.repoId === repoId &&
         !DISCUSSION_KEY_KINDS.has(e.key.split(":", 1)[0]),
     );
     return (
@@ -121,26 +123,26 @@ class PendingVerdictStore {
 
   /** Whether a submission for `key` is still being processed — its controls
    * should hold until the verdict lands (a repeat would only be rejected).
-   * `repoId` limits the check to one campaign. */
-  isProcessing(key: string, repoId?: number): boolean {
+   * The check is limited to the campaign `repoId`. */
+  isProcessing(key: string, repoId: number): boolean {
     return this.entries.some(
       (e) =>
         e.key === key &&
-        (repoId === undefined || e.repoId === repoId) &&
+        e.repoId === repoId &&
         (e.state === "processing" || e.state === "opening"),
     );
   }
 
   /** Whether any submission acting on `taskId` itself (claim, encoding,
    * verdict — not a discussion) is still being processed; the
-   * task's controls hold until it lands. `repoId` limits the check to one
-   * campaign. */
-  taskProcessing(taskId: string, repoId?: number): boolean {
+   * task's controls hold until it lands. The check is limited to the
+   * campaign `repoId`. */
+  taskProcessing(taskId: string, repoId: number): boolean {
     return this.entries.some(
       (e) =>
         taskOf(e.key) === taskId &&
         !DISCUSSION_KEY_KINDS.has(e.key.split(":", 1)[0]) &&
-        (repoId === undefined || e.repoId === repoId) &&
+        e.repoId === repoId &&
         (e.state === "processing" || e.state === "opening"),
     );
   }

@@ -28,6 +28,7 @@
 </script>
 
 <TaskBox
+  repoId={session.campaign.repoId}
   {card}
   pieceName={card.piece}
   {campaign}

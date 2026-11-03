@@ -29,6 +29,7 @@
   import type { PagePreview, PiecePreview } from "$lib/piece-previews.ts";
 
   let {
+    repoId,
     owner,
     repo,
     cards,
@@ -46,6 +47,8 @@
     onact,
     onopen,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     owner: string;
     repo: string;
     /** Every board card, in column order. */
@@ -108,7 +111,8 @@
       submission still being processed. */
   const running = $derived(
     cards.filter(
-      (c) => c.task !== featured?.task && pendingVerdicts.forTask(c.task),
+      (c) =>
+        c.task !== featured?.task && pendingVerdicts.forTask(c.task, repoId),
     ),
   );
 
@@ -359,7 +363,7 @@
             >
             <span class="nextcontext">{nextContext}</span>
             {@render failChip(featured)}
-            <TaskRunState task={featured.task} pill large />
+            <TaskRunState task={featured.task} {repoId} pill large />
             <!-- A card whose action only opens the task leaves it to the task's
                  panel while that shows it. -->
             {#if !completedCard && !(featured.task === shownTask && actLabel(featured) === "Open task")}
@@ -369,7 +373,7 @@
                   class="btn btn-primary {stageClass(featured)}"
                   onclick={() => (viewer === "" ? login() : onact(featured))}
                   disabled={busy ||
-                    pendingVerdicts.taskProcessing(featured.task)}
+                    pendingVerdicts.taskProcessing(featured.task, repoId)}
                   title={actTitle(featured)}
                   >{actLabel(
                     featured,
@@ -480,7 +484,7 @@
         {#each running as card (card.task)}
           <div class="runcard" data-stage={stageOf(card)}>
             <span class="runtitle">{card.title}</span>
-            <TaskRunState task={card.task} pill large />
+            <TaskRunState task={card.task} {repoId} pill large />
           </div>
         {/each}
       </div>
@@ -581,7 +585,7 @@
                       <div class="taskrow still" data-stage={stageOf(card)}>
                         <span class="tasktitle">{cardName(card)}</span>
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} pill short />
+                        <TaskRunState task={card.task} {repoId} pill short />
                         <span class="vspacer"></span>
                         <span class="waits">waits for {card.waitsFor}</span>
                       </div>
@@ -594,7 +598,7 @@
                           title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} pill short />
+                        <TaskRunState task={card.task} {repoId} pill short />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         <span class="merged"
@@ -612,7 +616,7 @@
                           title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} pill short />
+                        <TaskRunState task={card.task} {repoId} pill short />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}

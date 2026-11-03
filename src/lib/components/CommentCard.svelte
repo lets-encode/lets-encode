@@ -13,6 +13,7 @@
   import { elapsed, initialOf } from "$lib/campaign-board.ts";
 
   let {
+    repoId,
     comment,
     logins,
     viewer,
@@ -26,6 +27,8 @@
     onreply,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     comment: CommentRow;
     logins: Record<string, string>;
     viewer: string;
@@ -60,7 +63,8 @@
   // Pending from the click until the resolution PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
   const resolvePending = $derived(
-    resolving || pendingVerdicts.isProcessing(`resolve:${comment.comment_id}`),
+    resolving ||
+      pendingVerdicts.isProcessing(`resolve:${comment.comment_id}`, repoId),
   );
 
   async function resolve() {

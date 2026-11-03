@@ -1343,7 +1343,7 @@
          without page images has the preview alone. -->
     <div class="main">
       <h1 class="vh">Score setup · {session.pieceName || campaign}</h1>
-      <div class="runrow"><TaskRunState task={taskId} pill /></div>
+      <div class="runrow"><TaskRunState task={taskId} {repoId} pill /></div>
       <div class="desk" bind:this={desk}>
         {#if firstMeasure && data.imageUrls[shownPage]}
           {@const pg = data.model.pages[shownPage]}
@@ -2197,6 +2197,7 @@
     {#snippet reviewFooter()}
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
+          {repoId}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
@@ -2232,6 +2233,7 @@
 
     {#if tables}
       <TaskPageSidePanel
+        {repoId}
         {tables}
         {taskId}
         done={data?.status === "completed"}

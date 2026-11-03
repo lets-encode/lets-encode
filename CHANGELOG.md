@@ -5,6 +5,10 @@ parentheses.
 
 ## 2026-11-02
 
+- State from another task, campaign or account no longer carries over into the open view.
+- Esc or leaving the window cancels a box drag on the zones page.
+- The setup shows which pages it keeps and whether they are stored.
+- The scheduled run also deletes leftover comment-resolve branches.
 - Verovio is updated to 6.4.
 
 ## 2026-10-29

@@ -34,6 +34,7 @@
   import SidePanel from "./SidePanel.svelte";
 
   let {
+    repoId,
     piece,
     campaignTitle,
     owner,
@@ -56,6 +57,8 @@
     oncomment,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     piece: PieceRef;
     campaignTitle: string;
     owner: string;
@@ -206,6 +209,7 @@
     <div class="panelslot" class:hidden={panelHidden}>
       <SidePanel
         {task}
+        {repoId}
         zone={card ? cardZone : 0}
         review={card?.column === "validation"}
         {comments}

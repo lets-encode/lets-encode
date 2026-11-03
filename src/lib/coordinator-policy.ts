@@ -317,7 +317,7 @@ export const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
 // The branches the app opens operation pull requests from, each ending in a
 // random suffix of eight hex digits.
 const OPERATION_BRANCH =
-  /^(claim|release|validate|review-edit|comment|setup|layout|zones|align)-.+-[0-9a-f]{8}$/;
+  /^(claim|release|validate|review-edit|comment|resolve|setup|layout|zones|align)-.+-[0-9a-f]{8}$/;
 
 /**
  * Whether a campaign branch is an operation branch left without a pull

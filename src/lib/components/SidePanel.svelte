@@ -58,6 +58,7 @@
   import PanelResizeHandle from "./PanelResizeHandle.svelte";
 
   let {
+    repoId,
     task,
     zone = 0,
     comments,
@@ -90,6 +91,8 @@
     oncomment,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     /** The task the panel shows, or '' for the campaign. */
     task: string;
     /** The piece's colour slot, 1-based (--zone-N); 0 for none. */
@@ -210,7 +213,9 @@
   $effect(() => {
     if (footHeight) footShownHeight = footHeight;
   });
-  const posting = $derived(pendingVerdicts.isProcessing(`comment:${task}`));
+  const posting = $derived(
+    pendingVerdicts.isProcessing(`comment:${task}`, repoId),
+  );
   // Until the viewer sets a width, the panel beside the content keeps its
   // default share of the window as the window changes.
   $effect(() => {
@@ -248,11 +253,12 @@
   });
 
   // The comment a reply targets, shared by the thread list and the composer;
-  // cleared when the panel changes task.
+  // cleared with the unsent comment when the panel changes task.
   let replyTo = $state<CommentRow | null>(null);
   $effect.pre(() => {
     void task;
     replyTo = null;
+    draft = "";
     open = false;
     fieldOpen = false;
   });
@@ -478,6 +484,7 @@
   <div class="composerwrap" class:hidden={!fieldShown} onfocusout={fieldBlur}>
     <CommentComposer
       {task}
+      {repoId}
       {logins}
       {runner}
       bind:replyTo
@@ -618,6 +625,7 @@
           {#each threads as t (t.root.comment_id)}
             <CommentCard
               comment={t.root}
+              {repoId}
               {logins}
               {viewer}
               {canPush}
@@ -632,6 +640,7 @@
             {#each t.replies as reply (reply.comment_id)}
               <CommentCard
                 comment={reply}
+                {repoId}
                 {logins}
                 {viewer}
                 {canPush}

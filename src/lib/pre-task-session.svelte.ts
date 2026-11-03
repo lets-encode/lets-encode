@@ -91,13 +91,18 @@ export class PreTaskSession {
   // The submission runs in the background; the editor holds until its
   // verdict lands, since a repeat would only be rejected.
   submitting = $derived.by(() =>
-    pendingVerdicts.isProcessing(`encode:${this.#taskId()}`),
+    pendingVerdicts.isProcessing(
+      `encode:${this.#taskId()}`,
+      this.campaign.repoId,
+    ),
   );
   canEdit = $derived(this.holds && !this.submitting);
   // Any submission on the task still being processed (claim, encoding,
   // verdict) holds the editor's actions until it lands.
   busy = $derived.by(
-    () => this.runner.busy || pendingVerdicts.taskProcessing(this.#taskId()),
+    () =>
+      this.runner.busy ||
+      pendingVerdicts.taskProcessing(this.#taskId(), this.campaign.repoId),
   );
   /** id → login for every user the tables mention. */
   logins = $derived(this.tables?.logins ?? {});
@@ -156,6 +161,7 @@ export class PreTaskSession {
       void name();
       void taskId();
       untrack(() => void this.flushDraft());
+      this.draftState = "";
       this.data = null;
       this.loadError = null;
       this.#attempted = false;

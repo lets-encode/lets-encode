@@ -20,6 +20,7 @@
   import AbandonButton from "./AbandonButton.svelte";
 
   let {
+    repoId,
     task,
     sub,
     runner,
@@ -34,6 +35,8 @@
     onreviewedit,
     onabandon,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     task: string;
     /** The review slot the viewer holds. */
     sub: string;
@@ -69,7 +72,7 @@
 
   // A submission on this task still being processed (a claim or verdict):
   // the controls hold until it lands — a repeat would only be rejected.
-  const processing = $derived(pendingVerdicts.taskProcessing(task));
+  const processing = $derived(pendingVerdicts.taskProcessing(task, repoId));
 
   // The inline form a fail verdict or an edit from review fills in (its
   // mandatory comment).

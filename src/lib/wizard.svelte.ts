@@ -167,14 +167,15 @@ export const stepIndex = (id: WizardStepId) =>
  * step rail pass over it. The pages step exists to choose between page images;
  * an upload that offers none has nothing to choose. The preparation step
  * decides how facsimile pieces get their measures; without page images —
- * prepared, or still to be chosen from the upload — there are none, and the
- * pieces step finishes the setup.
+ * prepared, or still to be chosen on the pages step ahead — there are none,
+ * and the pieces step finishes the setup.
  */
 export const isSkipped = (id: WizardStepId): boolean =>
   (id === "pages" && wizard.candidates.length === 0) ||
   (id === "preparation" &&
     wizard.images.length === 0 &&
-    wizard.candidates.length === 0);
+    (wizard.candidates.length === 0 ||
+      stepIndex(wizard.step) > stepIndex("pages")));
 
 /**
  * "N pieces · M pages uncovered": the pieces and, with page images, how many

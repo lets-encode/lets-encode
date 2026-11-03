@@ -26,6 +26,7 @@
   import { encodingSize } from "$lib/encoding-align.ts";
   import {
     wizard,
+    isSkipped,
     nextStep,
     piecesSummary,
     previousStep,
@@ -44,9 +45,8 @@
   import { pieceIdLabel } from "$lib/campaign-tables.ts";
 
   let selected = $state(0);
-  // With no page images the preparation step is skipped, so this step
-  // finishes the setup itself.
-  const last = $derived(wizard.images.length === 0);
+  // With the preparation step skipped, this step finishes the setup itself.
+  const last = $derived(isSkipped("preparation"));
   const finisher = new CampaignFinisher();
   onDestroy(() => finisher.cancel());
   const busy = $derived(finisher.busy);

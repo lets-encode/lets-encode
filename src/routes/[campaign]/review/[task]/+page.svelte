@@ -379,6 +379,7 @@
   {:else}
     {#snippet taskBox(headAction: Snippet | undefined)}
       <TaskBox
+        {repoId}
         {card}
         pieceName={card.piece}
         {campaign}
@@ -447,6 +448,7 @@
     {#snippet reviewFooter()}
       {#if reviewSub !== undefined}
         <ReviewActions
+          {repoId}
           task={card.task}
           sub={reviewSub}
           {runner}
@@ -459,6 +461,7 @@
       {/if}
     {/snippet}
     <TaskPageSidePanel
+      {repoId}
       tables={panelTables}
       {taskId}
       {viewer}

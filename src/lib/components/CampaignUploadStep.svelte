@@ -40,8 +40,17 @@
   const canContinue = $derived(
     !busy && (!hasUpload || wizard.copyrightAccepted),
   );
+  // Without new material the pages chosen earlier (or kept with a continued
+  // setup) go on to the next steps.
+  const kept = $derived(wizard.images.length);
   const continueLabel = $derived(
-    busy ? "Working…" : hasUpload ? "Continue" : "Continue without images",
+    busy
+      ? "Working…"
+      : hasUpload
+        ? "Continue"
+        : kept
+          ? `Continue with ${kept} kept page${kept === 1 ? "" : "s"}`
+          : "Continue without images",
   );
 
   // What the rail reports while this step is open.

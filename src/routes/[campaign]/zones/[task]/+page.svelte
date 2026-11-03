@@ -2095,8 +2095,9 @@
     if (drag.kind !== "move") loupeAt(e, drag, x, y);
   }
 
-  // A second finger turns the gesture into a pinch: the drag the first one
-  // started is undone.
+  // The drag under way is undone when a second finger turns the gesture into
+  // a pinch, the pointer is cancelled, Esc is pressed or the window loses
+  // focus.
   function cancelDrag() {
     loupe = null;
     dragging = false;
@@ -2313,11 +2314,16 @@
   // The page's keys. Text fields keep their own keys; undo, redo and Esc
   // work from any other control; the editing keys (A, D, N, Delete, the
   // arrows) only on the pages or with nothing focused, so a key on a panel
-  // control never moves a box or turns a page.
+  // control never moves a box or turns a page. While a drag or a Shift+drag
+  // is under way, Esc undoes it and the other keys do nothing.
   function keydown(e: KeyboardEvent) {
     if (e.defaultPrevented) return;
     const target = e.target as HTMLElement;
     if (target.closest("input, textarea, select, [contenteditable]")) return;
+    if (drag || marquee) {
+      if (e.key === "Escape") cancelDrag();
+      return;
+    }
     // Cmd/Ctrl+Z undoes; add Shift (or Ctrl+Y) to redo.
     if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
       e.preventDefault();
@@ -2690,6 +2696,7 @@
   onpointermove={pointerMove}
   onpointerup={pointerUp}
   onpointercancel={cancelDrag}
+  onblur={cancelDrag}
   onkeydown={keydown}
 />
 
@@ -2827,7 +2834,7 @@
           </div>
         {/if}
       </div>
-      <div class="runrow"><TaskRunState task={taskId} pill /></div>
+      <div class="runrow"><TaskRunState task={taskId} {repoId} pill /></div>
 
       <div
         class="desk"
@@ -3999,6 +4006,7 @@
     {#snippet reviewFooter()}
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
+          {repoId}
           {approveBlock}
           instead={reviewNext}
           task={session.card.task}
@@ -4037,6 +4045,7 @@
 
     {#if tables}
       <TaskPageSidePanel
+        {repoId}
         {tables}
         {taskId}
         done={data?.status === "completed"}

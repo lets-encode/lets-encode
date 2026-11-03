@@ -17,6 +17,7 @@
   import { MAX_COMMENT_LENGTH } from "$lib/campaign-submit.ts";
 
   let {
+    repoId,
     task,
     logins,
     runner,
@@ -26,6 +27,8 @@
     oncancel,
     placeholder = "Write a comment…",
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     /** The task id the composer posts to, e.g. "T0002". */
     task: string;
     logins: Record<string, string>;
@@ -49,7 +52,7 @@
   // Pending from Send until the comment PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
   const posting = $derived(
-    sending || pendingVerdicts.isProcessing(`comment:${task}`),
+    sending || pendingVerdicts.isProcessing(`comment:${task}`, repoId),
   );
 
   async function postComment() {

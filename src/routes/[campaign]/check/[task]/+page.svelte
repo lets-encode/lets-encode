@@ -290,7 +290,9 @@
   {:else if data}
     <div class="main">
       <h1 class="vh">Score check · {session.pieceName || campaign}</h1>
-      <div class="runrow"><TaskRunState task={taskId} pill /></div>
+      <div class="runrow">
+        <TaskRunState task={taskId} repoId={session.campaign.repoId} pill />
+      </div>
       <div class="deskwrap">
         <fieldset class="check" disabled={!canEdit}>
           <div class="scorerow">
@@ -549,6 +551,7 @@
 
     {#if tables}
       <TaskPageSidePanel
+        repoId={session.campaign.repoId}
         {tables}
         {taskId}
         done={data.status === "completed"}

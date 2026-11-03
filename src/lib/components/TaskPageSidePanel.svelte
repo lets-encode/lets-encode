@@ -20,6 +20,7 @@
   >;
 
   let {
+    repoId,
     tables,
     taskId,
     viewer,
@@ -44,6 +45,8 @@
     oncomment,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     tables: PanelTables;
     /** The task the view is open on. */
     taskId: string;
@@ -106,6 +109,7 @@
 
 <SidePanel
   task={taskId}
+  {repoId}
   zone={pieceZone(index)}
   {review}
   {done}

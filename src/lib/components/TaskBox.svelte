@@ -38,6 +38,7 @@
   import ValidationRecord from "./ValidationRecord.svelte";
 
   let {
+    repoId,
     card,
     pieceName,
     zone = 0,
@@ -59,6 +60,8 @@
     oneditor,
     onabandon,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     card: BoardCard;
     /** The display name of the task's piece. */
     pieceName: string;
@@ -108,9 +111,11 @@
 
   // A submission on this task still being processed: every action in the
   // footer holds until it lands.
-  const processing = $derived(pendingVerdicts.taskProcessing(card.task));
+  const processing = $derived(
+    pendingVerdicts.taskProcessing(card.task, repoId),
+  );
   // A submission's run state takes the status pill's place while it shows.
-  const runState = $derived(pendingVerdicts.forTask(card.task));
+  const runState = $derived(pendingVerdicts.forTask(card.task, repoId));
   /** The viewer's encoding claim on the task, if any. */
   const myEncodingLock = $derived(
     viewer === ""
@@ -249,7 +254,7 @@
     </div>
   {/if}
   <div class="statusrow">
-    <TaskRunState task={card.task} pill />
+    <TaskRunState task={card.task} {repoId} pill />
     {#if !runState}
       <span
         class="chip"

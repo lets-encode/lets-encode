@@ -246,16 +246,19 @@
   async function loadScoreHead() {
     if (scoreHeadState !== "idle") return;
     scoreHeadState = "loading";
+    const name = campaign;
     try {
       const f = readForge();
       // The first task's fragment is the piece the campaign opens on.
       const mei = taskDefs[0]?.fragment
         ? await f.getRepoFile(owner, repo, taskDefs[0].fragment)
         : null;
+      // A read for a campaign left meanwhile is dropped.
+      if (name !== campaign) return;
       scoreHead = mei ? parseMeiHeader(mei) : null;
       scoreHeadState = mei ? "done" : "error";
     } catch {
-      scoreHeadState = "error";
+      if (name === campaign) scoreHeadState = "error";
     }
   }
 
@@ -1195,6 +1198,7 @@
 
 {#snippet boardTaskBox(card: BoardCard)}
   <TaskBox
+    {repoId}
     {card}
     pieceName={pieceNameOf(card.task)}
     zone={zoneOf(card.task)}
@@ -1220,6 +1224,7 @@
 {#snippet sidePanelFor(card: BoardCard | null, emptyLine: string)}
   {#if card}
     <SidePanel
+      {repoId}
       task={card.task}
       zone={zoneOf(card.task)}
       review={card.column === "validation"}
@@ -1240,6 +1245,7 @@
     </SidePanel>
   {:else}
     <SidePanel
+      {repoId}
       task=""
       {emptyLine}
       info={canPush ? campaignInfo : undefined}
@@ -1470,6 +1476,7 @@
         {:else if scoreView}
           {#key scoreView.piece.path}
             <ScoreView
+              {repoId}
               bind:this={scoreViewRef}
               piece={scoreView.piece}
               campaignTitle={title || repo}
@@ -1570,6 +1577,7 @@
                 </div>
                 <div class="volrow sidehost">
                   <VolunteerView
+                    {repoId}
                     {owner}
                     {repo}
                     cards={allCards}
@@ -1882,7 +1890,7 @@
                               {/if}
                               <!-- A submission's run state takes the review
                                    count's place while it shows. -->
-                              {#if card.column === "validation" && !pendingVerdicts.forTask(card.task)}
+                              {#if card.column === "validation" && !pendingVerdicts.forTask(card.task, repoId)}
                                 <div class="card-type">
                                   {reviewWaitLabel(
                                     card.passes,
@@ -1907,7 +1915,12 @@
                                   </span>
                                 </div>
                               {/if}
-                              <TaskRunState task={card.task} pill short />
+                              <TaskRunState
+                                task={card.task}
+                                {repoId}
+                                pill
+                                short
+                              />
                               {#if card.column === "blocked"}
                                 <div class="card-foot">
                                   waits for <strong>{card.waitsFor}</strong>

@@ -124,11 +124,21 @@ export async function initAuth(): Promise<void> {
 
 const SESSION_CHECK_INTERVAL_MS = 30 * 60_000;
 
-/** Ask the broker for the session's user; a rejection marks the session expired. */
+/**
+ * Ask the broker for the session's user; a rejection marks the session
+ * expired. A session that now belongs to another account (a login in another
+ * tab) reloads the page, so the app acts and shows as that account.
+ */
 function checkSession(): void {
   if (auth.status !== "authenticated") return;
   createForge(SESSION)
     .getAuthenticatedUser()
+    .then((resolved) => {
+      if (resolved && resolved.user.login !== auth.user?.login) {
+        console.log("[auth] session now belongs to", resolved.user.login);
+        location.reload();
+      }
+    })
     .catch(() => {});
 }
 

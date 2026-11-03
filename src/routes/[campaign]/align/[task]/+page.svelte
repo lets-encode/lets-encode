@@ -269,7 +269,9 @@
   {:else if data && aligned}
     <div class="scorecol" bind:clientWidth={scoreW}>
       <h1 class="vh">Encoding alignment · {session.pieceName || campaign}</h1>
-      <div class="runrow"><TaskRunState task={taskId} pill /></div>
+      <div class="runrow">
+        <TaskRunState task={taskId} repoId={session.campaign.repoId} pill />
+      </div>
       {#if scoreW > 0}
         <ScorePreview
           bind:this={preview}
@@ -386,6 +388,7 @@
     {#snippet reviewFooter()}
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
+          repoId={session.campaign.repoId}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
@@ -417,6 +420,7 @@
 
     {#if tables}
       <TaskPageSidePanel
+        repoId={session.campaign.repoId}
         {tables}
         {taskId}
         done={data.status === "completed"}
