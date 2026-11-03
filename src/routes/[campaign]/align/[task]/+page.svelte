@@ -420,6 +420,7 @@
         repoId={session.campaign.repoId}
         {tables}
         {taskId}
+        review={data.status === "validation_required"}
         done={data.status === "completed"}
         viewer={session.viewer}
         {runner}

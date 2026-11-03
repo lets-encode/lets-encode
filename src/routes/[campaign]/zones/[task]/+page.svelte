@@ -359,7 +359,10 @@
   const DROP_BELOW = 8;
   const NUDGE = 2;
   const NUDGE_FAR = 10;
-  const ed = new BoxEditor<{ box: MeasureBox }, EditPage[]>({
+  const ed = new BoxEditor<
+    { box: MeasureBox },
+    { pages: EditPage[]; named: LayoutInstruments }
+  >({
     items: (p) => (pages[p] ? items(p) : []),
     box: (item) => item.box,
     page: (p) => pages[p],
@@ -380,8 +383,15 @@
     dropBelow: () => DROP_BELOW,
     nudge: { near: NUDGE, far: NUDGE_FAR },
     changed: settle,
-    snapshot: () => clonePages(pages),
-    restore: (s) => (pages = clonePages(s)),
+    // The instruments' names are undone with the boxes they name.
+    snapshot: () => ({
+      pages: clonePages(pages),
+      named: $state.snapshot(named),
+    }),
+    restore: (s) => {
+      pages = clonePages(s.pages);
+      named = structuredClone(s.named);
+    },
   });
   $effect(() => ed.listen());
   const selected = $derived(ed.selected);
@@ -981,12 +991,15 @@
           i.id === id ? { ...i, abbr: abbr.trim() } : i,
         ),
       };
+      ed.commit();
     },
     groups(groups: LayoutGroup[]) {
       named = { ...named, groups };
+      ed.commit();
     },
     fix(fixed: boolean) {
       named = { ...named, fixed };
+      ed.commit();
     },
     // An instrument named a second time becomes a part of the one it looks
     // like: every box showing one of its staves shows the staff that
@@ -3364,6 +3377,7 @@
         {repoId}
         {tables}
         {taskId}
+        review={data?.status === "validation_required"}
         done={data?.status === "completed"}
         {viewer}
         {runner}

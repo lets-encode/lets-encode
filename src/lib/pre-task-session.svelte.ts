@@ -154,6 +154,17 @@ export class PreTaskSession {
       return () => clearInterval(timer);
     });
 
+    // Closing the tab asks first while a draft is waiting or being saved: a
+    // save started as the tab closes may not complete.
+    $effect(() => {
+      const ask = (e: BeforeUnloadEvent) => {
+        if (this.#draftInput || this.draftState === "saving")
+          e.preventDefault();
+      };
+      addEventListener("beforeunload", ask);
+      return () => removeEventListener("beforeunload", ask);
+    });
+
     // A pending draft is saved when the page is hidden or left.
     $effect(() => {
       const flush = () => {

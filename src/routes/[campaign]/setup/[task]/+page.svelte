@@ -512,6 +512,17 @@
   // The setup's two steps: the staves with the key and time signature, then
   // the groups.
   let setupStep = $state<1 | 2>(1);
+  // A review is approved once both steps have been opened.
+  let stepsSeen = $state<number[]>([1]);
+  $effect(() => {
+    const step = setupStep;
+    untrack(() => {
+      if (!stepsSeen.includes(step)) stepsSeen = [...stepsSeen, step];
+    });
+  });
+  const approveBlock = $derived(
+    stepsSeen.includes(2) ? null : "Open step 2 (groups) before approving.",
+  );
   let panelTab = $state<"selection" | "comments">("selection");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
@@ -988,14 +999,17 @@
     return `${pitch}sounds ${soundsText(transOf(staff))}`;
   }
   const STAFF_KEYS = KEY_SIGNATURES;
+  // Removing or moving a staff by other means drops a staff picked to move.
   function removeStaff(i: number) {
     if (staves.length <= 1) return;
+    picked = null;
     groups = removeStaffFromGroups(groups, i);
     clearMark();
     staves = staves.filter((_, n) => n !== i);
   }
   function moveStaff(from: number, to: number) {
     if (from === to || to < 0 || to >= staves.length) return;
+    picked = null;
     groups = moveStaffInGroups(groups, staves.length, from, to);
     clearMark();
     reorderStaves(from, to);
@@ -2189,6 +2203,7 @@
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
           {repoId}
+          {approveBlock}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
@@ -2227,6 +2242,7 @@
         {repoId}
         {tables}
         {taskId}
+        review={data?.status === "validation_required"}
         done={data?.status === "completed"}
         {viewer}
         {runner}

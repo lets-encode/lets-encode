@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-03
 
+- Pre-task pages undo instrument names, approve a setup only after both steps were opened and tint comments in review.
+- The pre-task editors ask before the tab closes while a draft is not yet saved.
 - OMR runs are followed until they settle, stop when their page is left and retry relay refusals like image downloads.
 - Piece previews reload when the score changes, and the recognition record keeps why a staff failed.
 - Requests recover from lost responses, stale forks and server errors, and logging out forgets cached reads.
