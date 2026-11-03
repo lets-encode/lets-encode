@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
-  import { tick, untrack, type Snippet } from "svelte";
+  import { onDestroy, tick, untrack, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
@@ -253,6 +253,11 @@
     },
   );
   const runner = session.runner;
+  // The recognition service's calls stop when the page goes away.
+  const omrStop = new AbortController();
+  onDestroy(() => omrStop.abort());
+  const omrClient = () =>
+    createOmrClient(provider.brokerUrl, { signal: omrStop.signal });
   const data = $derived(session.data);
   const tables = $derived(session.tables);
   $effect(() => {
@@ -1139,7 +1144,7 @@
         );
       const result = await recognisePiece({
         forge: f,
-        client: createOmrClient(provider.brokerUrl),
+        client: omrClient(),
         owner,
         repo,
         repoId,
@@ -1276,7 +1281,7 @@
     f: ForgeClient,
     fragment: string,
   ): Promise<Result> {
-    const client = createOmrClient(provider.brokerUrl);
+    const client = omrClient();
     const cached = readCachedLayouts(repoId, taskId, omrModels.layoutModel);
     try {
       if (!pages.every((pg) => cached[pg.image])) {

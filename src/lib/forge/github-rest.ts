@@ -35,6 +35,17 @@ export function onSessionRejected(callback: () => void): void {
 }
 
 /**
+ * Waits before re-attempting a request the broker's relays refused with a 429
+ * other than a daily allowance, in ms, each longer than the last. The relays
+ * also refuse while their requests in flight are taken, which a slow upstream
+ * holds for up to the relay's deadline plus its read timeout (see
+ * broker/app.py), so the waits add up to more than a minute.
+ */
+export const RELAY_RETRY_WAITS_MS = [
+  500, 1000, 2000, 4000, 8000, 15000, 15000, 15000,
+];
+
+/**
  * fetch() for the broker's own endpoints (the registry and the relays): a 401
  * means the broker session has ended, as for a proxied SESSION call.
  */

@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-03
 
+- OMR runs are followed until they settle, stop when their page is left and retry relay refusals like image downloads.
+- Piece previews reload when the score changes, and the recognition record keeps why a staff failed.
 - Requests recover from lost responses, stale forks and server errors, and logging out forgets cached reads.
 - Polling no longer drops the refresh when a tab is shown again.
 - Setup drafts are kept per account, survive leaving the page and no longer return from another tab.

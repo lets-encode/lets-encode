@@ -19,7 +19,7 @@
 // pure logic can be tested outside a browser. The broker's base URL is passed in
 // rather than read from config, keeping this module free of SvelteKit's env.
 
-import { brokerFetch } from "./forge/github-rest.ts";
+import { brokerFetch, RELAY_RETRY_WAITS_MS } from "./forge/github-rest.ts";
 import { pad2 } from "./pieces.ts";
 
 /** A page image ready to commit: repo-relative path and its bytes. */
@@ -84,13 +84,6 @@ export const IIIF_PREVIEW_REQUESTS = 4;
 // under the ceiling, with room left for a manifest fetch beside them. Raising
 // this means raising the relay's own limit with it (see broker/app.py).
 export const IIIF_REQUESTS_PER_SECOND = 16;
-// Waits before re-attempting a request the relay refused, in ms, each longer
-// than the last. The pass as a whole waits, not just the refused request: the
-// budget a 429 reports exhausted is shared by every request in the pass. The
-// relay also refuses while its requests in flight are taken, which a slow
-// source holds for up to RELAY_DEADLINE_S plus the read timeout (see
-// broker/app.py), so the waits add up to more than a minute.
-const IIIF_RETRY_WAITS = [500, 1000, 2000, 4000, 8000, 15000, 15000, 15000];
 const JPEG_QUALITY = 0.85;
 // Committed pages keep the source's resolution, as the OMR staff model is run
 // on the source image itself: uploads are committed byte-for-byte, IIIF images
@@ -418,7 +411,11 @@ const SOURCE_MARKER = "iiif";
 // further request until 00:00 UTC, so it is not re-attempted.
 const LIMIT_MARKER = "x-lets-encode-limit";
 
-/** Whether a failed relay request is re-attempted. */
+/**
+ * Whether a failed relay request is re-attempted, after RELAY_RETRY_WAITS_MS.
+ * The pass as a whole waits, not just the refused request: the budget a 429
+ * reports exhausted is shared by every request in the pass.
+ */
 const reattempt = (res: Response) =>
   res.status === 429 && res.headers.get(LIMIT_MARKER) !== "daily";
 
@@ -459,12 +456,12 @@ async function fetchIiifImage(
     await pacer.take();
     const res = await doFetch(iiifProxyUrl(url, brokerUrl));
     if (res.ok) return res.blob();
-    if (!reattempt(res) || attempt === IIIF_RETRY_WAITS.length) {
+    if (!reattempt(res) || attempt === RELAY_RETRY_WAITS_MS.length) {
       throw new Error(
         relayFailure(res, `Could not fetch the IIIF image at ${url}`),
       );
     }
-    await pacer.hold(IIIF_RETRY_WAITS[attempt]);
+    await pacer.hold(RELAY_RETRY_WAITS_MS[attempt]);
   }
 }
 
@@ -697,8 +694,9 @@ export async function fetchIiifCanvases(
         // fetch() rejects with an opaque TypeError on network and CORS failures.
         throw new Error(`Could not reach the IIIF manifest at ${manifestUrl}.`);
       }
-      if (!reattempt(res) || attempt === IIIF_RETRY_WAITS.length) return res;
-      await wait(IIIF_RETRY_WAITS[attempt]);
+      if (!reattempt(res) || attempt === RELAY_RETRY_WAITS_MS.length)
+        return res;
+      await wait(RELAY_RETRY_WAITS_MS[attempt]);
     }
   };
   const res = await fetchManifest();

@@ -73,7 +73,7 @@
     writeLastTask,
   } from "$lib/side-panels.ts";
   import { MediaQuery } from "svelte/reactivity";
-  import { piecePreview } from "$lib/piece-previews.ts";
+  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
@@ -382,14 +382,19 @@
   });
   // The scoped piece's preview, for the context strip over the columns.
   let stripPreview = $state<PiecePreview | null>(null);
+  const stripVersion = $derived(
+    railPiece ? scoreVersion(history, taskDefs, railPiece.piece.path) : "",
+  );
   $effect(() => {
     const piece = railPiece?.piece;
     stripPreview = null;
     if (!piece || !owner) return;
     const path = piece.path;
-    piecePreview(readForge(), owner, repo, path).then((preview) => {
-      if (railPiece?.piece.path === path) stripPreview = preview;
-    });
+    piecePreview(readForge(), owner, repo, path, true, stripVersion).then(
+      (preview) => {
+        if (railPiece?.piece.path === path) stripPreview = preview;
+      },
+    );
   });
   // Tasks the viewer's accepted submissions just moved on this campaign's
   // board, highlighted in their new column for a short while.
@@ -1584,6 +1589,7 @@
                     {nextCard}
                     {completedTask}
                     {taskDefs}
+                    {history}
                     {locks}
                     {viewer}
                     pieces={previewPieces}

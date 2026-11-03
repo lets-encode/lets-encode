@@ -96,7 +96,7 @@ export function serializeOmrRecord(record: OmrRecord): string {
       const label = staff.label
         ? `      <label>${escape(staff.label)}</label>`
         : "";
-      if (staff.musicxml === null) {
+      if (!staff.musicxml) {
         const error = ` error="${escape(staff.error || "not transcribed")}"`;
         lines.push(
           label

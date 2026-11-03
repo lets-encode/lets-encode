@@ -106,3 +106,11 @@ test("the record sits next to the score", () => {
     "sources/liszt/omr.xml",
   );
 });
+
+test("a staff with empty MusicXML keeps its error through writing and reading", () => {
+  const r = record();
+  r.pages[0].staves[1] = { ...r.pages[0].staves[1], musicxml: "" };
+  const back = parseOmrRecord(serializeOmrRecord(r))!;
+  assert.equal(back.pages[0].staves[1].musicxml, null);
+  assert.equal(back.pages[0].staves[1].error, "pipeline execution failed");
+});

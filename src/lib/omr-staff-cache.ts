@@ -24,13 +24,14 @@ export const staffCacheKey = (
   pipeline: OmrPipeline,
   cropMargin: number,
 ): string =>
+  // Corners rounded to whole pixels, as the record compares them (sameBox).
   [
     repoId,
     zone,
-    box.ulx,
-    box.uly,
-    box.lrx,
-    box.lry,
+    Math.round(box.ulx),
+    Math.round(box.uly),
+    Math.round(box.lrx),
+    Math.round(box.lry),
     pipeline.name,
     pipeline.version,
     cropMargin,
@@ -40,7 +41,9 @@ let opening: Promise<IDBDatabase | null> | null = null;
 
 function open(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  opening ??= new Promise((resolve) => {
+  if (opening) return opening;
+  // A store that could not be opened is tried again on the next call.
+  opening = new Promise<IDBDatabase | null>((resolve) => {
     try {
       const request = indexedDB.open(DB, 1);
       request.onupgradeneeded = () => request.result.createObjectStore(STORE);
@@ -50,6 +53,9 @@ function open(): Promise<IDBDatabase | null> {
     } catch {
       resolve(null);
     }
+  });
+  void opening.then((db) => {
+    if (!db) opening = null;
   });
   return opening;
 }

@@ -15,7 +15,7 @@
     type MusicGlyphName,
   } from "$lib/components/MusicGlyph.svelte";
   import { page } from "$app/state";
-  import { tick, untrack, type Snippet } from "svelte";
+  import { onDestroy, tick, untrack, type Snippet } from "svelte";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
@@ -180,6 +180,11 @@
     },
   );
   const runner = session.runner;
+  // The recognition service's calls stop when the page goes away.
+  const omrStop = new AbortController();
+  onDestroy(() => omrStop.abort());
+  const omrClient = () =>
+    createOmrClient(provider.brokerUrl, { signal: omrStop.signal });
   const data = $derived(session.data);
   const holds = $derived(session.holds);
   // Only the volunteer holding the task edits it; everyone else, and everyone
@@ -699,7 +704,7 @@
     f: ForgeClient,
     d: FacsimileTaskData,
   ): Promise<Result> {
-    const client = createOmrClient(provider.brokerUrl);
+    const client = omrClient();
     try {
       runner.log.step("Reading the recognition record");
       // A record saved with the work, or kept from an expired claim, comes

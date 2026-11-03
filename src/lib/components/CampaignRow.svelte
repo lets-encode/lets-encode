@@ -20,7 +20,7 @@
   import { login } from "$lib/auth.svelte.ts";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { piecePreview } from "$lib/piece-previews.ts";
+  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import { systemThumb } from "$lib/system-thumbs.ts";
 
@@ -64,6 +64,9 @@
   const piecePath = $derived(stats.taskDefs.find((t) => t.fragment)?.fragment);
   const repoOwner = $derived(stats.owner);
   const repoName = $derived(stats.repo);
+  const version = $derived(
+    piecePath ? scoreVersion(stats.history, stats.taskDefs, piecePath) : "",
+  );
   let preview = $state<PiecePreview | null>(null);
   // Raised by "Try again" to load a failed preview anew.
   let attempt = $state(0);
@@ -71,9 +74,11 @@
     const path = piecePath;
     void attempt;
     if (!path) return;
-    piecePreview(readForge(), repoOwner, repoName, path, false).then((p) => {
-      preview = p;
-    });
+    piecePreview(readForge(), repoOwner, repoName, path, false, version).then(
+      (p) => {
+        preview = p;
+      },
+    );
   });
 
   // A small image of the first page's first system, cut in the browser and

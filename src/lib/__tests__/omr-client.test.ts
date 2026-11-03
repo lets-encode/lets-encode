@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
+import { RELAY_RETRY_WAITS_MS } from "../forge/github-rest.ts";
 import { createOmrClient, OmrError } from "../omr-client.ts";
 
 interface Seen {
@@ -173,20 +174,23 @@ test("a call the broker rate limit refused is retried after a back-off; a servic
   const files = await client.download("p1", ["a.json"]);
   assert.equal(await files["a.json"].text(), "bytes");
   assert.equal(seen.filter((s) => s.url.startsWith(`${BASE}/blob`)).length, 3);
-  assert.deepEqual(waits, [1000, 2000]);
+  assert.deepEqual(waits, RELAY_RETRY_WAITS_MS.slice(0, 2));
 
   await assert.rejects(
     client.pipelines(),
     (e: unknown) => e instanceof OmrError && e.status === 429,
   );
-  assert.deepEqual(waits, [1000, 2000]);
+  assert.deepEqual(waits, RELAY_RETRY_WAITS_MS.slice(0, 2));
 
   refusals = 10;
   await assert.rejects(
     client.download("p1", ["a.json"]),
     /rate limit exceeded/,
   );
-  assert.deepEqual(waits, [1000, 2000, 1000, 2000, 4000]);
+  assert.deepEqual(waits, [
+    ...RELAY_RETRY_WAITS_MS.slice(0, 2),
+    ...RELAY_RETRY_WAITS_MS,
+  ]);
 });
 
 test("run starts the execution and polls until it has settled", async () => {
@@ -331,4 +335,40 @@ test("a call past the login's daily allowance fails at once with the relay's rea
     /^Error: The OMR relay refused POST .*: This account has reached today's limit for OMR runs/,
   );
   assert.equal(calls, 1);
+});
+
+test("run polls through states other than running until the execution settles", async () => {
+  let polls = 0;
+  const { fetch } = fakeFetch({
+    [`POST ${BASE}/api/musicorpus-pages/p1/pipeline-executions`]: () =>
+      Response.json({ execution_id: 3, state: "queued", error: null }),
+    [`GET ${BASE}/api/musicorpus-pages/p1/pipeline-executions/3`]: () =>
+      Response.json({
+        execution_id: 3,
+        state: ++polls < 2 ? "queued" : "completed",
+        error: null,
+      }),
+  });
+  const client = createOmrClient("/auth", { fetch, ...noSleep });
+  const execution = await client.run(
+    "p1",
+    { name: "mzk-staff", version: "1" },
+    [],
+  );
+  assert.equal(execution.state, "completed");
+  assert.equal(polls, 2);
+});
+
+test("an aborted client stops its calls", async () => {
+  const stop = new AbortController();
+  stop.abort();
+  const client = createOmrClient("/auth", {
+    fetch: (_input, init) =>
+      init?.signal?.aborted
+        ? Promise.reject(new DOMException("aborted", "AbortError"))
+        : Promise.resolve(Response.json({ pipelines: [] })),
+    signal: stop.signal,
+    ...noSleep,
+  });
+  await assert.rejects(client.pipelines(), /recognition was stopped/);
 });

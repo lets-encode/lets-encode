@@ -14,7 +14,12 @@
     pieceLabel,
     pieceZone,
   } from "$lib/campaign-tables.ts";
-  import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
+  import type {
+    HistoryRow,
+    LockRow,
+    PieceRef,
+    TaskRow,
+  } from "$lib/campaign-tables.ts";
   import {
     cardName,
     cardPill,
@@ -23,7 +28,7 @@
   } from "$lib/campaign-board.ts";
   import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
-  import { piecePreview } from "$lib/piece-previews.ts";
+  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { PagePreview, PiecePreview } from "$lib/piece-previews.ts";
@@ -36,6 +41,7 @@
     nextCard,
     completedTask,
     taskDefs,
+    history,
     locks,
     viewer,
     pieces,
@@ -59,6 +65,7 @@
         place while set; null otherwise. */
     completedTask: string | null;
     taskDefs: TaskRow[];
+    history: HistoryRow[];
     locks: LockRow[];
     viewer: string;
     pieces: PieceRef[];
@@ -169,13 +176,18 @@
   const startPage = (c: BoardCard): number | null => pageOfLocator(c.locator);
 
   // First-page thumbnails, page crops and measure counts, loaded per piece.
+  // A piece's preview is loaded again when its score has changed; the one
+  // shown stays until the new one is there.
   let previews = $state<Record<string, PiecePreview>>({});
+  const loadedVersions: Record<string, string> = {};
   $effect(() => {
     const f = readForge();
     for (const piece of pieces) {
       const path = piece.path;
-      if (previews[path]) continue;
-      piecePreview(f, owner, repo, path).then((preview) => {
+      const version = scoreVersion(history, taskDefs, path);
+      if (loadedVersions[path] === version) continue;
+      loadedVersions[path] = version;
+      piecePreview(f, owner, repo, path, true, version).then((preview) => {
         previews[path] = preview;
       });
     }

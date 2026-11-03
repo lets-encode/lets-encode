@@ -38,7 +38,9 @@ let opening: Promise<IDBDatabase | null> | null = null;
 
 function open(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  opening ??= new Promise((resolve) => {
+  if (opening) return opening;
+  // A store that could not be opened is tried again on the next call.
+  opening = new Promise<IDBDatabase | null>((resolve) => {
     // An open that another tab's pending deletion holds fires no event; the
     // images are then cut without the store.
     setTimeout(() => resolve(null), OPEN_TIMEOUT);
@@ -51,6 +53,9 @@ function open(): Promise<IDBDatabase | null> {
     } catch {
       resolve(null);
     }
+  });
+  void opening.then((db) => {
+    if (!db) opening = null;
   });
   return opening;
 }
