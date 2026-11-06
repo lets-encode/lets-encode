@@ -1013,8 +1013,10 @@
 
   // Save the edited plan; a clean save leaves the manage takeover (run() has
   // already refreshed the tables, so the board reflects the new plan).
-  async function savePlan(tasks: TaskRow[]) {
-    const result = await run((c) => invoke(commands.savePlan, { tasks }, c));
+  async function savePlan(tasks: TaskRow[], base: TaskRow[]) {
+    const result = await run((c) =>
+      invoke(commands.savePlan, { tasks, base }, c),
+    );
     if (result?.ok) manage = false;
   }
 

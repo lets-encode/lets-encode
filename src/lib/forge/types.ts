@@ -154,6 +154,12 @@ export interface ForgeClient {
     repo: string,
     opts?: { attempts?: number; delayMs?: number },
   ): Promise<{ owner: string; repo: string }>;
+  /** The commit a branch points at, or null when there is no such branch. */
+  getBranchHead(
+    owner: string,
+    repo: string,
+    branch: string,
+  ): Promise<string | null>;
   /** Create a branch at `fromSha`. */
   createBranch(
     owner: string,
@@ -176,7 +182,11 @@ export interface ForgeClient {
     repo: string,
     opts: { title: string; head: string; base: string; body: string },
   ): Promise<ChangeRequest>;
-  /** Commit `files` to a fresh branch (in the repo or the user's fork) and open a PR upstream. */
+  /**
+   * Commit `files` to a fresh branch (in the repo or the user's fork) and open
+   * a PR upstream. The branch starts at `baseSha` when given, else at the
+   * default branch's head.
+   */
   openChangePr(
     owner: string,
     repo: string,
@@ -186,6 +196,7 @@ export interface ForgeClient {
       message: string;
       title: string;
       body: string;
+      baseSha?: string;
     },
   ): Promise<OpenedChangeRequest>;
   /** Trigger a CI run (GitHub: workflow_dispatch) of `workflow` on `ref`. */

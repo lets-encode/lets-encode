@@ -198,6 +198,9 @@ export class CampaignFinisher {
       claim = wizard.claim ?? claim;
       sameSetup();
       if (!committed) {
+        // The commit goes on this head only: the same setup finished from
+        // another tab in the meantime refuses it instead of being replaced.
+        const { sha: base } = await f.getRepoHead(repo.owner, repo.name);
         const detected = this.detected ?? [];
 
         // Every piece is published under the campaign's licence, so it is stated
@@ -389,17 +392,27 @@ export class CampaignFinisher {
         }
         sameSetup();
         this.log.step(`Committing the campaign (${files.length} file(s))`);
-        await f.commitFiles(
-          repo.owner,
-          repo.name,
-          files,
-          "Initialise campaign",
-          {
-            deletePaths: TEMPLATE_ONLY_PATHS,
-            onUpload: (done, total) =>
-              this.log.detail(`uploading ${done} of ${total}`),
-          },
-        );
+        try {
+          await f.commitFiles(
+            repo.owner,
+            repo.name,
+            files,
+            "Initialise campaign",
+            {
+              baseSha: base,
+              deletePaths: TEMPLATE_ONLY_PATHS,
+              onUpload: (done, total) =>
+                this.log.detail(`uploading ${done} of ${total}`),
+            },
+          );
+        } catch (e) {
+          if (
+            !/\(422 PATCH /.test((e as Error).message) ||
+            (await f.getRepoFile(repo.owner, repo.name, CONFIG_PATH)) == null
+          )
+            throw e;
+          this.log.step("The campaign was committed from another tab");
+        }
       }
 
       // There is a campaign now, so the name it was reserved under becomes its

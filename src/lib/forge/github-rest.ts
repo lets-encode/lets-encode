@@ -1414,6 +1414,7 @@ export interface OpenPullRequest {
   /** GitHub account type: 'User', 'Bot' or 'Organization'. */
   user: { id: number; login: string; type: string };
   head: { sha: string; ref: string; repo: { full_name: string } | null };
+  body: string | null;
 }
 
 /** The repository's open pull requests, newest first; 1,000 at most. */
@@ -1449,6 +1450,7 @@ export async function listOpenPullRequests(
       ref: pr.head.ref,
       repo: pr.head.repo ? { full_name: pr.head.repo.full_name } : null,
     },
+    body: pr.body ?? null,
   }));
 }
 
@@ -1828,6 +1830,28 @@ export async function commitFiles(
   return commit.sha;
 }
 
+/** The commit `branch` points at, or null when there is no such branch. */
+export async function getBranchHead(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<string | null> {
+  const { status, ok, data } = await ghGet<{
+    object?: { sha?: string };
+    message?: string;
+  }>(
+    `${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${encodeRepoPath(branch)}`,
+    token,
+  );
+  if (status === 404) return null;
+  if (!ok || !data?.object?.sha)
+    throw new Error(
+      `${data?.message || "Failed to read branch"} (${status} GET ref heads/${branch})`,
+    );
+  return data.object.sha;
+}
+
 /** Create a new branch `branch` pointing at `fromSha`. */
 export async function createBranch(
   token: string,
@@ -1931,7 +1955,8 @@ export async function deleteBranch(
 
 /**
  * Open a pull request. Returns { number, html_url, headSha } — the head commit
- * SHA is what identifies the workflow run the PR triggers.
+ * SHA is what identifies the workflow run the PR triggers. When a pull request
+ * from `head` is open already, that one is returned.
  */
 export async function createPullRequest(
   token: string,
@@ -1966,6 +1991,20 @@ export async function createPullRequest(
       ?.map((e) => e.message)
       .filter(Boolean)
       .join("; ");
+    // The same head opened from another tab or device: that pull request is
+    // the one to follow.
+    if (
+      res.status === 422 &&
+      /pull request already exists/i.test(detail ?? "")
+    ) {
+      const open = await findOpenPullRequest(
+        token,
+        owner,
+        repo,
+        head.includes(":") ? head : `${owner}:${head}`,
+      );
+      if (open) return open;
+    }
     throw new Error(
       `${data.message || "Failed to open pull request"}${detail ? `: ${detail}` : ""} (${res.status} POST pulls)`,
     );
@@ -1987,7 +2026,8 @@ export async function createPullRequest(
  * If the user can push to the repo (owner/collaborator) the branch is made in
  * the repo itself. Otherwise the user's fork is used and a cross-repo PR is
  * opened upstream — the real volunteer model. Either way the branch is based on
- * the upstream head, so the PR diff is only the change in `files`.
+ * the upstream head, or on `baseSha` when given, so the PR diff is only the
+ * change in `files` as long as they were read at that commit.
  */
 export async function openChangePr(
   token: string,
@@ -1999,12 +2039,14 @@ export async function openChangePr(
     message,
     title,
     body,
+    baseSha,
   }: {
     branch: string;
     files: FileChange[];
     message: string;
     title: string;
     body: string;
+    baseSha?: string;
   },
 ): Promise<{
   number: number;
@@ -2012,7 +2054,9 @@ export async function openChangePr(
   headSha: string;
   head: { owner: string; repo: string; branch: string };
 }> {
-  const { branch: base, sha, canPush } = await getRepoHead(token, owner, repo);
+  const head = await getRepoHead(token, owner, repo);
+  const { branch: base, canPush } = head;
+  const sha = baseSha ?? head.sha;
   const target = canPush
     ? { owner, repo }
     : await ensureFork(token, owner, repo);

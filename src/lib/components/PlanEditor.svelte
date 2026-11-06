@@ -43,7 +43,8 @@
     logins: Logins;
     pieceNames: PieceNames;
     busy: boolean;
-    onsave: (tasks: TaskRow[]) => void;
+    /** The edited task table and the one the editor opened with. */
+    onsave: (tasks: TaskRow[], base: TaskRow[]) => void;
     oncancel: () => void;
   } = $props();
 
@@ -62,6 +63,9 @@
 
   // The draft: a deep copy of the task table, grouped, taken once on entry.
   let groups = $state<Group[]>(buildDraft());
+  // The task table the draft was taken from; the save is refused when the
+  // campaign's has changed since.
+  const base = untrack(() => taskDefs);
   const flatRows = (gs: Group[]) => gs.flatMap((g) => [g.task, ...g.subs]);
   const entered = JSON.stringify(flatRows(untrack(() => groups)));
   const edited = $derived(JSON.stringify(flatRows(groups)) !== entered);
@@ -204,7 +208,7 @@
         ? "Click again to leave this task where it is."
         : `Click to move task ${groups[reorder.picked].task.task_id} here.`;
 
-  const save = () => onsave(flatRows(groups));
+  const save = () => onsave(flatRows(groups), base);
 </script>
 
 <div class="plan">

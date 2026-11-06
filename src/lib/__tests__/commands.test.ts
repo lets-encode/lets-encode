@@ -3,13 +3,19 @@ import assert from "node:assert/strict";
 
 import {
   commands,
+  commentInput,
   invoke,
   resumeFollowing,
   setVerdictSink,
   type CommandContext,
 } from "../commands.ts";
 import { envelopeFromPrBody } from "../command-envelope.ts";
-import { HISTORY_COLUMNS, HISTORY_PATH } from "../campaign-tables.ts";
+import {
+  HISTORY_COLUMNS,
+  HISTORY_PATH,
+  serializeTaskCsv,
+  TASK_PATH,
+} from "../campaign-tables.ts";
 import type { ForgeClient, OpenedChangeRequest } from "../forge/types.ts";
 import { fakeForge, type ForgeOverrides } from "./fake-forge.ts";
 
@@ -83,6 +89,12 @@ function claimForge(
 ): ForgeClient {
   return fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
     getRepoFile: async () => lockHeader,
     openChangePr: async () => ({
       number,
@@ -236,6 +248,12 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
   };
   const forge = fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
     getRepoFile: async (_owner, _repo, path) =>
       path === "tracking/lock.csv" ? lockHeader : null,
     openChangePr: async (_owner, _repo, options) => {
@@ -465,6 +483,40 @@ test("a claim still pending is followed and its accepted verdict deletes the tas
   assert.deepEqual(deleted, ["volunteer:encode-T0001"]);
 });
 
+test("a late accepted release keeps the task branch of a claim made since", async () => {
+  const deleted: string[] = [];
+  const forge = claimForge(20, {
+    // The viewer claimed T0001 again after the release was decided.
+    getRepoFile: async (_owner, _repo, path) =>
+      path === "tracking/lock.csv"
+        ? lockHeader +
+          "T0001,,9001,2026-01-01T00:05:00Z,encoding,2026-01-02T00:05:00Z\n"
+        : null,
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Release accepted.",
+    ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    deleteBranch: async (_owner, _repo, branch) => {
+      deleted.push(branch);
+    },
+  });
+  const verdict = captureVerdict();
+
+  resumeFollowing(
+    context(withDecision(forge, 20)),
+    "Release of T0001",
+    "entry-1",
+    {
+      number: 20,
+      html_url: "https://example.test/pr/20",
+      taskBranch: "T0001",
+    },
+    Date.now(),
+  );
+
+  assert.equal((await verdict).state, "accepted");
+  assert.deepEqual(deleted, []);
+});
+
 test("a submission followed again after a reload settles with its verdict", async () => {
   const forge = claimForge(19, {
     getPullRequestState: async () => "closed",
@@ -492,6 +544,12 @@ test("resolving a comment flips its replies in the PR payload too", async () => 
   let serialized = "";
   const forge = fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
     getRepoFile: async () => commentCsv,
     openChangePr: async (_owner, _repo, options) => {
       serialized = options.files[0].content ?? "";
@@ -523,6 +581,52 @@ test("resolving a comment flips its replies in the PR payload too", async () => 
   assert.match(serialized, /c1,T0001,,comment,,,,9001,t1,true,,Answered\?/);
   assert.match(serialized, /c2,T0001,,reply,,,,7,t2,true,c1,Yes/);
   assert.match(serialized, /c3,T0001,,comment,,,,9001,t3,,,Other thread/);
+});
+
+test("a comment PR starts at the head its comment table was read at", async () => {
+  const header =
+    "comment_id,task_id,subtask_id,kind,page,measure_start,measure_end,author_id,timestamp,resolved,parent_id,body\n";
+  const atHead = header + "c1,T0001,,comment,,,,9001,t1,,,At the head\n";
+  let opened: { content: string; baseSha?: string } | null = null;
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    // A read without a ref returns an older table than the head's.
+    getRepoFile: async (_owner, _repo, _path, ref) =>
+      ref === "head1" ? atHead : header,
+    openChangePr: async (_owner, _repo, options) => {
+      opened = {
+        content: options.files[0].content ?? "",
+        baseSha: options.baseSha,
+      };
+      return {
+        number: 19,
+        html_url: "https://example.test/pr/19",
+        head: { owner: "volunteer", repo: "campaign", branch: "comment-x" },
+      };
+    },
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Comment recorded.",
+  });
+
+  const settled = captureVerdict();
+  await withImmediateTimeouts(async () => {
+    await invoke(
+      commands.submitComment,
+      commentInput("T0001", "comment", "New", ""),
+      context(forge),
+    );
+    return settled;
+  });
+
+  assert.equal(opened!.baseSha, "head1");
+  assert.match(opened!.content, /c1,T0001,,comment,,,,9001,t1,,,At the head\n/);
+  assert.match(opened!.content, /,New/);
 });
 
 test("a rejected volunteer encoding keeps its fork branch for correction", async (t) => {
@@ -884,4 +988,79 @@ test("an encoding completed without changes gets a commit so its PR can open", a
     "pr",
   ]);
   assert.equal(verdict.state, "accepted");
+});
+
+test("savePlan refuses a plan edited from a task table that has changed since", async () => {
+  const row = (task_id: string, locator: string) => ({
+    task_id,
+    subtask_id: "",
+    fragment: "sources/piece.mei",
+    locator,
+    allowlist: "",
+    blocklist: "",
+    depends_on: "",
+  });
+  const opened = [row("T0001", "surface-1"), row("T0002", "surface-2")];
+  // A replan replaced T0002's page while the editor was open.
+  const current = [row("T0001", "surface-1"), row("T0003", "surface-3")];
+  const commits: string[] = [];
+  const forge = fakeForge({
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: true,
+    }),
+    getRepoFile: async (_owner, _repo, path) =>
+      path === TASK_PATH
+        ? serializeTaskCsv(current)
+        : path === "tracking/state.csv"
+          ? "task_id,subtask_id,status,encoder,encoded_at\n"
+          : null,
+    commitFiles: async (_owner, _repo, _files, message) => {
+      commits.push(message);
+      return "commit1";
+    },
+  });
+
+  const result = await invoke(
+    commands.savePlan,
+    { tasks: [...opened, row("T0004", "surface-4")], base: opened },
+    context(forge),
+  );
+
+  assert.match(result.error ?? "", /changed while you were editing/);
+  assert.ok(!commits.includes("Edit the task plan"));
+});
+
+test("saveDraft refuses to overwrite a draft saved from another tab", async () => {
+  const files = editorFiles(
+    lockHeader +
+      "T0001,,9001,2026-09-01T00:00:00Z,encoding,2999-01-01T00:00:00Z\n",
+  );
+  let wrote = false;
+  const forge = fakeForge({
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: true,
+    }),
+    // Another tab saved since this editor loaded the branch at "draft1".
+    getBranchHead: async () => "draft2",
+    commitFiles: async () => {
+      wrote = true;
+      return "c1";
+    },
+  });
+
+  const result = await invoke(
+    commands.saveDraft,
+    { task_id: "T0001", pins: [], base: "draft1" },
+    context(forge),
+  );
+
+  assert.match(result.error ?? "", /changed in another tab/);
+  assert.equal(wrote, false);
 });

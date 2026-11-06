@@ -36,6 +36,8 @@ export function createGitHubForge(token: string): ForgeClient {
     getRepoAccess: (owner, repo) => gh.getRepoAccess(token, owner, repo),
     getRepoInfo: (owner, repo) => gh.getRepoInfo(token, owner, repo),
     ensureFork: (owner, repo, opts) => gh.ensureFork(token, owner, repo, opts),
+    getBranchHead: (owner, repo, branch) =>
+      gh.getBranchHead(token, owner, repo, branch),
     createBranch: (owner, repo, branch, fromSha) =>
       gh.createBranch(token, owner, repo, branch, fromSha),
     fastForwardBranch: (owner, repo, branch, sha) =>

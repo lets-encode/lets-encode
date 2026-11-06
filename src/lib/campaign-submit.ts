@@ -126,6 +126,55 @@ function commentCellsError(row: CommentRow): string | null {
   return null;
 }
 
+// Complete `row`, a subtask row of `state`, when its pass verdicts reach
+// `passThreshold`, and its task when that was the task's last open subtask.
+// Returns whether the subtask was completed.
+function completeIfPassed(
+  state: ParsedState,
+  row: StateRow,
+  passThreshold: number,
+): boolean {
+  const passes = state.validationColumns.filter((c) =>
+    isPassVerdict(row[c] ?? ""),
+  ).length;
+  if (passes < passThreshold) return false;
+  row.status = "completed";
+  const subtasks = state.rows.filter(
+    (r) => r.task_id === row.task_id && r.subtask_id !== "",
+  );
+  if (subtasks.every((r) => r.status === "completed"))
+    findRow(state.rows, row.task_id, "")!.status = "completed";
+  return true;
+}
+
+/**
+ * Complete the subtasks in review whose pass verdicts already reach
+ * `passThreshold` — after the threshold was lowered, no further claim or
+ * verdict can complete them — except those someone holds a review claim on,
+ * whose verdict completes them. Returns the new state and the subtasks
+ * completed, or null when there are none.
+ */
+export function completeReachedReviews(
+  state: ParsedState,
+  locks: LockRow[],
+  passThreshold: number,
+): { state: ParsedState; completed: StateRow[] } | null {
+  const next = cloneState(state);
+  const completed = next.rows.filter(
+    (row) =>
+      row.subtask_id !== "" &&
+      row.status === "validation_required" &&
+      !locks.some(
+        (l) =>
+          l.task_id === row.task_id &&
+          l.subtask_id === row.subtask_id &&
+          l.kind === "validation",
+      ) &&
+      completeIfPassed(next, row, passThreshold),
+  );
+  return completed.length > 0 ? { state: next, completed } : null;
+}
+
 function cloneState(state: ParsedState): ParsedState {
   return {
     header: [...state.header],
@@ -334,19 +383,7 @@ export function checkValidation({
   }
   const nextRow = findRow(next.rows, intent.task_id, intent.subtask_id)!;
   nextRow[slot] = `${intent.verdict}|${author}|${now}`;
-
-  const passCount = next.validationColumns.filter((c) =>
-    isPassVerdict(nextRow[c] ?? ""),
-  ).length;
-  if (passCount >= passThreshold) nextRow.status = "completed";
-
-  // The task completes when its last subtask does.
-  const subtasks = next.rows.filter(
-    (r) => r.task_id === intent.task_id && r.subtask_id !== "",
-  );
-  if (subtasks.every((r) => r.status === "completed")) {
-    findRow(next.rows, intent.task_id, "")!.status = "completed";
-  }
+  completeIfPassed(next, nextRow, passThreshold);
 
   const nextLocks = locks.filter(
     (l) =>

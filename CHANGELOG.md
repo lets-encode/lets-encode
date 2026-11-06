@@ -5,6 +5,19 @@ parentheses.
 
 ## 2026-11-03
 
+- Operations start their pull request at the head their tables were read at.
+- Saving the plan is refused when the plan changed while the editor was open.
+- An operation whose run lost every commit to other runs is closed as not recorded.
+- A claim stays while its holder's submission, opened before it ran out, is open.
+- Work of an expired claim is kept when two runs drop the claim at once.
+- The cleanup run completes reviews whose passes reach a lowered threshold.
+- A late background verdict no longer deletes the branch of a newer claim.
+- Draft saves from two tabs no longer overwrite each other.
+- A second submission of the same task follows the one already open.
+- A push during an encoding's decision leaves it to the run for that push.
+- A comment resolved or a task claimed from another tab shows as done.
+- A cleanup run replaced by a scheduled one shows as pending.
+- Finishing one setup from two tabs commits the campaign once.
 - The setup's staff list and the plan editor share one reorder control, and the task pages share their panel tab and footer rules.
 - Approve waits while a change request is being written, and the plan editor asks before dropping unsaved edits.
 - The campaign page and list keep only their latest reads, and page drafts no longer use the score preview's toolkit.

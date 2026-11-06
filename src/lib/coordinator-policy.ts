@@ -13,6 +13,7 @@ import type {
   TaskRow,
 } from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
+import { envelopeFromPrBody } from "./command-envelope.ts";
 import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
 
 export type PullRequestKind =
@@ -412,6 +413,53 @@ export function keptWorkSince(
   return rows;
 }
 
+/** An open pull request as heldByOpenOperation reads it. */
+export interface PendingOperation {
+  number: number;
+  created_at: string;
+  draft: boolean;
+  user: { id: number };
+  head: { ref: string };
+  body?: string | null;
+}
+
+// Commands whose pull requests need no claim.
+const CLAIMLESS_COMMANDS = new Set([
+  "campaign.submitComment",
+  "campaign.resolveComment",
+]);
+
+/**
+ * Whether an open pull request in `open` still needs `lock`: one by the lock's
+ * holder on the lock's task (named by its command envelope or its head branch
+ * `encode-<task>`), opened before the lock ran out and at most `maxAgeMs` old
+ * at `nowMs`. Its own run judges it at its opening time and must still find
+ * the lock, so the lock is not dropped as expired before then. A discussion
+ * comment needs no claim and does not count.
+ */
+export function heldByOpenOperation(
+  lock: LockRow,
+  open: PendingOperation[],
+  nowMs: number,
+  maxAgeMs: number,
+): boolean {
+  const expires = Date.parse(lock.expires);
+  if (!Number.isFinite(expires)) return false;
+  return open.some((pr) => {
+    const opened = Date.parse(pr.created_at);
+    if (pr.draft || String(pr.user.id) !== lock.user_id) return false;
+    if (!(opened <= expires) || nowMs - opened > maxAgeMs) return false;
+    const envelope = envelopeFromPrBody(pr.body ?? null);
+    if (envelope && CLAIMLESS_COMMANDS.has(envelope.command)) return false;
+    const task =
+      String(envelope?.input?.task_id ?? "") ||
+      (pr.head.ref.startsWith("encode-")
+        ? pr.head.ref.slice("encode-".length)
+        : "");
+    return task === lock.task_id;
+  });
+}
+
 export function shouldCleanupSubmission(
   kind: "encoding" | "validation",
   accepted: boolean,
@@ -516,6 +564,8 @@ export const REASON_TEXT: Record<string, string> = {
     "a parent comment must be a top-level comment, and only replies carry one",
   unknown_comment: "no such comment",
   already_resolved: "the comment is already resolved",
+  tables_busy:
+    "other operations changed the campaign's tables on every attempt to record this one; nothing was changed, try again",
 };
 
 /** The longest detail a rejection comment carries, in characters. */

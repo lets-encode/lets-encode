@@ -16,6 +16,7 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
+  completeReachedReviews,
   MAX_ANCHOR_LENGTH,
   MAX_COMMENT_LENGTH,
   resolveChangeRequests,
@@ -898,4 +899,39 @@ test("review edit: resets the task and hands the reviewer the encoding claim", (
     reason({ intent: { task_id: "T0001", subtask_id: "" } }),
     "unknown_task",
   );
+});
+
+test("a lowered pass threshold completes reviews that already reach it", () => {
+  const state = parseStateCsv(
+    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2,validate_status_3\n" +
+      "T0001,,validation_required,7,t,,,\n" +
+      "T0001,S0001,validation_required,,,pass|8|t1,pass|9|t2,\n" +
+      "T0002,,validation_required,7,t,,,\n" +
+      "T0002,S0001,validation_required,,,pass|8|t1,pass|9|t2,\n" +
+      "T0003,,validation_required,7,t,,,\n" +
+      "T0003,S0001,validation_required,,,pass|8|t1,,\n",
+  );
+  // Someone reviews T0002: their verdict completes it.
+  const locks = parseLockCsv(
+    "task_id,subtask_id,user_id,timestamp,kind,expires\n" +
+      "T0002,S0001,10,t,validation,2099-01-01T00:00:00Z\n",
+  );
+
+  const reached = completeReachedReviews(state, locks, 2);
+
+  assert.deepEqual(
+    reached?.completed.map((r) => r.task_id),
+    ["T0001"],
+  );
+  assert.equal(findRow(reached!.state.rows, "T0001", "")?.status, "completed");
+  assert.equal(
+    findRow(reached!.state.rows, "T0002", "S0001")?.status,
+    "validation_required",
+  );
+  assert.equal(
+    findRow(reached!.state.rows, "T0003", "S0001")?.status,
+    "validation_required",
+  );
+  assert.equal(findRow(state.rows, "T0001", "")?.status, "validation_required");
+  assert.equal(completeReachedReviews(state, locks, 3), null);
 });

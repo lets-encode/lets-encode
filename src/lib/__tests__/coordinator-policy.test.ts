@@ -8,6 +8,7 @@ import {
   checksOpening,
   claimPullRequest,
   classifyPullRequest,
+  heldByOpenOperation,
   isAutomaticCommit,
   isLeftoverOperationBranch,
   isReviewEdit,
@@ -27,6 +28,7 @@ import {
   validationIntentFromPatch,
   validationVerdict,
 } from "../coordinator-policy.ts";
+import { appendEnvelopeToPrBody } from "../command-envelope.ts";
 
 const STATE_HEADER = [
   "task_id",
@@ -575,4 +577,55 @@ test("isLeftoverOperationBranch takes old operation branches without an open pul
   assert.equal(left("wip-T0001"), false);
   assert.equal(left("main"), false);
   assert.equal(left("claim-T0001"), false);
+});
+
+test("an expired lock stays while its holder's submission opened in time is open", () => {
+  const lock = {
+    task_id: "T0001",
+    subtask_id: "",
+    user_id: "7",
+    timestamp: "2026-11-02T12:00:00Z",
+    kind: "encoding",
+    expires: "2026-11-03T12:00:00Z",
+  };
+  const envelope = (command: string, task_id: string) =>
+    appendEnvelopeToPrBody("", {
+      command,
+      version: 1,
+      user_id: "7",
+      timestamp: "2026-11-03T11:59:50Z",
+      input: { task_id },
+    });
+  const pr = (overrides: object) => ({
+    number: 5,
+    created_at: "2026-11-03T11:59:50Z",
+    draft: false,
+    user: { id: 7 },
+    head: { ref: "zones-T0001-abcd" },
+    body: envelope("campaign.submitZones", "T0001"),
+    ...overrides,
+  });
+  const now = Date.parse("2026-11-03T12:00:30Z");
+  const week = 7 * 24 * 60 * 60_000;
+  const held = (prs: object[]) =>
+    heldByOpenOperation(lock, prs as never, now, week);
+
+  assert.equal(held([pr({})]), true);
+  // The head branch names the task when there is no envelope.
+  assert.equal(held([pr({ body: "", head: { ref: "encode-T0001" } })]), true);
+  assert.equal(held([pr({ created_at: "2026-11-03T12:00:10Z" })]), false);
+  assert.equal(held([pr({ user: { id: 8 } })]), false);
+  assert.equal(
+    held([pr({ body: envelope("campaign.submitZones", "T0002") })]),
+    false,
+  );
+  assert.equal(
+    held([pr({ body: envelope("campaign.submitComment", "T0001") })]),
+    false,
+  );
+  assert.equal(held([pr({ draft: true })]), false);
+  assert.equal(
+    heldByOpenOperation(lock, [pr({})] as never, now + week, week),
+    false,
+  );
 });

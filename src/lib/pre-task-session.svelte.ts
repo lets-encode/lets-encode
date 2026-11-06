@@ -64,6 +64,11 @@ export class PreTaskSession {
   #draftKey: string | null = null;
   #draftTimer: ReturnType<typeof setTimeout> | null = null;
   #draftInput: DraftInput | null = null;
+  // The task branch commit the editor's state was loaded from or last saved
+  // as, and the save in progress; saves run one after another, each on top
+  // of the one before.
+  #draftBase: string | null = null;
+  #saving: Promise<void> = Promise.resolve();
 
   // Whether a load has been attempted for the current params; a failed load
   // stays on its error banner instead of retrying.
@@ -266,16 +271,24 @@ export class PreTaskSession {
     const f = forge();
     this.#cancelDraft();
     if (!input || !f) return;
+    const save = this.#saving.then(() => this.#saveDraft(f, input));
+    this.#saving = save;
+    await save;
+  }
+
+  async #saveDraft(f: ForgeClient, input: DraftInput) {
     const { task_id: _, ...state } = input;
     this.draftState = "saving";
-    const result = await invoke(commands.saveDraft, input, {
-      ...this.ctx(f),
-      progress: () => {},
-    });
+    const result = await invoke(
+      commands.saveDraft,
+      { ...input, base: this.#draftBase },
+      { ...this.ctx(f), progress: () => {} },
+    );
     if (result.error) {
       this.draftState = result.error;
       return;
     }
+    if (result.sha) this.#draftBase = result.sha;
     this.#draftKey = JSON.stringify(state);
     this.draftState = "saved";
   }
@@ -312,6 +325,7 @@ export class PreTaskSession {
       this.tables = t;
       this.#cancelDraft();
       this.#draftKey = null;
+      this.#draftBase = d.draftBase;
       this.#hooks.loaded(d);
     } catch (e) {
       this.loadError = `Could not load ${task}: ${(e as Error).message}`;
