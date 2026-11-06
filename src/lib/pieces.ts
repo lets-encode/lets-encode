@@ -327,11 +327,10 @@ export function followPages(
 
 /**
  * The pieces a fresh campaign starts with: one per uploaded encoding, plus a
- * single facsimile piece covering the pages when there are any — or, with
- * nothing uploaded at all, a single physical piece to be encoded straight from
- * the source. One encoding uploaded with page images is taken to be the
- * pages' piece: the facsimile piece starts from it instead. An organiser with
- * one work per source then has nothing to add.
+ * single facsimile piece covering the pages when there are any. One encoding
+ * uploaded with page images is taken to be the pages' piece: the facsimile
+ * piece starts from it instead. An organiser with one work per source then has
+ * nothing to add.
  */
 export function initialPieces(
   encodingNames: string[],
@@ -347,7 +346,6 @@ export function initialPieces(
     pieces.push(createEncodedPiece(pieces, name));
   }
   if (hasImages) pieces.push(createPiece(pieces, "facsimile"));
-  else if (!pieces.length) pieces.push(createPiece(pieces, "physical-only"));
   return pieces;
 }
 

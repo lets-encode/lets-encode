@@ -245,7 +245,6 @@ test("starts one encoded piece per upload, a facsimile piece for images, else on
       true,
       ["encoded", "encoded", "facsimile"],
     ],
-    ["neither", [], false, ["physical-only"]],
     ["one encoding, no images", ["sonata.mei"], false, ["encoded"]],
   ];
   for (const [label, encodingNames, hasImages, kinds] of cases) {

@@ -265,6 +265,11 @@
     return wizard.candidates.map((page) => (page.include ? ++n : 0));
   });
 
+  // A campaign needs page images or an encoding to work from.
+  const noMaterial = $derived(
+    wizard.candidates.length > 0 && !chosen.length && !wizard.encodings.length,
+  );
+
   // Only an attempt that stopped part way is a retry.
   const continueLabel = $derived(
     busy
@@ -273,7 +278,9 @@
         ? "Try again"
         : chosen.length
           ? `Use ${chosen.length} page${chosen.length === 1 ? "" : "s"}`
-          : "Continue without pages",
+          : noMaterial
+            ? "Continue"
+            : "Continue without pages",
   );
 
   // The material toolbar names what the pages came from.
@@ -572,7 +579,10 @@
   onBack={previousStep}
   backDisabled={busy}
   onNext={prepareAndContinue}
-  nextDisabled={busy}
+  nextDisabled={busy || noMaterial}
+  nextReason={!busy && noMaterial
+    ? "Keep at least one page, or upload an encoding."
+    : undefined}
   nextLabel={continueLabel}
   material={wizard.candidates.length ? material : undefined}
   info={hints}

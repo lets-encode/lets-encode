@@ -85,6 +85,7 @@
     nextIcon = "arrow-right",
     nextDisabled = false,
     nextReason,
+    footnote,
     backDisabled = false,
     navBlocked,
     finish = false,
@@ -131,6 +132,8 @@
      * behind the other tab, with the button's tooltip repeating it.
      */
     nextReason?: string;
+    /** A control on the footer's row left of the buttons, in place of the reason. */
+    footnote?: Snippet;
     /** A step's work is under way: Back, Discard and the other setups wait. */
     backDisabled?: boolean;
     /**
@@ -144,7 +147,7 @@
     footer?: Snippet;
   } = $props();
   const reasonId = $props.id();
-  const reasonShown = $derived(nextDisabled && !!nextReason);
+  const reasonShown = $derived(nextDisabled && !!nextReason && !footnote);
   // The reason's height; on a phone it lies over the body, which scrolls
   // that much further.
   let noteH = $state(0);
@@ -820,7 +823,9 @@
       {:else}
         <!-- Beside pages fitted to the card's height the line is kept while
              empty, so the reason coming and going does not rescale them. -->
-        {#if reasonShown || material}
+        {#if footnote}
+          {@render footnote()}
+        {:else if reasonShown || material}
           <span
             class="footnote"
             id={reasonId}

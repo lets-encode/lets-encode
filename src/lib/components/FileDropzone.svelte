@@ -143,7 +143,7 @@
       </div>
       <div class="drop-text">
         <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
-        <div class="types">You can combine them — or continue without any.</div>
+        <div class="types">You can combine them.</div>
       </div>
       <label class="picker">
         <input type="file" accept={ACCEPT} multiple onchange={onPick} />

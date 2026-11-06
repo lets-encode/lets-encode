@@ -5,6 +5,9 @@ parentheses.
 
 ## 2026-11-06
 
+- The setup wizard continues only with page images or an uploaded encoding.
+- The reason a wizard step cannot continue wraps instead of being cut off.
+- The publishing acknowledgement sits beside the upload step's buttons again.
 - Failed layout detection and staff recognition offer a Try again button.
 - Results, errors and page notices share one notice line with icon, headline and button.
 - Actions shown as underlined link text are buttons now.
