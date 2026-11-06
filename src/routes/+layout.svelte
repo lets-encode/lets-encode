@@ -206,6 +206,20 @@
       <span>Could not check the login: {auth.checkFailed}. Retrying…</span>
     </div>
   {/if}
+  {#if auth.logoutFailed}
+    <div class="banner bar err" role="alert">
+      <span
+        >Could not log out: {auth.logoutFailed}. You are still logged in.</span
+      >
+      <button
+        type="button"
+        class="btn btn-icon dismiss"
+        aria-label="Dismiss"
+        title="Dismiss"
+        onclick={() => (auth.logoutFailed = null)}><Icon name="close" /></button
+      >
+    </div>
+  {/if}
   {#if auth.error}
     <div class="banner bar err" role="alert">
       <span>Login failed: {auth.error}</span>

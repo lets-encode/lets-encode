@@ -823,6 +823,16 @@
   // change, or the campaign isn't resolved (nothing to refresh).
   $effect(() =>
     pendingVerdicts.onSettled((entry) => {
+      // A rejected submission ends the task's "Just completed" highlight; a
+      // failed run is followed on until the submission is decided.
+      if (
+        entry.repoId === repoId &&
+        entry.state === "rejected" &&
+        !entry.runFailed &&
+        entry.key.kind === "encode" &&
+        entry.key.task === completed?.task
+      )
+        completed = null;
       if (entry.repoId === repoId && !runner.busy && owner && repo) load();
     }),
   );
@@ -985,10 +995,12 @@
     if (status === "complete") submitCompleted(task);
     else abandon(task, "");
   }
-  function submitCompleted(task: string) {
+  async function submitCompleted(task: string) {
     editorError = null;
     completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
-    submitpr(task);
+    // A submission that could not be opened is not completed.
+    const result = await submitpr(task);
+    if (!result?.ok && completed?.task === task) completed = null;
   }
 
   const postComment = (

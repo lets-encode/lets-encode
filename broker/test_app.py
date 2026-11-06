@@ -481,7 +481,11 @@ class BrokerTest(unittest.TestCase):
         def lookup(url, **_options):
             name = url.split("/repos/", 1)[1]
             body = repositories.get(name)
-            return SimpleNamespace(ok=body is not None, json=lambda: body)
+            return SimpleNamespace(
+                ok=body is not None,
+                status_code=200 if body is not None else 404,
+                json=lambda: body,
+            )
 
         upstream = SimpleNamespace(
             content=b'{"full_name":"alice/new-campaign"}',
@@ -554,6 +558,39 @@ class BrokerTest(unittest.TestCase):
             )
         self.assertEqual(response.status_code, 504)
         request_upstream.assert_not_called()
+
+    def test_proxy_passes_on_github_failures_of_the_campaign_lookup(self):
+        self.authenticate()
+        for status, headers, expected in (
+            (401, {}, 401),
+            (
+                403,
+                {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "99"},
+                403,
+            ),
+            (500, {}, 502),
+        ):
+            failed = SimpleNamespace(
+                ok=False,
+                status_code=status,
+                headers=headers,
+                json=lambda: {"message": "GitHub says no"},
+            )
+            with patch.object(
+                broker.requests, "get", return_value=failed
+            ), patch.object(broker.requests, "request") as request_upstream:
+                response = self.client.post(
+                    "/proxy/api.github.com/repos/o/r/git/blobs", json={}
+                )
+            self.assertEqual(response.status_code, expected, status)
+            self.assertNotEqual(
+                (response.get_json() or {}).get("error"),
+                "Writes go to campaign repositories only",
+            )
+            if status == 403:
+                self.assertEqual(response.headers["X-RateLimit-Reset"], "99")
+                self.assertNotIn("X-Lets-Encode-Upstream", response.headers)
+            request_upstream.assert_not_called()
 
     def test_proxy_refuses_dot_segments(self):
         self.authenticate()
@@ -1244,6 +1281,18 @@ class BrokerTest(unittest.TestCase):
         with self.client.session_transaction() as current:
             self.assertNotIn("githubToken", current)
             self.assertNotIn("userLogin", current)
+
+    def test_a_revoke_github_refuses_is_logged(self):
+        for status, logged in ((204, False), (404, False), (401, True)):
+            with patch.object(
+                broker.requests,
+                "delete",
+                return_value=SimpleNamespace(status_code=status),
+            ), self.assertLogs(broker.app.logger, "WARNING") as logs:
+                broker.app.logger.warning("marker")
+                broker.revoke_github_token("token")
+            revoke_lines = [r for r in logs.output if "revoke_failed" in r]
+            self.assertEqual(bool(revoke_lines), logged, status)
 
 
 if __name__ == "__main__":

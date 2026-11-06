@@ -40,6 +40,8 @@ export interface ChangeRequest {
   html_url: string;
   /** The head commit SHA — identifies the CI run the request triggers. */
   headSha?: string;
+  /** When the forge created the request (ISO); its runs start after it. */
+  createdAt?: string;
 }
 
 /** A ChangeRequest whose head branch the client created itself. */
@@ -208,6 +210,12 @@ export interface ForgeClient {
   ): Promise<void>;
   /** A pull/merge request's current state: 'open' or 'closed'. */
   getPullRequestState(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<string>;
+  /** The commit a pull/merge request's head branch points at. */
+  getPullRequestHead(
     owner: string,
     repo: string,
     number: number,

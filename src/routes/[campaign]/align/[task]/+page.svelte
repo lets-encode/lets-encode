@@ -13,7 +13,11 @@
   import { auth } from "$lib/auth.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import type { MeasureAnchor } from "$lib/campaign-tables.ts";
+  import {
+    commentAnchor,
+    type CommentRow,
+    type MeasureAnchor,
+  } from "$lib/campaign-tables.ts";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
   import { readSidePanel } from "$lib/side-panels.ts";
   import {
@@ -83,15 +87,19 @@
     result && "ok" in result ? result.ok : null,
   );
 
-  // The score viewer, and the measure selected in it (a layout measure label).
+  // The score viewer, and the measure selected in it: a layout measure label
+  // and, where the viewer knows it, its position among the layout measures.
   let preview = $state<ReturnType<typeof ScorePreview>>();
   let scoreW = $state(0);
   let selectedMeasure = $state<string | null>(null);
+  let selectedAt = $state<number | null>(null);
   // The measures a problem refers to, highlighted in both panes.
   let anchor = $state<MeasureAnchor | null>(null);
 
   const selectedBox = $derived.by(() => {
     if (selectedMeasure === null || !aligned) return null;
+    if (selectedAt !== null)
+      return selectedAt < aligned.layout.length ? selectedAt : null;
     const i = aligned.layout.findIndex((m) => m.label === selectedMeasure);
     return i < 0 ? null : i;
   });
@@ -151,7 +159,7 @@
       out.push({
         text: `The file has ${staffMap.length} staves, the pages ${staffCount}`,
         title:
-          "The file's staves go to the page's staves from the top down; staves without a counterpart stay empty or are left out.",
+          "The file's staves go to the page's staves from the top down or, where the pages name their instruments, to the staves with the same clef and the same place in a brace; staves without a counterpart stay empty or are left out.",
         measures: [],
       });
     return out;
@@ -163,13 +171,20 @@
     let last = measures[0];
     while (measures.includes(last + 1)) last++;
     const label = (i: number) => aligned!.layout[i].label;
-    const page = preview?.pageOfMeasure(label(measures[0])) ?? -1;
+    const page = preview?.pageOfMeasure(label(measures[0]), measures[0]) ?? -1;
     anchor = {
       page: page + 1,
       m1: parseInt(label(measures[0]), 10) || 0,
       m2: parseInt(label(last), 10) || 0,
     };
     if (page >= 0) preview?.showPage(page);
+  }
+
+  // Highlight a comment's measures and turn to their page.
+  function showAnchorFor(c: CommentRow) {
+    anchor = commentAnchor(c);
+    preview?.setZones(true);
+    preview?.showPage(anchor.page - 1);
   }
 
   // Whether the selected measure's file measure was chosen in the select.
@@ -216,7 +231,7 @@
   let reviewAsking = $state(false);
   const reviewPrefill = () => {
     const page = selectedMeasure
-      ? (preview?.pageOfMeasure(selectedMeasure) ?? -1)
+      ? (preview?.pageOfMeasure(selectedMeasure, selectedAt) ?? -1)
       : -1;
     return selectedMeasure && page >= 0
       ? { page: String(page + 1), m1: selectedMeasure, m2: selectedMeasure }
@@ -278,7 +293,10 @@
           mei={aligned.merged.mei}
           {anchor}
           initialPane={scoreW - 32 < 560 ? "facs" : "both"}
-          onmeasureselect={(label) => (selectedMeasure = label)}
+          onmeasureselect={(label, index) => {
+            selectedMeasure = label;
+            selectedAt = index;
+          }}
         />
       {/if}
       <DraftBubble {session} />
@@ -288,7 +306,7 @@
       <MeasureSelection
         label={selectedMeasure}
         page={selectedMeasure
-          ? (preview?.pageOfMeasure(selectedMeasure) ?? -1)
+          ? (preview?.pageOfMeasure(selectedMeasure, selectedAt) ?? -1)
           : -1}
         {preview}
         oncomment={auth.user ? () => (panelTab = "comments") : undefined}
@@ -436,7 +454,7 @@
           : session.footerMode === "review"
             ? reviewFooter
             : undefined}
-        onanchor={() => {}}
+        onanchor={showAnchorFor}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
       />

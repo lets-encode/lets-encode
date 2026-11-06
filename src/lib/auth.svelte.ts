@@ -34,7 +34,8 @@ type Status = "loading" | "authenticated" | "anonymous";
  * is the SESSION sentinel when logged in (API calls then ride the broker
  * session cookie) and null when anonymous. `expired` is set when a session
  * that was active is rejected by the broker. `checkFailed` is why the login
- * check at app start failed while it is being retried.
+ * check at app start failed while it is being retried. `logoutFailed` is why
+ * the last logout did not end the session.
  */
 export const auth = $state<{
   token: string | null;
@@ -43,6 +44,7 @@ export const auth = $state<{
   error: string | null;
   expired: boolean;
   checkFailed: string | null;
+  logoutFailed: string | null;
   status: Status;
 }>({
   token: null,
@@ -51,6 +53,7 @@ export const auth = $state<{
   error: null,
   expired: false,
   checkFailed: null,
+  logoutFailed: null,
   status: "loading",
 });
 
@@ -203,16 +206,20 @@ export function login(
 /** Log out: clear local state and end the broker session (which revokes the token). */
 export async function logout(): Promise<void> {
   console.log("[auth] logging out");
+  auth.logoutFailed = null;
+  // The session ends at the broker; until it confirms, the tab stays logged in.
+  try {
+    const res = await fetch(`${provider.brokerUrl}/logout`, { method: "POST" });
+    if (!res.ok) auth.logoutFailed = `the server answered ${res.status}`;
+  } catch {
+    auth.logoutFailed = "the server could not be reached";
+  }
+  if (auth.logoutFailed) return;
   clear();
   clearRequestCaches();
   auth.expired = false;
   auth.error = null;
   auth.checkFailed = null;
-  try {
-    await fetch(`${provider.brokerUrl}/logout`, { method: "POST" });
-  } catch {
-    // best-effort; the local session is already cleared
-  }
   authChannel?.postMessage({ login: null });
 }
 

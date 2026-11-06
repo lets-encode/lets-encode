@@ -146,8 +146,35 @@
     const result = edit
       ? await onreviewedit?.(sub, comment)
       : await onvalidate(sub, "fail", comment);
-    if (result?.ok) failForm = null;
+    if (result?.ok) {
+      if (result.background || result.outcome === "pending")
+        sentForm = { form, kind: edit ? "review-edit" : "validate" };
+      failForm = null;
+    }
   }
+
+  // A change request still being processed: its form opens again with what
+  // was entered when the submission is rejected, so it can be sent again. A
+  // failed run is not a verdict: the submission is followed on until decided.
+  let sentForm: {
+    form: NonNullable<typeof failForm>;
+    kind: "validate" | "review-edit";
+  } | null = null;
+  $effect(() =>
+    pendingVerdicts.onSettled((entry) => {
+      if (
+        !sentForm ||
+        entry.runFailed ||
+        entry.repoId !== repoId ||
+        entry.key.kind !== sentForm.kind ||
+        entry.key.task !== task ||
+        (entry.key.sub ?? "") !== sub
+      )
+        return;
+      if (entry.state === "rejected" && !failForm) failForm = sentForm.form;
+      if (entry.state !== "timeout") sentForm = null;
+    }),
+  );
 </script>
 
 <div class="ractions" class:infoot={!!onabandon}>

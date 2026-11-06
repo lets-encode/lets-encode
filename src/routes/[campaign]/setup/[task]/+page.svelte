@@ -513,17 +513,6 @@
   // The setup's two steps: the staves with the key and time signature, then
   // the groups.
   let setupStep = $state<1 | 2>(1);
-  // A review is approved once both steps have been opened.
-  let stepsSeen = $state<number[]>([1]);
-  $effect(() => {
-    const step = setupStep;
-    untrack(() => {
-      if (!stepsSeen.includes(step)) stepsSeen = [...stepsSeen, step];
-    });
-  });
-  const approveBlock = $derived(
-    stepsSeen.includes(2) ? null : "Open step 2 (groups) before approving.",
-  );
   let panelTab = $state<"selection" | "comments">("selection");
   // Whether the file still carries the default definition (set on load).
   let unset = $state(false);
@@ -1576,7 +1565,7 @@
                     class:picked={reorder.picked === i}
                     {...pointAt(i)}
                   >
-                    {#if canEdit && staves.length > 1}
+                    {#if canEdit && staves.length > 1 && !data?.hasNotation}
                       <button
                         type="button"
                         class="grip staffgrip"
@@ -1615,10 +1604,9 @@
                           type="button"
                           class="btn btn-icon btn-danger"
                           onclick={() => removeStaff(i)}
-                          disabled={staves.length <= 1 ||
-                            (omr && data?.hasNotation)}
+                          disabled={staves.length <= 1 || data?.hasNotation}
                           aria-label={`Remove staff ${i + 1}`}
-                          title={omr && data?.hasNotation
+                          title={data?.hasNotation
                             ? "The staff count is fixed once the piece holds notation"
                             : "Remove this staff"}><Icon name="trash" /></button
                         >
@@ -1775,9 +1763,8 @@
                   type="button"
                   class="btn addbtn"
                   onclick={() => addStaff()}
-                  disabled={staves.length >= MAX_STAVES ||
-                    (omr && data?.hasNotation)}
-                  title={omr && data?.hasNotation
+                  disabled={staves.length >= MAX_STAVES || data?.hasNotation}
+                  title={data?.hasNotation
                     ? "The staff count is fixed once the piece holds notation"
                     : "Add a staff below the last one."}
                   ><Icon name="plus" />Add staff</button
@@ -2149,7 +2136,6 @@
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
           {repoId}
-          {approveBlock}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}

@@ -188,6 +188,15 @@ class PendingVerdictStore {
     );
   }
 
+  /** The entry for `key` in campaign `repoId` whose wait ran out before its
+   * verdict landed, if any. */
+  timedOut(key: PendingKey, repoId: number): PendingVerdict | undefined {
+    return this.entries.find(
+      (e) =>
+        sameKey(e.key, key) && e.repoId === repoId && e.state === "timeout",
+    );
+  }
+
   /** Whether any submission acting on `taskId` itself (claim, encoding,
    * verdict — not a discussion) is still being processed; the
    * task's controls hold until it lands. The check is limited to the
@@ -229,6 +238,22 @@ class PendingVerdictStore {
     this.entries = this.entries.filter((e) => e.id !== id);
   }
 
+  /** Entries still being processed when their wait ran out are dropped once
+   * the campaign's tables record their PR's decision: the tables show it. */
+  recorded(repoId: number, prs: Set<number>): void {
+    if (
+      !this.entries.some(
+        (e) =>
+          e.state === "timeout" && e.repoId === repoId && prs.has(e.prNumber),
+      )
+    )
+      return;
+    this.entries = this.entries.filter(
+      (e) =>
+        !(e.state === "timeout" && e.repoId === repoId && prs.has(e.prNumber)),
+    );
+  }
+
   /**
    * Go on following the submissions `viewer` left processing in this tab
    * before a reload. `contextFor` builds a command context for a campaign
@@ -266,7 +291,14 @@ class PendingVerdictStore {
           runFailed: false,
         },
       ];
-      resumeFollowing(ctx, record.label, record.id, record.pr, record.openedAt);
+      resumeFollowing(
+        ctx,
+        record.label,
+        record.key,
+        record.id,
+        record.pr,
+        record.openedAt,
+      );
     }
   }
 
@@ -282,7 +314,7 @@ class PendingVerdictStore {
         key: e.key,
         target: { repoId: e.repoId, owner: e.owner, repo: e.repo },
         pr,
-        openedAt: Date.now(),
+        openedAt: pr.openedAt ?? Date.now(),
         viewer: e.viewer,
       },
     ]);

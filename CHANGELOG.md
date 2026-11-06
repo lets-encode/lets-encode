@@ -3,6 +3,37 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-06
+
+- A score-setup review can be approved again.
+- Uploaded encodings keep clefs, keys, meter and braces written as child elements.
+- The score setup no longer adds, removes or moves staves in a score that holds notation.
+- An uploaded encoding's own system breaks no longer push its measures out of place.
+- The score viewer and the alignment editor tell apart measures of equal number in different movements.
+- An uploaded encoding's braced staves go to the braced staves of a piece that names its instruments.
+- A short piece's uploaded encoding with one or two extra measures can still be submitted.
+- A partly encoded upload no longer puts its final barline in the middle of the score.
+- The campaign copy script copies a piece's uploaded encoding.
+- A piece's last page keeps the measures of a movement that starts on it.
+- A piece marked as covering no regions on purpose is left out of the new campaign.
+- Show measure in a comment works on the alignment page and is gone from the score check.
+- A score check in review opens the review view.
+- A failed or rejected mei-friend submission no longer shows as just completed.
+- Comment and change-request text comes back when its submission is rejected.
+- A failed logout keeps the session and says so.
+- Work kept from an expired claim is replaced only once its new copy exists, and a failure to keep it is retried.
+- Following a submission survives a failed read of its run or its pull request.
+- An earlier pull request's run for the same commit is no longer taken for a new submission's.
+- A submission whose run failed is followed on until the scheduled run decides it.
+- A submission still shown as being processed disappears once the tables record its decision.
+- A comment or resolution still being processed after the wait says so with its link.
+- A GitHub error during the broker's campaign check no longer shows as a refused write.
+- Creating a campaign stops with an error when the measure detector fails on a page twice.
+- Leaving a pre-task editor waits for its draft to be saved and stays on a failed save.
+- Failed refreshes on the campaign list show in the refresh notice.
+- An accepted submission whose record is read late no longer shows as rejected.
+- The app checks a submitted encoding as the automation assembles it, opening and header included.
+
 ## 2026-11-03
 
 - Operations start their pull request at the head their tables were read at.

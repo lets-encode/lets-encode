@@ -6,7 +6,8 @@
 // commit, the source's files as of its default branch:
 //   config.yaml             new name, title, repo id and instigator;
 //                           `preparation` set on every facsimile piece
-//   caller.yml, page images as they are
+//   caller.yml, page images, uploaded encodings
+//                           as they are
 //   README.md               new title and address
 //   sources/<piece>/        a facsimile piece's score with the source's
 //                           corrected boxes (below); any other piece's score
@@ -161,6 +162,7 @@ function configPieces(yaml: string): ConfigPiece[] {
       kind: configString(entry, "kind"),
       path: configString(entry, "path"),
       preparation: configString(entry, "preparation") || undefined,
+      encoding: configString(entry, "encoding") || undefined,
       pages: Number(configString(entry, "pages")) || undefined,
       zones: [
         ...entry.matchAll(
@@ -304,10 +306,17 @@ for (const piece of pieces) {
 }
 
 const copied = new Set(files.map((f) => f.path));
+const encodings = new Set(
+  pieces.flatMap((p) => (p.encoding ? [p.encoding] : [])),
+);
 for (const path of srcPaths) {
   if (copied.has(path) || path === CONFIG_PATH || path.startsWith("tracking/"))
     continue;
-  if (path.startsWith("sources/") && !/\.(jpe?g|png|tiff?|webp)$/i.test(path))
+  if (
+    path.startsWith("sources/") &&
+    !encodings.has(path) &&
+    !/\.(jpe?g|png|tiff?|webp)$/i.test(path)
+  )
     continue;
   if (path === "README.md") {
     const readme = (await read(path)) ?? "";

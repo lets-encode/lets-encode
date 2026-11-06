@@ -271,6 +271,14 @@ export interface PiecePages {
  * A piece keeps every page it covers, even one where nothing was detected, so
  * its surface numbering stays continuous and stable.
  */
+/**
+ * The pieces a campaign is created with: every piece but a facsimile piece
+ * marked as covering no regions on purpose.
+ */
+export function campaignPieces(pieces: Piece[]): Piece[] {
+  return pieces.filter((piece) => !(piece.noRegions && !piece.zones.length));
+}
+
 export function partitionPages(
   pieces: Piece[],
   detected: DetectedPage[],

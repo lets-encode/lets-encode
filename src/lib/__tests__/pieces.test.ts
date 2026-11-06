@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  campaignPieces,
   copyMetadata,
   createEncodedPiece,
   createPiece,
@@ -318,5 +319,17 @@ test("followPages moves regions with their pages and drops those on pages left o
   assert.deepEqual(
     moved.zones.map((z) => z.surface),
     [1, 0],
+  );
+});
+
+test("campaignPieces leaves out a piece that covers no regions on purpose", () => {
+  const zone = { surface: 0, ...box(0, 0, 10, 10) };
+  const none = { ...facsimilePiece("piece-01", []), noRegions: true };
+  const marked = facsimilePiece("piece-02", [zone]);
+  // A region marked after the switch was set counts.
+  const both = { ...facsimilePiece("piece-03", [zone]), noRegions: true };
+  assert.deepEqual(
+    campaignPieces([none, marked, both]).map((p) => p.id),
+    ["piece-02", "piece-03"],
   );
 });

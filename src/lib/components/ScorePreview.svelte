@@ -22,6 +22,7 @@
   import { tick, untrack } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
+  import { startTags } from "$lib/mei-xml.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import {
@@ -79,8 +80,12 @@
      * facsimile images are still resolved relative to `fragment`.
      */
     mei?: string | null;
-    /** Reports the selected measure's label; null when deselected. */
-    onmeasureselect?: (label: string | null) => void;
+    /**
+     * Reports the selected measure's label and its position among the
+     * score's measures (0-based; null when not known); both null when
+     * deselected.
+     */
+    onmeasureselect?: (label: string | null, index: number | null) => void;
   } = $props();
 
   /** One facsimile page in the preview: image plus its measure zones. */
@@ -103,6 +108,8 @@
     encAspect: number;
     /** Rendered encoding pages, filled lazily as they near the view (1-based). */
     svgs: Record<number, string>;
+    /** The xml:ids of the score's measures in document order; '' for none. */
+    measureIds?: string[];
   } | null>(null);
 
   // Display state: which panes show, the rows of one or two pages and the zoom
@@ -263,13 +270,18 @@
   // The selected measure, linking the panes: clicking a zone on the facsimile
   // or a measure on the rendered encoding highlights it on both. Zone labels
   // and Verovio's data-n both carry the measure's number (@n), so the label is
-  // the shared key.
+  // the shared key. Labels restart in each movement; `selectedAt`, the
+  // measure's position, tells measures of equal label apart. A facsimile
+  // score's zones and measures are in the same order.
   let selected = $state<string | null>(null);
-  function selectMeasure(label: string | null) {
-    selected = selected === label ? null : label;
-    onmeasureselect?.(selected);
+  let selectedAt = $state<number | null>(null);
+  function selectMeasure(label: string | null, at: number | null = null) {
+    const off = label === null || (selected === label && selectedAt === at);
+    selected = off ? null : label;
+    selectedAt = off ? null : at;
+    onmeasureselect?.(selected, selectedAt);
     if (selected) {
-      const p = pageOfMeasure(selected);
+      const p = pageOfMeasure(selected, selectedAt);
       const shown = pvShownRows.some((r) => pvSpreads[r]?.pages.includes(p));
       if (p >= 0 && !shown) showPage(p);
     }
@@ -279,10 +291,8 @@
   // reaches no measure element — those fall back to the measures' bounding
   // boxes, making the whole measure rectangle the hit area.
   function encClick(e: MouseEvent) {
-    let n = (e.target as Element)
-      .closest?.("g.measure")
-      ?.getAttribute("data-n");
-    if (!n) {
+    let hit = (e.target as Element).closest?.("g.measure[data-n]");
+    if (!hit) {
       for (const g of (e.currentTarget as Element).querySelectorAll(
         "g.measure[data-n]",
       )) {
@@ -293,12 +303,15 @@
           e.clientY >= r.top &&
           e.clientY <= r.bottom
         ) {
-          n = g.getAttribute("data-n");
+          hit = g;
           break;
         }
       }
     }
-    if (n) selectMeasure(n);
+    if (!hit) return;
+    // Verovio writes each measure's xml:id as its id.
+    const at = hit.id ? (preview?.measureIds?.indexOf(hit.id) ?? -1) : -1;
+    selectMeasure(hit.getAttribute("data-n"), at < 0 ? null : at);
   }
 
   // Whether a facsimile zone falls in the anchored measure range (zone labels
@@ -316,6 +329,8 @@
   function flagSvg(svg: string): string {
     const a = anchor;
     const sel = selected;
+    const selId =
+      selectedAt === null ? "" : (preview?.measureIds?.[selectedAt] ?? "");
     if (!svg || (!a && sel === null)) return svg;
     try {
       const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -327,7 +342,8 @@
         const n = Number(label);
         if (a && Number.isFinite(n) && n >= a.m1 && n <= a.m2)
           g.classList.add("m-flag");
-        if (sel !== null && label === sel) g.classList.add("m-sel");
+        if (sel !== null && (selId ? g.id === selId : label === sel))
+          g.classList.add("m-sel");
       }
       return new XMLSerializer().serializeToString(doc);
     } catch {
@@ -380,10 +396,18 @@
   }
 
   /**
-   * Which page a measure sits on, read from the facsimile's zone labels; -1
+   * Which page a measure sits on, read from the facsimile's zones: the zone
+   * at position `at` when given, else the first zone labelled `label`; -1
    * when the score has no facsimile to say.
    */
-  export function pageOfMeasure(label: string): number {
+  export function pageOfMeasure(
+    label: string,
+    at: number | null = null,
+  ): number {
+    if (at !== null)
+      return at < measureOrder.length
+        ? zoneStart.findLastIndex((start) => start <= at)
+        : -1;
     return (
       preview?.facs?.findIndex((pg) =>
         pg.zones.some((z) => z.label === label),
@@ -418,21 +442,36 @@
   const measureOrder = $derived(
     (preview?.facs ?? []).flatMap((pg) => pg.zones.map((z) => z.label)),
   );
+  // Per facsimile page, the position of its first zone in measureOrder.
+  const zoneStart = $derived.by(() => {
+    let start = 0;
+    return (preview?.facs ?? []).map((pg) => {
+      const first = start;
+      start += pg.zones.length;
+      return first;
+    });
+  });
+  // Whether the zone at position `zi` of page `p` is the selected measure.
+  const zoneSelected = (p: number, zi: number, label: string): boolean =>
+    selectedAt !== null ? selectedAt === zoneStart[p] + zi : selected === label;
+  // The selected measure's position in measureOrder; -1 when not in it.
+  const selectedIndex = (): number =>
+    selected === null ? -1 : (selectedAt ?? measureOrder.indexOf(selected));
   /** Whether a measure comes before (-1) or after (1) the selected one. */
   export function canStepMeasure(dir: 1 | -1): boolean {
-    if (selected === null) return false;
-    const i = measureOrder.indexOf(selected);
+    const i = selectedIndex();
     return i >= 0 && measureOrder[i + dir] !== undefined;
   }
   /** Select the measure before (-1) or after (1) the selected one. */
   export function stepMeasure(dir: 1 | -1) {
     if (!canStepMeasure(dir)) return;
-    selectMeasure(measureOrder[measureOrder.indexOf(selected!) + dir]);
+    const i = selectedIndex() + dir;
+    selectMeasure(measureOrder[i], i);
   }
 
   /** Clear the measure selection. */
   export function clearSelection() {
-    if (selected !== null) selectMeasure(selected);
+    if (selected !== null) selectMeasure(selected, selectedAt);
   }
 
   /** Show or hide the measure zones on the facsimile. */
@@ -466,7 +505,8 @@
       // A selection belongs to the score it was made on.
       if (selected !== null) {
         selected = null;
-        onmeasureselect?.(null);
+        selectedAt = null;
+        onmeasureselect?.(null, null);
       }
     }
     try {
@@ -527,6 +567,9 @@
           pageCount,
           encAspect,
           svgs: {},
+          measureIds: [...startTags(mei, "measure")].map(
+            ({ tag }) => /\bxml:id="([^"]*)"/.exec(tag)?.[1] ?? "",
+          ),
         };
         if (again) {
           renderNear();
@@ -813,7 +856,7 @@
                                     class:flagged={anchor &&
                                       p + 1 === anchor.page &&
                                       zoneFlagged(z.label)}
-                                    class:sel={selected === z.label}
+                                    class:sel={zoneSelected(p, zi, z.label)}
                                     role="button"
                                     tabindex={0}
                                     aria-label={`Measure ${z.label}: highlight in both panes`}
@@ -821,11 +864,15 @@
                                     y={z.box.uly}
                                     width={z.box.lrx - z.box.ulx}
                                     height={z.box.lry - z.box.uly}
-                                    onclick={() => selectMeasure(z.label)}
+                                    onclick={() =>
+                                      selectMeasure(z.label, zoneStart[p] + zi)}
                                     onkeydown={(e) => {
                                       if (e.key === "Enter" || e.key === " ") {
                                         e.preventDefault();
-                                        selectMeasure(z.label);
+                                        selectMeasure(
+                                          z.label,
+                                          zoneStart[p] + zi,
+                                        );
                                       }
                                     }}
                                   />
@@ -834,7 +881,7 @@
                                     class:flagged={anchor &&
                                       p + 1 === anchor.page &&
                                       zoneFlagged(z.label)}
-                                    class:sel={selected === z.label}
+                                    class:sel={zoneSelected(p, zi, z.label)}
                                     x={z.box.ulx + 6}
                                     y={z.box.uly + 30}>{z.label}</text
                                   >

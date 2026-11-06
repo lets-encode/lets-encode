@@ -65,25 +65,16 @@ import {
   resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
-import {
-  spliceOpeningScoreDef,
-  splicePage,
-  splicePageSpan,
-} from "../src/lib/mei-page-splice.ts";
 import { measuredSurfaceIds } from "../src/lib/mei-facsimile.ts";
 import { replanPageTasks } from "../src/lib/campaign-plan.ts";
-import {
-  applicationNamesIn,
-  recordApplications,
-  recordContribution,
-} from "../src/lib/mei-provenance.ts";
+import type { Contribution } from "../src/lib/mei-provenance.ts";
 import { reapedLocks, reapLocks } from "../src/lib/campaign-reaper.ts";
 import type { ReapLocksResult } from "../src/lib/campaign-reaper.ts";
 import { isPreTask } from "../src/lib/campaign-graph.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
-  checksOpening,
+  assembleSubmission,
   claimPullRequest,
   classifyPullRequest,
   heldByOpenOperation,
@@ -93,8 +84,6 @@ import {
   keptWorkBranch,
   keptWorkSince,
   lockIntentFromRow,
-  pieceFieldForPath,
-  pieceKindForPath,
   MAX_OPEN_PRS_PER_AUTHOR,
   priorDecision,
   REASON_TEXT,
@@ -307,10 +296,10 @@ const expiredLocks = (
 // branch `encode-<task>` — in the repo their claim's pull request came from —
 // is copied to the campaign branch `wip-<task>` when it holds commits of
 // their own. The copy starts from `main` at `sha` and carries the task's
-// score and side files; a later expiry replaces it. Returns the locks whose
-// work was kept. A lock whose work cannot be read or copied counts as having
-// none, except when `wip-<task>` was created by another run between this
-// run's delete and create: that throws, so the attempt is retried.
+// score and side files; a later expiry moves `wip-<task>` to the new copy once
+// it exists. Returns the locks whose work was kept. A claim whose pull request,
+// repo or branch no longer exists has none; any other failure throws, so the
+// attempt is retried.
 async function keepExpiredWork(
   removed: LockRow[],
   historyCsv: string | null,
@@ -325,54 +314,49 @@ async function keepExpiredWork(
     (await getRepoFile(token, owner, repo, TASK_PATH, sha)) ?? "",
   );
   for (const lock of encoding) {
-    try {
-      const task = tasks.find(
-        (t) => t.task_id === lock.task_id && t.subtask_id === "",
-      );
-      const claimPr = claimPullRequest(history, lock.task_id, lock.user_id);
-      if (!task || claimPr === null) continue;
-      const { headRepo: workRepo } = await getPullRequestDetails(
-        token,
-        owner,
-        repo,
-        claimPr,
-      );
-      if (!workRepo) continue;
-      const [workOwner, workName] = workRepo.split("/");
-      const ref = `encode-${lock.task_id}`;
-      const messages = await compareCommitMessages(
-        token,
-        owner,
-        repo,
-        mainBranch,
-        workOwner === owner && workName === repo ? ref : `${workOwner}:${ref}`,
-      );
-      if (!messages?.some((m) => !isAutomaticCommit(m))) continue;
-      const paths = [task.fragment, ...sideFilesOf(task)];
-      const contents = await Promise.all(
-        paths.map((path) => getRepoFile(token, workOwner, workName, path, ref)),
-      );
-      const files = paths.flatMap((path, i) =>
-        contents[i] == null ? [] : [{ path, content: contents[i]! }],
-      );
-      if (files.length === 0) continue;
-      const wip = keptWorkBranch(lock.task_id);
-      await deleteBranch(token, owner, repo, wip);
-      await commitFiles(
-        token,
-        owner,
-        repo,
-        files,
-        `Keep the unsubmitted work on ${lock.task_id} from an expired claim`,
-        { baseSha: sha, newBranch: wip },
-      );
-      kept.add(lock);
-    } catch (e) {
-      if (BRANCH_EXISTS.test((e as Error).message)) throw e;
-      console.warn(
-        `Could not keep the work on ${lock.task_id}: ${(e as Error).message}`,
-      );
-    }
+    const task = tasks.find(
+      (t) => t.task_id === lock.task_id && t.subtask_id === "",
+    );
+    const claimPr = claimPullRequest(history, lock.task_id, lock.user_id);
+    if (!task || claimPr === null) continue;
+    const { headRepo: workRepo } = await getPullRequestDetails(
+      token,
+      owner,
+      repo,
+      claimPr,
+    );
+    if (!workRepo) continue;
+    const [workOwner, workName] = workRepo.split("/");
+    const ref = `encode-${lock.task_id}`;
+    const messages = await compareCommitMessages(
+      token,
+      owner,
+      repo,
+      mainBranch,
+      workOwner === owner && workName === repo ? ref : `${workOwner}:${ref}`,
+    );
+    if (!messages?.some((m) => !isAutomaticCommit(m))) continue;
+    const paths = [task.fragment, ...sideFilesOf(task)];
+    const contents = await Promise.all(
+      paths.map((path) => getRepoFile(token, workOwner, workName, path, ref)),
+    );
+    const files = paths.flatMap((path, i) =>
+      contents[i] == null ? [] : [{ path, content: contents[i]! }],
+    );
+    if (files.length === 0) continue;
+    await commitFiles(
+      token,
+      owner,
+      repo,
+      files,
+      `Keep the unsubmitted work on ${lock.task_id} from an expired claim`,
+      {
+        baseSha: sha,
+        newBranch: keptWorkBranch(lock.task_id),
+        replaceBranch: true,
+      },
+    );
+    kept.add(lock);
   }
   return kept;
 }
@@ -395,8 +379,6 @@ const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
 
 // A write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
 const REFUSED_WRITE = /\((?:401|403|404) [A-Z]+ /;
-// A branch creation GitHub refused because the branch exists.
-const BRANCH_EXISTS = /\(422 POST \S*\/git\/refs\)/;
 // A non-forced branch update GitHub refused because the branch moved on.
 const LOST_RACE = /\(422 PATCH \S*\/git\/refs\/heads\//;
 
@@ -933,62 +915,26 @@ async function decideEncoding(
   ]);
   logPhase("read_pr_files", readStart);
   const checkStart = Date.now();
-  let mei = forkMei;
+  let mei: string | null = null;
   let detail =
     forkMei == null ? `${task.fragment} is missing from the fork.` : "";
-  if (forkMei != null && isPageTask) {
-    if (baseMei == null) {
-      mei = null;
-      detail = `${task.fragment} is missing from the campaign.`;
-    } else {
-      try {
-        const physical =
-          pieceKindForPath(configText, task.fragment) === "physical-only";
-        mei = physical
-          ? splicePageSpan(baseMei, forkMei, task.locator)
-          : splicePage(baseMei, forkMei, task.locator);
-        // The first page task of an 'omr-instruments' piece checks the
-        // opening score definition, which lies outside every page's span.
-        const preparation = pieceFieldForPath(
-          configText,
-          task.fragment,
-          "preparation",
-        );
-        if (checksOpening(task, tasks, preparation))
-          mei = spliceOpeningScoreDef(mei, forkMei);
-        // The splice keeps the base header. The recognition models an OMR
-        // page draft names in the fork's header are carried over; no other
-        // entry is taken from a fork.
-        mei = recordApplications(
-          mei,
-          applicationNamesIn(forkMei).filter((name) =>
-            /^Musibot [\w.-]+ [\w.-]+$/.test(name),
-          ),
-        );
-      } catch (err) {
-        const message = (err as Error).message;
-        console.warn(
-          `Page splice failed for ${task.task_id} (${task.locator}): ${message}`,
-        );
-        mei = null;
-        detail = `Could not splice page ${task.locator} into ${task.fragment}: ${message}`;
-      }
-    }
-  }
-  // Record the contribution in the assembled score's header — the revision,
-  // the contributor, and the editing application — before the machine check,
-  // so the updated header is validated with the rest of the file. Encodings
-  // are edited in mei-friend; a pre-task is edited in the app itself, whose
-  // <application> entry every generated score already carries.
-  if (mei != null) {
+  if (forkMei != null && isPageTask && baseMei == null) {
+    detail = `${task.fragment} is missing from the campaign.`;
+  } else if (forkMei != null) {
+    // The contribution is recorded in the assembled score's header — the
+    // revision, the contributor, and the editing application — before the
+    // machine check, so the updated header is validated with the rest of the
+    // file. Encodings are edited in mei-friend; a pre-task is edited in the app
+    // itself, whose <application> entry every generated score already carries.
+    // The expired claims whose unsubmitted work this submission continues are
+    // recorded first, each dated at its expiry.
     const application = isPreTask(task.locator) ? undefined : "mei-friend";
-    // The expired claims whose unsubmitted work this submission continues
-    // are recorded first, each dated at its expiry.
+    const contributions: Contribution[] = [];
     for (const row of keptWorkSince(pastHistory, task.task_id)) {
       const login = await getUserLogin(token, Number(row.user_id)).catch(
         () => null,
       );
-      mei = recordContribution(mei, {
+      contributions.push({
         name: login ?? row.user_id,
         message: `Unsubmitted work on ${task.task_id}, kept when the claim expired.`,
         isodate: row.timestamp.slice(0, 10),
@@ -996,7 +942,7 @@ async function decideEncoding(
       });
     }
     const message = commitMessage ?? `Encoding of ${task.task_id} accepted.`;
-    mei = recordContribution(mei, {
+    contributions.push({
       name: authorLabel,
       message: isReviewEdit(pastHistory, task.task_id, author)
         ? `Corrected during review: ${message}`
@@ -1004,6 +950,22 @@ async function decideEncoding(
       isodate: now.slice(0, 10),
       application,
     });
+    try {
+      mei = assembleSubmission({
+        task,
+        tasks,
+        configYaml: configText,
+        baseMei,
+        forkMei,
+        contributions,
+      });
+    } catch (err) {
+      const message = (err as Error).message;
+      console.warn(
+        `Page splice failed for ${task.task_id} (${task.locator}): ${message}`,
+      );
+      detail = `Could not splice page ${task.locator} into ${task.fragment}: ${message}`;
+    }
   }
 
   let meiValid = false;

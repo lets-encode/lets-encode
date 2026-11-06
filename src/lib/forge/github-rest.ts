@@ -1700,6 +1700,7 @@ export async function commitFiles(
     baseTreeSha,
     branch,
     newBranch,
+    replaceBranch = false,
     deletePaths = [],
     onUpload,
   }: {
@@ -1708,6 +1709,12 @@ export async function commitFiles(
     baseTreeSha?: string;
     branch?: string;
     newBranch?: string;
+    /**
+     * With `newBranch`: a branch of that name that exists already is moved to
+     * the commit (forced) instead of refusing it. The branch keeps its old
+     * commit until the new one exists.
+     */
+    replaceBranch?: boolean;
     deletePaths?: string[];
     onUpload?: (uploaded: number, total: number) => void;
   } = {},
@@ -1811,7 +1818,22 @@ export async function commitFiles(
     },
   );
 
-  if (newBranch) {
+  if (newBranch && replaceBranch) {
+    try {
+      await ghSend(
+        "PATCH",
+        `${api}/git/refs/heads/${encodeRepoPath(newBranch)}`,
+        token,
+        { sha: commit.sha, force: true },
+      );
+    } catch (e) {
+      if (!/^Reference does not exist /.test((e as Error).message)) throw e;
+      await ghSend("POST", `${api}/git/refs`, token, {
+        ref: `refs/heads/${newBranch}`,
+        sha: commit.sha,
+      });
+    }
+  } else if (newBranch) {
     await ghSend("POST", `${api}/git/refs`, token, {
       ref: `refs/heads/${newBranch}`,
       sha: commit.sha,
@@ -1968,7 +1990,12 @@ export async function createPullRequest(
     base,
     body,
   }: { title: string; head: string; base: string; body: string },
-): Promise<{ number: number; html_url: string; headSha: string }> {
+): Promise<{
+  number: number;
+  html_url: string;
+  headSha: string;
+  createdAt: string;
+}> {
   const res = await githubFetch(
     `${apiRoot(token)}/repos/${owner}/${repo}/pulls`,
     {
@@ -1981,6 +2008,7 @@ export async function createPullRequest(
     number: number;
     html_url: string;
     head?: { sha?: string };
+    created_at?: string;
     message?: string;
     errors?: Array<{ message?: string }>;
   } = await res.json().catch(() => ({}));
@@ -2013,6 +2041,7 @@ export async function createPullRequest(
     number: data.number,
     html_url: data.html_url,
     headSha: data.head?.sha ?? "",
+    createdAt: data.created_at ?? "",
   };
 }
 
@@ -2115,9 +2144,19 @@ async function findOpenPullRequest(
   owner: string,
   repo: string,
   head: string,
-): Promise<{ number: number; html_url: string; headSha: string } | null> {
+): Promise<{
+  number: number;
+  html_url: string;
+  headSha: string;
+  createdAt: string;
+} | null> {
   const prs = await ghSend<
-    Array<{ number: number; html_url: string; head?: { sha?: string } }>
+    Array<{
+      number: number;
+      html_url: string;
+      head?: { sha?: string };
+      created_at?: string;
+    }>
   >(
     "GET",
     `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(head)}`,
@@ -2125,7 +2164,12 @@ async function findOpenPullRequest(
   );
   const pr = prs[0];
   return pr
-    ? { number: pr.number, html_url: pr.html_url, headSha: pr.head?.sha ?? "" }
+    ? {
+        number: pr.number,
+        html_url: pr.html_url,
+        headSha: pr.head?.sha ?? "",
+        createdAt: pr.created_at ?? "",
+      }
     : null;
 }
 

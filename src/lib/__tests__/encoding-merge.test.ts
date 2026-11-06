@@ -179,6 +179,22 @@ test("the file's final barline is kept, its repeats are not", () => {
   assert.match(tags[2], /right="end"/);
 });
 
+test("a final barline is kept only on the last measure of a movement", () => {
+  const end = (n: number) => measure(n, 1, ' right="end"');
+  // A file that stops early ends without a final barline.
+  const partial = merge(skeleton([4, 4]), upload(measure(1) + end(2)));
+  assert.ok(measuresOf(partial.mei).every((m) => !/right=/.test(m.tag)));
+  // Two movements keep a final barline each.
+  const movements = merge(
+    skeleton([2, 2], 1, { 2: { mdiv: true, label: "1" }, 3: { label: "2" } }),
+    upload(measure(1) + end(2) + measure(1) + end(2)),
+  );
+  assert.deepEqual(
+    measuresOf(movements.mei).map((m) => /right="end"/.test(m.tag)),
+    [false, true, false, true],
+  );
+});
+
 test("the skeleton rebuilt from a merged score merges into the same score", () => {
   const layout = skeleton([2, 2], 1, { 1: { rptEnd: true } });
   const fileMei = upload(

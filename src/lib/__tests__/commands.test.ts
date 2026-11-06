@@ -76,6 +76,7 @@ function captureVerdict(): Promise<{ state: string; message: string }> {
       begin: () => "test",
       attachPr: () => {},
       settle: (_id, state, message) => resolve({ state, message }),
+      recorded: () => {},
     });
   });
 }
@@ -284,9 +285,11 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
 });
 
 test("a failed automation run surfaces as an error while the PR stays open", async () => {
+  let polls = 0;
   const forge = claimForge(21, {
     pr: { headSha: "abc123" },
-    getPullRequestState: async () => "open",
+    // Open while the run fails; closed by the scheduled run later on.
+    getPullRequestState: async () => (polls++ < 1 ? "open" : "closed"),
     listWorkflowRuns: async (_owner, _repo, _workflow, filter) => {
       assert.equal(filter?.headSha, "abc123");
       return [
@@ -301,12 +304,150 @@ test("a failed automation run surfaces as an error while the PR stays open", asy
     },
   });
 
+  const followed = captureVerdict();
+
   const result = await withImmediateTimeouts(() =>
     invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
   );
 
   assert.match(result.error ?? "", /automation run for submission #21 failed/);
   assert.match(result.error ?? "", /example\.test\/run\/7/);
+  // The PR stays open after the failed run and is followed until it closes.
+  assert.match(result.error ?? "", /next scheduled run processes it/);
+  assert.equal((await withImmediateTimeouts(() => followed)).state, "rejected");
+});
+
+test("one failed read of the run does not end the watching", async () => {
+  let polls = 0;
+  let reads = 0;
+  const forge = claimForge(24, {
+    pr: { headSha: "abc125" },
+    getPullRequestState: async () => (polls++ < 2 ? "open" : "closed"),
+    listWorkflowRuns: async () => {
+      if (reads++ === 0) throw new Error("502");
+      return [
+        {
+          id: 9,
+          status: "completed",
+          conclusion: "failure",
+          created_at: new Date().toISOString(),
+          html_url: "https://example.test/run/9",
+        },
+      ];
+    },
+  });
+  const followed = captureVerdict();
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
+  );
+
+  assert.match(result.error ?? "", /automation run for submission #24 failed/);
+  await withImmediateTimeouts(() => followed);
+});
+
+test("a run from before the PR was opened is not taken for its own", async () => {
+  let polls = 0;
+  const forge = claimForge(25, {
+    pr: { headSha: "abc126" },
+    getPullRequestState: async () => (polls++ < 2 ? "open" : "closed"),
+    getLastIssueComment: async () => "✅ Claim accepted.",
+    // An earlier pull request's failed run for the same commit.
+    listWorkflowRuns: async () => [
+      {
+        id: 10,
+        status: "completed",
+        conclusion: "failure",
+        created_at: new Date(Date.now() - 3_600_000).toISOString(),
+        html_url: "https://example.test/run/10",
+      },
+    ],
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.claimTask,
+      { task_id: "P0001" },
+      context(withDecision(forge, 25)),
+    ),
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.ok, true);
+});
+
+test("the run is looked for from the PR's creation on GitHub, not the browser's time", async () => {
+  let polls = 0;
+  const minutesAgo = (n: number) =>
+    new Date(Date.now() - n * 60_000).toISOString();
+  const forge = claimForge(28, {
+    // A follow resumed long after the PR was opened, or a browser clock ahead.
+    pr: { headSha: "abc127", createdAt: minutesAgo(10) },
+    getPullRequestState: async () => (polls++ < 2 ? "open" : "closed"),
+    listWorkflowRuns: async () => [
+      {
+        id: 13,
+        status: "completed",
+        conclusion: "failure",
+        created_at: minutesAgo(9),
+        html_url: "https://example.test/run/13",
+      },
+    ],
+  });
+  const followed = captureVerdict();
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
+  );
+
+  assert.match(result.error ?? "", /example\.test\/run\/13/);
+  await withImmediateTimeouts(() => followed);
+});
+
+test("a cancelled run is followed by the run for the PR's new head", async () => {
+  let polls = 0;
+  const forge = claimForge(26, {
+    pr: { headSha: "old-head" },
+    getPullRequestState: async () => (polls++ < 3 ? "open" : "closed"),
+    getPullRequestHead: async () => "new-head",
+    listWorkflowRuns: async (_owner, _repo, _workflow, filter) => [
+      {
+        id: filter?.headSha === "new-head" ? 12 : 11,
+        status: "completed",
+        conclusion: filter?.headSha === "new-head" ? "failure" : "cancelled",
+        created_at: new Date().toISOString(),
+        html_url: `https://example.test/run/${filter?.headSha}`,
+      },
+    ],
+  });
+  const followed = captureVerdict();
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
+  );
+
+  assert.match(result.error ?? "", /example\.test\/run\/new-head/);
+  await withImmediateTimeouts(() => followed);
+});
+
+test("a decided PR stands when its comment cannot be read", async () => {
+  const forge = claimForge(27, {
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => {
+      throw new Error("502");
+    },
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(
+      commands.claimTask,
+      { task_id: "P0001" },
+      context(withDecision(forge, 27)),
+    ),
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.error, undefined);
 });
 
 test("a decision recorded before its run failed stands", async () => {
@@ -366,6 +507,57 @@ test("a skipped automation run is explained and its PR closed by the console", a
   );
   assert.match(result.error ?? "", /was closed/);
   assert.equal(closed, 1);
+});
+
+test("an accepted PR whose record is read late counts as accepted", async () => {
+  let historyReads = 0;
+  const refs: (string | undefined)[] = [];
+  const forge = claimForge(29, {
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+  });
+  const decided = withDecision(forge, 29);
+  const lagging = new Proxy(decided, {
+    get(target, property) {
+      if (property !== "getRepoFile")
+        return target[property as keyof ForgeClient];
+      return (owner: string, repo: string, path: string, ref?: string) => {
+        if (path !== HISTORY_PATH)
+          return target.getRepoFile(owner, repo, path, ref);
+        refs.push(ref);
+        // The first two reads do not show the row yet.
+        return historyReads++ < 2
+          ? Promise.resolve(`${HISTORY_COLUMNS.join(",")}\n`)
+          : target.getRepoFile(owner, repo, path, ref);
+      };
+    },
+  });
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(commands.claimTask, { task_id: "P0001" }, context(lagging)),
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.ok, true);
+  assert.equal(result.outcome, undefined);
+  // History is read at the head, not at the default branch.
+  assert.ok(refs.every((ref) => ref === "head1"));
+});
+
+test("an accepted PR without a readable record is still being processed, not rejected", async () => {
+  const forge = claimForge(30, {
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => "✅ Claim accepted.",
+  });
+  const followed = captureVerdict();
+
+  const result = await withImmediateTimeouts(() =>
+    invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.outcome, "pending");
+  assert.equal((await withImmediateTimeouts(() => followed)).state, "timeout");
 });
 
 test("a closed PR without a recorded decision fails closed", async () => {
@@ -436,6 +628,7 @@ test("a poll failure leaves a claim as still-processing, not rejected", async ()
       throw new Error("network down");
     },
   });
+  const followed = captureVerdict();
 
   const result = await withImmediateTimeouts(() =>
     invoke(commands.claimTask, { task_id: "P0001" }, context(forge)),
@@ -445,6 +638,8 @@ test("a poll failure leaves a claim as still-processing, not rejected", async ()
   assert.equal(result.ok, true);
   assert.equal(result.outcome, "pending");
   assert.match(result.message ?? "", /still being processed/);
+  // The claim is followed on in the background, which fails the same way.
+  assert.equal((await withImmediateTimeouts(() => followed)).state, "timeout");
 });
 
 test("a claim still pending is followed and its accepted verdict deletes the task branch", async () => {
@@ -452,7 +647,7 @@ test("a claim still pending is followed and its accepted verdict deletes the tas
   let polls = 0;
   const forge = claimForge(18, {
     getPullRequestState: async () => {
-      if (polls++ === 0) throw new Error("network down");
+      if (polls++ < 3) throw new Error("network down");
       return "closed";
     },
     getLastIssueComment: async () => "✅ Claim accepted.",
@@ -504,6 +699,7 @@ test("a late accepted release keeps the task branch of a claim made since", asyn
   resumeFollowing(
     context(withDecision(forge, 20)),
     "Release of T0001",
+    { kind: "release", task: "T0001" },
     "entry-1",
     {
       number: 20,
@@ -527,6 +723,7 @@ test("a submission followed again after a reload settles with its verdict", asyn
   resumeFollowing(
     context(withDecision(forge, 19)),
     "Encoding claim of T0001",
+    { kind: "claim", task: "T0001" },
     "entry-1",
     { number: 19, html_url: "https://example.test/pr/19" },
     Date.now(),

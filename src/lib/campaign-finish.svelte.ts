@@ -38,7 +38,7 @@ import {
   relinkFacsimileImages,
   replaceMeiHead,
 } from "./mei-facsimile.ts";
-import { partitionPages, type DetectedPage } from "./pieces.ts";
+import { campaignPieces, partitionPages, type DetectedPage } from "./pieces.ts";
 import {
   wizard,
   clearFinishedSetup,
@@ -66,7 +66,7 @@ import {
  */
 export function finishSummary(owner: string): string {
   const name = wizard.handle.trim();
-  const pieces = wizard.pieces.length;
+  const pieces = campaignPieces(wizard.pieces).length;
   const pages = wizard.images.length;
   const content = [
     `${pieces} piece${pieces === 1 ? "" : "s"}`,
@@ -101,9 +101,10 @@ export class CampaignFinisher {
   /**
    * Every page with its size and, for the measure-detection preparation, its
    * detected measure boxes. One result per page image, not per piece: two
-   * pieces sharing a page share its measures. Pages the detector fails on come
-   * back empty rather than failing the whole campaign. With OMR the measures
-   * are found later, in each piece's layout task, so only the sizes are read.
+   * pieces sharing a page share its measures. A page the detector fails on is
+   * tried once more; a second failure stops the finish before anything is
+   * created. With OMR the measures are found later, in each piece's layout
+   * task, so only the sizes are read.
    */
   private async measurePages(): Promise<DetectedPage[]> {
     const pagesOut: DetectedPage[] = [];
@@ -123,7 +124,18 @@ export class CampaignFinisher {
         `Detecting measures on page ${i + 1} of ${wizard.images.length}`,
       );
       this.log.detail(name(i));
-      const { width, height, boxes, tookMs } = await this.detection.page(i);
+      let result = await this.detection.page(i);
+      if (result.detectorFailed) {
+        this.log.detail(
+          `${name(i)}: the measure detector failed, trying again`,
+        );
+        result = await this.detection.page(i);
+      }
+      if (result.detectorFailed)
+        throw new Error(
+          `the measure detector failed on page ${i + 1} (${name(i)}). Try again in a few minutes`,
+        );
+      const { width, height, boxes, tookMs } = result;
       this.log.detail(
         boxes.length
           ? `${name(i)}: ${boxes.length} measure(s) found`
@@ -206,7 +218,8 @@ export class CampaignFinisher {
         // Every piece is published under the campaign's licence, so it is stated
         // in each piece's header as well as in the config.
         const license = wizard.license;
-        const split = partitionPages(wizard.pieces, detected);
+        const pieces = campaignPieces(wizard.pieces);
+        const split = partitionPages(pieces, detected);
         // The committed pages, as an uploaded encoding's facsimile is relinked to
         // them: every one was measured at its committed size.
         const images = detected.map((page) => ({
@@ -217,12 +230,12 @@ export class CampaignFinisher {
         const surfaces: PieceSurfaces = {};
         const scores: FileChange[] = [];
 
-        wizard.pieces.forEach((piece, i) => {
+        pieces.forEach((piece, i) => {
           const name = piece.meta.title.trim() || pieceIdLabel(piece.id);
           // Building a score is a string operation: it reports what it did, not
           // how long it took.
           this.log.step(
-            `Building the score for ${name} (${i + 1} of ${wizard.pieces.length})`,
+            `Building the score for ${name} (${i + 1} of ${pieces.length})`,
             {
               timed: false,
             },
@@ -328,7 +341,7 @@ export class CampaignFinisher {
             rightsAcknowledged: wizard.copyrightAccepted
               ? COPYRIGHT_ACKNOWLEDGEMENT.version
               : "",
-            pieces: wizard.pieces.map((piece) => ({
+            pieces: pieces.map((piece) => ({
               id: piece.id,
               kind: piece.kind,
               path: piecePath(piece.id),

@@ -6,8 +6,10 @@
 // Both sides are read as measure sequences with the same reader. They are
 // aligned globally (Needleman–Wunsch), with a gap allowed on either side, on
 // structural features only: system and page starts, repeat barlines, endings,
-// pickups, and measure labels where the file's numbering has jumps. Where
-// several alignments score the same, the stretch is reported as ambiguous.
+// pickups, and measure labels where the file's numbering has jumps. System and
+// page starts only decide between alignments the other features score the
+// same. Where several alignments score the same, the stretch is reported as
+// ambiguous.
 //
 // Pure functions: MEI text in, plain data out. No DOM, forge or network access.
 
@@ -239,19 +241,28 @@ interface Features {
 
 /**
  * The structural score of placing `slot` in `box`, and whether any feature
- * contradicts the placement.
+ * contradicts the placement. System and page starts are scored and
+ * contradicted apart (`breaks`, `breakConflict`), since a file's breaks may be
+ * an engraver's rather than the source's.
  */
 function matchScore(
   box: MeasureInfo,
   file: MeasureInfo[],
   slot: FileSlot,
   features: Features,
-): { score: number; conflict: boolean } {
+): {
+  score: number;
+  breaks: number;
+  conflict: boolean;
+  breakConflict: boolean;
+} {
   const measure = file[slot.measure];
   const first = slot.part === 0;
   const last = slot.part === measure.span - 1;
   let score = MATCH;
   let conflict = false;
+  let breaks = 0;
+  let breakConflict = false;
   const compare = (a: boolean, b: boolean, weight: number) => {
     if (a && b) score += weight;
     else if (a !== b) {
@@ -259,10 +270,18 @@ function matchScore(
       conflict = true;
     }
   };
+  const compareBreak = (a: boolean, b: boolean, weight: number) => {
+    if (a && b) breaks += weight;
+    else if (a !== b) {
+      breaks -= weight;
+      breakConflict = true;
+    }
+  };
   if (features.labels && first && box.label === measure.label) score += 1;
   if (features.breaks)
-    compare(box.systemStart, first && measure.systemStart, 1);
-  if (features.pages) compare(box.pageStart, first && measure.pageStart, 0.5);
+    compareBreak(box.systemStart, first && measure.systemStart, 1);
+  if (features.pages)
+    compareBreak(box.pageStart, first && measure.pageStart, 0.5);
   compare(box.rptStart, first && measure.rptStart, 1);
   compare(box.rptEnd, last && measure.rptEnd, 1);
   if (box.ending !== measure.ending) {
@@ -273,7 +292,7 @@ function matchScore(
     score -= 0.5;
     conflict = true;
   }
-  return { score, conflict };
+  return { score, breaks, conflict, breakConflict };
 }
 
 /**
@@ -374,8 +393,15 @@ export function alignMeasures(
   const empty = new Set(
     pins.filter((pin) => pin.slot === null).map((pin) => pin.box),
   );
-  const score = (i: number, j: number) =>
-    matchScore(layout[i], file, slots[j], features).score;
+  // System and page starts decide only between placements the other features
+  // score the same: their weight keeps their sum over every box below half the
+  // smallest step of the other scores (0.5). A power of two keeps the sums
+  // exact, so equal placements stay equal.
+  const breakWeight = 2 ** -Math.ceil(Math.log2(8 * (Math.min(n, m) + 1)));
+  const score = (i: number, j: number) => {
+    const s = matchScore(layout[i], file, slots[j], features);
+    return s.score + breakWeight * s.breaks;
+  };
 
   // The result places gaps late: a partly encoded file more often stops early
   // than starts late.
@@ -399,15 +425,30 @@ export function alignMeasures(
     });
   }
 
+  // A break contradicts a placement only when most of the file's placed system
+  // starts fall on the layout's; otherwise the file's breaks are an engraver's.
+  let starts = 0;
+  let agreeing = 0;
+  late.forEach((j, i) => {
+    if (j === null) return;
+    const slot = slots[j];
+    if (slot.part !== 0 || slot.measure === 0) return;
+    if (!file[slot.measure].systemStart) return;
+    starts++;
+    if (layout[i].systemStart) agreeing++;
+  });
+  const sourceBreaks = agreeing * 2 > starts;
+
   const placed = new Set(late.filter((j): j is number => j !== null));
   return {
     matches: late.map((j) => (j === null ? null : slots[j])),
     unplaced: slots.filter((_, j) => !placed.has(j)),
     ambiguous: late.flatMap((j, i) => (j === early[i] ? [] : [i])),
-    conflicts: late.map(
-      (j, i) =>
-        j !== null && matchScore(layout[i], file, slots[j], features).conflict,
-    ),
+    conflicts: late.map((j, i) => {
+      if (j === null) return false;
+      const s = matchScore(layout[i], file, slots[j], features);
+      return s.conflict || (sourceBreaks && s.breakConflict);
+    }),
   };
 }
 
@@ -476,10 +517,12 @@ export function differentReason(summary: AlignmentSummary): string {
 export type AlignmentKind = "complete" | "partial" | "different";
 
 /**
- * More unplaced file measures than this share of the layout's measures marks
- * the file as a different version.
+ * More unplaced file measures than this share of the layout's measures, and
+ * more than DIFFERENT_UNPLACED_MIN, marks the file as a different version.
  */
 export const DIFFERENT_UNPLACED_SHARE = 0.1;
+/** The unplaced file measures a short piece's file may have and still fit. */
+export const DIFFERENT_UNPLACED_MIN = 2;
 /**
  * More matches contradicting a structural feature than this share of the
  * matches marks the file as a different version.
@@ -515,7 +558,8 @@ export function summariseAlignment(
   const conflicts = alignment.conflicts.filter(Boolean).length;
   const boxes = alignment.matches.length;
   const kind: AlignmentKind =
-    unplaced > boxes * DIFFERENT_UNPLACED_SHARE ||
+    unplaced >
+      Math.max(DIFFERENT_UNPLACED_MIN, boxes * DIFFERENT_UNPLACED_SHARE) ||
     conflicts > matched * DIFFERENT_CONFLICT_SHARE
       ? "different"
       : filled === boxes && unplaced === 0
@@ -525,33 +569,64 @@ export function summariseAlignment(
 }
 
 /**
+ * A staff's key for mapStaves: its clef (`G2`), followed for a staff in a
+ * brace by its place there (`G2|1/2`: the first of two braced staves).
+ */
+export function staffKey(
+  staff: { clefShape: string; clefLine: number },
+  n: number,
+  groups: { start: number; end: number; symbol: string }[],
+): string {
+  const brace = groups.find(
+    (g) => g.symbol === "brace" && g.start <= n && n <= g.end,
+  );
+  const clef = `${staff.clefShape}${staff.clefLine}`;
+  return brace
+    ? `${clef}|${n - brace.start + 1}/${brace.end - brace.start + 1}`
+    : clef;
+}
+
+/**
  * Which layout staff each file staff goes to (by position, 0-based in, 1-based
- * out), or null for a file staff with no place. With the layout's clefs, staves
- * with equal clefs are paired in order (longest common subsequence) and the
- * staves between two pairs are paired in order as far as both sides have
- * them; without, staff k goes to staff k.
+ * out), or null for a file staff with no place. With the layout's staff keys
+ * (staffKey), staves with equal clefs are paired in order, as many as
+ * possible with the same place in a brace too, and the staves between two
+ * pairs are paired in order as far as both sides have them; without, staff k
+ * goes to staff k.
  */
 export function mapStaves(
-  fileClefs: string[],
+  fileKeys: string[],
   layoutCount: number,
-  layoutClefs?: string[],
+  layoutKeys?: string[],
 ): (number | null)[] {
-  if (!layoutClefs || layoutClefs.length !== layoutCount)
-    return fileClefs.map((_, s) => (s < layoutCount ? s + 1 : null));
-  const a = fileClefs.length;
+  if (!layoutKeys || layoutKeys.length !== layoutCount)
+    return fileKeys.map((_, s) => (s < layoutCount ? s + 1 : null));
+  const a = fileKeys.length;
   const b = layoutCount;
-  const lcs = Array.from({ length: a + 1 }, () => new Array(b + 1).fill(0));
+  const clefOf = (key: string) => key.split("|")[0];
+  // A pair of equal keys weighs 2, of equal clefs only 1; others do not pair.
+  const weight = (s: number, t: number) =>
+    fileKeys[s] === layoutKeys[t]
+      ? 2
+      : clefOf(fileKeys[s]) === clefOf(layoutKeys[t])
+        ? 1
+        : 0;
+  const best = Array.from({ length: a + 1 }, () => new Array(b + 1).fill(0));
   for (let s = a - 1; s >= 0; s--)
-    for (let t = b - 1; t >= 0; t--)
-      lcs[s][t] =
-        fileClefs[s] === layoutClefs[t]
-          ? lcs[s + 1][t + 1] + 1
-          : Math.max(lcs[s + 1][t], lcs[s][t + 1]);
+    for (let t = b - 1; t >= 0; t--) {
+      const w = weight(s, t);
+      best[s][t] = Math.max(
+        best[s + 1][t],
+        best[s][t + 1],
+        w > 0 ? w + best[s + 1][t + 1] : 0,
+      );
+    }
   const anchors: [number, number][] = [];
   for (let s = 0, t = 0; s < a && t < b; ) {
-    if (fileClefs[s] === layoutClefs[t] && lcs[s][t] === lcs[s + 1][t + 1] + 1)
+    const w = weight(s, t);
+    if (w > 0 && best[s][t] === w + best[s + 1][t + 1])
       anchors.push([s++, t++]);
-    else if (lcs[s + 1][t] >= lcs[s][t + 1]) s++;
+    else if (best[s + 1][t] >= best[s][t + 1]) s++;
     else t++;
   }
   const map: (number | null)[] = new Array(a).fill(null);

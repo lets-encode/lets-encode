@@ -84,8 +84,8 @@
     bar?: Snippet;
     /** Docked: whether the panel is opened (SidePanel). */
     open?: boolean;
-    /** Show a comment's measure range in the view's own viewer. */
-    onanchor: (comment: CommentRow) => void;
+    /** Show a comment's measure range in the view's own viewer; absent hides the action. */
+    onanchor?: (comment: CommentRow) => void;
     oncomment: (
       task: string,
       kind: string,

@@ -874,28 +874,59 @@ function attr(tag: string, name: string): string | null {
   return m ? xmlUnescape(m[1]) : null;
 }
 
+// The start tag of the first `name` element in `xml`; '' if there is none.
+function firstTag(xml: string, name: string): string {
+  return firstElementNamed(xml, name, true)?.tag ?? "";
+}
+
+// A staffDef's content without its <layerDef> elements.
+function withoutLayerDefs(inner: string): string {
+  return [...elementsNamed(inner, "layerDef", true)].reduceRight(
+    (text, el) => text.slice(0, el.start) + text.slice(el.end),
+    inner,
+  );
+}
+
 /**
- * Parse the first `<scoreDef>` of an MEI document back into the model. The key
- * signature is read from the scoreDef; the meter (symbol, or count and unit)
- * from the scoreDef where it carries one, else from the first staffDef (where
- * buildScoreDefXml writes it). A document without a scoreDef, or one whose
- * scoreDef has no staffDef, yields the default.
+ * Parse the first `<scoreDef>` of an MEI document back into the model. Clef,
+ * key signature, meter and group symbol are read from attributes or, where
+ * those are absent, from `<clef>`, `<keySig>`, `<meterSig>` and `<grpSym>`
+ * children. The key signature is read from the scoreDef, else from a
+ * `<keySig>` of the first staffDef without a transposition; the meter (symbol,
+ * or count and unit) from the scoreDef where it carries one, else from the
+ * first staffDef (where buildScoreDefXml writes it). A document without a
+ * scoreDef, or one whose scoreDef has no staffDef, yields the default.
  */
 export function parseScoreDef(text: string): ScoreDefModel {
   const scoreDefAt = firstElementNamed(text, "scoreDef", true);
   if (!scoreDefAt) return defaultScoreDef();
   const block = text.slice(scoreDefAt.start, scoreDefAt.end);
   const open = scoreDefAt.tag;
+  // The scoreDef's own content: everything before its <staffGrp>.
+  const grpAt = block.search(/<staffGrp\b/);
+  const scoreOwn = grpAt < 0 ? block : block.slice(0, grpAt);
+  const staffDefs = [...elementsNamed(block, "staffDef", true)];
+  const untransposed =
+    staffDefs.find(
+      (el) =>
+        !Number(attr(el.tag, "trans\\.diat") ?? 0) &&
+        !Number(attr(el.tag, "trans\\.semi") ?? 0),
+    ) ?? staffDefs[0];
+  const scoreKeysig =
+    attr(open, "keysig") ??
+    attr(firstTag(scoreOwn, "keySig"), "sig") ??
+    attr(
+      firstTag(withoutLayerDefs(untransposed?.inner ?? ""), "keySig"),
+      "sig",
+    ) ??
+    "0";
   const staves: StaffModel[] = [];
-  for (const staffDefAt of elementsNamed(block, "staffDef", true)) {
+  for (const staffDefAt of staffDefs) {
     const tag = staffDefAt.tag;
     // The staff's own label and short label; its layers' labels sit inside
     // their <layerDef> elements.
     const layerDefs = [...elementsNamed(staffDefAt.inner, "layerDef", true)];
-    const own = layerDefs.reduceRight(
-      (text, el) => text.slice(0, el.start) + text.slice(el.end),
-      staffDefAt.inner,
-    );
+    const own = withoutLayerDefs(staffDefAt.inner);
     const label = firstElementNamed(own, "label")?.inner;
     const labelAbbr = firstElementNamed(own, "labelAbbr")?.inner;
     const layers = layerDefs.map((el, i): LayerModel => {
@@ -919,12 +950,17 @@ export function parseScoreDef(text: string): ScoreDefModel {
     const notationType = attr(tag, "notationtype") ?? "";
     const tab = notationType.startsWith("tab");
     const id = attr(tag, "xml:id");
+    const clef = firstTag(own, "clef");
     const staff: StaffModel = {
       ...(id ? { id } : {}),
-      clefShape: attr(tag, "clef\\.shape") ?? (tab ? "TAB" : "G"),
-      clefLine: Number(attr(tag, "clef\\.line") ?? (tab ? 3 : 2)),
-      clefDis: attr(tag, "clef\\.dis") ?? "",
-      clefDisPlace: attr(tag, "clef\\.dis\\.place") ?? "",
+      clefShape:
+        attr(tag, "clef\\.shape") ?? attr(clef, "shape") ?? (tab ? "TAB" : "G"),
+      clefLine: Number(
+        attr(tag, "clef\\.line") ?? attr(clef, "line") ?? (tab ? 3 : 2),
+      ),
+      clefDis: attr(tag, "clef\\.dis") ?? attr(clef, "dis") ?? "",
+      clefDisPlace:
+        attr(tag, "clef\\.dis\\.place") ?? attr(clef, "dis\\.place") ?? "",
       lines: Number(attr(tag, "lines") ?? 5),
       notationType,
       label: label ? xmlUnescape(label.trim()) : "",
@@ -941,8 +977,10 @@ export function parseScoreDef(text: string): ScoreDefModel {
     }
     // A staffDef without a key signature has the scoreDef's; the model keeps
     // a key only where it differs from the one the transposition gives.
-    const scoreKeysig = attr(open, "keysig") ?? "0";
-    const ownKey = attr(tag, "keysig") ?? scoreKeysig;
+    const ownKey =
+      attr(tag, "keysig") ??
+      attr(firstTag(own, "keySig"), "sig") ??
+      scoreKeysig;
     if (ownKey !== staffKeysig(scoreKeysig, staff)) staff.keysig = ownKey;
     staves.push(staff);
   }
@@ -967,38 +1005,48 @@ export function parseScoreDef(text: string): ScoreDefModel {
     } else {
       depth++;
       if (depth >= 2) {
-        // A label directly after the open tag names the group (a staff's
-        // own label sits inside its staffDef instead), a <labelAbbr> after it
-        // gives its short name, and an <instrDef> after those makes the
-        // staves one instrument.
+        // A <grpSym> directly after the open tag gives the group's symbol, a
+        // label after it names the group (a staff's own label sits inside
+        // its staffDef instead), a <labelAbbr> after that gives its short
+        // name, and an <instrDef> after those makes the staves one
+        // instrument.
         const head =
-          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(?:<labelAbbr\b[^>]*>([\s\S]*?)<\/labelAbbr>)?\s*(<instrDef\b)?/.exec(
+          /^\s*(<grpSym\b[^>]*?(?:\/>|>[\s\S]*?<\/grpSym>))?\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(?:<labelAbbr\b[^>]*>([\s\S]*?)<\/labelAbbr>)?\s*(<instrDef\b)?/.exec(
             block.slice(tokenRe.lastIndex),
           )!;
         const id = attr(token[0], "xml:id");
         pending.push({
           ...(id ? { id } : {}),
           start: staffNo + 1,
-          symbol: attr(token[0], "symbol") ?? "bracket",
-          label: head[1] ? xmlUnescape(head[1].trim()) : "",
-          ...(head[2] ? { labelAbbr: xmlUnescape(head[2].trim()) } : {}),
+          symbol:
+            attr(token[0], "symbol") ??
+            attr(head[1] ?? "", "symbol") ??
+            "bracket",
+          label: head[2] ? xmlUnescape(head[2].trim()) : "",
+          ...(head[3] ? { labelAbbr: xmlUnescape(head[3].trim()) } : {}),
           barThru: attr(token[0], "bar\\.thru") === "true",
-          oneInstrument: !!head[3],
+          oneInstrument: !!head[4],
         });
       }
     }
   }
   groups.sort((a, b) => a.start - b.start || b.end - a.end);
-  const firstStaff = /<staffDef\b[^>]*>/.exec(block)?.[0] ?? "";
+  const firstStaff = staffDefs[0].tag;
+  const meterSig =
+    firstTag(scoreOwn, "meterSig") ||
+    firstTag(withoutLayerDefs(staffDefs[0].inner), "meterSig");
   // A symbol signature implies its numeric meter — common time is 4/4, cut
   // time 2/2 — so the model stays complete either way.
   const meterSym =
-    attr(open, "meter\\.sym") ?? attr(firstStaff, "meter\\.sym") ?? "";
+    attr(open, "meter\\.sym") ??
+    attr(firstStaff, "meter\\.sym") ??
+    attr(meterSig, "sym") ??
+    "";
   if (meterSym !== "") {
     return {
       staves,
       groups,
-      keysig: attr(open, "keysig") ?? "0",
+      keysig: scoreKeysig,
       meterCount: meterSym === "cut" ? "2" : "4",
       meterUnit: meterSym === "cut" ? "2" : "4",
       meterSym,
@@ -1007,11 +1055,17 @@ export function parseScoreDef(text: string): ScoreDefModel {
   return {
     staves,
     groups,
-    keysig: attr(open, "keysig") ?? "0",
+    keysig: scoreKeysig,
     meterCount:
-      attr(open, "meter\\.count") ?? attr(firstStaff, "meter\\.count") ?? "4",
+      attr(open, "meter\\.count") ??
+      attr(firstStaff, "meter\\.count") ??
+      attr(meterSig, "count") ??
+      "4",
     meterUnit:
-      attr(open, "meter\\.unit") ?? attr(firstStaff, "meter\\.unit") ?? "4",
+      attr(open, "meter\\.unit") ??
+      attr(firstStaff, "meter\\.unit") ??
+      attr(meterSig, "unit") ??
+      "4",
     meterSym: "",
   };
 }

@@ -14,6 +14,17 @@ import type {
 } from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
 import { envelopeFromPrBody } from "./command-envelope.ts";
+import {
+  spliceOpeningScoreDef,
+  splicePage,
+  splicePageSpan,
+} from "./mei-page-splice.ts";
+import {
+  applicationNamesIn,
+  recordApplications,
+  recordContribution,
+  type Contribution,
+} from "./mei-provenance.ts";
 import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
 
 export type PullRequestKind =
@@ -69,6 +80,62 @@ export function checksOpening(
         (t.locator === "omr-layout" || t.locator === "encoding-align"),
     )
   );
+}
+
+/**
+ * The campaign score a submitted encoding of `task` makes, as the campaign
+ * automation assembles it for its schema check and its commit: for a page
+ * task, the page of `forkMei` spliced into `baseMei`, with the opening score
+ * definition where the task checks it (checksOpening) and the recognition
+ * models an OMR page draft names in the fork's header; otherwise `forkMei`.
+ * Then `contributions` are recorded in its header, in order. Throws when the
+ * page cannot be spliced.
+ */
+export function assembleSubmission({
+  task,
+  tasks,
+  configYaml,
+  baseMei,
+  forkMei,
+  contributions,
+}: {
+  task: TaskRow;
+  tasks: TaskRow[];
+  configYaml: string | null;
+  /** The campaign's score; read for page tasks only. */
+  baseMei: string | null;
+  forkMei: string;
+  contributions: Contribution[];
+}): string {
+  let mei = forkMei;
+  if (task.locator.startsWith("surface-")) {
+    if (baseMei == null)
+      throw new Error(`${task.fragment} is missing from the campaign.`);
+    mei =
+      pieceKindForPath(configYaml, task.fragment) === "physical-only"
+        ? splicePageSpan(baseMei, forkMei, task.locator)
+        : splicePage(baseMei, forkMei, task.locator);
+    if (
+      checksOpening(
+        task,
+        tasks,
+        pieceFieldForPath(configYaml, task.fragment, "preparation"),
+      )
+    )
+      mei = spliceOpeningScoreDef(mei, forkMei);
+    // The splice keeps the base header. The recognition models an OMR page
+    // draft names in the fork's header are carried over; no other entry is
+    // taken from a fork.
+    mei = recordApplications(
+      mei,
+      applicationNamesIn(forkMei).filter((name) =>
+        /^Musibot [\w.-]+ [\w.-]+$/.test(name),
+      ),
+    );
+  }
+  for (const contribution of contributions)
+    mei = recordContribution(mei, contribution);
+  return mei;
 }
 
 /**

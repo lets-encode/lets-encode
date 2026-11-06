@@ -9,6 +9,7 @@ import {
   labelRanges,
   mapStaves,
   readMeasures,
+  staffKey,
   summariseAlignment,
 } from "../encoding-align.ts";
 import { measure, skeleton, staff, upload } from "./encoding-fixture.ts";
@@ -151,6 +152,43 @@ test("the file's system breaks place the missing measures", () => {
   );
 });
 
+test("an engraver's system breaks neither move a complete file nor count as conflicts", () => {
+  // Layout systems of 4 measures; the file breaks every 5 measures.
+  const layout = readMeasures(skeleton(Array(16).fill(4)));
+  const withBreaks = (every: number, extra?: number) =>
+    readMeasures(
+      upload(
+        range(1, 64)
+          .map(
+            (n, i) =>
+              (i > 0 && (i % every === 0 || i === extra) ? "<sb/>" : "") +
+              measure(n),
+          )
+          .join(""),
+      ),
+    );
+  const engraved = withBreaks(5);
+  const alignment = alignMeasures(layout, engraved);
+  assert.deepEqual(
+    alignment.matches.map((slot) => slot?.measure),
+    range(0, 63),
+  );
+  assert.deepEqual(summariseAlignment(engraved, alignment), {
+    kind: "complete",
+    filled: 64,
+    empty: 0,
+    unplaced: 0,
+    conflicts: 0,
+  });
+  // Breaks that mostly agree with the page's are the source's: the one that
+  // does not is a conflict.
+  const source = withBreaks(4, 2);
+  assert.deepEqual(
+    alignMeasures(layout, source).conflicts.flatMap((c, i) => (c ? [i] : [])),
+    [2],
+  );
+});
+
 test("a repeat barline places the measures after it; the gap before it stays ambiguous", () => {
   const alignment = alignMeasures(
     readMeasures(skeleton([5], 1, { 3: { rptEnd: true } })),
@@ -199,6 +237,21 @@ test("a file with many more measures than the layout is a different version", ()
   assert.equal(summariseAlignment(file, alignment).kind, "different");
 });
 
+test("a short piece's file with one measure too many still fits", () => {
+  // The file writes the pickup as a measure of its own.
+  const file = readMeasures(
+    upload(
+      measure(0, 1, ' metcon="false"') +
+        range(1, 8)
+          .map((n) => measure(n))
+          .join(""),
+    ),
+  );
+  const alignment = alignMeasures(readMeasures(skeleton([4, 4])), file);
+  assert.equal(alignment.unplaced.length, 1);
+  assert.equal(summariseAlignment(file, alignment).kind, "partial");
+});
+
 test("empty file measures count as empty", () => {
   const file = readMeasures(
     upload(
@@ -227,6 +280,20 @@ test("mapStaves pairs equal clefs in order and fills between them", () => {
     [1, 2, 4],
   );
   assert.deepEqual(mapStaves(["C3", "F4"], 2, ["G2", "F4"]), [1, 2]);
+});
+
+test("mapStaves pairs braced staves with braced staves", () => {
+  // Voice and piano on the pages; the piano's staves are braced.
+  const pages = ["G2", "G2|1/2", "F4|2/2"];
+  assert.deepEqual(mapStaves(["G2|1/2", "F4|2/2"], 3, pages), [2, 3]);
+  assert.deepEqual(mapStaves(["G2"], 3, pages), [1]);
+  assert.deepEqual(
+    staffKey({ clefShape: "F", clefLine: 4 }, 3, [
+      { start: 1, end: 1, symbol: "bracket" },
+      { start: 2, end: 3, symbol: "brace" },
+    ]),
+    "F4|2/2",
+  );
 });
 
 test("labelRanges joins neighbouring measures", () => {

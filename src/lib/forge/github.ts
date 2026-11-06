@@ -52,6 +52,8 @@ export function createGitHubForge(token: string): ForgeClient {
       gh.dispatchWorkflow(token, owner, repo, workflow, ref),
     getPullRequestState: (owner, repo, number) =>
       gh.getPullRequestState(token, owner, repo, number),
+    getPullRequestHead: async (owner, repo, number) =>
+      (await gh.getPullRequestDetails(token, owner, repo, number)).headSha,
     closePullRequest: (owner, repo, number) =>
       gh.closePullRequest(token, owner, repo, number),
     getLastIssueComment: (owner, repo, number) =>

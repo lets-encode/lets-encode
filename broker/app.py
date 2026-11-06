@@ -511,8 +511,20 @@ CAMPAIGN_TEMPLATE = (
 _REPO_PATH = re.compile(r"/repos/([^/]+/[^/]+)(/.*)?")
 
 
+class RepositoryLookupFailed(Exception):
+    """GitHub answered a repository lookup with neither the repository nor 404."""
+
+    def __init__(self, response):
+        super().__init__(response.status_code)
+        self.response = response
+
+
 def fetch_repository(full_name):
-    """GitHub's description of a repository as the session sees it, or None."""
+    """
+    GitHub's description of a repository as the session sees it, or None when
+    GitHub does not show it (404). Raises RepositoryLookupFailed for any other
+    failed answer.
+    """
     response = requests.get(
         "{}/repos/{}".format(GITHUB_API, full_name),
         headers={
@@ -521,8 +533,10 @@ def fetch_repository(full_name):
         },
         timeout=(10, 30),
     )
-    if not response.ok:
+    if response.status_code == 404:
         return None
+    if not response.ok:
+        raise RepositoryLookupFailed(response)
     body = response.json()
     return body if isinstance(body, dict) else None
 
@@ -571,6 +585,46 @@ def campaign_repository(full_name):
         return False
     remember_campaign_repo(full_name)
     return True
+
+
+# GitHub's answer to the write check's repository lookup, when it is neither
+# the repository nor 404: an ended session (401) and a rate limit keep GitHub's
+# status and rate-limit headers, so the app reads them as it reads any GitHub
+# answer; any other failure is a 502.
+RATE_LIMIT_HEADERS = (
+    "Retry-After",
+    "X-RateLimit-Limit",
+    "X-RateLimit-Remaining",
+    "X-RateLimit-Reset",
+    "X-RateLimit-Resource",
+)
+
+
+def repository_lookup_failure(upstream):
+    status = upstream.status_code
+    rate_limited = status == 429 or (
+        status == 403 and upstream.headers.get("X-RateLimit-Remaining") == "0"
+    )
+    if status == 401 or rate_limited:
+        try:
+            body = upstream.json()
+        except ValueError:
+            body = None
+        message = body.get("message", "") if isinstance(body, dict) else ""
+        response = jsonify(message=message or "GitHub refused the request")
+        response.status_code = status
+        for name in RATE_LIMIT_HEADERS:
+            if name in upstream.headers:
+                response.headers[name] = upstream.headers[name]
+        return response
+    return (
+        jsonify(
+            error="GitHub could not be asked whether this is a campaign repository ({})".format(
+                status
+            )
+        ),
+        502,
+    )
 
 
 def write_outside_campaigns(path):
@@ -1005,13 +1059,25 @@ def revoke_github_token(token):
         return
     try:
         # 204 = revoked, 404 = already invalid; both leave the token unusable.
-        requests.delete(
+        res = requests.delete(
             "{}/applications/{}/token".format(GITHUB_API, client_id),
             auth=(client_id, client_secret),
             json={"access_token": token},
             headers={"Accept": "application/vnd.github+json"},
             timeout=5,
         )
+        if res.status_code not in (204, 404):
+            app.logger.warning(
+                "token_revoke %s",
+                json.dumps(
+                    {
+                        "source": "broker",
+                        "event": "revoke_failed",
+                        "status": res.status_code,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
     except requests.RequestException as e:
         app.logger.warning(
             "token_revoke %s",
@@ -1432,6 +1498,8 @@ def proxy(url):
         outside = write_outside_campaigns(parsed.path)
     except requests.Timeout:
         return jsonify(error="Upstream request timed out"), 504
+    except RepositoryLookupFailed as e:
+        return repository_lookup_failure(e.response)
     except (requests.RequestException, ValueError):
         return jsonify(error="Upstream request failed"), 502
     if outside:

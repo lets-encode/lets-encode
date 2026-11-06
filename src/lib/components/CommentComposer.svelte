@@ -54,6 +54,10 @@
   const posting = $derived(
     sending || pendingVerdicts.isProcessing({ kind: "comment", task }, repoId),
   );
+  // A comment whose verdict did not land within the wait.
+  const stuck = $derived(
+    pendingVerdicts.timedOut({ kind: "comment", task }, repoId),
+  );
 
   async function postComment() {
     if (!text.trim() || text.length > MAX_COMMENT_LENGTH) return;
@@ -67,10 +71,33 @@
       sending = false;
     }
     if (result?.ok) {
+      if (result.background) sent = { text, replyTo };
       text = "";
       replyTo = null;
     }
   }
+
+  // A comment still being processed: back in the field, with its reply
+  // target, when its submission is rejected, so it can be sent again. A failed
+  // run is not a verdict: the submission is followed on until it is decided.
+  let sent: { text: string; replyTo: CommentRow | null } | null = null;
+  $effect(() =>
+    pendingVerdicts.onSettled((entry) => {
+      if (
+        !sent ||
+        entry.runFailed ||
+        entry.repoId !== repoId ||
+        entry.key.kind !== "comment" ||
+        entry.key.task !== task
+      )
+        return;
+      if (entry.state === "rejected" && !text.trim()) {
+        text = sent.text;
+        replyTo = sent.replyTo;
+      }
+      if (entry.state !== "timeout") sent = null;
+    }),
+  );
 
   function cancel() {
     text = "";
@@ -131,6 +158,14 @@
       <div class="posting">
         <span class="spinner" aria-hidden="true"></span>
         Processing comment…
+      </div>
+    {:else if stuck}
+      <div class="posting">
+        <span
+          >Comment <a href={stuck.prUrl} target="_blank" rel="noreferrer"
+            >#{stuck.prNumber}</a
+          > is still being processed</span
+        >
       </div>
     {/if}
     <textarea

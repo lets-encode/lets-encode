@@ -77,6 +77,7 @@ import type {
   ScoreDefModel,
 } from "./mei-facsimile.ts";
 import {
+  assembleSubmission,
   checksOpening,
   keptWorkBranch,
   keptWorkSince,
@@ -85,11 +86,7 @@ import {
   priorDecision,
   REASON_TEXT,
 } from "./coordinator-policy.ts";
-import {
-  firstElementOfPage,
-  splicePage,
-  splicePageSpan,
-} from "./mei-page-splice.ts";
+import { firstElementOfPage } from "./mei-page-splice.ts";
 import {
   resolveFacsimileImageUrls,
   resolveRepoRelativeTarget,
@@ -299,6 +296,15 @@ type PrProcessingResult =
 export const RUN_REQUIREMENTS =
   "a submission must change at most four files, must not be a draft, and must come from a user account";
 
+// Polls of the PR, and ticks of its run watch, that may fail in a row before
+// the wait, or the watching, ends.
+const POLL_FAILURES = 3;
+const WATCH_FAILURES = 3;
+// Reads of history.csv, 2 s apart, for a closed PR the bot accepted.
+const HISTORY_READS = 15;
+// How the campaign automation's comment on an accepted PR begins.
+const ACCEPTED_MARK = "✅";
+
 // Wait until the campaign automation has processed a PR and return its
 // decision. The decision is the history.csv row naming the PR, which the
 // coordinator commits before it comments on and closes the PR; it is read once
@@ -316,6 +322,7 @@ async function waitForPrProcessed(
     headSha?: string;
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
+    createdAt?: string;
   },
   { waitMs = 90_000, maxDelayMs = 3_000 } = {},
 ): Promise<PrProcessingResult> {
@@ -325,26 +332,51 @@ async function waitForPrProcessed(
   });
   console.log("[pr] waiting for automation to process PR", pr.number);
   // Best-effort narration of the Actions run the PR triggered, identified by
-  // the PR's head commit. A watch failure never fails the command — the PR
-  // itself stays the source of truth.
-  let watch = pr.headSha
-    ? new WorkflowRunWatch(
-        f,
-        owner,
-        repo,
-        {
-          workflow: "caller.yml",
-          event: "pull_request_target",
-          headSha: pr.headSha,
-        },
-        ctx.progress,
-      )
-    : null;
-  const decision = async () =>
-    priorDecision(
-      parseHistoryCsv((await f.getRepoFile(owner, repo, HISTORY_PATH)) ?? ""),
+  // the PR's head commit and, since an earlier pull request from an unchanged
+  // branch has runs for the same commit, created after the PR (by GitHub's
+  // clock). A watch failure never fails the command — the PR itself stays the
+  // source of truth — and ends the watching only after WATCH_FAILURES in a row.
+  const since = pr.createdAt ? Date.parse(pr.createdAt) : Date.now();
+  const runWatch = (headSha: string, from: number) =>
+    new WorkflowRunWatch(
+      f,
+      owner,
+      repo,
+      {
+        workflow: "caller.yml",
+        event: "pull_request_target",
+        headSha,
+        since: from,
+      },
+      ctx.progress,
+    );
+  let watch = pr.headSha ? runWatch(pr.headSha, since) : null;
+  let watchedSha = pr.headSha ?? "";
+  let watchFailures = 0;
+  // The history is read at the current head: a read of the default branch
+  // can lag behind the commit that recorded the decision.
+  const decision = async () => {
+    const { sha } = await f.getRepoHead(owner, repo);
+    return priorDecision(
+      parseHistoryCsv(
+        (await f.getRepoFile(owner, repo, HISTORY_PATH, sha)) ?? "",
+      ),
       pr.number,
     );
+  };
+  // The bot's comment on the closed PR; null when there is none or it cannot
+  // be read, since the decision stands without the comment that explains it.
+  const comment = async (): Promise<string | null> => {
+    try {
+      return await f.getLastIssueComment(owner, repo, pr.number);
+    } catch (e) {
+      console.warn(
+        "[pr] could not read the verdict comment:",
+        (e as Error).message,
+      );
+      return null;
+    }
+  };
   const decided = (
     row: { outcome: string; detail: string; timestamp: string } | null,
     verdict: string | null,
@@ -360,29 +392,69 @@ async function waitForPrProcessed(
   // unchanged poll answers 304 and does not count against the API rate limit —
   // the cap trades a few extra free polls for catching the close sooner.
   let delayMs = 1_000;
+  // Consecutive polls that failed; POLL_FAILURES in a row end the wait.
+  let pollFailures = 0;
+  const pollFailed = (e: unknown) => {
+    if (++pollFailures >= POLL_FAILURES) throw e;
+    console.warn("[pr] poll failed, retrying:", (e as Error).message);
+  };
   while (Date.now() < deadline) {
     await sleep(delayMs);
+    delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * 1.5));
     // The PR-state read and the run-watch tick are independent reads — one
-    // round trip per iteration instead of two.
-    const [state] = await Promise.all([
+    // round trip per iteration instead of two. Both are waited for, so a tick
+    // never overlaps the next one.
+    const [read] = await Promise.allSettled([
       f.getPullRequestState(owner, repo, pr.number),
-      watch?.tick().catch((e) => {
-        console.warn(
-          "[pr] stopped watching the Actions run:",
-          (e as Error).message,
-        );
-        watch = null;
-      }),
+      watch?.tick().then(
+        () => (watchFailures = 0),
+        (e) => {
+          if (++watchFailures < WATCH_FAILURES) return;
+          console.warn(
+            "[pr] stopped watching the Actions run:",
+            (e as Error).message,
+          );
+          watch = null;
+        },
+      ),
     ]);
+    if (read.status === "rejected") {
+      pollFailed(read.reason);
+      continue;
+    }
+    const state = read.value;
     if (state === "closed") {
-      // The row is committed before the PR closes; a read that does not show
-      // it yet is repeated once before the PR counts as rejected.
-      let row = await decision();
-      if (!row) {
-        await sleep(2_000);
-        row = await decision();
+      // The row is committed before the PR closes, but a read can still miss
+      // it. Without it, a read is repeated once, and for up to HISTORY_READS
+      // reads while the bot's comment says the PR was accepted: the row is
+      // then still to come, so the PR counts as being processed, never as
+      // rejected. A PR closed without a row and without an accepting comment
+      // was rejected without a record (a malformed operation).
+      let row: Awaited<ReturnType<typeof decision>> = null;
+      let verdict: string | null = null;
+      let commented = false;
+      try {
+        for (let read = 0; read < HISTORY_READS; read++) {
+          if (read > 0) await sleep(2_000);
+          row = await decision();
+          if (row) break;
+          verdict = await comment();
+          commented = true;
+          if (read > 0 && !verdict?.startsWith(ACCEPTED_MARK)) break;
+        }
+      } catch (e) {
+        pollFailed(e);
+        continue;
       }
-      const verdict = await f.getLastIssueComment(owner, repo, pr.number);
+      if (!commented) verdict = await comment();
+      if (!row && verdict?.startsWith(ACCEPTED_MARK)) {
+        console.log(
+          "[pr] PR",
+          pr.number,
+          "accepted; its record is not read yet",
+        );
+        return { state: "timeout" };
+      }
       console.log(
         "[pr] PR",
         pr.number,
@@ -398,21 +470,30 @@ async function waitForPrProcessed(
       }
       return result;
     }
+    pollFailures = 0;
     // A failed run never closes the PR — report the failure rather than
     // letting the wait time out as if the run were merely slow. A skipped
     // run means the workflow's guard refused the PR before a runner started;
     // the PR is closed here so its branch can be corrected and resubmitted
     // at once, instead of waiting for the scheduled catch-up to close it. A
     // cancelled run was replaced by one for a newer push to the same PR,
-    // which the PR-state poll goes on waiting for. The guard sits in a called
+    // which is followed from the PR's new head. The guard sits in a called
     // workflow, so a refused PR can also show as a successful run whose jobs
-    // were all skipped.
+    // were all skipped; until its jobs are read, the run is not judged.
     if (watch?.state.phase === "completed") {
-      const { conclusion, html_url, id } = watch.state.run;
-      const jobs =
-        conclusion === "success"
-          ? await f.getWorkflowRunJobs(owner, repo, id).catch(() => [])
-          : [];
+      const { conclusion, html_url, id, created_at } = watch.state.run;
+      let jobs: { conclusion: string | null }[] = [];
+      if (conclusion === "success") {
+        try {
+          jobs = await f.getWorkflowRunJobs(owner, repo, id);
+        } catch (e) {
+          console.warn(
+            "[pr] could not read the run's jobs:",
+            (e as Error).message,
+          );
+          continue;
+        }
+      }
       const skipped =
         conclusion === "skipped" ||
         (jobs.length > 0 && jobs.every((j) => j.conclusion === "skipped"));
@@ -420,7 +501,19 @@ async function waitForPrProcessed(
       if (conclusion === "success" && !skipped) {
         watch = null;
       } else if (conclusion === "cancelled") {
-        watch = null;
+        let head: string;
+        try {
+          head = await f.getPullRequestHead(owner, repo, pr.number);
+        } catch (e) {
+          console.warn(
+            "[pr] could not read the PR's head:",
+            (e as Error).message,
+          );
+          continue;
+        }
+        watch =
+          head !== watchedSha ? runWatch(head, Date.parse(created_at)) : null;
+        watchedSha = head;
       } else if (skipped) {
         await f.closePullRequest(owner, repo, pr.number);
         return { state: "run_skipped" };
@@ -432,7 +525,6 @@ async function waitForPrProcessed(
           : { state: "run_failed", runUrl: html_url };
       }
     }
-    delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * 1.5));
   }
   const row = await decision();
   if (row) return decided(row, null);
@@ -607,7 +699,7 @@ function verdictResult(
   }
   if (result.state === "run_failed") {
     return {
-      error: `The campaign automation run for submission #${prNumber} failed — see ${result.runUrl}.`,
+      error: `The campaign automation run for submission #${prNumber} failed — see ${result.runUrl}. The submission stays open; the next scheduled run processes it.`,
       prUrl,
     };
   }
@@ -675,6 +767,10 @@ export interface FollowedPr {
   cleanup?: "always" | "accepted";
   /** The task whose branch `encode-<task>` is deleted once the PR is accepted. */
   taskBranch?: string;
+  /** When GitHub created the PR (ISO); the run watch looks for runs after it. */
+  createdAt?: string;
+  /** When the follow began, epoch milliseconds; set on a follow resumed after a reload. */
+  openedAt?: number;
 }
 
 /**
@@ -701,6 +797,8 @@ export interface PendingVerdictSink {
     message: string,
     runFailed?: boolean,
   ): void;
+  /** The campaign's history.csv, as just read, records these PRs' decisions. */
+  recorded(repoId: number, prs: Set<number>): void;
 }
 
 // The fallback sink cannot render anything, but a rejection must never
@@ -712,6 +810,7 @@ let verdictSink: PendingVerdictSink = {
     if (state !== "accepted")
       console.error("[pending-verdict] unrendered verdict:", state, message);
   },
+  recorded: () => {},
 };
 
 export function setVerdictSink(sink: PendingVerdictSink): void {
@@ -752,7 +851,7 @@ function openAndFinishInBackground(
       return;
     }
     verdictSink.attachPr(id, pr);
-    await settleWhenProcessed(background, label, id, pr);
+    await settleWhenProcessed(background, label, key, id, pr);
   })();
   // No banner: the task's run state (TaskRunState.svelte) is the visible
   // signal from here on.
@@ -770,10 +869,12 @@ const SETTLE_WAIT_MS = 70 * 60_000;
 async function settleWhenProcessed(
   ctx: CommandContext,
   label: string,
+  key: PendingKey,
   id: string,
   pr: FollowedPr,
   waitMs = SETTLE_WAIT_MS,
 ): Promise<void> {
+  const until = Date.now() + waitMs;
   let res: Result;
   let runFailed = false;
   let decidedAt = "";
@@ -823,6 +924,34 @@ async function settleWhenProcessed(
     res.error ?? res.message ?? `${label} processed.`,
     runFailed,
   );
+  // A failed run leaves the PR open for the scheduled run: the failure is
+  // shown, and the PR is followed on without its run until it is decided.
+  if (runFailed) followAfterFailedRun(ctx, label, key, pr, until);
+}
+
+// Follow a PR whose run failed until it is decided, up to `until` (epoch
+// milliseconds), also after a reload.
+function followAfterFailedRun(
+  ctx: CommandContext,
+  label: string,
+  key: PendingKey,
+  pr: FollowedPr,
+  until = Date.now() + SETTLE_WAIT_MS,
+): void {
+  const followed = {
+    ...pr,
+    headSha: undefined,
+    openedAt: until - SETTLE_WAIT_MS,
+  };
+  const id = verdictSink.begin({ label, key, target: ctx, pr: followed });
+  void settleWhenProcessed(
+    { ...ctx, progress: () => {} },
+    label,
+    key,
+    id,
+    followed,
+    Math.max(0, until - Date.now()),
+  );
 }
 
 // Whether the viewer holds an encoding claim on `task_id` granted after `at`
@@ -859,7 +988,13 @@ function followInBackground(
 ): void {
   const followed = { ...pr, taskBranch };
   const id = verdictSink.begin({ label, key, target: ctx, pr: followed });
-  void settleWhenProcessed({ ...ctx, progress: () => {} }, label, id, followed);
+  void settleWhenProcessed(
+    { ...ctx, progress: () => {} },
+    label,
+    key,
+    id,
+    followed,
+  );
 }
 
 /**
@@ -869,6 +1004,7 @@ function followInBackground(
 export function resumeFollowing(
   ctx: CommandContext,
   label: string,
+  key: PendingKey,
   id: string,
   pr: FollowedPr,
   openedAt: number,
@@ -876,8 +1012,9 @@ export function resumeFollowing(
   void settleWhenProcessed(
     { ...ctx, progress: () => {} },
     label,
+    key,
     id,
-    pr,
+    { ...pr, openedAt },
     Math.max(0, openedAt + SETTLE_WAIT_MS - Date.now()),
   );
 }
@@ -1011,12 +1148,12 @@ async function claimAndWait(
         prUrl: pr.html_url,
         message: `You already hold the claim on ${target}.`,
       };
-    if (verdict.state === "timeout")
+    if (verdict.state === "timeout" || verdict.state === "run_failed")
       followInBackground(
         ctx,
         `${kind === "validation" ? "Review" : "Encoding"} claim of ${target}`,
         { kind: "claim", task: task_id, sub: subtask_id },
-        pr,
+        verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
         kind === "encoding" ? task_id : undefined,
       );
     return verdictResult(
@@ -1173,6 +1310,10 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
     // A lock past its `expires` no longer holds the task.
     const locks = liveLocks(parseLockCsv(lockCsv));
     const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
+    verdictSink.recorded(
+      ctx.repoId,
+      new Set(history.flatMap((row) => (row.pr ? [Number(row.pr)] : []))),
+    );
     const comments = commentCsv ? parseCommentCsv(commentCsv) : [];
     return {
       notInitialised: false,
@@ -1273,12 +1414,12 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         pr.html_url,
         `Release #${pr.number} opened for ${target}.`,
       );
-      if (verdict.state === "timeout")
+      if (verdict.state === "timeout" || verdict.state === "run_failed")
         followInBackground(
           ctx,
           `Release of ${target}`,
           { kind: "release", task: task_id, sub: subtask_id },
-          pr,
+          verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
           kind === "encoding" ? task_id : undefined,
         );
       if (!res.ok || res.outcome === "pending") return res;
@@ -1399,6 +1540,14 @@ const openEditor: CommandDef<
         );
         prUrl = pr.html_url;
         const verdict = await waitForPrProcessed(ctx, pr);
+        if (verdict.state === "run_failed")
+          followInBackground(
+            ctx,
+            `Encoding claim of ${task_id}`,
+            { kind: "claim", task: task_id },
+            { ...pr, headSha: undefined },
+            task_id,
+          );
         if (verdict.state === "timeout") {
           followInBackground(
             ctx,
@@ -1603,7 +1752,8 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
           f.getRepoHead(owner, repo),
           f.getRepoFile(owner, repo, TASK_PATH),
         ]);
-        const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+        const tasks = parseTaskCsv(taskCsv ?? "");
+        const task = findRow(tasks, task_id, "");
         if (!task) throw new Error(`Unknown task ${task_id}.`);
         // The claim/editor flow put the encoding on `encode-<task_id>` — in the
         // campaign repo for owners/collaborators, in the volunteer's fork
@@ -1621,8 +1771,9 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
           forkHead = { ...fork, branch };
         }
         // The branch holds mei-friend's commits. The score is assembled the way
-        // the automation assembles it — a page task contributes only its page,
-        // spliced into the campaign's score — and checked against the schema,
+        // the automation assembles it (assembleSubmission) — a page task
+        // contributes only its page, spliced into the campaign's score — and
+        // checked against the schema,
         // so a failing submission is refused before a pull request is opened.
         // GitHub's Contents API can briefly lag a push, so the read is retried.
         let forkMei: string | null = null;
@@ -1639,24 +1790,39 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
           throw new Error(
             `${task.fragment} is missing from the submitted encoding.`,
           );
-        let mei = forkMei;
-        if (task.locator.startsWith("surface-")) {
-          const [baseMei, configYaml] = await Promise.all([
-            f.getRepoFile(owner, repo, task.fragment),
-            f.getRepoFile(owner, repo, CONFIG_PATH),
-          ]);
-          if (baseMei == null)
-            throw new Error(`${task.fragment} is missing from the campaign.`);
-          try {
-            mei =
-              pieceKindForPath(configYaml, task.fragment) === "physical-only"
-                ? splicePageSpan(baseMei, forkMei, task.locator)
-                : splicePage(baseMei, forkMei, task.locator);
-          } catch (e) {
-            throw new Error(
-              `page ${task.locator} cannot be joined into ${task.fragment}: ${(e as Error).message}`,
-            );
-          }
+        const isPageTask = task.locator.startsWith("surface-");
+        const [baseMei, configYaml] = isPageTask
+          ? await Promise.all([
+              f.getRepoFile(owner, repo, task.fragment),
+              f.getRepoFile(owner, repo, CONFIG_PATH),
+            ])
+          : [null, null];
+        if (isPageTask && baseMei == null)
+          throw new Error(`${task.fragment} is missing from the campaign.`);
+        // The automation records the contribution in the header before its
+        // check; this one stands in for it, so the header checked has the
+        // same shape.
+        let mei: string;
+        try {
+          mei = assembleSubmission({
+            task,
+            tasks,
+            configYaml,
+            baseMei,
+            forkMei,
+            contributions: [
+              {
+                name: viewerLogin,
+                message: `Encoding of ${task_id}`,
+                isodate: new Date().toISOString().slice(0, 10),
+                application: "mei-friend",
+              },
+            ],
+          });
+        } catch (e) {
+          throw new Error(
+            `page ${task.locator} cannot be joined into ${task.fragment}: ${(e as Error).message}`,
+          );
         }
         const meiError = await checkMei(mei);
         if (meiError) {
@@ -1893,12 +2059,12 @@ const reviewEdit: CommandDef<
         pr.html_url,
         `Review edit #${pr.number} opened for ${target}.`,
       );
-      if (verdict.state === "timeout")
+      if (verdict.state === "timeout" || verdict.state === "run_failed")
         followInBackground(
           ctx,
           `Review edit of ${target}`,
           { kind: "review-edit", task: task_id, sub: subtask_id },
-          pr,
+          verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
           task_id,
         );
       if (!res.ok || res.outcome === "pending") return res;

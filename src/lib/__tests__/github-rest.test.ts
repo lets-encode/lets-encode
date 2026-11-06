@@ -466,6 +466,53 @@ test("commitFiles builds one tree and advances the requested branch from the sup
   assert.deepEqual(calls.at(-1)?.body, { sha: "new-commit" });
 });
 
+test("commitFiles with replaceBranch moves an existing branch, or creates a missing one, after the commit", async (t) => {
+  for (const exists of [true, false]) {
+    const calls: RecordedCall[] = [];
+    gitDataMock(t, {
+      record: calls,
+      extra: (url, method) =>
+        !exists && method === "PATCH"
+          ? Response.json(
+              { message: "Reference does not exist" },
+              { status: 422 },
+            )
+          : url.endsWith("/git/refs") && method === "POST"
+            ? Response.json({})
+            : undefined,
+    });
+    await commitFiles(
+      "token",
+      "owner",
+      "repo",
+      [{ path: "sources/score.mei", content: "work" }],
+      "Keep work",
+      { baseSha: "base-sha", newBranch: "wip-T0001", replaceBranch: true },
+    );
+    const writes = calls
+      .filter((c) => c.method !== "GET")
+      .map(
+        (c) =>
+          `${c.method} ${new URL(c.url).pathname.replace(/^.*\/repos\/owner\/repo/, "")}`,
+      );
+    assert.deepEqual(
+      writes,
+      [
+        "POST /git/trees",
+        "POST /git/commits",
+        "PATCH /git/refs/heads/wip-T0001",
+        ...(exists ? [] : ["POST /git/refs"]),
+      ],
+      exists ? "existing branch" : "missing branch",
+    );
+    assert.deepEqual(calls.find((c) => c.method === "PATCH")?.body, {
+      sha: "new-commit",
+      force: true,
+    });
+    t.mock.restoreAll();
+  }
+});
+
 test("commitFiles removes the paths it is told to delete in the same commit", async (t) => {
   const calls: RecordedCall[] = [];
   gitDataMock(t, { record: calls });

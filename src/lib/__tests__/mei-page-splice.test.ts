@@ -268,6 +268,41 @@ test("the last page's span ends at the enclosing close, nested sections included
   assert.equal((spliced.match(/<\/mdiv>/g) ?? []).length, 1);
 });
 
+test("the last page's span takes a movement that starts on the page", () => {
+  const model = initialFacsimileModel(PAGES);
+  model.pages[1].zones[1] = {
+    ...model.pages[1].zones[1],
+    mdiv: true,
+    label: "1",
+  };
+  const twoMovements = buildFacsimileMei(
+    { ...model, headXml: HEAD },
+    { withBreaks: true },
+  );
+  const fork = twoMovements.replace(
+    /<mRest\b[^>]*\/>/g,
+    '<note dur="4" oct="4" pname="c"/>',
+  );
+  const spliced = splicePage(twoMovements, fork, "surface-2");
+  // Page 2's three measures, the second movement's two among them, take the
+  // fork; page 1 keeps its rests; the movements stay two.
+  assert.equal((spliced.match(/<note /g) ?? []).length, 3);
+  assert.equal((spliced.match(/<mRest\b/g) ?? []).length, 2);
+  assert.equal((spliced.match(/<mdiv\b/g) ?? []).length, 2);
+});
+
+test("a measure of the page outside the submitted page is refused", () => {
+  // The fork moved the page's last measure out of its section.
+  const moved = forkAll.replace(
+    /(<measure xml:id="measure-5"[\s\S]*?<\/measure>)([\s\S]*?<\/section>)/,
+    "$2$1",
+  );
+  assert.throws(
+    () => splicePage(base, moved, "surface-2"),
+    /measure-5 of surface-2 lies outside the page in the submitted score/,
+  );
+});
+
 test("firstElementOfPage returns the page's first note, else its first measure", () => {
   assert.equal(firstElementOfPage(base, "surface-2"), "measure-3");
   const noted = base.replace(

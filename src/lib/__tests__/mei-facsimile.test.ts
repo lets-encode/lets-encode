@@ -700,6 +700,66 @@ test("parseScoreDef yields the default without a scoreDef or without staffDefs",
   assert.equal(DEFAULT_SCORE_DEF.staves.length, 1);
 });
 
+test("parseScoreDef reads clef, key, meter and group symbol from child elements", () => {
+  // The shape Verovio 6.4 writes for a MusicXML piano part.
+  const piano = parseScoreDef(`<scoreDef xml:id="sd">
+    <staffGrp xml:id="g0">
+      <staffGrp xml:id="P1" bar.thru="true">
+        <grpSym xml:id="gs" symbol="brace" />
+        <label xml:id="l1">Piano</label>
+        <staffDef xml:id="s1" n="1" lines="5" ppq="1">
+          <clef xml:id="c1" shape="G" line="2" />
+          <keySig xml:id="k1" sig="2f" />
+          <meterSig xml:id="m1" count="3" unit="4" />
+        </staffDef>
+        <staffDef xml:id="s2" n="2" lines="5" ppq="1">
+          <clef xml:id="c2" shape="F" line="4" />
+          <keySig xml:id="k2" sig="2f" />
+          <meterSig xml:id="m2" count="3" unit="4" />
+        </staffDef>
+      </staffGrp>
+    </staffGrp>
+  </scoreDef>`);
+  assert.deepEqual(withoutIds(piano), {
+    staves: [
+      { clefShape: "G", clefLine: 2, ...PLAIN, label: "" },
+      { clefShape: "F", clefLine: 4, ...PLAIN, label: "" },
+    ],
+    groups: [
+      {
+        start: 1,
+        end: 2,
+        symbol: "brace",
+        label: "Piano",
+        barThru: true,
+        oneInstrument: false,
+      },
+    ],
+    keysig: "2f",
+    meterCount: "3",
+    meterUnit: "4",
+    meterSym: "",
+  });
+  // The score's key comes from the first staff without a transposition; an
+  // octave clef and a meter symbol are read from the children too.
+  const winds = parseScoreDef(`<scoreDef>
+    <staffGrp>
+      <staffDef n="1" lines="5" trans.diat="-1" trans.semi="-2">
+        <clef shape="G" line="2" /><keySig sig="1s" /><meterSig sym="cut" />
+      </staffDef>
+      <staffDef n="2" lines="5">
+        <clef shape="G" line="2" dis="8" dis.place="below" /><keySig sig="1f" />
+      </staffDef>
+    </staffGrp>
+  </scoreDef>`);
+  assert.equal(winds.keysig, "1f");
+  assert.equal(winds.staves[0].keysig, undefined);
+  assert.equal(winds.staves[1].clefDis, "8");
+  assert.equal(winds.staves[1].clefDisPlace, "below");
+  assert.equal(winds.meterSym, "cut");
+  assert.equal(winds.meterCount, "2");
+});
+
 test("staff groups nest their staves in a symbol-carrying staffGrp and round-trip", () => {
   const piano: ScoreDefModel = {
     ...DEFAULT_SCORE_DEF,

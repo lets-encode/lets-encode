@@ -14,6 +14,7 @@ import {
   labelRanges,
   mapStaves,
   readMeasures,
+  staffKey,
   summariseAlignment,
   type Alignment,
   type AlignmentSummary,
@@ -276,7 +277,7 @@ export function mergeEncoding(
 
   let out = "";
   let last = 0;
-  for (const plan of plans) {
+  for (const [i, plan] of plans.entries()) {
     const { box, slot, measure } = plan;
     const own = children(
       base.slice(box.start, box.end).replace(/^<[^>]*>|<\/measure>$/g, ""),
@@ -319,8 +320,12 @@ export function mergeEncoding(
       .exec(base.slice(box.start, box.end))![0]
       .replace(/\/>$/, ">");
     // The file's other barlines (final, double …) are kept where the layout
-    // has none; repeats come from the layout alone. A multi-measure rest's
+    // has none; repeats come from the layout alone, and a final barline is
+    // kept only on the last measure of a movement. A multi-measure rest's
     // left barline goes to its first measure, its right to its last.
+    const next = layout[i + 1];
+    const endsMovement =
+      !next || /<\/(section|mdiv)>/.test(base.slice(box.end, next.start));
     const fileOpen = measure
       ? /^<[^>]*>/.exec(file.slice(measure.start))![0]
       : "";
@@ -330,7 +335,12 @@ export function mergeEncoding(
     ];
     for (const side of sides) {
       const barline = attr(fileOpen, side);
-      if (!attr(open, side) && barline && !barline.startsWith("rpt"))
+      if (
+        !attr(open, side) &&
+        barline &&
+        !barline.startsWith("rpt") &&
+        (barline !== "end" || endsMovement)
+      )
         open = withAttr(open, side, barline);
     }
     const leading =
@@ -490,10 +500,10 @@ export function alignEncoding(input: EncodingInput): AlignedEncoding {
   const upload = addXmlIds(input.upload, "u-");
   const layout = readMeasures(skeleton);
   const file = readMeasures(upload);
-  const clef = (s: { clefShape: string; clefLine: number }) =>
-    `${s.clefShape}${s.clefLine}`;
-  const fileStaves = parseScoreDef(upload).staves;
-  const ownStaves = parseScoreDef(skeleton).staves;
+  const fileDef = parseScoreDef(upload);
+  const ownDef = parseScoreDef(skeleton);
+  const fileStaves = fileDef.staves;
+  const ownStaves = ownDef.staves;
   const staffCount = named
     ? ownStaves.length
     : omr
@@ -505,9 +515,11 @@ export function alignEncoding(input: EncodingInput): AlignedEncoding {
         )
       : fileStaves.length;
   const staffMap = mapStaves(
-    fileStaves.map(clef),
+    fileStaves.map((s, i) => staffKey(s, i + 1, fileDef.groups)),
     staffCount,
-    named ? ownStaves.map(clef) : undefined,
+    named
+      ? ownStaves.map((s, i) => staffKey(s, i + 1, ownDef.groups))
+      : undefined,
   );
   const alignment = alignMeasures(layout, file, input.pins);
   const merged = mergeEncoding(

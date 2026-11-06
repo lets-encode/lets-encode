@@ -43,8 +43,8 @@
     reply?: boolean;
     /** Anchor links read as in-view highlights instead of score links. */
     inScore?: boolean;
-    /** Show the comment's measure range in the score. */
-    onanchor: (comment: CommentRow) => void;
+    /** Show the comment's measure range in the score; absent hides the action. */
+    onanchor?: (comment: CommentRow) => void;
     /** Start a reply to this comment; absent hides the Reply action. */
     onreply?: (comment: CommentRow) => void;
     onresolve: (comment_id: string) => Promise<unknown>;
@@ -68,6 +68,14 @@
         { kind: "resolve", task: comment.task_id, comment: comment.comment_id },
         repoId,
       ),
+  );
+
+  // A resolution whose verdict did not land within the wait.
+  const resolveStuck = $derived(
+    pendingVerdicts.timedOut(
+      { kind: "resolve", task: comment.task_id, comment: comment.comment_id },
+      repoId,
+    ),
   );
 
   async function resolve() {
@@ -113,9 +121,9 @@
     {/if}
   </div>
   <span class="cbody">{comment.body}</span>
-  {#if !reply && (measureLabel || (onreply && auth.user) || (!resolved && canResolve))}
+  {#if !reply && ((measureLabel && onanchor) || (onreply && auth.user) || (!resolved && canResolve))}
     <div class="cacts">
-      {#if measureLabel}
+      {#if measureLabel && onanchor}
         <button type="button" class="anchor" onclick={() => onanchor(comment)}>
           {anchorLabel}
         </button>
@@ -131,6 +139,14 @@
             <span class="spinner" aria-hidden="true"></span>
             Resolving…
           </span>
+        {:else if resolveStuck}
+          <span class="resolving"
+            >Resolution <a
+              href={resolveStuck.prUrl}
+              target="_blank"
+              rel="noreferrer">#{resolveStuck.prNumber}</a
+            > is still being processed</span
+          >
         {:else}
           <button
             type="button"

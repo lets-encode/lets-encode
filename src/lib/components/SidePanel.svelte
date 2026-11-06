@@ -152,8 +152,8 @@
     open?: boolean;
     /** Return to the campaign; absent where the view is the task's own. */
     ondeselect?: () => void;
-    /** Show a comment's measure range. */
-    onanchor: (comment: CommentRow) => void;
+    /** Show a comment's measure range; absent where there is no score to show it in. */
+    onanchor?: (comment: CommentRow) => void;
     oncomment: (
       kind: string,
       body: string,

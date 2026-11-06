@@ -10,6 +10,7 @@
   read-only and opens mei-friend on it.
 -->
 <script lang="ts">
+  import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { auth } from "$lib/auth.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -103,6 +104,11 @@
   const runner = session.runner;
   const data = $derived(session.data);
   const tables = $derived(session.tables);
+  // A task in review is reviewed in the review view.
+  $effect(() => {
+    if (data?.status === "validation_required")
+      goto(`/${campaign}/review/${taskId}`, { replaceState: true });
+  });
   $effect(() => {
     if (tables) recordCampaignTitle(campaign, tables.title);
   });
@@ -557,7 +563,6 @@
         {taskBox}
         footer={data.status === "encoding_required" ? footer : undefined}
         bind:open={sheetOpen}
-        onanchor={() => {}}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
       />

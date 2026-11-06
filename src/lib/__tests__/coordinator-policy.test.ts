@@ -3,8 +3,15 @@ import assert from "node:assert/strict";
 
 import { type TaskRow } from "../campaign-tables.ts";
 import {
+  buildFacsimileMei,
+  initialFacsimileModel,
+  parseScoreDef,
+} from "../mei-facsimile.ts";
+import { buildPieceHead, emptySourceMetadata } from "../source-metadata.ts";
+import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  assembleSubmission,
   checksOpening,
   claimPullRequest,
   classifyPullRequest,
@@ -628,4 +635,78 @@ test("an expired lock stays while its holder's submission opened in time is open
     heldByOpenOperation(lock, [pr({})] as never, now + week, week),
     false,
   );
+});
+
+test("assembleSubmission splices the page, takes a checked opening and records the contribution", () => {
+  const box = (i: number) => ({
+    ulx: 100 * i,
+    uly: 10,
+    lrx: 100 * i + 90,
+    lry: 90,
+  });
+  const base = buildFacsimileMei(
+    {
+      ...initialFacsimileModel([
+        {
+          image: "img/01.jpg",
+          width: 400,
+          height: 200,
+          measures: [box(0), box(1)],
+        },
+        { image: "img/02.jpg", width: 400, height: 200, measures: [box(0)] },
+      ]),
+      headXml: buildPieceHead(
+        { title: "Lied", composer: "" },
+        emptySourceMetadata(),
+        { date: "2026-11-06" },
+      ),
+    },
+    { withBreaks: true },
+  );
+  // The volunteer encoded every page and changed the opening clef.
+  const fork = base
+    .replace(/<mRest\b[^>]*\/>/g, '<note dur="4" oct="4" pname="c"/>')
+    .replace('clef.shape="G" clef.line="2"', 'clef.shape="F" clef.line="4"');
+  const row = (task_id: string, locator: string, depends_on = ""): TaskRow => ({
+    task_id,
+    subtask_id: "",
+    fragment: "sources/piece-01/score.mei",
+    locator,
+    allowlist: "",
+    blocklist: "",
+    depends_on,
+  });
+  const tasks = [
+    row("P0001", "omr-layout"),
+    row("T0001", "surface-1", "P0001"),
+  ];
+  const config =
+    "pieces:\n" +
+    '  - id: "piece-01"\n' +
+    '    kind: "facsimile"\n' +
+    '    preparation: "omr-instruments"\n' +
+    '    path: "sources/piece-01/score.mei"\n' +
+    "    zones: []\n";
+
+  const mei = assembleSubmission({
+    task: tasks[1],
+    tasks,
+    configYaml: config,
+    baseMei: base,
+    forkMei: fork,
+    contributions: [
+      {
+        name: "volunteer",
+        message: "Encoding of T0001",
+        isodate: "2026-11-06",
+      },
+    ],
+  });
+
+  // Page 1's two measures come from the fork, page 2 stays as in the base.
+  assert.equal((mei.match(/<note /g) ?? []).length, 2);
+  assert.equal((mei.match(/<mRest\b/g) ?? []).length, 1);
+  assert.equal(parseScoreDef(mei).staves[0].clefShape, "F");
+  assert.match(mei, /volunteer/);
+  assert.match(mei, /Encoding of T0001/);
 });

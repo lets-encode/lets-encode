@@ -8,7 +8,7 @@
 // component's lifetime, which is one campaign and task
 // (routes/[campaign]/+layout.svelte).
 
-import { goto } from "$app/navigation";
+import { beforeNavigate, goto } from "$app/navigation";
 import { auth, forge } from "./auth.svelte.ts";
 import type { ForgeClient } from "./forge/types.ts";
 import { commands, invoke, commentInput } from "./commands.ts";
@@ -177,6 +177,23 @@ export class PreTaskSession {
       };
       addEventListener("beforeunload", ask);
       return () => removeEventListener("beforeunload", ask);
+    });
+
+    // Leaving the editor within the app waits for a waiting draft to be
+    // saved; a save that fails keeps the editor open with its error.
+    beforeNavigate((nav) => {
+      if (nav.willUnload || !nav.to) return;
+      if (!this.#draftInput && this.draftState !== "saving") return;
+      nav.cancel();
+      const to = nav.to.url;
+      const delta = nav.type === "popstate" ? nav.delta : undefined;
+      void this.flushDraft()
+        .then(() => this.#saving)
+        .then(() => {
+          if (this.draftState !== "saved") return;
+          if (delta) history.go(delta);
+          else void goto(to);
+        });
     });
 
     // A pending draft is saved when the page is hidden or left.
@@ -351,8 +368,11 @@ export class PreTaskSession {
         // reload would discard the work the volunteer may retry from.
         if (result.error) return;
         if (opts.overviewOnSuccess) {
-          if (result.ok && result.outcome !== "pending")
+          if (result.ok && result.outcome !== "pending") {
+            // The submission carried the editor's state; no draft is due.
+            this.#cancelDraft();
             await goto(`/${this.#name()}`);
+          }
           // Still processing: keep the editor and its work as they are.
           return;
         }

@@ -183,7 +183,8 @@
   // rest of the listing as it is.
   // Of a campaign's reads that overlap, only the latest one started is shown.
   const refreshSeq = new Map<number, number>();
-  async function refreshStats(s: CampaignStats) {
+  // `rethrow`: a failed read is the caller's to report (the poll's notice).
+  async function refreshStats(s: CampaignStats, rethrow = false) {
     invalidateStats(s.repoId);
     const seq = (refreshSeq.get(s.repoId) ?? 0) + 1;
     refreshSeq.set(s.repoId, seq);
@@ -201,8 +202,9 @@
       });
       if (refreshSeq.get(s.repoId) !== seq) return;
       stats = stats.map((x) => (x.repoId === fresh.repoId ? fresh : x));
-    } catch {
+    } catch (e) {
       // The stale row stays; the next full listing load replaces it.
+      if (rethrow) throw e;
     }
   }
 
@@ -240,7 +242,8 @@
             const sha = heads
               ? heads[i]?.headSha
               : (await f.getRepoHead(s.owner, s.repo)).sha;
-            if (sha !== undefined && sha !== s.headSha) await refreshStats(s);
+            if (sha !== undefined && sha !== s.headSha)
+              await refreshStats(s, true);
           }),
         );
       },
