@@ -517,24 +517,28 @@
     </p>
   {/if}
   {#if doubles.length}
-    <p class="doubles" title={PARTS_HINT}>
+    <div class="doubles" title={PARTS_HINT}>
       <Icon name="warning" size={14} />
-      <span>
-        Possibly named twice:
-        {#each doubles as d, i (d.instrument)}
+      <div class="dlist">
+        <span>Possibly named twice:</span>
+        {#each doubles as d (d.instrument)}
           {@const result = canEdit ? mergeResult(d) : null}
-          {i ? ", " : ""}<span title={doubleTitle(d.instrument)}
-            ><b>{nameOf(d.instrument)}</b> ({nameOf(d.like)})</span
-          >{#if result}
-            <button
-              type="button"
-              class="linkish"
-              title={`Name its staves ${result} instead. One step, undo restores it.`}
-              onclick={() => onmerge(d)}>make it {result}</button
-            >{/if}
+          <div class="drow">
+            <span title={doubleTitle(d.instrument)}
+              ><b>{nameOf(d.instrument)}</b> ({nameOf(d.like)})</span
+            >
+            {#if result}
+              <button
+                type="button"
+                class="btn"
+                title={`Name its staves ${result} instead. One step, undo restores it.`}
+                onclick={() => onmerge(d)}>Make it {result}</button
+              >
+            {/if}
+          </div>
         {/each}
-      </span>
-    </p>
+      </div>
+    </div>
   {/if}
 
   {#if named.fixed && canEdit}
@@ -576,7 +580,7 @@
                     {#if result}
                       <button
                         type="button"
-                        class="linkish merge"
+                        class="btn merge"
                         title={`Name its staves ${result} instead. One step, undo restores it.`}
                         onclick={() => onmerge(d)}>Make it {result}</button
                       >
@@ -1143,10 +1147,23 @@
   .doubles b {
     font-weight: 600;
   }
+  .dlist {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  /* Each double on its own line, its fix at the line's right end. */
+  .drow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
   .merge {
     margin-left: 6px;
-    font-size: 12px;
-    font-weight: 600;
   }
   .dup {
     display: inline-flex;

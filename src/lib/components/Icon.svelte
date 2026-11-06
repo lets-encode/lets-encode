@@ -29,6 +29,7 @@
     | "plus"
     | "sort"
     | "clock"
+    | "clock-pause"
     | "upload"
     | "zoom-in"
     | "zoom-out"
@@ -38,6 +39,7 @@
     | "page-none"
     | "undo"
     | "redo"
+    | "reply"
     | "help"
     | "minus"
     | "trash"
@@ -104,8 +106,10 @@
     minus: "M5 12h14",
     sort: "M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4",
     clock: "M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
+    "clock-pause": "M12 7v5l2 1M20.8 13.5A9 9 0 1 0 13.5 20.8M17 16v5M21 16v5",
     undo: "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
     redo: "M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
+    reply: "M18 18v-6a3 3 0 0 0-3-3H5M9 13 5 9l4-4",
     help: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM9.2 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
     trash: "M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10.5 10.5v5M13.5 10.5v5",
     copy: "M9 9h11v11H9zM15 5V4H4v11h1",

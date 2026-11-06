@@ -536,7 +536,7 @@
     {/snippet}
 
     {#snippet resultNote()}
-      <RunnerBanner {runner} bar collapsible />
+      <RunnerBanner {runner} surface="inline" />
     {/snippet}
 
     {#snippet taskBox(headAction: import("svelte").Snippet | undefined)}

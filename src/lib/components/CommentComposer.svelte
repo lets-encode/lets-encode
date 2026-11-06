@@ -148,8 +148,8 @@
   <div class="composer">
     {#if replyTo}
       <div class="replying">
-        Replying to <strong>{commentLogin(replyTo)}</strong>
-        <button type="button" class="linkish" onclick={() => (replyTo = null)}
+        <span>Replying to <strong>{commentLogin(replyTo)}</strong></span>
+        <button type="button" class="btn" onclick={() => (replyTo = null)}
           >Cancel</button
         >
       </div>
@@ -221,6 +221,7 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    justify-content: space-between;
   }
   .posting {
     display: flex;

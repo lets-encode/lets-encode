@@ -154,6 +154,9 @@ export type Result = {
   /** The mei-friend hand-off waits until the overlay's Continue, so the
    * steps it shows (a draft's warnings) are read before the page is left. */
   holdHandOff?: boolean;
+  /** Runs the failed work again; the banner offers it as Try again next to
+   * the error. */
+  retry?: () => void;
 };
 
 interface CommandDef<I, O> {

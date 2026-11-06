@@ -44,6 +44,7 @@
   } from "$lib/page-scroll.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
@@ -1358,7 +1359,10 @@
         message: `Layout detected: ${staves} staves, ${grandstaves} grand staves and ${measures} measures on ${pages.length} page(s).`,
       };
     } catch (e) {
-      return { error: `Layout detection failed: ${(e as Error).message}` };
+      return {
+        error: `Layout detection failed: ${(e as Error).message}`,
+        retry: detectLayout,
+      };
     }
   }
 
@@ -2217,10 +2221,11 @@
                 <div class="page">
                   <p class="page-label pagehead">Page {p + 1} · Facsimile</p>
                   {#if pg.failed}
-                    <div class="banner err">
-                      The page facsimile for page {p + 1} could not be loaded. The
-                      zones are shown without their reference image.
-                    </div>
+                    <Notice
+                      tone="err"
+                      title={`The facsimile of page ${p + 1} could not be loaded`}
+                      detail="The zones are shown without their reference image."
+                    />
                   {/if}
                   <div
                     class="frame"
@@ -3245,14 +3250,14 @@
         {/if}
         {#if step4 && canEdit && transcription}
           <p
-            class="blockline"
+            class="blockline retryline"
             class:err={transcription.error}
             role="status"
             title="The staves are transcribed while the instruments are named. The transcription is submitted with the corrections."
           >
-            {transcription.text}
+            <span>{transcription.text}</span>
             {#if transcription.error && runningKey === null}
-              <button type="button" class="linkish" onclick={() => transcribe()}
+              <button type="button" class="btn" onclick={() => transcribe()}
                 >{recognisedKey === staffKey
                   ? "Transcribe the failed staves again"
                   : "Try again"}</button
@@ -3352,9 +3357,11 @@
       {/if}
     {/snippet}
 
-    <!-- The last command's result, in the task box. -->
+    <!-- The last command's result, in the task box. A failed detection is
+         offered again only while the score has no boxes, which it would
+         replace. -->
     {#snippet resultNote()}
-      <RunnerBanner {runner} bar collapsible />
+      <RunnerBanner {runner} surface="inline" retryable={needsDetection()} />
     {/snippet}
 
     {#snippet taskBox(headAction: Snippet | undefined)}
@@ -3565,6 +3572,13 @@
   }
   .blockline.err {
     color: var(--danger);
+  }
+  /* A failed transcription's line, with its retry at the right end. */
+  .retryline {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
   }
   .wfoot :global(.btn) {
     white-space: nowrap;

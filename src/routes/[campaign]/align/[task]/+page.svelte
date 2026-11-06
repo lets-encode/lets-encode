@@ -360,16 +360,13 @@
           {#each problems as problem (problem.text)}
             <li>
               <Icon name="warning" size={14} />
+              <span class="ptext" title={problem.title}>{problem.text}</span>
               {#if problem.measures.length}
                 <button
                   type="button"
-                  class="linkish"
-                  title={problem.title}
-                  onclick={() => showProblem(problem.measures)}
-                  >{problem.text}</button
+                  class="btn"
+                  onclick={() => showProblem(problem.measures)}>Show</button
                 >
-              {:else}
-                <span title={problem.title}>{problem.text}</span>
               {/if}
             </li>
           {/each}
@@ -418,7 +415,7 @@
     {/snippet}
 
     {#snippet resultNote()}
-      <RunnerBanner {runner} bar collapsible />
+      <RunnerBanner {runner} surface="inline" />
     {/snippet}
 
     {#snippet taskBox(headAction: import("svelte").Snippet | undefined)}
@@ -506,6 +503,11 @@
     display: flex;
     align-items: center;
     gap: 6px;
+  }
+  /* The problem's text, its Show button at the line's right end. */
+  .ptext {
+    flex: 1;
+    min-width: 0;
   }
   .problems :global(svg) {
     flex: none;

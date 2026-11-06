@@ -772,9 +772,6 @@
   .sp > :global(*) {
     flex: none;
   }
-  .sp :global(.banner) {
-    margin: 0;
-  }
   .sphead,
   .spsel,
   .clist,

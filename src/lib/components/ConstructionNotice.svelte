@@ -122,9 +122,15 @@
         Data on this platform can be reset at any time.
       {/if}
       <span class="banner-links">
-        <button type="button" class="linkish" onclick={open}>Details</button>
+        <button type="button" class="btn onpaper" onclick={open}>Details</button
+        >
         {#if level < 2}
-          <a href={reportHref} target="_blank" rel="noopener">Report a bug</a>
+          <a
+            class="btn onpaper"
+            href={reportHref}
+            target="_blank"
+            rel="noopener">Report a bug <Icon name="external" size={12} /></a
+          >
         {/if}
       </span></span
     >
@@ -217,13 +223,8 @@
     gap: 8px;
     padding: 9px 20px;
     background: var(--warn-bg);
-    /* A strip across the window: none of the shared .banner card's rounding,
-       side borders or shadow. */
-    border-radius: 0;
-    border-width: 0 0 1px;
-    border-style: solid;
-    border-color: var(--warn-line);
-    box-shadow: none;
+    /* A strip across the window. */
+    border-bottom: 1px solid var(--warn-line);
     font-size: 13.5px;
     line-height: 1.4;
     color: var(--ink);
@@ -235,15 +236,15 @@
   .banner strong {
     font-weight: 600;
   }
-  /* One line (oneLine); the padding keeps the links' 24px press inside the
-     clipped box. */
+  /* One line (oneLine); the padding keeps the buttons inside the clipped
+     box. */
   .banner-text {
     min-width: 0;
     overflow: hidden;
     white-space: nowrap;
     text-overflow: ellipsis;
-    padding-block: 3px;
-    margin-block: -3px;
+    padding-block: 4px;
+    margin-block: -4px;
   }
   /* 32px to tap, without growing the banner. */
   .close {
@@ -251,7 +252,7 @@
   }
   .banner-links {
     display: inline-flex;
-    gap: 16px;
+    gap: 6px;
     margin-left: 12px;
     white-space: nowrap;
   }
@@ -278,13 +279,14 @@
       border-top: 1px solid var(--warn-line);
     }
   }
-  /* 24px tall to tap, without growing the banner. */
-  .banner-links a {
-    padding: 3px 0;
-    margin: -3px 0;
-  }
-  .linkish {
-    margin: -3px 0;
+  /* On paper, 26px tall without growing the banner. */
+  .onpaper {
+    --btn-bg: var(--card);
+    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
+    border-color: var(--line-strong);
+    min-height: 26px;
+    padding: 0 10px;
+    margin-block: -4px;
   }
 
   dialog {

@@ -53,6 +53,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
@@ -345,7 +346,7 @@
 
 <!-- The last command's result, in the task box. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar collapsible />
+  <RunnerBanner {runner} surface="inline" />
 {/snippet}
 
 <div class="review sidehost" data-stage="review">
@@ -390,16 +391,13 @@
     <div class="scorecol" bind:clientWidth={scoreW}>
       <h1 class="vh">{card.title}</h1>
       {#if !auth.user}
-        <div class="banner warn">
-          <span>
-            {#if auth.expired}Your GitHub login has expired.{/if}
-            Viewing read-only.
-            <button type="button" class="linkish" onclick={() => login()}
-              >Log in with GitHub</button
-            >
-            to review.
-          </span>
-        </div>
+        <Notice
+          tone="warn"
+          icon="eye"
+          title={auth.expired ? "Your GitHub login has expired" : "Read-only"}
+          detail="Log in to review this task."
+          action={{ label: "Log in with GitHub", run: () => login() }}
+        />
       {/if}
       {#if fragment}
         {#if scoreW > 0}

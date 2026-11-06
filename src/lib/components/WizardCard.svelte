@@ -458,12 +458,12 @@
             {:else}
               <button
                 type="button"
-                class="linkish"
+                class="btn btn-danger"
                 onclick={() => (confirmingDiscard = true)}
                 disabled={backDisabled || registered}
                 title={registeredNote}
               >
-                Discard this setup
+                <Icon name="trash" />Discard this setup
               </button>
             {/if}
           {/if}
@@ -471,7 +471,7 @@
             {@const name = draft.entries?.title?.trim() || draft.handle}
             <button
               type="button"
-              class="linkish other-draft"
+              class="btn other-draft"
               title={`Resume setup of “${name}”`}
               onclick={() => resumeOther(draft.handle)}
               disabled={resuming !== null || backDisabled}
@@ -654,7 +654,7 @@
   {#if otherDrafts.length}
     <button
       type="button"
-      class="linkish others"
+      class="btn others"
       data-popup
       aria-expanded={popup?.kind === "others"}
       onclick={(e) => togglePopup("others", e, 320)}
@@ -668,7 +668,7 @@
     {@const open = asPopup ? popup?.kind === "discard" : confirmingDiscard}
     <button
       type="button"
-      class="linkish"
+      class="btn btn-danger"
       data-popup
       aria-expanded={open}
       onclick={(e) =>
@@ -676,7 +676,7 @@
       disabled={backDisabled || registered}
       title={registeredNote}
     >
-      {discardLabel}
+      <Icon name="trash" />{discardLabel}
     </button>
   {/if}
 {/snippet}
@@ -948,18 +948,10 @@
   .rail-unnamed {
     color: var(--ink-faint);
   }
-  .others {
-    gap: 4px;
-  }
-  @media (pointer: coarse) {
-    .linkish {
-      min-height: 44px;
-    }
-    /* In the line above the track the press area overlaps its neighbours
-       rather than making the line taller. */
-    .thead .linkish {
-      margin-block: -10px;
-    }
+  /* In the line above the track a button overlaps the line's padding
+     rather than making the line taller. */
+  .thead .btn {
+    margin-block: -4px;
   }
   .discard-row {
     display: flex;
@@ -1130,12 +1122,11 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    gap: 6px;
     font-size: 12.5px;
   }
-  .rail-foot .linkish {
+  .rail-foot .btn {
     max-width: 100%;
-    text-align: left;
   }
   .discard-inline {
     display: flex;
@@ -1146,6 +1137,7 @@
     color: var(--ink-soft);
   }
   .other-draft {
+    max-width: 100%;
     margin-top: 4px;
   }
 

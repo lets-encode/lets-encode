@@ -78,6 +78,7 @@
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
@@ -906,6 +907,13 @@
   // message in the side panel.
   /** An error from the return from mei-friend, shown in the task's panel;
       `label` names mei-friend when the text is its own message. */
+  // The way back from a name that holds no campaign.
+  const allCampaigns = {
+    label: "All campaigns",
+    href: "/campaigns",
+    icon: "arrow-left" as const,
+  };
+
   let editorError = $state<{
     task: string;
     label: string;
@@ -1209,10 +1217,13 @@
 <!-- The last command's result: in the task box of a selected task, else at
      the top of the side panel; above the plan editor, which has no panel. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar {isPrivate} />
+  <RunnerBanner {runner} {isPrivate} />
 {/snippet}
 {#snippet resultNote()}
-  <RunnerBanner {runner} bar {isPrivate} collapsible />
+  <RunnerBanner {runner} surface="inline" {isPrivate} />
+{/snippet}
+{#snippet panelResult()}
+  <RunnerBanner {runner} surface="strip" {isPrivate} />
 {/snippet}
 
 {#snippet boardTaskBox(card: BoardCard)}
@@ -1274,7 +1285,7 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
-      banner={resultNote}
+      banner={panelResult}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
         postComment("", kind, body, parent_id)}
@@ -1384,24 +1395,26 @@
     <PageState loading="the campaign" />
   {:else}
     {#if !auth.user}
-      <div class="banner bar warn">
-        <span>
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Viewing this public campaign read-only.
-          <button type="button" class="linkish" onclick={() => login()}
-            >Log in with GitHub</button
-          >
-          to contribute.
-        </span>
-      </div>
+      <Notice
+        tone="warn"
+        surface="strip"
+        icon="eye"
+        title={auth.expired ? "Your GitHub login has expired" : "Read-only"}
+        detail="Log in to contribute to this campaign."
+        action={{ label: "Log in with GitHub", run: () => login() }}
+      />
     {/if}
     {#if manage && canPush && !scoreView}
       {@render resultBanner()}
     {/if}
     {#if branchHint}
-      <div class="banner bar warn">
+      <Notice
+        tone="warn"
+        surface="strip"
+        title="This campaign runs a different branch"
+      >
         <span>
-          Dev server: this campaign runs the coordinator from <code
+          Dev server: the campaign runs the coordinator from <code
             >{branchHint.ref}</code
           >
           but <code>campaign.yml</code> from <code>{branchHint.called}</code>,
@@ -1410,7 +1423,7 @@
           on <code>{branchHint.ref}</code>, run
           <code>{branchCommand}</code>, then reload.
         </span>
-      </div>
+      </Notice>
       <dialog
         bind:this={branchDialog}
         class="branch-dialog"
@@ -1452,37 +1465,39 @@
     {#if resolveError}
       <PageState error={resolveError} onretry={() => (resolveError = null)} />
     {:else if notFound && !isValidHandle(campaign)}
-      <div class="banner bar err">
-        <span>
-          <code>{campaign}</code> cannot be a campaign name. Names are 3–40
-          characters: lowercase letters, digits, and single internal hyphens.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
+      <Notice
+        tone="err"
+        surface="strip"
+        title={`${campaign} can't be a campaign name`}
+        detail="Names are 3–40 characters: lowercase letters, digits, and single internal hyphens."
+        action={allCampaigns}
+      />
     {:else if notFound}
       <PageState missingCampaign={campaign} />
     {:else if slugState === "pending"}
-      <div class="banner bar warn">
-        <span>
-          Someone is setting up a campaign called <code>{campaign}</code>. If
-          they don't finish it, the name becomes free again.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
+      <Notice
+        tone="warn"
+        surface="strip"
+        title={`Someone is setting up ${campaign}`}
+        detail="If they don't finish it, the name becomes free again."
+        action={allCampaigns}
+      />
     {:else if slugState === "reserved"}
-      <div class="banner bar err">
-        <span>
-          <code>{campaign}</code> is reserved and can't be used for a campaign.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
+      <Notice
+        tone="err"
+        surface="strip"
+        title={`${campaign} is reserved`}
+        detail="It can't be used for a campaign."
+        action={allCampaigns}
+      />
     {:else if slugState === "tombstoned"}
-      <div class="banner bar err">
-        <span>
-          The name <code>{campaign}</code> has been blocked and can't be used.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
+      <Notice
+        tone="err"
+        surface="strip"
+        title={`${campaign} has been blocked`}
+        detail="It can't be used for a campaign."
+        action={allCampaigns}
+      />
     {:else}
       <div class="viewcol">
         <RefreshNotice status={refreshStatus} />
@@ -1508,7 +1523,7 @@
                 (pieceIndexByTask.get(detailCard.task) ?? 0) ===
                   scoreView.index}
               cardZone={detailCard ? zoneOf(detailCard.task) : 0}
-              banner={detailCard ? undefined : resultNote}
+              banner={detailCard ? undefined : panelResult}
               {comments}
               {logins}
               {viewer}
@@ -2038,6 +2053,10 @@
 </div>
 
 <style>
+  /* The result card above the plan editor, inset like the editor. */
+  .console > :global(.live) > :global(.notice) {
+    margin: 12px 32px 0;
+  }
   .console {
     flex: 1;
     min-height: 0;

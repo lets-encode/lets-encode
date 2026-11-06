@@ -757,7 +757,10 @@
         message: `${total - result.failed.length} of ${total} staves are transcribed.${failed}${labels}${filled}`,
       };
     } catch (e) {
-      return { error: `Recognition failed: ${(e as Error).message}` };
+      return {
+        error: `Recognition failed: ${(e as Error).message}`,
+        retry: recognise,
+      };
     }
   }
 
@@ -2060,8 +2063,8 @@
       </div>
     {/snippet}
 
-    <!-- The task tools: the setup's steps, and transcribing the staves
-         again (an OMR-prepared piece). -->
+    <!-- The task tools: the setup's steps, and transcribing failed
+         staves again (an OMR-prepared piece). -->
     {#snippet tools()}
       {#if !docked}{@render steps()}{/if}
       {#if omr && canEdit && recognition && recognition.failed.length > 0}
@@ -2074,16 +2077,6 @@
             .length} staves it could not transcribe"
         >
           Transcribe failed staves again
-        </button>
-      {:else if omr && canEdit && !recognition && recognisedFor === taskId}
-        <button
-          type="button"
-          class="btn"
-          onclick={() => recognise()}
-          disabled={busy}
-          title="Transcribe the staves again; staves already transcribed in this browser are kept"
-        >
-          Transcribe the staves again
         </button>
       {/if}
     {/snippet}
@@ -2154,7 +2147,7 @@
 
     <!-- The last command's result, in the task box. -->
     {#snippet resultNote()}
-      <RunnerBanner {runner} bar collapsible />
+      <RunnerBanner {runner} surface="inline" />
     {/snippet}
 
     {#snippet taskBox(headAction: Snippet | undefined)}

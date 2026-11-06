@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { MediaQuery } from "svelte/reactivity";
@@ -582,12 +583,14 @@
               {#if attention.length > attentionMax}
                 <button
                   type="button"
-                  class="linkish moretoggle"
+                  class="btn moretoggle"
                   aria-expanded={allAttention}
                   onclick={() => (allAttention = !allAttention)}
                   >{allAttention
                     ? "Show fewer"
-                    : `Show all ${attention.length}`}</button
+                    : `Show all ${attention.length}`}<Icon
+                    name={allAttention ? "chevron-up" : "chevron-down"}
+                  /></button
                 >
               {/if}
             </div>
@@ -701,12 +704,14 @@
                 {#if openWork.length > SIDE_MAX}
                   <button
                     type="button"
-                    class="linkish moretoggle"
+                    class="btn moretoggle"
                     aria-expanded={allWork}
                     onclick={() => (allWork = !allWork)}
                     >{allWork
                       ? "Show fewer"
-                      : `Show all ${openWork.length}`}</button
+                      : `Show all ${openWork.length}`}<Icon
+                      name={allWork ? "chevron-up" : "chevron-down"}
+                    /></button
                   >
                 {/if}
                 {#if done.length > 0}
@@ -815,50 +820,30 @@
         </div>
       </div>
       {#if !listError && listFailed > 0}
-        <div class="banner err" role="alert">
-          <span>
-            {#if partialRateLimit && auth.expired}Your GitHub login has expired.{/if}
-            <span title={partialRateLimit ? undefined : listFailure?.message}
-              >{listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded{partialRateLimit
-                ? `: ${partialRateLimit.message}`
-                : "."}</span
-            >
-            <button
-              type="button"
-              class="linkish"
-              disabled={listLoading}
-              onclick={retryList}>Try again</button
-            >
-          </span>
-        </div>
+        <Notice
+          tone="err"
+          title={`${listFailed} campaign${listFailed === 1 ? "" : "s"} couldn't be loaded`}
+          detail={`${partialRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${listFailure?.message ?? ""}`}
+          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+        />
       {/if}
       {#if listError}
-        <div class="banner err" role="alert">
-          <span>
-            {#if listRateLimit && auth.expired}Your GitHub login has expired.{/if}
-            <span title={listRateLimit ? undefined : listError.message}
-              >Couldn't load the campaigns{listRateLimit
-                ? `: ${listRateLimit.message}`
-                : "."}</span
-            >
-            <button
-              type="button"
-              class="linkish"
-              disabled={listLoading}
-              onclick={retryList}>Try again</button
-            >
-          </span>
-        </div>
+        <Notice
+          tone="err"
+          title="Couldn't load the campaigns"
+          detail={`${listRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${listError.message}`}
+          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+        />
       {:else if listLoaded && stats.length === 0}
         <p class="note">No campaigns yet. Create one with New campaign.</p>
       {:else if (listLoading || auth.status === "loading") && stats.length === 0}
         <p class="note">Loading campaigns…</p>
       {:else if shown.length === 0}
-        <p class="note">
-          No campaign matches this search or filter.
+        <p class="note noteline">
+          <span>No campaign matches this search or filter.</span>
           <button
             type="button"
-            class="linkish"
+            class="btn"
             onclick={() => {
               search = "";
               filter = "all";
@@ -894,12 +879,14 @@
         {/if}
       {/if}
       {#if !auth.user && auth.status === "anonymous" && !listRateLimit && !partialRateLimit}
-        <p class="note login-hint">
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Browsing works logged out:
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          > to claim a task or see your work here.
+        <p class="note login-hint noteline">
+          <span
+            >{#if auth.expired}Your GitHub login has expired.{/if}
+            Browsing works logged out. Log in to claim a task or see your work here.</span
+          >
+          <button type="button" class="btn" onclick={() => login()}
+            >Log in with GitHub</button
+          >
         </p>
       {/if}
     </section>
@@ -1296,9 +1283,15 @@
     align-self: center;
   }
   .login-hint {
-    text-align: center;
     font-size: 12.5px;
     color: var(--ink-faint);
   }
-  /* Banner styles are shared app-wide in ui.css. */
+  /* A note whose action follows it at the line's right end. */
+  .noteline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 </style>

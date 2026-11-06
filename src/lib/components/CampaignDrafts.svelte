@@ -77,7 +77,7 @@
         </span>
         <button
           type="button"
-          class="linkish"
+          class="btn"
           onclick={() => continueSetup(draft)}
           disabled={busy !== null}
         >
@@ -170,10 +170,5 @@
   }
   .spacer {
     flex: 1;
-  }
-  .linkish {
-    flex: none;
-    gap: 4px;
-    font-size: 13px;
   }
 </style>

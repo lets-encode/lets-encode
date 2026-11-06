@@ -213,7 +213,7 @@
             : `Continue in ${workPlace(next.locator)}`}</a
         >
       {:else if !viewer}
-        <button type="button" class="linkish" onclick={() => login()}
+        <button type="button" class="btn" onclick={() => login()}
           >Log in with GitHub to claim</button
         >
       {:else}

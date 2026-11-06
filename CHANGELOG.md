@@ -5,6 +5,9 @@ parentheses.
 
 ## 2026-11-06
 
+- Failed layout detection and staff recognition offer a Try again button.
+- Results, errors and page notices share one notice line with icon, headline and button.
+- Actions shown as underlined link text are buttons now.
 - A score-setup review can be approved again.
 - Uploaded encodings keep clefs, keys, meter and braces written as child elements.
 - The score setup no longer adds, removes or moves staves in a score that holds notation.

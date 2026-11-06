@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import { auth, login } from "$lib/auth.svelte.ts";
+  import Notice, { splitMessage } from "./Notice.svelte";
 
   let {
     loading,
@@ -33,59 +34,57 @@
     /** The campaign the page belongs to, for the link back to it. */
     campaign?: string;
   } = $props();
-</script>
 
-{#snippet back()}
-  {#if campaign}
-    <a href={`/${campaign}`}>Back to the campaign</a>.
-  {:else}
-    <a href="/campaigns">Back to all campaigns</a>.
-  {/if}
-{/snippet}
+  const allCampaigns = {
+    label: "All campaigns",
+    href: "/campaigns",
+    icon: "arrow-left" as const,
+  };
+  const back = $derived(
+    campaign
+      ? { label: "Campaign", href: `/${campaign}`, icon: "arrow-left" as const }
+      : allCampaigns,
+  );
+</script>
 
 <div class="pagestate">
   {#if loading}
     <p class="loading">Loading {loading}…</p>
   {:else if error}
-    <div class="banner err" role="alert">
-      <span>
-        {error}
-        <button type="button" class="linkish" onclick={onretry}
-          >Try again</button
-        >
-      </span>
-    </div>
+    <Notice
+      tone="err"
+      {...splitMessage(error)}
+      action={{ label: "Try again", run: onretry }}
+    />
   {:else if missingCampaign}
-    <div class="banner err" role="alert">
-      <span>
-        No campaign called <code>{missingCampaign}</code> was found. It may have
-        been removed, or the name may be misspelled.
-        <a href="/campaigns">Back to all campaigns</a>.
-      </span>
-    </div>
+    <Notice
+      tone="err"
+      title={`No campaign called ${missingCampaign}`}
+      detail="It may have been removed, or the name may be misspelled."
+      action={allCampaigns}
+    />
   {:else if missingTask}
-    <div class="banner err" role="alert">
-      <span>
-        No task called <code>{missingTask}</code> was found in this campaign.
-        {@render back()}
-      </span>
-    </div>
+    <Notice
+      tone="err"
+      title={`No task called ${missingTask} in this campaign`}
+      action={back}
+    />
   {:else if noTables}
-    <div class="banner err" role="alert">
-      <span>
-        This repository has no tracking tables yet. {@render back()}
-      </span>
-    </div>
+    <Notice
+      tone="err"
+      title="This repository has no tracking tables yet"
+      action={back}
+    />
   {:else if loggedOut}
-    <div class="banner warn">
-      <span>
-        {#if auth.expired}Your GitHub login has expired.{/if}
-        <button type="button" class="linkish" onclick={() => login()}
-          >Log in with GitHub</button
-        >
-        to work on this task.
-      </span>
-    </div>
+    <Notice
+      tone="warn"
+      icon="lock"
+      title={auth.expired
+        ? "Your GitHub login has expired"
+        : "Log in to work on this task"}
+      detail={auth.expired ? "Log in to work on this task." : ""}
+      action={{ label: "Log in with GitHub", run: () => login() }}
+    />
   {/if}
 </div>
 

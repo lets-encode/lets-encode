@@ -11,6 +11,7 @@
   import { MediaQuery } from "svelte/reactivity";
   import { DOCKED_QUERY } from "$lib/side-panels.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import Notice, { splitMessage } from "$lib/components/Notice.svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import { findRow } from "$lib/campaign-tables.ts";
@@ -213,37 +214,6 @@
     />
     {@render headAction?.()}
   </div>
-  {#if card.rejected && !runState}
-    {@const { pr, reason } = card.rejected}
-    <div class="banner err bar">
-      <span
-        ><b
-          >Submission {#if changeRequestUrl && pr}<a
-              href={changeRequestUrl(Number(pr))}
-              target="_blank"
-              rel="noreferrer">#{pr}</a
-            >{:else if pr}#{pr}{/if} rejected:</b
-        >
-        {REASON_TEXT[reason] ?? reason}.</span
-      >
-    </div>
-  {/if}
-  {#if editorError}
-    <div class="banner err bar">
-      <span
-        >{#if editorError.label}<b>{editorError.label}:</b
-          >{" "}{/if}{editorError.text}</span
-      >
-      {#if editorError.confirm}
-        <button
-          type="button"
-          class="btn btn-soft"
-          disabled={runner.busy}
-          onclick={editorError.confirm.run}>{editorError.confirm.label}</button
-        >
-      {/if}
-    </div>
-  {/if}
   <div class="statusrow">
     <TaskRunState task={card.task} {repoId} pill />
     {#if !runState}
@@ -271,6 +241,41 @@
       <p class="help">{help}</p>
     {/if}
   </div>
+  {#if card.rejected && !runState}
+    {@const { pr, reason } = card.rejected}
+    {@const why = REASON_TEXT[reason] ?? reason}
+    {#snippet rejectedTitle()}
+      Submission {#if changeRequestUrl && pr}<a
+          href={changeRequestUrl(Number(pr))}
+          target="_blank"
+          rel="noreferrer">#{pr}</a
+        >{:else if pr}#{pr}{/if} rejected
+    {/snippet}
+    <Notice
+      tone="err"
+      surface="inline"
+      title={rejectedTitle}
+      detail={`${why.charAt(0).toUpperCase()}${why.slice(1)}.`}
+    />
+  {/if}
+  {#if editorError}
+    {@const text = editorError.label
+      ? { title: editorError.label, detail: editorError.text }
+      : splitMessage(editorError.text)}
+    <Notice
+      tone="err"
+      surface="inline"
+      title={text.title}
+      detail={text.detail}
+      action={editorError.confirm
+        ? {
+            label: editorError.confirm.label,
+            run: editorError.confirm.run,
+            disabled: runner.busy,
+          }
+        : undefined}
+    />
+  {/if}
   {@render tools?.()}
   {#snippet submission()}
     <div class="section">

@@ -11,6 +11,7 @@
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { handle } from "$lib/campaign-graph.ts";
   import { elapsed, initialOf } from "$lib/campaign-board.ts";
+  import Icon from "./Icon.svelte";
 
   let {
     repoId,
@@ -129,8 +130,8 @@
         </button>
       {/if}
       {#if onreply && auth.user}
-        <button type="button" class="linkish" onclick={() => onreply(comment)}>
-          Reply
+        <button type="button" class="btn" onclick={() => onreply(comment)}>
+          <Icon name="reply" />Reply
         </button>
       {/if}
       {#if !resolved && canResolve}
@@ -150,11 +151,11 @@
         {:else}
           <button
             type="button"
-            class="linkish"
+            class="btn"
             onclick={resolve}
             disabled={runner.busy}
           >
-            Resolve
+            <Icon name="check" />Resolve
           </button>
         {/if}
       {/if}
@@ -233,17 +234,14 @@
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
-  /* The anchor and the actions are 24px tall to tap, 32px on a touch
-     screen; the row's negative margin keeps the extra height out of the
-     card. */
+  /* The anchor is 24px tall to tap, 32px on a touch screen. */
   .anchor {
     min-height: 24px;
     display: inline-flex;
     align-items: center;
   }
   @media (pointer: coarse) {
-    .anchor,
-    .linkish {
+    .anchor {
       min-height: 32px;
     }
   }
@@ -259,12 +257,16 @@
     text-align: left;
     font-family: inherit;
   }
+  /* The actions sit on the card's paper in the soft fill. */
   .cacts {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0 12px;
-    margin: -4px 0;
+    gap: 6px;
+    margin-top: 3px;
+    --btn-bg: var(--soft);
+    --btn-shadow: none;
+    --btn-bg-hover: var(--soft-hover);
   }
   .resolving {
     display: inline-flex;

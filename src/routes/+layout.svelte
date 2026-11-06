@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { auth, initAuth, login, logout } from "$lib/auth.svelte.ts";
@@ -12,6 +13,9 @@
   import "./ui.css";
 
   let { children } = $props();
+
+  // A message as a detail line, starting with a capital.
+  const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
   // The pre-paint script in app.html has already set data-theme before mount;
   // mirror it here so the bulb reflects the active theme, and flip + persist on
@@ -202,35 +206,30 @@
 
 {#snippet body()}
   {#if auth.checkFailed}
-    <div class="banner bar err" role="alert">
-      <span>Could not check the login: {auth.checkFailed}. Retrying…</span>
-    </div>
+    <Notice
+      tone="err"
+      surface="strip"
+      title="Could not check the login"
+      detail={`${cap(auth.checkFailed)}. Retrying…`}
+    />
   {/if}
   {#if auth.logoutFailed}
-    <div class="banner bar err" role="alert">
-      <span
-        >Could not log out: {auth.logoutFailed}. You are still logged in.</span
-      >
-      <button
-        type="button"
-        class="btn btn-icon dismiss"
-        aria-label="Dismiss"
-        title="Dismiss"
-        onclick={() => (auth.logoutFailed = null)}><Icon name="close" /></button
-      >
-    </div>
+    <Notice
+      tone="err"
+      surface="strip"
+      title="Could not log out"
+      detail={`${cap(auth.logoutFailed)}. You are still logged in.`}
+      ondismiss={() => (auth.logoutFailed = null)}
+    />
   {/if}
   {#if auth.error}
-    <div class="banner bar err" role="alert">
-      <span>Login failed: {auth.error}</span>
-      <button
-        type="button"
-        class="btn btn-icon dismiss"
-        aria-label="Dismiss"
-        title="Dismiss"
-        onclick={() => (auth.error = null)}><Icon name="close" /></button
-      >
-    </div>
+    <Notice
+      tone="err"
+      surface="strip"
+      title="Login failed"
+      detail={cap(auth.error)}
+      ondismiss={() => (auth.error = null)}
+    />
   {/if}
   {@render children()}
 {/snippet}
