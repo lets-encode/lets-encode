@@ -454,7 +454,15 @@ async function fetchIiifImage(
   const url = iiifCanvasUrl(canvas, maxEdge);
   for (let attempt = 0; ; attempt++) {
     await pacer.take();
-    const res = await doFetch(iiifProxyUrl(url, brokerUrl));
+    let res: Response;
+    try {
+      res = await doFetch(iiifProxyUrl(url, brokerUrl));
+    } catch {
+      // fetch() rejects with an opaque TypeError on network and CORS failures.
+      throw new Error(
+        `Could not fetch the IIIF image at ${url}: the image relay could not be reached.`,
+      );
+    }
     if (res.ok) return res.blob();
     if (!reattempt(res) || attempt === RELAY_RETRY_WAITS_MS.length) {
       throw new Error(

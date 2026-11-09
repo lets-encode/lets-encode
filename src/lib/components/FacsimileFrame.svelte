@@ -54,6 +54,7 @@
 <script lang="ts">
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import Icon from "./Icon.svelte";
+  import Notice from "./Notice.svelte";
 
   let {
     url,
@@ -196,6 +197,8 @@
     view.scrollTop = pan.top - (e.clientY - pan.y);
   }
   const up = () => (pan = null);
+  // The image address that failed to load, if the current one did.
+  let failedUrl = $state<string | null>(null);
 </script>
 
 <div class="ffwrap">
@@ -225,14 +228,20 @@
       follow: true,
     })}
   >
-    {#if k}
+    {#if failedUrl === url}
+      <Notice
+        tone="err"
+        surface="inline"
+        title="The facsimile could not be loaded"
+      />
+    {:else if k}
       <svg
         width={width * k}
         height={3 * height * k}
         viewBox={`0 ${-height} ${width} ${3 * height}`}
         aria-hidden="true"
       >
-        <image href={url} {width} {height} />
+        <image href={url} {width} {height} onerror={() => (failedUrl = url)} />
         {#if mark}<rect
             class="ffmark"
             x={mark.ulx}

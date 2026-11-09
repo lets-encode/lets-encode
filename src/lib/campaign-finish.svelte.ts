@@ -448,7 +448,7 @@ export class CampaignFinisher {
               ? `Everything was committed to ${repo.full_name}, but the repository has since been renamed on GitHub. Rename it back to “${claim.name}”, then try again.`
               : registration === "repo_taken"
                 ? `Everything was committed to ${repo.full_name}, but that repository is already registered under another campaign name.`
-                : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
+                : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered${typeof registration === "object" && registration.error ? ` (${registration.error})` : ""}, so the campaign has no address yet. Try again.`;
         this.busy = false;
         this.log.fail();
         return;

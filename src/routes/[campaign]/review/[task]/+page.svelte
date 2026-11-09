@@ -362,6 +362,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}

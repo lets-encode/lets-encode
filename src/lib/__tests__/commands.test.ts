@@ -629,8 +629,10 @@ test("a skipped automation run is explained and its PR closed by the console", a
         html_url: "https://example.test/run/8",
       },
     ],
-    closePullRequest: async (_owner, _repo, number) => {
+    closePullRequest: async (_owner, _repo, number, comment) => {
       assert.equal(number, 22);
+      // The closed PR says why on GitHub too, as the app's, not a verdict.
+      assert.match(comment ?? "", /^Not processed: .*at most 50 files/);
       closed++;
     },
   });

@@ -280,7 +280,7 @@ const fakeForge = (
   getRepoFilesBatch: ForgeClient["getRepoFilesBatch"] = async () => null,
 ): ForgeClient =>
   ({
-    searchReposByTopic: async () => repos,
+    searchReposByTopic: async () => ({ repos, incomplete: false }),
     getRepoFile,
     getRepoFilesBatch,
     getUserLogin: async () => null,
@@ -426,6 +426,7 @@ test("loadAllCampaignStats: an empty search result is not an error", async () =>
     stats: [],
     failed: 0,
     failure: null,
+    incomplete: false,
   });
 });
 

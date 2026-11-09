@@ -88,7 +88,17 @@ export async function lookupSlug(name: string): Promise<SlugInfo | null> {
 /** A held name's token, or why the name could not be held. */
 export type ClaimResult =
   | { token: string; expiresAt: string }
-  | { error: "taken" | "invalid" | "limit" | "unreachable" };
+  | { error: "taken" | "invalid" | "limit" }
+  /** `detail` is the registry's answer when it gave one. */
+  | { error: "unreachable"; detail?: string };
+
+/** The registry's answer to a failed request: its error text and status. */
+async function registryRefusal(res: Response): Promise<string> {
+  const { error } = (await res.json().catch(() => ({}))) as {
+    error?: string;
+  };
+  return `${error || "no reason given"} (${res.status})`;
+}
 
 /**
  * Hold a name in the registry before the repo it will belong to exists, so the
@@ -115,12 +125,15 @@ export async function claimName(name: string): Promise<ClaimResult> {
     if (res.status === 422) return { error: "invalid" };
     // The login holds the registry's limit of claims (MAX_PENDING_CLAIMS).
     if (res.status === 429) {
-      const { reason } = (await res.json().catch(() => ({}))) as {
+      const { reason } = (await res
+        .clone()
+        .json()
+        .catch(() => ({}))) as {
         reason?: string;
       };
       if (reason === "too_many_claims") return { error: "limit" };
     }
-    return { error: "unreachable" };
+    return { error: "unreachable", detail: await registryRefusal(res) };
   } catch {
     return { error: "unreachable" };
   }
@@ -150,6 +163,10 @@ export async function releaseClaim(
   }
 }
 
+/** What a failed releaseClaim of `name` means for the name. */
+export const releaseFailedNote = (name: string): string =>
+  `“${name}” could not be given back, so it stays reserved for up to 24 hours before it is free again.`;
+
 /** The outcome of registering a name against a repo id. */
 export type RegisterResult =
   | "ok"
@@ -157,7 +174,8 @@ export type RegisterResult =
   | "renamed"
   | "repo_taken"
   | "invalid"
-  | "error";
+  /** `error` is the registry's answer, "" when it gave none. */
+  | { error: string };
 
 /**
  * Register a campaign name against its repo id on `forge`, after the repo has
@@ -194,9 +212,9 @@ export async function registerCampaign(
       return "conflict";
     }
     if (res.status === 422) return "invalid";
-    return "error";
+    return { error: await registryRefusal(res) };
   } catch {
-    return "error";
+    return { error: "" };
   }
 }
 

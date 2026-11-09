@@ -69,26 +69,39 @@
   // released once its replacement is on screen; the live set on destroy.
   let liveUrls: string[] = [];
   let pages = $state<{ url: string; width: number; height: number }[]>([]);
+  // Why the page images could not be measured, naming the page.
+  let pagesError = $state<string | null>(null);
   $effect(() => {
+    const images = wizard.images;
     let cancelled = false;
     (async () => {
-      const urls: string[] = [];
-      const built = await Promise.all(
-        wizard.images.map(async (image) => {
-          const { width, height } = await imageSize(image.blob);
-          const url = URL.createObjectURL(image.blob);
-          urls.push(url);
-          return { url, width, height };
-        }),
-      );
-      if (cancelled) {
-        // Superseded before it was ever shown.
-        urls.forEach((url) => URL.revokeObjectURL(url));
+      // The sizes are read first; the object URLs are made only for a set
+      // that is shown.
+      let sizes: { width: number; height: number }[];
+      try {
+        sizes = await Promise.all(
+          images.map((image, i) =>
+            imageSize(image.blob).catch((e: Error) => {
+              throw new Error(
+                `The size of page ${i + 1} (${image.path}) could not be read: ${e.message}`,
+              );
+            }),
+          ),
+        );
+      } catch (e) {
+        if (!cancelled) pagesError = (e as Error).message;
         return;
       }
+      // Superseded before it was ever shown.
+      if (cancelled) return;
+      pagesError = null;
+      const built = images.map((image, i) => ({
+        url: URL.createObjectURL(image.blob),
+        ...sizes[i],
+      }));
       pages = built;
       liveUrls.forEach((url) => URL.revokeObjectURL(url));
-      liveUrls = urls;
+      liveUrls = built.map((page) => page.url);
     })();
     return () => {
       cancelled = true;
@@ -551,6 +564,9 @@
   {/if}
 
   {#snippet pinned()}
+    {#if pagesError}
+      <p class="msg-error" role="alert">{pagesError}</p>
+    {/if}
     {#if wizard.piecesRedone}
       <p class="msg-warn" role="status">
         The upload changed, so the pieces were set up again.

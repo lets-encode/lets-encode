@@ -480,24 +480,32 @@ export function alignmentRecord(
   );
 }
 
-/** The pins of an alignment record; none when it is absent or unreadable. */
+/**
+ * The pins of an alignment record; none when it is absent. Throws when it is
+ * there but cannot be read, so its pins are not taken for none and saved over.
+ */
 export function pinsOf(record: string | null): Pin[] {
+  if (record === null) return [];
+  let pins: unknown;
   try {
-    const pins = JSON.parse(record ?? "null")?.pins;
-    if (!Array.isArray(pins)) return [];
-    return pins.flatMap((pin): Pin[] => {
-      if (!Array.isArray(pin) || !Number.isInteger(pin[0])) return [];
-      const slot = pin[1];
-      if (slot === null) return [{ box: pin[0], slot: null }];
-      return Array.isArray(slot) &&
-        Number.isInteger(slot[0]) &&
-        Number.isInteger(slot[1])
-        ? [{ box: pin[0], slot: { measure: slot[0], part: slot[1] } }]
-        : [];
-    });
-  } catch {
-    return [];
+    pins = JSON.parse(record)?.pins;
+  } catch (e) {
+    throw new Error(
+      `the alignment record could not be read (${(e as Error).message})`,
+    );
   }
+  if (!Array.isArray(pins))
+    throw new Error("the alignment record holds no list of fixed links");
+  return pins.flatMap((pin): Pin[] => {
+    if (!Array.isArray(pin) || !Number.isInteger(pin[0])) return [];
+    const slot = pin[1];
+    if (slot === null) return [{ box: pin[0], slot: null }];
+    return Array.isArray(slot) &&
+      Number.isInteger(slot[0]) &&
+      Number.isInteger(slot[1])
+      ? [{ box: pin[0], slot: { measure: slot[0], part: slot[1] } }]
+      : [];
+  });
 }
 
 /**

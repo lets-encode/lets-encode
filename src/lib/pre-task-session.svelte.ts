@@ -429,7 +429,9 @@ export class PreTaskSession {
         { task_id: this.#taskId() },
         this.ctx(f),
       );
-      if (result.error) return result;
+      // A claim still being processed is not confirmed yet: the after-claim
+      // step waits for it, and its warning stays.
+      if (result.error || result.outcome === "pending") return result;
       this.runner.log.step("Reloading…");
       await this.load();
       if (!this.data) return result;

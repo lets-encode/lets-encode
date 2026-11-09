@@ -273,10 +273,16 @@ test("searchReposByTopic reads every search page", async (t) => {
         page === "1"
           ? Array.from({ length: 100 }, (_, i) => item(i))
           : [item(100)],
+      incomplete_results: page === "2",
     });
   });
-  const repos = await searchReposByTopic("paged-topic", "token");
+  const { repos, incomplete } = await searchReposByTopic(
+    "paged-topic",
+    "token",
+  );
   assert.equal(repos.length, 101);
+  // A page GitHub stopped searching for marks the whole listing.
+  assert.equal(incomplete, true);
   assert.deepEqual(
     urls.map((url) => new URL(url).searchParams.get("page")),
     ["1", "2"],
@@ -372,7 +378,11 @@ test("getRepoFilesBatch reads every repo's files in one GraphQL query", async (t
             defaultBranchRef: null,
           },
         },
-        errors: [{ type: "NOT_FOUND", message: "Could not resolve" }],
+        errors: [
+          { type: "NOT_FOUND", message: "Could not resolve", path: ["r1"] },
+          // An organisation's access restriction hides that repository only.
+          { type: "FORBIDDEN", message: "Restricted", path: ["r1"] },
+        ],
       });
     },
   );
@@ -405,6 +415,34 @@ test("getRepoFilesBatch reads every repo's files in one GraphQL query", async (t
   assert.equal(bodies[0].variables.n1, "gone");
   assert.equal(bodies[0].variables.p0, "tracking/task.csv");
   assert.doesNotMatch(bodies[0].query, /gone|tracking/);
+});
+
+test("getRepoFilesBatch fails on a field error instead of reading a missing file", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      data: {
+        r0: {
+          isPrivate: false,
+          viewerPermission: "READ",
+          defaultBranchRef: { target: { oid: "sha0", f0: null } },
+        },
+      },
+      errors: [
+        {
+          message: "Timeout on blob",
+          path: ["r0", "defaultBranchRef", "target", "f0"],
+        },
+      ],
+    }),
+  );
+  await assert.rejects(
+    getRepoFilesBatch(
+      "token",
+      [{ owner: "o", repo: "a" }],
+      ["tracking/task.csv"],
+    ),
+    /Timeout on blob/,
+  );
 });
 
 test("getRepoFilesBatch returns null without a token", async (t) => {
@@ -1015,4 +1053,20 @@ test("a 401 from a broker endpoint reports the session as rejected", async (t) =
   assert.equal(rejected, 0);
   await brokerFetch("/registry/claim", { method: "POST" });
   assert.equal(rejected, 1);
+});
+
+test("a 401 a relay passes on from a source does not end the session", async (t) => {
+  let rejected = 0;
+  onSessionRejected(() => rejected++);
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response("{}", {
+        status: 401,
+        headers: { "X-Lets-Encode-Upstream": "iiif" },
+      }),
+  );
+  await brokerFetch("/iiif?url=https://ex.test/page");
+  assert.equal(rejected, 0);
 });

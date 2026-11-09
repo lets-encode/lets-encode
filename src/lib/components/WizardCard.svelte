@@ -50,12 +50,13 @@
   import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
-  import { releaseClaim } from "$lib/campaign-resolve.ts";
+  import { releaseClaim, releaseFailedNote } from "$lib/campaign-resolve.ts";
   import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
   import { markHidden } from "$lib/scroll-edges.ts";
   import {
     WIZARD_STEPS,
+    discardedRelease,
     draftSnapshot,
     draftStatus,
     goToStep,
@@ -305,9 +306,13 @@
     const owner = auth.user?.login;
     if (handle && owner) discardDraft(owner, handle);
     resetWizard();
-    // Give the name back so it is free again straight away. Best-effort: an
-    // unreleased hold runs out on its own.
-    if (claim) void releaseClaim(claim.name, claim.token);
+    // Give the name back so it is free again straight away. An unreleased
+    // hold runs out on its own; the drafts list says so.
+    discardedRelease.note = null;
+    if (claim)
+      void releaseClaim(claim.name, claim.token).then((released) => {
+        if (!released) discardedRelease.note = releaseFailedNote(claim.name);
+      });
     void goto("/campaigns");
   }
 

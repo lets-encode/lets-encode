@@ -5,7 +5,8 @@
   the action has finished the card stays up, with the step times and their
   total readable, until its Continue button is pressed. An action that ended
   in an error shows that error on the card itself, in place of the finished
-  title. The palette is fixed rather than themed, matching the console
+  title; one still being processed, or only partly done, shows that as a
+  warning with its message. The palette is fixed rather than themed, matching the console
   surfaces it covers.
 -->
 <script lang="ts">
@@ -17,12 +18,18 @@
     log,
     finished = false,
     error,
+    outcome,
+    message,
     onContinue,
   }: {
     log: ProgressLog;
     finished?: boolean;
     /** The finished action's error, when it ended in one. */
     error?: string;
+    /** The finished action's outcome: still being processed, or part of the
+        work failed; both are shown as a warning with `message`. */
+    outcome?: "pending" | "noop" | "partial";
+    message?: string;
     onContinue?: () => void;
   } = $props();
 </script>
@@ -39,6 +46,11 @@
       </div>
       <p class="overlay-title failed">Failed</p>
       <p class="overlay-error">{error}</p>
+    {:else if finished && (outcome === "pending" || outcome === "partial")}
+      <p class="overlay-title warned">
+        {outcome === "pending" ? "Still being processed" : "Partly done"}
+      </p>
+      {#if message}<p class="overlay-sub">{message}</p>{/if}
     {:else if finished}
       <p class="overlay-title">Finished</p>
     {:else}
@@ -71,6 +83,9 @@
   }
   .overlay-title.failed {
     color: var(--danger);
+  }
+  .overlay-title.warned {
+    color: var(--warn);
   }
   .overlay-error {
     margin: 0;

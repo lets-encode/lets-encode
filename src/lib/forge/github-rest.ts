@@ -46,15 +46,19 @@ export const RELAY_RETRY_WAITS_MS = [
 ];
 
 /**
- * fetch() for the broker's own endpoints (the registry and the relays): a 401
- * means the broker session has ended, as for a proxied SESSION call.
+ * fetch() for the broker's own endpoints (the registry and the relays): the
+ * broker's own 401 means its session has ended, as for a proxied SESSION call.
+ * A 401 the relays pass on from a source or service they reach (marked
+ * `X-Lets-Encode-Upstream` other than `broker`) does not.
  */
 export async function brokerFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
   const res = await fetch(input, init);
-  if (res.status === 401) sessionRejected?.();
+  const upstream = res.headers.get("X-Lets-Encode-Upstream");
+  if (res.status === 401 && (!upstream || upstream === "broker"))
+    sessionRejected?.();
   return res;
 }
 
@@ -365,6 +369,13 @@ async function ghGet<T>(
   } catch {
     data = null;
   }
+  // The broker's own refusals carry `error` where GitHub's carry `message`;
+  // callers read `message`.
+  if (!ok && data && typeof data === "object") {
+    const body = data as { message?: unknown; error?: unknown };
+    if (body.message === undefined && typeof body.error === "string")
+      data = { ...body, message: body.error };
+  }
   return { status, ok, data: data as T, link };
 }
 
@@ -666,9 +677,12 @@ export async function createRepoFromTemplate(
       }),
     },
   );
-  const data: RepoData = await res.json();
+  // An error page from a proxy in front of the broker is not JSON.
+  const data: RepoData & { error?: string } = res.ok
+    ? await res.json()
+    : await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = data.message || "Failed to create repository";
+    const message = `${data.message || data.error || "Failed to create repository"} (${res.status})`;
     const detail = Array.isArray(data.errors)
       ? `: ${data.errors.map((e) => e.message || e.code).join(", ")}`
       : "";
@@ -800,7 +814,11 @@ async function repoFilesQuery(
         defaultBranchRef: { target: CommitNode | null } | null;
       } | null
     > | null;
-    errors?: Array<{ type?: string; message?: string }>;
+    errors?: Array<{
+      type?: string;
+      message?: string;
+      path?: Array<string | number>;
+    }>;
   }>("POST", "/graphql", token, { query, variables });
   if (res.errors?.some((e) => e.type === "RATE_LIMITED"))
     throw new RateLimitError({
@@ -816,6 +834,13 @@ async function repoFilesQuery(
   const data = res.data;
   if (!data)
     throw new Error(res.errors?.[0]?.message || "GraphQL query failed");
+  // A repository GitHub does not show, or will not show to this account,
+  // comes back as null with an error on its own field: that repository reads
+  // as unreadable. An error deeper in a repository, or with no path, leaves a
+  // field null that is not absent, so the whole read fails rather than report
+  // a missing file.
+  const failure = res.errors?.find((e) => e.path?.length !== 1);
+  if (failure) throw new Error(failure.message || "GraphQL query failed");
   return Promise.all(
     repos.map(async ({ owner, repo }, i) => {
       const found = data[`r${i}`];
@@ -2262,7 +2287,7 @@ export async function ignoreRepoNotifications(
 export async function searchReposByTopic(
   topic: string,
   token?: string,
-): Promise<RepoSummary[]> {
+): Promise<{ repos: RepoSummary[]; incomplete: boolean }> {
   const q = encodeURIComponent(`topic:${topic}`);
   type SearchItem = {
     id: number;
@@ -2276,21 +2301,25 @@ export async function searchReposByTopic(
     created_at: string;
   };
   const items: SearchItem[] = [];
+  // A search GitHub stopped before it was done reports incomplete_results.
+  let incomplete = false;
   // The search API pages at 100 results and serves at most 1,000 (10 pages).
   for (let page = 1; page <= 10; page++) {
     const { ok, data } = await ghGet<{
       items?: SearchItem[];
+      incomplete_results?: boolean;
       message?: string;
     }>(
       `${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100&page=${page}`,
       token,
     );
     if (!ok) throw new Error(data?.message || "Repo search failed");
+    if (data?.incomplete_results) incomplete = true;
     const batch = data?.items ?? [];
     items.push(...batch);
     if (batch.length < 100) break;
   }
-  return items.map((r) => ({
+  const repos = items.map((r) => ({
     id: r.id,
     full_name: r.full_name,
     name: r.name,
@@ -2301,4 +2330,5 @@ export async function searchReposByTopic(
     updated_at: r.updated_at,
     created_at: r.created_at,
   }));
+  return { repos, incomplete };
 }

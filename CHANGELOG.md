@@ -22,6 +22,29 @@ parentheses.
 - The campaign workflow runs pull requests of up to 50 files and the coordinator action checks the entry point.
 - A repeated pre-task submission follows the one already open from another tab instead of opening a second.
 - A campaign setup open in two tabs stops saving in the tab that did not save last.
+- A batch table read with a GraphQL field error fails instead of reporting files as missing.
+- A rejection of an expired claim says the claim was released and its work kept.
+- Each phase of the scheduled run runs even when an earlier one failed.
+- Campaign pull requests older than seven days are closed with a comment saying they were not processed.
+- A pull request the workflow skipped is closed with a comment naming the requirements.
+- An unconfirmed claim no longer starts the editor's after-claim step.
+- The progress overlay shows a pending or partial result as a warning instead of Finished.
+- A plan save or cleanup whose history row could not be written reports a partial result.
+- Reading instrument names reports the pages whose images could not be read.
+- A return from mei-friend for a removed task or with an unknown status is shown.
+- The IIIF relay passes a source's error status on instead of answering 415.
+- Broker and registry error texts reach the messages the app shows.
+- The OMR relay's own refusals are marked as the broker's.
+- A failed staff recognition run names its reason.
+- A network error while reading the GitHub user at login ends as a login error.
+- The campaign list says when GitHub's search did not finish.
+- OMR page checks that could not be read are shown on the task.
+- A name that could not be given back on discard is reported.
+- Page images the browser's storage cannot read stop the resume instead of being dropped.
+- An unreadable alignment record stops the align page instead of starting without links.
+- Facsimile images that fail to load show an error in the score preview and the crop view.
+- Page images whose size cannot be read are reported in the pieces step.
+- The setup preview's render error is shown as an error.
 
 ## 2026-11-06
 

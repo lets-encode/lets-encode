@@ -370,6 +370,23 @@ export function touchesCampaignPaths(changedPaths: string[]): boolean {
   );
 }
 
+/**
+ * Whether a pull request is a campaign operation: it changes a tracking or
+ * source file, or — an encoding completed without changes — carries a command
+ * envelope or comes from a task branch.
+ */
+export function isCampaignOperation(
+  changedPaths: string[],
+  body: string | null,
+  headRef: string,
+): boolean {
+  return (
+    touchesCampaignPaths(changedPaths) ||
+    envelopeFromPrBody(body) !== null ||
+    headRef.startsWith("encode-")
+  );
+}
+
 export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
   // A switch from review to editing gives up the review lock and carries the
   // fail comment.
@@ -455,6 +472,21 @@ export function splitContract(comment: string): {
   return match
     ? { text: comment.slice(0, match.index), contract: Number(match[1]) }
     : { text: comment, contract: null };
+}
+
+/**
+ * What a rejected operation left changed, for the coordinator's comment: a
+ * claim that had run out is released in the same run, with any unsubmitted
+ * work on an encoding claim's task branch kept; otherwise nothing changed.
+ */
+export function rejectionOutcome(
+  reason: string | undefined,
+  encodingClaim: boolean,
+): string {
+  if (reason !== "claim_expired") return "No changes were made.";
+  return encodingClaim
+    ? "The claim had run out and has been released; any unsubmitted work on its task branch was kept."
+    : "The claim had run out and has been released.";
 }
 
 /** The campaign branch holding the unsubmitted work of a task's expired claims. */

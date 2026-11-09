@@ -19,6 +19,7 @@
 <script lang="ts">
   import { type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { tick, untrack } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
@@ -95,6 +96,8 @@
     h: number;
     zones: { box: MeasureBox; label: string }[];
   };
+  // Facsimile image addresses that failed to load.
+  let failedFacs = $state<Record<string, true>>({});
   let preview = $state<{
     /** The fragment this state belongs to — a late load for another one is dropped. */
     key: string;
@@ -830,6 +833,13 @@
                             <figcaption class="page-label">
                               Page {p + 1} · Facsimile
                             </figcaption>
+                            {#if pg.url && failedFacs[pg.url]}
+                              <Notice
+                                tone="err"
+                                title={`The facsimile of page ${p + 1} could not be loaded`}
+                                detail="The zones are shown without their reference image."
+                              />
+                            {/if}
                             <svg
                               viewBox={`0 0 ${pg.w} ${pg.h}`}
                               role="img"
@@ -840,6 +850,7 @@
                                   href={pg.url}
                                   width={pg.w}
                                   height={pg.h}
+                                  onerror={() => (failedFacs[pg.url!] = true)}
                                 />
                               {:else}
                                 <rect

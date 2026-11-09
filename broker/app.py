@@ -1033,8 +1033,12 @@ def authorize():
         return redirect(
             with_auth_error(return_to, AUTH_ERROR_CODES.get(error, "failed"))
         )
-    resp = github.get("user", token=token)
-    login = resp.json().get("login") if resp.ok else None
+    # A failed or unreadable answer ends as a login error, like a missing login.
+    try:
+        resp = github.get("user", token=token)
+        login = resp.json().get("login") if resp.ok else None
+    except (requests.RequestException, ValueError):
+        login = None
     if not (isinstance(login, str) and login):
         return redirect(with_auth_error(return_to, "user"))
     # What the session recorded for an earlier login does not carry over; the
@@ -1182,6 +1186,19 @@ def iiif_fetch():
             continue
         break
 
+    # A source's error answer is passed on as its status, marked as the
+    # source's, whatever its body: an error page is not relayed.
+    if response.status_code >= 400:
+        response.close()
+        failed = jsonify(
+            error="The source answered {}".format(response.status_code)
+        )
+        failed.status_code = response.status_code
+        failed.headers["X-Lets-Encode-Upstream"] = "iiif"
+        if "retry-after" in response.headers:
+            failed.headers["Retry-After"] = response.headers["retry-after"]
+        return failed
+
     content_type = response.headers.get("content-type", "")
     if not content_type.startswith(IIIF_ALLOWED_CONTENT):
         response.close()
@@ -1209,6 +1226,14 @@ def iiif_fetch():
     )
 
 
+def omr_refusal(error, status):
+    """The broker's own refusal of an OMR request, marked as the broker's."""
+    response = jsonify(error=error, source="musibot")
+    response.status_code = status
+    response.headers["X-Lets-Encode-Upstream"] = "broker"
+    return response
+
+
 @app.route("/omr/api/<path:path>", methods=["GET", "POST", "DELETE"])
 # Transcribing a page is one execution per staff plus the polling for each,
 # so a page is a burst of a few dozen calls.
@@ -1224,21 +1249,13 @@ def omr_api(path):
     if not signed_in():
         return jsonify(error="Authentication required"), 401
     if not MUSIBOT_TOKEN:
-        return (
-            jsonify(
-                error="OMR is not configured on this instance", source="musibot"
-            ),
-            503,
-        )
+        return omr_refusal("OMR is not configured on this instance", 503)
     for method, pattern in OMR_ROUTES:
         route = pattern.fullmatch(path) if method == request.method else None
         if route:
             break
     else:
-        return (
-            jsonify(error="That OMR endpoint is not relayed", source="musibot"),
-            404,
-        )
+        return omr_refusal("That OMR endpoint is not relayed", 404)
     login = session.get("userLogin")
     groups = route.groups()
     page_id = groups[0] if groups else None
@@ -1250,12 +1267,8 @@ def omr_api(path):
             and not relay_store.has_execution(page_id, execution_id)
         )
     ):
-        return (
-            jsonify(
-                error="That OMR page or run does not belong to this account",
-                source="musibot",
-            ),
-            404,
+        return omr_refusal(
+            "That OMR page or run does not belong to this account", 404
         )
     starts_run = request.method == "POST" and path.endswith(
         "/pipeline-executions"

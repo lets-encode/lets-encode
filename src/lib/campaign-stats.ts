@@ -282,6 +282,8 @@ export interface CampaignListing {
   failed: number;
   /** Why (the first failure — a rate-limit one preferred); null when none. */
   failure: Error | null;
+  /** The forge's search stopped before it was done: campaigns may be missing. */
+  incomplete: boolean;
 }
 
 /**
@@ -302,7 +304,7 @@ export async function loadAllCampaignStats(
     registered?: (stats: CampaignStats) => Promise<boolean>;
   } = {},
 ): Promise<CampaignListing> {
-  const repos = await f.searchReposByTopic(topic);
+  const { repos, incomplete } = await f.searchReposByTopic(topic);
   await batchStats(f, repos);
   const errors: unknown[] = [];
   const all = await Promise.all(
@@ -330,6 +332,7 @@ export async function loadAllCampaignStats(
         ? cause
         : new Error(String(cause))
       : null,
+    incomplete,
   };
 }
 

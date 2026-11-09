@@ -455,7 +455,9 @@
   // Why each page of the selected task's piece is to be checked against the
   // scan (omr-page-checks.ts), read once per piece whose layout task names
   // its instruments; keyed by campaign repo and piece.
-  let pageChecksBy = $state<Record<string, string[][] | null>>({});
+  // Per score: its page checks, null while they load, "failed" when they could
+  // not be read (tried again on the next load of the page).
+  let pageChecksBy = $state<Record<string, string[][] | null | "failed">>({});
   const checksKey = (fragment: string) => `${owner}/${repo}/${fragment}`;
   $effect(() => {
     const fragment = detailCard
@@ -473,12 +475,14 @@
     import("$lib/omr-page-checks.ts")
       .then((m) => m.loadPageChecks(readForge(), at.owner, at.repo, fragment))
       .then((checks) => (pageChecksBy[key] = checks))
-      .catch(() => {});
+      .catch(() => (pageChecksBy[key] = "failed"));
   });
+  const checksFor = (card: BoardCard) =>
+    pageChecksBy[checksKey(findRow(taskDefs, card.task, "")?.fragment ?? "")];
   const checksOf = (card: BoardCard): string[] => {
-    const fragment = findRow(taskDefs, card.task, "")?.fragment ?? "";
+    const checks = checksFor(card);
     const n = pageOfLocator(card.locator);
-    return (n && pageChecksBy[checksKey(fragment)]?.[n - 1]) || [];
+    return (n && checks !== "failed" && checks?.[n - 1]) || [];
   };
   // The selected task's card is scrolled into the board's visible part, in
   // its lane and above a docked panel.
@@ -920,6 +924,8 @@
     text: string;
     confirm?: { label: string; run: () => void };
   } | null>(null);
+  // A task mei-friend returned from that the plan no longer has.
+  let returnedGone = $state<string | null>(null);
   // The longest message from mei-friend the panel shows.
   const MAX_EDITOR_MESSAGE = 500;
   /** The task mei-friend just reported complete, highlighted until `until`. */
@@ -947,8 +953,16 @@
       holds: holdsEncoding(task),
       msg,
     });
-    // A return uses up this browser's record of the hand-off, whatever it
-    // reports.
+    // A status other than mei-friend's three is shown and keeps this
+    // browser's record of the hand-off; any of the three uses it up.
+    if (!["complete", "failed", "abandoned"].includes(status)) {
+      editorError = {
+        task,
+        label: "",
+        text: `mei-friend returned an unknown status (${status.slice(0, 40)}); nothing was recorded.`,
+      };
+      return;
+    }
     const handedOff = takeHandOff(campaign, task);
     if (status === "failed") {
       // mei-friend's own message only for a hand-off this browser made: the
@@ -967,7 +981,6 @@
             };
       return;
     }
-    if (status !== "complete" && status !== "abandoned") return;
     if (!holdsEncoding(task)) {
       editorError = {
         task,
@@ -1071,6 +1084,14 @@
         });
         handleEditorReturn(task, status, msg);
       }
+      return;
+    }
+    // A return from mei-friend for a task the plan no longer has records
+    // nothing; it is said so, and the outcome is cleared from the URL.
+    if (task && page.url.searchParams.has("mf_status")) {
+      // The id comes from a link anyone can build; it is shown cut short.
+      returnedGone = task.slice(0, 40);
+      goto(`/${campaign}`, { replaceState: true, noScroll: true });
       return;
     }
     // The owner's board reopens the task chosen last time only while it is
@@ -1210,6 +1231,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -1241,6 +1264,7 @@
     {runner}
     tools={resultNote}
     checks={checksOf(card)}
+    checksFailed={checksFor(card) === "failed"}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     changeRequestUrl={(n) => readForge().changeRequestWebUrl(owner, repo, n)}
@@ -1406,6 +1430,15 @@
     {/if}
     {#if manage && canPush && !scoreView}
       {@render resultBanner()}
+    {/if}
+    {#if returnedGone}
+      <Notice
+        tone="err"
+        surface="strip"
+        title={`${returnedGone} no longer exists in this campaign`}
+        detail="The outcome from mei-friend was not recorded."
+        ondismiss={() => (returnedGone = null)}
+      />
     {/if}
     {#if branchHint}
       <Notice

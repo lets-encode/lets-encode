@@ -84,8 +84,10 @@ export function createGitHubForge(token: string): ForgeClient {
         ? { owner: headOwner, repo: headName }
         : null;
     },
-    closePullRequest: (owner, repo, number) =>
-      gh.closePullRequest(token, owner, repo, number),
+    closePullRequest: (owner, repo, number, comment) =>
+      comment
+        ? gh.commentAndClosePr(token, owner, repo, number, comment)
+        : gh.closePullRequest(token, owner, repo, number),
     getLastIssueComment: (owner, repo, number) =>
       gh.getLastIssueComment(token, owner, repo, number),
     listWorkflowRuns: (owner, repo, workflow, filter) =>

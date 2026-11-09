@@ -204,19 +204,30 @@ export async function invoke<I extends Record<string, unknown>, O>(
   console.log("[command]", def.id, input);
   ctx.progress({ command: def.id, background: def.background });
   const output = await def.run(input, ctx, envelope);
-  if (def.log === "direct" && envelope)
-    await logDirect(ctx, envelope, output as Result);
+  if (def.log === "direct" && envelope) {
+    const result = output as Result;
+    // A command that went through without its history row is partly done.
+    if (!(await logDirect(ctx, envelope, result)) && !result?.error) {
+      const note = "The command was not recorded in the campaign history.";
+      return {
+        ...result,
+        outcome: result.outcome ?? "partial",
+        message: result.message ? `${result.message} ${note}` : note,
+      } as O;
+    }
+  }
   return output;
 }
 
 // Commit the command's history row directly (only 'direct' commands, which
-// require push access anyway). A lost log row is reported, not fatal — the
-// command itself already succeeded or failed on its own terms.
+// require push access anyway). Returns whether it was committed: a lost log
+// row is reported, not fatal — the command itself already succeeded or failed
+// on its own terms.
 async function logDirect(
   ctx: CommandContext,
   envelope: CommandEnvelope,
   result: Result,
-): Promise<void> {
+): Promise<boolean> {
   const { forge: f, owner, repo } = ctx;
   const row: HistoryRow = {
     timestamp: envelope.timestamp,
@@ -239,7 +250,7 @@ async function logDirect(
         `Log command ${envelope.command}`,
         { baseSha: sha },
       );
-      return;
+      return true;
     } catch (e) {
       if (i === MAX_LOG_ATTEMPTS - 1) {
         console.warn(
@@ -248,6 +259,7 @@ async function logDirect(
       }
     }
   }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -546,7 +558,14 @@ async function waitForPrProcessed(
           head !== watchedSha ? runWatch(head, Date.parse(created_at)) : null;
         watchedSha = head;
       } else if (skipped) {
-        await f.closePullRequest(owner, repo, pr.number);
+        // The comment carries no ✅ or ❌: it is the app's, not a verdict of
+        // the campaign automation.
+        await f.closePullRequest(
+          owner,
+          repo,
+          pr.number,
+          `Not processed: the campaign automation did not run for this pull request, since ${RUN_REQUIREMENTS}. Closed by the app.`,
+        );
         return { state: "run_skipped" };
       } else {
         // A decision recorded before the run failed stands.

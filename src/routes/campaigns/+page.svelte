@@ -44,6 +44,7 @@
     nextTask,
   } from "$lib/campaign-stats.ts";
   import type {
+    CampaignListing,
     CampaignStats,
     FeedComment,
     MyTask,
@@ -69,6 +70,8 @@
   // Repositories the search found but whose tables could not be read.
   let listFailed = $state(0);
   let listFailure = $state<Error | null>(null);
+  // GitHub's search stopped before it was done: campaigns may be missing.
+  let listIncomplete = $state(false);
 
   $effect(() => {
     if (auth.status === "loading" || listLoaded || listLoading) return;
@@ -87,15 +90,21 @@
   const placeRow = (s: CampaignStats) =>
     (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]);
 
+  // What a listing reports beyond its rows.
+  function noteListing(listing: CampaignListing) {
+    listFailed = listing.failed;
+    listFailure = listing.failure;
+    listIncomplete = listing.incomplete;
+  }
+
   async function loadAll() {
     try {
-      const listing = await loadAllCampaignStats(
-        readForge(),
-        provider.repoTopic,
-        { onEach: placeRow, registered },
+      noteListing(
+        await loadAllCampaignStats(readForge(), provider.repoTopic, {
+          onEach: placeRow,
+          registered,
+        }),
       );
-      listFailed = listing.failed;
-      listFailure = listing.failure;
       listError = null;
     } catch (err) {
       listError = err as Error;
@@ -107,6 +116,7 @@
     listError = null;
     listFailed = 0;
     listFailure = null;
+    listIncomplete = false;
     listLoaded = false;
   }
 
@@ -239,10 +249,12 @@
       poll: async (resumed) => {
         const f = readForge();
         if (resumed)
-          await loadAllCampaignStats(f, provider.repoTopic, {
-            onEach: placeRow,
-            registered,
-          });
+          noteListing(
+            await loadAllCampaignStats(f, provider.repoTopic, {
+              onEach: placeRow,
+              registered,
+            }),
+          );
         // All heads in one batch read where the client can; else one each.
         const polled = stats;
         const heads = await f
@@ -383,7 +395,7 @@
   const workSummary = $derived(
     [
       // First, so a cut-off summary still shows it.
-      listFailed > 0 ? "Incomplete" : "",
+      listFailed > 0 || listIncomplete ? "Incomplete" : "",
       encoding.length ? `${encoding.length} encoding` : "",
       validating.length ? `${validating.length} reviewing` : "",
       awaiting.length ? `${awaiting.length} awaiting review` : "",
@@ -546,6 +558,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -835,6 +849,14 @@
           {/if}
         </div>
       </div>
+      {#if !listError && listIncomplete}
+        <Notice
+          tone="warn"
+          title="Some campaigns may be missing"
+          detail="GitHub's search stopped before it was done."
+          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+        />
+      {/if}
       {#if !listError && listFailed > 0}
         <Notice
           tone="err"

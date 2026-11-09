@@ -203,8 +203,21 @@ def _push_permission_error(forge, repo_id, name):
             404,
         )
     if not response.ok:
-        return jsonify(error="could not verify the repository"), 502
-    repository = response.json()
+        return (
+            jsonify(
+                error="could not verify the repository: GitHub answered {}".format(
+                    response.status_code
+                )
+            ),
+            502,
+        )
+    try:
+        repository = response.json()
+    except ValueError:
+        return (
+            jsonify(error="could not verify the repository: no JSON answer"),
+            502,
+        )
     permissions = repository.get("permissions") or {}
     if not permissions.get("push"):
         return (

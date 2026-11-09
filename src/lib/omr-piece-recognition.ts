@@ -52,6 +52,8 @@ export interface PieceRecognition {
   fromCache: number;
   /** Pages whose labels could not be read, with the reason. */
   labelErrors: { page: number; error: string }[];
+  /** Why staff pipeline runs failed, each reason once. */
+  runErrors: string[];
 }
 
 const PAGES_PER_RUN = 2;
@@ -115,6 +117,7 @@ export async function recognisePiece(
     await o.client.requirePipelines([o.pipeline]);
   }
   const labelErrors: PieceRecognition["labelErrors"] = [];
+  const runErrors: string[] = [];
   let failedSoFar = 0;
   for (let i = 0; i < todo.length; i += PAGES_PER_RUN) {
     const batch = todo.slice(i, i + PAGES_PER_RUN);
@@ -149,11 +152,12 @@ export async function recognisePiece(
         return { p, pg, image, missing, crops };
       }),
     );
-    const xmls = await transcribeStaves(
+    const { xmls, error: runError } = await transcribeStaves(
       o.client,
       o.pipeline,
       work.flatMap((w) => w.crops),
     );
+    if (runError && !runErrors.includes(runError)) runErrors.push(runError);
     let at = 0;
     const kept: [string, { musicxml: string; label: string }][] = [];
     for (const w of work) {
@@ -183,7 +187,9 @@ export async function recognisePiece(
           musicxml,
           error: musicxml
             ? ""
-            : "The staff pipeline returned no transcription.",
+            : runError
+              ? `The staff pipeline failed: ${runError}`
+              : "The staff pipeline returned no transcription.",
         };
         if (musicxml) kept.push([keyOf(w.p + 1, k, w.pg), { musicxml, label }]);
         else failedSoFar++;
@@ -212,5 +218,6 @@ export async function recognisePiece(
     ),
     fromCache,
     labelErrors,
+    runErrors,
   };
 }

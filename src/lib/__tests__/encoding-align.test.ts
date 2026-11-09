@@ -380,7 +380,8 @@ test("the alignment record keeps the pins", () => {
   const record = alignmentRecord(pins, alignMeasures(layout, file, pins), [1]);
   assert.deepEqual(pinsOf(record), pins);
   assert.deepEqual(JSON.parse(record).matches, [null, [1, 0]]);
-  assert.deepEqual(pinsOf("not json"), []);
+  assert.throws(() => pinsOf("not json"), /could not be read/);
+  assert.throws(() => pinsOf("{}"), /no list of fixed links/);
   assert.deepEqual(pinsOf(null), []);
 });
 

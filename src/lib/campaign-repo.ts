@@ -130,7 +130,7 @@ export async function ensureCampaignRepo(
         throw new Error(
           renewed.error === "taken"
             ? `The reservation of “${claim.name}” ran out and the name was taken by another campaign. Go back to the first step and choose another name.`
-            : `The reservation of “${claim.name}” ran out and could not be renewed. Try again.`,
+            : `The reservation of “${claim.name}” ran out and could not be renewed${"detail" in renewed && renewed.detail ? `: ${renewed.detail}` : ""}. Try again.`,
         );
       }
       wizard.claim = {

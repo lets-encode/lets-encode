@@ -1053,6 +1053,8 @@
     await runner.run(async () => {
       try {
         const labels: string[][][] = models.map(() => []);
+        // Pages whose image could not be read, 1-based.
+        const unread: number[] = [];
         for (const p of open) {
           runner.log.step(
             `Reading the instrument names on page ${p + 1} of ${pages.length}`,
@@ -1063,6 +1065,7 @@
             : null;
           if (!image) {
             runner.log.detail("The page image could not be read.");
+            unread.push(p + 1);
             continue;
           }
           labels[p] = await readStaffLabels(image, unitBoxes(models)[p]);
@@ -1070,6 +1073,11 @@
         printedLabels = models.map((_, p) =>
           labels[p].length ? labels[p] : (printedLabels[p] ?? []),
         );
+        if (unread.length === open.length)
+          return {
+            error:
+              "Reading the instrument names failed: the page images could not be read.",
+          };
         let count = 0;
         if (!named.fixed) {
           for (const s of suggestFirstSystem(models, named, printedLabels)) {
@@ -1079,10 +1087,17 @@
         }
         count += followSystems();
         if (count) ed.commit();
-        return {
-          ok: true,
-          message: `${count} of the unnamed staves and grand staves were named from the printed names and the systems before them. Check every name.`,
-        };
+        const summary = `${count} of the unnamed staves and grand staves were named from the printed names and the systems before them. Check every name.`;
+        return unread.length
+          ? {
+              ok: true,
+              outcome: "partial" as const,
+              message:
+                unread.length === 1
+                  ? `${summary} The image of page ${unread[0]} could not be read.`
+                  : `${summary} The images of pages ${unread.join(", ")} could not be read.`,
+            }
+          : { ok: true, message: summary };
       } catch (e) {
         return {
           error: `Reading the instrument names failed: ${(e as Error).message}`,
@@ -1178,7 +1193,9 @@
         ? {
             text: `${result.failed.length} of ${total} staves could not be transcribed (${result.failed
               .map((s) => `page ${s.page}, staff ${s.staff}`)
-              .join("; ")}).`,
+              .join(
+                "; ",
+              )})${result.runErrors.length ? `; the staff pipeline reported: ${result.runErrors.join("; ")}` : ""}.`,
             error: true,
           }
         : { text: `All ${total} staves are transcribed.`, error: false };
@@ -2038,6 +2055,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}

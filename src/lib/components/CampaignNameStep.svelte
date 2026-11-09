@@ -17,6 +17,7 @@
     claimName,
     lookupSlug,
     releaseClaim,
+    releaseFailedNote,
   } from "$lib/campaign-resolve.ts";
   import { readDraft } from "$lib/wizard-draft.ts";
   import { isValidHandle } from "$lib/campaign-handle.ts";
@@ -38,7 +39,7 @@
   $effect(() => {
     if (auth.status === "loading") return;
     searchReposByTopic(provider.repoTopic, auth.token ?? undefined)
-      .then((r) => (campaignRepos = r))
+      .then((r) => (campaignRepos = r.repos))
       .catch(() => (campaignRepos = []));
   });
 
@@ -218,7 +219,9 @@
           ? `“${name}” cannot be used as a campaign name.`
           : result.error === "limit"
             ? "You are holding the names of too many unfinished setups. Discard one under Drafts on the campaign list, or wait until a name is released 24 hours after it was reserved."
-            : "The name could not be reserved just now. Check your connection and try again.";
+            : "detail" in result && result.detail
+              ? `The name could not be reserved: ${result.detail}. Try again.`
+              : "The name could not be reserved just now. Check your connection and try again.";
   }
 
   // Take over the name held by this browser's unfinished setup of the same
@@ -246,9 +249,7 @@
     claimError = null;
     saveDraft(auth.user?.login ?? "", draftSnapshot());
     const released = await releaseClaim(claim.name, claim.token);
-    releaseNote = released
-      ? null
-      : `“${claim.name}” could not be given back, so it stays reserved for up to 24 hours before it is free again.`;
+    releaseNote = released ? null : releaseFailedNote(claim.name);
   }
 </script>
 

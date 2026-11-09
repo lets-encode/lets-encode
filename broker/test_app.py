@@ -996,6 +996,22 @@ class BrokerTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 415)
 
+        # A source's error page is passed on as its status, marked as the
+        # source's, without its body.
+        response, _ = self.iiif_get(
+            "https://ex.test/page",
+            self.iiif_response(
+                b"<html>busy</html>",
+                "text/html",
+                status=429,
+                headers={"retry-after": "30"},
+            ),
+        )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "iiif")
+        self.assertEqual(response.headers["Retry-After"], "30")
+        self.assertNotIn(b"busy", response.data)
+
         # A redirect to a private address must be caught on the second hop.
         redirect = SimpleNamespace(
             status_code=302,
@@ -1319,6 +1335,21 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(parse_qs(location.query), {"auth_error": ["user"]})
         with self.client.session_transaction() as current:
             self.assertNotIn("githubToken", current)
+
+    def test_a_login_whose_user_lookup_fails_ends_as_a_login_error(self):
+        self.client.get("/login?return_to=/a")
+        token = {"access_token": "fresh-token"}
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(
+                broker.github,
+                "get",
+                side_effect=broker.requests.ConnectionError("down"),
+            ):
+                response = self.client.get("/authorize")
+        location = urlsplit(response.headers["Location"])
+        self.assertEqual(parse_qs(location.query), {"auth_error": ["user"]})
 
     def test_a_campaign_repo_is_looked_up_again_after_a_while(self):
         with broker.app.test_request_context():

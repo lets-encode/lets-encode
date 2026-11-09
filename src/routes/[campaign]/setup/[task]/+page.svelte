@@ -741,7 +741,9 @@
       const failed = result.failed.length
         ? ` ${result.failed.length} of ${total} staves could not be transcribed (${result.failed
             .map((s) => `page ${s.page}, staff ${s.staff}`)
-            .join("; ")}); use “Transcribe failed staves again”.`
+            .join(
+              "; ",
+            )})${result.runErrors.length ? `; the staff pipeline reported: ${result.runErrors.join("; ")}` : ""}. Use “Transcribe failed staves again”.`
         : "";
       const labels = result.labelErrors.length
         ? ` The instrument labels could not be read on page${result.labelErrors.length === 1 ? "" : "s"} ${result.labelErrors.map((e) => e.page).join(", ")} (${result.labelErrors[0].error}).`
@@ -1244,6 +1246,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -1348,7 +1352,7 @@
           {:else if !groupsValid}
             <p class="muted">Fix the staff groups to see the preview.</p>
           {:else if previewError}
-            <p class="muted">{previewError}</p>
+            <p class="msg-error">{previewError}</p>
           {:else if previewSvg}
             <!-- In step 2 the staves take clicks and taps; the Groups section
                  of the panel is the path without a pointer. -->

@@ -10,6 +10,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { goto } from "$app/navigation";
+  import { onDestroy } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import {
     discardDraft,
@@ -17,10 +18,17 @@
     resumableDrafts,
     type WizardDraft,
   } from "$lib/wizard-draft.ts";
-  import { releaseClaim } from "$lib/campaign-resolve.ts";
-  import { WIZARD_STEPS, resumeDraft, stepIndex } from "$lib/wizard.svelte.ts";
+  import { releaseClaim, releaseFailedNote } from "$lib/campaign-resolve.ts";
+  import {
+    WIZARD_STEPS,
+    discardedRelease,
+    resumeDraft,
+    stepIndex,
+  } from "$lib/wizard.svelte.ts";
 
   let drafts = $state<WizardDraft[]>([]);
+  // The note on a name not given back is shown on this visit only.
+  onDestroy(() => (discardedRelease.note = null));
   let busy = $state<string | null>(null);
   let confirming = $state<string | null>(null);
   let error = $state<string | null>(null);
@@ -62,7 +70,12 @@
     confirming = null;
     // Give the name back, so it is free again straight away instead of staying
     // reserved until the reservation runs out on its own.
-    if (draft.claim) await releaseClaim(draft.claim.name, draft.claim.token);
+    discardedRelease.note = null;
+    if (
+      draft.claim &&
+      !(await releaseClaim(draft.claim.name, draft.claim.token))
+    )
+      discardedRelease.note = releaseFailedNote(draft.claim.name);
   }
 </script>
 
@@ -125,6 +138,9 @@
       <p class="msg-error" role="alert">{error}</p>
     {/if}
   </section>
+{/if}
+{#if discardedRelease.note}
+  <p class="msg-warn" role="status">{discardedRelease.note}</p>
 {/if}
 
 <style>

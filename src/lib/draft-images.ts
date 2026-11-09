@@ -75,7 +75,9 @@ export async function storeDraftImages(
  * The page images stored for a setup, in the order of `paths`, when every one
  * of them is there and has the byte size `sizes` records for it; null when any
  * is missing or of another size (stored for another choice of pages under the
- * same paths), or the store cannot be read.
+ * same paths), or the browser's image store cannot be opened (the images
+ * were never stored then). Throws when the store opens but cannot be read: the
+ * images may still be in it.
  */
 export async function readDraftImages(
   owner: string,
@@ -84,10 +86,15 @@ export async function readDraftImages(
   sizes?: number[],
 ): Promise<PageImage[] | null> {
   try {
-    const stored = await inStore<PageImage[] | undefined>("readonly", (store) =>
+    (await openDb()).close();
+  } catch {
+    return null;
+  }
+  try {
+    const stored = await inStore<unknown>("readonly", (store) =>
       store.get(imagesKey(owner, handle)),
     );
-    if (!stored) return null;
+    if (!Array.isArray(stored)) return null;
     const byPath = new Map(stored.map((image) => [image.path, image.blob]));
     const images: PageImage[] = [];
     for (const [i, path] of paths.entries()) {
@@ -96,8 +103,10 @@ export async function readDraftImages(
       images.push({ path, blob });
     }
     return images;
-  } catch {
-    return null;
+  } catch (err) {
+    throw new Error(
+      `the page images could not be read from this browser's storage (${(err as Error).message})`,
+    );
   }
 }
 

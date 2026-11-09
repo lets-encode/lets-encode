@@ -80,6 +80,7 @@ import {
   heldByOpenOperation,
   isAutomaticCommit,
   contractMarker,
+  rejectionOutcome,
   isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkBranch,
@@ -93,7 +94,7 @@ import {
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
-  touchesCampaignPaths,
+  isCampaignOperation,
   validationIntentFromPatch,
   validationVerdict,
 } from "../src/lib/coordinator-policy.ts";
@@ -157,14 +158,15 @@ let headRef = "";
 // comments were submitted in even when their runs finish in another order;
 // lock, state, history rows and a fail's comment carry the processing time.
 let submittedAt = "";
-// Comment on the bound pull request and close it. Every verdict comment ends
-// with the automation's contract number, which the app compares with its own.
-function commentAndClose(body: string): Promise<void> {
+// Comment on pull request `number` (the bound one by default) and close it.
+// Every verdict comment ends with the automation's contract number, which the
+// app compares with its own.
+function commentAndClose(body: string, number = prNumber): Promise<void> {
   return commentAndClosePr(
     token,
     owner,
     repo,
-    prNumber,
+    number,
     `${body}\n\n${contractMarker()}`,
   );
 }
@@ -705,7 +707,7 @@ async function runRelease(
   const target = `\`${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}\``;
   const body = verdict.ok
     ? `✅ Release accepted — ${authorLabel} abandoned ${target}.`
-    : `❌ Release rejected: ${explainReason(verdict.reason)}. No changes were made.`;
+    : `❌ Release rejected: ${explainReason(verdict.reason)}. ${rejectionOutcome(verdict.reason, intent.subtask_id === "")}`;
   const closeStart = Date.now();
   await commentAndClose(body);
   await cleanupHeadBranch();
@@ -841,7 +843,7 @@ async function runReviewEdit(
   const verdict = await withRetry(() => attemptReviewEdit(files, envelope));
   const body = verdict.ok
     ? `✅ Review edit accepted — \`${verdict.task}\` is back in editing, claimed by ${authorLabel}.`
-    : `❌ Review edit rejected: ${explainReason(verdict.reason)}. No changes were made.`;
+    : `❌ Review edit rejected: ${explainReason(verdict.reason)}. ${rejectionOutcome(verdict.reason, false)}`;
   const closeStart = Date.now();
   await commentAndClose(body);
   await cleanupHeadBranch();
@@ -1326,7 +1328,7 @@ async function runSubmit(
 
   const body = verdict.ok
     ? `✅ Submission accepted (${kind === "validation" ? "review" : kind}).`
-    : `❌ Submission rejected: ${explainReason(verdict.reason)}. No changes were made.` +
+    : `❌ Submission rejected: ${explainReason(verdict.reason)}. ${rejectionOutcome(verdict.reason, kind === "encoding")}` +
       (verdict.detail ? ` ${rejectionDetail(verdict.detail)}` : "");
   const closeStart = Date.now();
   await commentAndClose(body);
@@ -1574,15 +1576,9 @@ async function processPullRequest(
   // it names the task and feeds the command columns of the history row this
   // run authors.
   const envelope = envelopeFromPrBody(body);
-  // A campaign operation changes a tracking or source file, or — an encoding
-  // completed without changes — carries a command envelope or comes from a
-  // task branch. Any other pull request is left alone, by the catch-up pass
-  // as well.
-  if (
-    !touchesCampaignPaths(changedPaths) &&
-    !envelope &&
-    !headRef.startsWith("encode-")
-  ) {
+  // Any pull request other than a campaign operation is left alone, by the
+  // catch-up pass as well.
+  if (!isCampaignOperation(changedPaths, body, headRef)) {
     console.log(`PR #${prNumber} is no campaign operation; left as is.`);
     return false;
   }
@@ -1633,6 +1629,15 @@ async function processPullRequest(
 async function runCatchUp(): Promise<void> {
   const open = await listOpenPullRequests(token, owner, repo);
   const now = Date.now();
+  await closeUndecided(
+    open.filter(
+      (pr) =>
+        !pr.draft &&
+        pr.user.type === "User" &&
+        now - Date.parse(pr.created_at) > CATCHUP_MAX_AGE_MS,
+    ),
+    open,
+  );
   const due = open
     .filter((pr) => {
       const age = now - Date.parse(pr.created_at);
@@ -1653,24 +1658,9 @@ async function runCatchUp(): Promise<void> {
   let processed = 0;
   for (const pr of due) {
     if (processed >= CATCHUP_MAX_PRS) break;
-    const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split(
-      "/",
-    );
-    bindPullRequest({
-      number: pr.number,
-      author: String(pr.user.id),
-      authorLogin: pr.user.login,
-      headOwner: prHeadOwner ?? "",
-      headRepo: prHeadRepo ?? "",
-      headSha: pr.head.sha,
-      headRef: pr.head.ref,
-    });
+    bindOpenPullRequest(pr);
     try {
-      const runs = await listWorkflowRuns(token, owner, repo, "caller.yml", {
-        event: "pull_request_target",
-        headSha: pr.head.sha,
-      });
-      if (runs.some((run) => run.status !== "completed")) {
+      if (await runUnderWay(pr)) {
         console.log(
           `Catch-up: PR #${pr.number} has a run of its own under way; left to it.`,
         );
@@ -1686,6 +1676,89 @@ async function runCatchUp(): Promise<void> {
     } catch (e) {
       console.error(
         `Catch-up: PR #${pr.number} failed: ${(e as Error).message}`,
+      );
+      process.exitCode = 1;
+    }
+  }
+}
+
+// Bind an open pull request as the one this run processes.
+function bindOpenPullRequest(pr: OpenPullRequest): void {
+  const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split("/");
+  bindPullRequest({
+    number: pr.number,
+    author: String(pr.user.id),
+    authorLogin: pr.user.login,
+    headOwner: prHeadOwner ?? "",
+    headRepo: prHeadRepo ?? "",
+    headSha: pr.head.sha,
+    headRef: pr.head.ref,
+  });
+}
+
+// Whether a run of the pull request's own (on its current head) is under way;
+// that run decides it.
+async function runUnderWay(pr: OpenPullRequest): Promise<boolean> {
+  const runs = await listWorkflowRuns(token, owner, repo, "caller.yml", {
+    event: "pull_request_target",
+    headSha: pr.head.sha,
+  });
+  return runs.some((run) => run.status !== "completed");
+}
+
+// Campaign operations older than CATCHUP_MAX_AGE_MS are no longer decided:
+// they are closed with a comment saying so, which the app shows as the
+// rejection. One decided before, whose comment or close was lost, gets its
+// decision posted again instead; one with a run of its own under way is left
+// to it. A failure is logged, fails the run, and the next pass tries again.
+async function closeUndecided(
+  stale: OpenPullRequest[],
+  open: OpenPullRequest[],
+): Promise<void> {
+  if (stale.length === 0) return;
+  let history: HistoryRow[];
+  try {
+    history = parseHistoryCsv(
+      (await getRepoFile(token, owner, repo, HISTORY_PATH)) ?? "",
+    );
+  } catch (e) {
+    // The pass for the younger pull requests goes on without this one.
+    console.error(
+      `Could not read the history to close undecided PRs: ${(e as Error).message}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  for (const pr of stale) {
+    try {
+      if (await runUnderWay(pr)) continue;
+      if (priorDecision(history, pr.number)) {
+        bindOpenPullRequest(pr);
+        await processPullRequest(open, { capped: false });
+        continue;
+      }
+      const { body, files } = await getPullRequest(
+        token,
+        owner,
+        repo,
+        pr.number,
+      );
+      if (
+        !isCampaignOperation(
+          files.map((f) => f.filename),
+          body,
+          pr.head.ref,
+        )
+      )
+        continue;
+      await commentAndClose(
+        "❌ Not processed: this pull request was not decided within seven days of being opened. No changes were made. Submit it again.",
+        pr.number,
+      );
+      console.log(`Closed PR #${pr.number}: not decided within seven days.`);
+    } catch (e) {
+      console.error(
+        `Could not close the undecided PR #${pr.number}: ${(e as Error).message}`,
       );
       process.exitCode = 1;
     }
@@ -1720,10 +1793,18 @@ async function run(): Promise<void> {
   // The catch-up pass runs before the reaper: it judges each pull request
   // at its opening time, and the reaper would first remove the locks that
   // expired since.
+  // Each phase runs whatever became of the one before; a failed phase fails
+  // the run.
   if (eventName === "schedule" || eventName === "workflow_dispatch") {
-    await runCatchUp();
-    await runReap();
-    return sweepOperationBranches();
+    for (const phase of [runCatchUp, runReap, sweepOperationBranches]) {
+      try {
+        await phase();
+      } catch (e) {
+        console.error(`${phase.name} failed: ${(e as Error).message}`);
+        process.exitCode = 1;
+      }
+    }
+    return;
   }
   if (eventName !== "pull_request_target") {
     throw new Error(`Unsupported event: ${eventName}`);

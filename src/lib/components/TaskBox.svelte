@@ -58,6 +58,7 @@
     tools,
     headAction,
     checks = [],
+    checksFailed = false,
     onclaim,
     oneditor,
     onabandon,
@@ -104,6 +105,8 @@
     /** Why the task's page is to be checked against the scan
         (omr-page-checks.ts); none shows no mark. */
     checks?: string[];
+    /** The page checks could not be read. */
+    checksFailed?: boolean;
     onclaim: (task_id: string, subtask_id: string) => Promise<unknown>;
     /** Claim or open the task in mei-friend; not used in the review view. */
     oneditor?: (task_id: string) => Promise<void>;
@@ -235,6 +238,12 @@
         class="chip chip-note"
         title={`Check the clefs, key, meter and staves of this page against the scan. ${checks.join(" ")}`}
         >Check</span
+      >
+    {:else if checksFailed && card.column !== "done"}
+      <span
+        class="chip chip-note"
+        title="The checks of this page against the scan could not be read. Reload the page to try again."
+        >Checks not read</span
       >
     {/if}
     {#if help}

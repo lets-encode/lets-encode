@@ -68,7 +68,11 @@ export interface ForgeClient {
   /** Resolve a numeric repo id to its current owner/name, or null. Memoised. */
   getRepoById(id: number): Promise<RepoRef | null>;
   /** Repos tagged with `topic` that the user can see. */
-  searchReposByTopic(topic: string): Promise<RepoSummary[]>;
+  /** The repos with `topic`; `incomplete` when the forge's search stopped
+      before it was done. */
+  searchReposByTopic(
+    topic: string,
+  ): Promise<{ repos: RepoSummary[]; incomplete: boolean }>;
   /** Create a repo from a template into `owner`'s account. */
   createRepoFromTemplate(opts: {
     templateOwner: string;
@@ -235,8 +239,14 @@ export interface ForgeClient {
     repo: string,
     number: number,
   ): Promise<{ owner: string; repo: string } | null>;
-  /** Close a pull/merge request without merging it. */
-  closePullRequest(owner: string, repo: string, number: number): Promise<void>;
+  /** Close a pull/merge request without merging it, after posting `comment`
+      on it when given. */
+  closePullRequest(
+    owner: string,
+    repo: string,
+    number: number,
+    comment?: string,
+  ): Promise<void>;
   /** The most recent comment on a pull/merge request, or null. */
   getLastIssueComment(
     owner: string,

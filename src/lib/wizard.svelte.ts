@@ -284,6 +284,10 @@ export const draftStatus = $state<{
   resumeNotice: null,
 });
 
+/** A discarded setup whose name could not be given back: the note saying so,
+    shown with the drafts once the wizard has been left. */
+export const discardedRelease = $state<{ note: string | null }>({ note: null });
+
 // A setup put into the wizard starts with no draft status of its own.
 function resetDraftStatus(): void {
   draftStatus.saveError = null;
@@ -474,7 +478,8 @@ export async function resumeDraft(
     throw new Error("it has since been finished or discarded in this browser");
   const paths = stored.entries.imagePaths;
   // Images that are not stored any more can be uploaded again: applyDraft puts
-  // a setup without its images on the upload step.
+  // a setup without its images on the upload step. A store that cannot be read
+  // stops the continuation instead, so the draft keeps its images.
   const images = paths.length
     ? ((await readDraftImages(
         owner,

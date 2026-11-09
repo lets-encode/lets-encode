@@ -16,6 +16,8 @@ import {
   AUTOMATION_CONTRACT,
   checksOpening,
   contractMarker,
+  isCampaignOperation,
+  rejectionOutcome,
   splitContract,
   claimPullRequest,
   classifyPullRequest,
@@ -787,4 +789,22 @@ test("a verdict comment's contract line is split off", () => {
     text: "✅ Claim accepted.",
     contract: null,
   });
+});
+
+test("a rejection says when an expired claim was released", () => {
+  assert.equal(rejectionOutcome("mei_invalid", true), "No changes were made.");
+  assert.match(
+    rejectionOutcome("claim_expired", true),
+    /released; any unsubmitted work on its task branch was kept/,
+  );
+  assert.equal(
+    rejectionOutcome("claim_expired", false),
+    "The claim had run out and has been released.",
+  );
+});
+
+test("a campaign operation is told from any other pull request", () => {
+  assert.equal(isCampaignOperation(["tracking/lock.csv"], null, "x"), true);
+  assert.equal(isCampaignOperation(["README.md"], null, "encode-T0001"), true);
+  assert.equal(isCampaignOperation(["README.md"], null, "fix-typo"), false);
 });
