@@ -56,6 +56,8 @@
     value = $bindable(),
     fitPage,
     fit = $bindable(null),
+    layout = "slider",
+    onfitpage,
   }: {
     /** Percent, between LEAST and MOST. */
     value: number;
@@ -63,6 +65,13 @@
     fitPage?: number;
     /** The fit in force, if any. */
     fit?: "width" | "page" | null;
+    /** How much of the control a narrower toolbar keeps: the slider (zoom
+        out and in on a touch screen), zoom out and in either side of the
+        readout, or only the fits where a pinch zooms. */
+    layout?: "slider" | "steps" | "pinch";
+    /** Called for the page fit in place of setting `fit`, for a viewer that
+        also keeps its current page in view. */
+    onfitpage?: () => void;
   } = $props();
 
   $effect(() => {
@@ -91,7 +100,11 @@
   }
 </script>
 
-<span class="zoomctl">
+<span
+  class="zoomctl"
+  class:zsteps={layout === "steps"}
+  class:zpinch={layout === "pinch"}
+>
   <button
     type="button"
     class="tbtn tbtn-icon zstep"
@@ -138,7 +151,7 @@
       class="tbtn tbtn-icon fit-page"
       class:on={fit === "page"}
       aria-pressed={fit === "page"}
-      onclick={() => (fit = "page")}
+      onclick={() => (onfitpage ? onfitpage() : (fit = "page"))}
       aria-label="Fit the whole page"
       title="Fit the whole page, top to bottom"><FitIcon kind="page" /></button
     >
@@ -165,6 +178,15 @@
     .zstep {
       display: inline-flex;
     }
+  }
+  .zoomctl.zsteps .zoomslider,
+  .zoomctl.zpinch .zoomslider,
+  .zoomctl.zpinch .zval,
+  .zoomctl.zpinch .zstep {
+    display: none;
+  }
+  .zoomctl.zsteps .zstep {
+    display: inline-flex;
   }
   @container material (max-width: 639px) {
     .zoomctl .zoomslider {

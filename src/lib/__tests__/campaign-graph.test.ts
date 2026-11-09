@@ -5,6 +5,8 @@ import {
   blockedBy,
   canClaim,
   claimLabel,
+  taskAction,
+  taskActionHref,
 } from "../campaign-graph.ts";
 import type { GraphData } from "../campaign-graph.ts";
 import type { StateRow, TaskRow } from "../campaign-tables.ts";
@@ -316,5 +318,44 @@ test("canClaim offers only the claims the campaign automation grants", () => {
   assert.equal(
     canClaim({ ...d, passThreshold: 2 }, "", "T0001", "S0001"),
     false,
+  );
+});
+
+test("taskAction: one button per task and mode, wherever the task is offered", () => {
+  const encode = { locator: "surface-2", pre: false, checksOpening: false };
+  const check = { locator: "surface-1", pre: false, checksOpening: true };
+  const pre = { locator: "omr-layout", pre: true, checksOpening: false };
+
+  assert.equal(taskAction(encode, "claim").label, "Claim & open in mei-friend");
+  assert.equal(taskAction(encode, "claim").target, "mei-friend");
+  assert.equal(taskAction(encode, "continue").label, "Continue in mei-friend");
+  // A held score-check task continues in the score check, not in mei-friend.
+  assert.equal(taskAction(check, "continue").label, "Continue in score check");
+  assert.match(taskAction(check, "claim").title, /score check/);
+  assert.equal(taskAction(check, "claim").stage, "enc");
+  assert.equal(taskAction(pre, "claim").stage, "pre");
+  assert.equal(
+    taskAction(encode, "claim-review").title,
+    "Claims a review of this task for you and opens the review.",
+  );
+  assert.equal(
+    taskActionHref(
+      "c",
+      { task: "T0001", ...check },
+      taskAction(check, "claim"),
+    ),
+    "/c/check/T0001",
+  );
+  assert.equal(
+    taskActionHref("c", { task: "P0001", ...pre }, taskAction(pre, "continue")),
+    "/c/zones/P0001",
+  );
+  assert.equal(
+    taskActionHref(
+      "c",
+      { task: "T0002", ...encode },
+      taskAction(encode, "claim"),
+    ),
+    null,
   );
 });

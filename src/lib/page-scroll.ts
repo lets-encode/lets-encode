@@ -94,6 +94,25 @@ export function readAnchor(
   };
 }
 
+/**
+ * The row the paging buttons go to from row `current`, `delta` rows on, of
+ * `rows`: back from a row scrolled partly out of view first returns to its
+ * top.
+ */
+export function pagingRow(
+  scroller: HTMLElement,
+  rows: HTMLElement[],
+  current: number,
+  delta: number,
+): number {
+  const a = readAnchor(scroller, rows);
+  const row =
+    delta < 0 && a && a.row === current && a.frac > 0.02
+      ? current
+      : current + delta;
+  return Math.max(0, Math.min(rows.length - 1, row));
+}
+
 /** Scroll back to an anchor; the horizontal position only when it has one. */
 export function applyAnchor(
   scroller: HTMLElement,

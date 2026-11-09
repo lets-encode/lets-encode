@@ -21,7 +21,8 @@
     pageOfLocator,
     preTaskHref,
     preTaskInstruction,
-    claimLabel,
+    taskAction,
+    taskActionHref,
     workPlace,
   } from "$lib/campaign-graph.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -145,9 +146,6 @@
   const compact = new MediaQuery(DOCKED_QUERY, false);
   const foldRecord = $derived(compact.current && hasRecord && !myReview);
   const editorRoute = $derived(preTaskHref(campaign, card.locator, card.task));
-  // The first page task of a piece whose instruments were named is claimed
-  // and continued in the app's score check, which makes its draft.
-  const checkRoute = $derived(`/${campaign}/check/${card.task}`);
   const editorName = $derived(workPlace(card.locator));
 
   // The submitted encoding behind the card, for the Submission section.
@@ -316,81 +314,54 @@
   {#if inView && card.column !== "validation"}
     <!-- The review view offers no work actions. -->
   {:else if card.column === "ready"}
+    {@const act = taskAction(card, "claim")}
     <div class="tspfoot">
-      {#if card.pre}
-        <a
-          class="btn btn-pre"
-          class:btn-primary={primary}
-          href={processing ? undefined : editorRoute}
-          aria-disabled={processing}
-          title={`Claims the task for you and opens the ${editorName}.`}
-          >{claimLabel(card.locator)}</a
-        >
-      {:else if card.checksOpening}
-        <a
-          class="btn btn-enc"
-          class:btn-primary={primary}
-          href={processing ? undefined : checkRoute}
-          aria-disabled={processing}
-          title="Claims the task for you and opens the score check: the clefs, key signatures, meter and transpositions of the score's staves, before the draft opens in mei-friend."
-          >Claim & open score check</a
-        >
-      {:else}
+      {#if act.target === "mei-friend"}
         <button
           type="button"
-          class="btn btn-enc"
+          class="btn btn-{act.stage}"
           class:btn-primary={primary}
           onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
-          title={auth.user
-            ? "Claims this task for you and opens the score in mei-friend."
-            : "Log in with GitHub to claim a task."}
-          >{claimLabel(card.locator)} <Icon name="external" /></button
+          title={auth.user ? act.title : "Log in with GitHub to claim a task."}
+          >{act.label} <Icon name="external" /></button
+        >
+      {:else}
+        <a
+          class="btn btn-{act.stage}"
+          class:btn-primary={primary}
+          href={processing
+            ? undefined
+            : (taskActionHref(campaign, card, act) ?? undefined)}
+          aria-disabled={processing}
+          title={act.title}>{act.label}</a
         >
       {/if}
     </div>
   {:else if card.column === "encoding"}
-    {#if card.pre && card.worker?.mine}
+    {#if (card.pre && card.worker?.mine) || (!card.pre && mineEncoding)}
+      {@const act = taskAction(card, "continue")}
       <div class="tspfoot">
-        <a
-          class="btn"
-          class:btn-primary={primary}
-          href={processing ? undefined : editorRoute}
-          aria-disabled={processing}
-          title={`Continue your work in the ${editorName}.`}
-          >Continue in {editorName}</a
-        >
-        <AbandonButton
-          disabled={runner.busy || processing}
-          onabandon={() => onabandon(card.task, "")}
-        />
-      </div>
-    {:else if mineEncoding && card.checksOpening}
-      <div class="tspfoot">
-        <a
-          class="btn"
-          class:btn-primary={primary}
-          href={processing ? undefined : checkRoute}
-          aria-disabled={processing}
-          title="Continue in the score check, which opens the draft in mei-friend."
-          >Continue in score check</a
-        >
-        <AbandonButton
-          disabled={runner.busy || processing}
-          onabandon={() => onabandon(card.task, "")}
-        />
-      </div>
-    {:else if mineEncoding}
-      <div class="tspfoot">
-        <button
-          type="button"
-          class="btn"
-          class:btn-primary={primary}
-          onclick={() => oneditor?.(card.task)}
-          disabled={runner.busy || processing}
-          title="Opens the score in mei-friend. Completing the task there submits it for review."
-          >Open in mei-friend <Icon name="external" /></button
-        >
+        {#if act.target === "mei-friend"}
+          <button
+            type="button"
+            class="btn"
+            class:btn-primary={primary}
+            onclick={() => oneditor?.(card.task)}
+            disabled={runner.busy || processing}
+            title={act.title}>{act.label} <Icon name="external" /></button
+          >
+        {:else}
+          <a
+            class="btn"
+            class:btn-primary={primary}
+            href={processing
+              ? undefined
+              : (taskActionHref(campaign, card, act) ?? undefined)}
+            aria-disabled={processing}
+            title={act.title}>{act.label}</a
+          >
+        {/if}
         <AbandonButton
           disabled={runner.busy || processing}
           onabandon={() => onabandon(card.task, "")}
@@ -399,14 +370,15 @@
     {/if}
   {:else if card.column === "validation"}
     {#if claimableSub !== undefined}
+      {@const act = taskAction(card, "claim-review")}
       <div class="tspfoot">
         <button
           type="button"
-          class="btn btn-review"
+          class="btn btn-{act.stage}"
           class:btn-primary={primary}
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
-          title="Claims a review of this task for you.">Claim to review</button
+          title={act.title}>{act.label}</button
         >
         {#if !card.pre && !inView}
           <a
@@ -418,26 +390,17 @@
         {/if}
       </div>
     {:else if myReview && !inView}
+      {@const act = taskAction(card, "continue-review")}
       <div class="tspfoot">
-        {#if card.pre}
-          <a
-            class="btn"
-            class:btn-primary={primary}
-            href={processing ? undefined : editorRoute}
-            aria-disabled={processing}
-            title={`Review the submitted work in the ${editorName}.`}
-            >Continue in {editorName}</a
-          >
-        {:else}
-          <a
-            class="btn"
-            class:btn-primary={primary}
-            href={processing ? undefined : `/${campaign}/review/${card.task}`}
-            aria-disabled={processing}
-            title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
-            >Continue in review</a
-          >
-        {/if}
+        <a
+          class="btn"
+          class:btn-primary={primary}
+          href={processing
+            ? undefined
+            : (taskActionHref(campaign, card, act) ?? undefined)}
+          aria-disabled={processing}
+          title={act.title}>{act.label}</a
+        >
         <AbandonButton
           review
           disabled={runner.busy || processing}

@@ -38,16 +38,7 @@
     staffKeysig,
     withoutIds,
   } from "$lib/mei-facsimile.ts";
-  import {
-    COMMON_TRANSPOSITIONS,
-    PITCHES,
-    fromCustom,
-    keysigText,
-    soundsText,
-    toCustom,
-    transpositionFromLabel,
-  } from "$lib/transposition.ts";
-  import type { Transposition } from "$lib/transposition.ts";
+  import { keysigText, soundsText, toCustom } from "$lib/transposition.ts";
   import type {
     MeasureBox,
     ScoreDefModel,
@@ -100,6 +91,10 @@
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import { StaffPitchEditor } from "$lib/staff-pitch.svelte.ts";
+  import KeyTimeFields from "$lib/components/KeyTimeFields.svelte";
+  import StaffPitchSelects from "$lib/components/StaffPitchSelects.svelte";
+  import StaffCustomPitch from "$lib/components/StaffCustomPitch.svelte";
   import {
     CLEF_OPTIONS,
     COMMON_CLEFS,
@@ -107,11 +102,8 @@
     clefGlyph,
     clefOption,
     clefText,
-    followedKey as followedStaffKey,
     linesChoices,
     setClef as setStaffClef,
-    setTransposition as setStaffTransposition,
-    settleKey as settleStaffKey,
     transOf,
     transposes,
     unpitched,
@@ -123,12 +115,6 @@
   const taskId = $derived(page.params.task!);
 
   const METER_NAMES = { common: "Common time", cut: "Cut time" };
-  const METER_KINDS = [
-    { value: "numeric", label: "Numbers", glyph: "threeFour" },
-    { value: "common", label: METER_NAMES.common, glyph: "common" },
-    { value: "cut", label: METER_NAMES.cut, glyph: "cut" },
-  ] as const;
-  const METER_UNITS = [1, 2, 4, 8, 16];
   const MAX_STAVES = 24;
 
   // The form's working copy of the score definition.
@@ -670,7 +656,7 @@
       filled++;
       return { ...staff, label: read[i] };
     });
-    staves.forEach(fillFromLabel);
+    staves.forEach((staff) => pitch.fillFromLabel(staff));
     // The fullest system's grand-staff boxes become braces, unless the
     // definition has groups already; a span repeating or crossing an earlier
     // one is left out.
@@ -931,59 +917,16 @@
   // The staff edits against the score's key (staff-edit.ts).
   const setClef = (staff: StaffModel, key: string) =>
     setStaffClef(keysig, staff, key);
-  const followedKey = (staff: StaffModel) => followedStaffKey(keysig, staff);
-  const settleKey = (staff: StaffModel) => settleStaffKey(keysig, staff);
-  const setTransposition = (staff: StaffModel, t: Transposition | null) =>
-    setStaffTransposition(keysig, staff, t);
 
-  // Staves whose transposition the volunteer chose, which a label no longer
-  // fills, and those showing the pitch fields although a listed
-  // transposition matches.
-  const transChosen = new SvelteSet<StaffModel>();
-  const transCustom = new SvelteSet<StaffModel>();
-  /** The transposition select's value: 'none', a list index, or 'other'. */
-  function transValue(staff: StaffModel): string {
-    if (transCustom.has(staff)) return "other";
-    if (!transposes(staff)) return "none";
-    const i = COMMON_TRANSPOSITIONS.findIndex(
-      (t) => t.diat === staff.transDiat && t.semi === staff.transSemi,
-    );
-    return i < 0 ? "other" : String(i);
-  }
-  function pickTransposition(staff: StaffModel, value: string) {
-    transChosen.add(staff);
-    if (value === "other") {
-      transCustom.add(staff);
-      return;
-    }
-    transCustom.delete(staff);
-    setTransposition(
-      staff,
-      value === "none" ? null : COMMON_TRANSPOSITIONS[Number(value)],
-    );
-  }
-  /** The pitch fields of a staff with a transposition outside the list. */
-  const customOf = (staff: StaffModel) =>
-    toCustom(transOf(staff)) ?? { pitch: "C", higher: false, octaves: 0 };
-  function setCustom(
-    staff: StaffModel,
-    change: Partial<ReturnType<typeof customOf>>,
-  ) {
-    setTransposition(staff, fromCustom({ ...customOf(staff), ...change }));
-  }
-  /** Fill a staff's transposition from its label, unless one is set or was chosen. */
-  function fillFromLabel(staff: StaffModel) {
-    if (transChosen.has(staff) || transposes(staff) || unpitched(staff)) return;
-    const t = transpositionFromLabel(staff.label);
-    if (t) setTransposition(staff, t);
-  }
+  // The staves' transposition fields (StaffPitchSelects, StaffCustomPitch).
+  const pitch = new StaffPitchEditor(() => keysig);
   // Labels already in the file or a saved draft fill the transpositions
   // once the holder opens the task.
   let labelsReadFor = $state<string | null>(null);
   $effect(() => {
     if (!canEdit || staves.length === 0 || labelsReadFor === taskId) return;
     labelsReadFor = taskId;
-    untrack(() => staves.forEach(fillFromLabel));
+    untrack(() => staves.forEach((staff) => pitch.fillFromLabel(staff)));
   });
   /** "in B♭, sounds a major 2nd lower", or '' for a staff that does not transpose. */
   function transText(staff: StaffModel): string {
@@ -993,7 +936,6 @@
       c && !(c.pitch === "C" && c.octaves > 0) ? `in ${c.pitch}, ` : "";
     return `${pitch}sounds ${soundsText(transOf(staff))}`;
   }
-  const STAFF_KEYS = KEY_SIGNATURES;
   // Removing or moving a staff by other means drops a staff picked to move.
   function removeStaff(i: number) {
     if (staves.length <= 1) return;
@@ -1506,58 +1448,13 @@
           {#if setupStep === 1}
             <fieldset disabled={!canEdit} class="sec-meter">
               <p class="grouphead">Key and time signature</p>
-              <div class="meterrow">
-                <label class="mfield">
-                  <span>Key signature</span>
-                  <select
-                    class="ctl"
-                    bind:value={keysig}
-                    title="The accidentals the score opens with, on the staves that do not transpose."
-                  >
-                    {#each KEY_SIGNATURES as key (key.value)}
-                      <option value={key.value}>{key.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <div class="mfield">
-                  <span>Time signature</span>
-                  <GlyphSelect
-                    class="ctl"
-                    options={METER_KINDS}
-                    value={meterType}
-                    onchange={(v) => (meterType = v as typeof meterType)}
-                    label="Time signature"
-                    title="Numbers (beats over a beat unit), or a symbol: common time or cut time."
-                  />
-                </div>
-              </div>
-              {#if meterType === "numeric"}
-                <div class="meterrow">
-                  <label class="mfield">
-                    <span>Beats</span>
-                    <input
-                      class="ctl"
-                      type="text"
-                      inputmode="numeric"
-                      bind:value={meterCount}
-                      class:bad={!meterValid}
-                      title="The number of beats in a bar — the upper number of the time signature."
-                    />
-                  </label>
-                  <label class="mfield">
-                    <span>Beat unit</span>
-                    <select
-                      class="ctl"
-                      bind:value={meterUnit}
-                      title="The note value that counts as one beat — the lower number of the time signature."
-                    >
-                      {#each METER_UNITS as unit (unit)}
-                        <option value={String(unit)}>{unit}</option>
-                      {/each}
-                    </select>
-                  </label>
-                </div>
-              {/if}
+              <KeyTimeFields
+                bind:keysig
+                bind:meterType
+                bind:meterCount
+                bind:meterUnit
+                {meterValid}
+              />
             </fieldset>
 
             <fieldset disabled={!canEdit} class="sec-staves">
@@ -1578,7 +1475,7 @@
                         class="grip staffgrip"
                         class:target={reorder.picked >= 0 &&
                           reorder.picked !== i}
-                        style:grid-row="2 / span {transValue(staff) ===
+                        style:grid-row="2 / span {pitch.value(staff) ===
                           'other' && !unpitched(staff)
                           ? 2
                           : 1}"
@@ -1601,7 +1498,7 @@
                         class="ctl grow"
                         type="text"
                         bind:value={staff.label}
-                        oninput={() => fillFromLabel(staff)}
+                        oninput={() => pitch.fillFromLabel(staff)}
                         placeholder="Instrument"
                         aria-label={`Staff ${i + 1}: instrument`}
                         title="The instrument or voice name printed in front of this staff. Leave empty for none. A name with a pitch, like Clarinetto in B, sets the transposition."
@@ -1660,106 +1557,21 @@
                           {/each}
                         </select>
                       {:else if !unpitched(staff)}
-                        <select
-                          class="ctl trans"
-                          value={transValue(staff)}
-                          onchange={(e) =>
-                            pickTransposition(
-                              staff,
-                              (e.target as HTMLSelectElement).value,
-                            )}
-                          aria-label={`Staff ${i + 1}: transposition`}
-                          title={transposes(staff)
-                            ? `Sounds ${soundsText(transOf(staff))} than written.`
-                            : "Whether the instrument transposes: its music is written at another pitch than it sounds."}
-                        >
-                          <option value="none">Not transposing</option>
-                          {#each COMMON_TRANSPOSITIONS as t, n (n)}
-                            <option value={String(n)}>{t.label}</option>
-                          {/each}
-                          <option value="other">Other…</option>
-                        </select>
-                        <select
-                          class="ctl key"
-                          value={staff.keysig ?? ""}
-                          onchange={(e) => {
-                            const v = (e.target as HTMLSelectElement).value;
-                            if (v === "") delete staff.keysig;
-                            else staff.keysig = v;
-                            settleKey(staff);
-                          }}
-                          aria-label={`Staff ${i + 1}: key signature`}
-                          title={staff.keysig === undefined
-                            ? transposes(staff)
-                              ? "The key signature of this staff: the score's, moved by the transposition."
-                              : "The key signature of this staff: the score's."
-                            : "The key signature of this staff, chosen for it alone."}
-                        >
-                          <optgroup
-                            label={transposes(staff)
-                              ? "Score key, transposed"
-                              : "Score key"}
-                          >
-                            <option value=""
-                              >{keysigText(followedKey(staff))}</option
-                            >
-                          </optgroup>
-                          <optgroup label="This staff only">
-                            {#each STAFF_KEYS as k (k.value)}
-                              <option value={k.value}>{k.label}</option>
-                            {/each}
-                          </optgroup>
-                        </select>
+                        <StaffPitchSelects
+                          editor={pitch}
+                          {staff}
+                          scoreKey={keysig}
+                          name={`Staff ${i + 1}`}
+                        />
                       {/if}
                     </div>
-                    {#if transValue(staff) === "other" && !unpitched(staff)}
-                      {@const c = customOf(staff)}
+                    {#if pitch.value(staff) === "other" && !unpitched(staff)}
                       <div class="staffline custom">
-                        <select
-                          class="ctl"
-                          value={c.pitch}
-                          onchange={(e) =>
-                            setCustom(staff, {
-                              pitch: (e.target as HTMLSelectElement).value,
-                            })}
-                          aria-label={`Staff ${i + 1}: instrument pitch`}
-                          title="The pitch the instrument is in: the note that sounds when a C is written."
-                        >
-                          {#each PITCHES as p (p.name)}
-                            <option value={p.name}>in {p.name}</option>
-                          {/each}
-                        </select>
-                        <select
-                          class="ctl"
-                          value={c.higher ? "higher" : "lower"}
-                          onchange={(e) =>
-                            setCustom(staff, {
-                              higher:
-                                (e.target as HTMLSelectElement).value ===
-                                "higher",
-                            })}
-                          aria-label={`Staff ${i + 1}: sounds higher or lower`}
-                          title="Whether the instrument sounds higher or lower than written."
-                        >
-                          <option value="lower">sounds lower</option>
-                          <option value="higher">sounds higher</option>
-                        </select>
-                        <select
-                          class="ctl"
-                          value={String(c.octaves)}
-                          onchange={(e) =>
-                            setCustom(staff, {
-                              octaves: Number(
-                                (e.target as HTMLSelectElement).value,
-                              ),
-                            })}
-                          aria-label={`Staff ${i + 1}: added octaves`}
-                          title="Whole octaves added to the interval, as for a bass clarinet."
-                        >
-                          <option value="0">no octave</option>
-                          <option value="1">+1 octave</option>
-                          <option value="2">+2 octaves</option>
-                        </select>
+                        <StaffCustomPitch
+                          editor={pitch}
+                          {staff}
+                          name={`Staff ${i + 1}`}
+                        />
                       </div>
                     {/if}
                   </li>
@@ -2489,7 +2301,7 @@
     gap: 6px;
     min-width: 0;
   }
-  .staffline > .ctl,
+  .staffline > :global(.ctl),
   .staffline > :global(.gsel) {
     flex: 1 1 0;
     min-width: 0;
@@ -2497,14 +2309,14 @@
   .staffline > :global(.gsel.clef) {
     flex: 0 1 96px;
   }
-  .staffline > .ctl.key {
+  .staffline > :global(.ctl.key) {
     flex: 0 0 68px;
   }
   /* The staff blocks take the section's width up to a narrow margin. */
   .setup fieldset.sec-staves {
     padding-inline: 8px;
   }
-  .staffline.custom > .ctl:first-child {
+  .staffline.custom > :global(.ctl:first-child) {
     flex: 0 0 72px;
   }
   /* Docked, the text is larger: the transposition takes its own line below
@@ -2515,10 +2327,10 @@
   .setup.docked .staffline > :global(.gsel.clef) {
     flex: 1 1 0;
   }
-  .setup.docked .staffline > .ctl.key {
+  .setup.docked .staffline > :global(.ctl.key) {
     flex: 1 1 0;
   }
-  .setup.docked .staffline > .ctl.trans {
+  .setup.docked .staffline > :global(.ctl.trans) {
     order: 1;
     flex-basis: 100%;
   }
@@ -2689,9 +2501,6 @@
     font-size: 11.5px;
     font-weight: 600;
     color: var(--ink-faint);
-  }
-  .mfield > .ctl.bad {
-    border-color: var(--danger-line);
   }
   .field {
     flex: 1;

@@ -11,7 +11,7 @@ import {
   workStage,
   taskThreshold,
 } from "./campaign-graph.ts";
-import type { GraphData, WorkStage } from "./campaign-graph.ts";
+import type { GraphData, TaskActionMode, WorkStage } from "./campaign-graph.ts";
 import { cardTitle } from "./campaign-board.ts";
 import {
   configFlag,
@@ -169,6 +169,16 @@ export interface NextTask {
   /** The work's stage, for labelling the suggestion. */
   kind: WorkStage | "review";
 }
+
+/** The button mode (taskAction) of a next task the viewer can act on. */
+export const nextTaskMode = (n: NextTask): TaskActionMode =>
+  n.action === "encode"
+    ? "claim"
+    : n.action === "review"
+      ? "claim-review"
+      : n.kind === "review"
+        ? "continue-review"
+        : "continue";
 
 /**
  * The campaign's suggested next task: the first task the viewer can act on
@@ -511,6 +521,9 @@ export interface MyTask {
   subtask: string;
   /** The task's locator, which says whether it is a pre-task. */
   locator: string;
+  pre: boolean;
+  /** The task is claimed and continued in the app's score check (checksOpening). */
+  checksOpening: boolean;
   title: string;
   /** The claim's ISO timestamp (encoding group). */
   claimedAt: string;
@@ -597,6 +610,14 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       task,
       subtask: "",
       locator: def?.locator ?? "",
+      pre: isPreTask(def?.locator ?? ""),
+      checksOpening:
+        !!def &&
+        checksOpening(
+          def,
+          stats.taskDefs,
+          stats.piecePreparations[def.fragment],
+        ),
       title: def ? titleOf(stats, def) : task,
       claimedAt: "",
       expiresAt: "",

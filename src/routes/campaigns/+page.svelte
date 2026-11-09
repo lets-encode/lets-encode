@@ -29,10 +29,9 @@
   import { expiresIn, reviewWaitLabel, timeAgo } from "$lib/campaign-board.ts";
   import {
     handle,
-    isPreTask,
-    preTaskHref,
     reviewHref,
-    workPlace,
+    taskAction,
+    taskActionHref,
   } from "$lib/campaign-graph.ts";
   import {
     changeRequestTasks,
@@ -42,6 +41,7 @@
     loadCampaignStats,
     myTasksIn,
     nextTask,
+    nextTaskMode,
   } from "$lib/campaign-stats.ts";
   import type {
     CampaignListing,
@@ -328,16 +328,17 @@
     const s = stats.find((x) => x.name === t.campaignSlug);
     return s ? pendingVerdicts.taskProcessing(t.task, s.repoId) : false;
   };
-  // Claim a campaign row's suggested next task. Encoding claims open
-  // mei-friend (a pre-task claims in its own editor instead); a clean review
-  // claim lands on the place the review happens.
+  // Claim a campaign row's suggested next task, or continue the one held:
+  // a task worked on in the app opens its page there (taskAction), an
+  // encoding opens mei-friend; a clean review claim lands on the place the
+  // review happens.
   async function claimNext(s: CampaignStats, next: NextTask) {
-    if (next.action === "encode" && next.pre) {
-      await goto(preTaskHref(s.name, next.locator, next.task));
-      return;
-    }
-    if (next.checksOpening && next.action !== "review") {
-      await goto(`/${s.name}/check/${next.task}`);
+    const href =
+      next.action === "review"
+        ? null
+        : taskActionHref(s.name, next, taskAction(next, nextTaskMode(next)));
+    if (href) {
+      await goto(href);
       return;
     }
     const c = ctxOf(s);
@@ -699,29 +700,26 @@
                         <span class="chip">review · reviewing</span>
                       {/if}
                       {#if t.group === "encoding"}
+                        {@const act = taskAction(t, "continue")}
                         <div class="iacts">
-                          {#if isPreTask(t.locator)}
-                            <a
-                              class="btn"
-                              href={processing(t)
-                                ? undefined
-                                : preTaskHref(
-                                    t.campaignSlug,
-                                    t.locator,
-                                    t.task,
-                                  )}
-                              aria-disabled={processing(t)}
-                              >Continue in {workPlace(t.locator)}</a
-                            >
-                          {:else}
+                          {#if act.target === "mei-friend"}
                             <button
                               type="button"
                               class="btn"
                               disabled={runner.busy || processing(t)}
                               onclick={() => openEditor(t)}
-                              >Open in mei-friend <Icon
-                                name="external"
-                              /></button
+                              title={act.title}
+                              >{act.label} <Icon name="external" /></button
+                            >
+                          {:else}
+                            <a
+                              class="btn"
+                              href={processing(t)
+                                ? undefined
+                                : (taskActionHref(t.campaignSlug, t, act) ??
+                                  undefined)}
+                              aria-disabled={processing(t)}
+                              title={act.title}>{act.label}</a
                             >
                           {/if}
                         </div>

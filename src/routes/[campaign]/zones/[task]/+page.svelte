@@ -33,11 +33,11 @@
   import {
     buildSpreads,
     defaultSpreadView,
-    pagesLabelCh,
     shownPagesLabel,
   } from "$lib/page-spreads.ts";
   import {
     applyAnchor,
+    pagingRow,
     readAnchor,
     rowView,
     scrollToRow,
@@ -53,7 +53,13 @@
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
-  import FitIcon from "$lib/components/FitIcon.svelte";
+  import PageNav from "$lib/components/PageNav.svelte";
+  import PageSpreadControls from "$lib/components/PageSpreadControls.svelte";
+  import ViewerToolbar from "$lib/components/ViewerToolbar.svelte";
+  import ZoomLevel, {
+    ZOOM_MAX as ZOOM_MAX_PERCENT,
+    ZOOM_MIN as ZOOM_MIN_PERCENT,
+  } from "$lib/components/ZoomLevel.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
   import InstrumentNaming from "$lib/components/InstrumentNaming.svelte";
   import {
@@ -432,16 +438,9 @@
 
   // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
   // canvas; above 1 the pages overflow and the desk scrolls horizontally.
-  const ZOOM_MIN = 0.2;
-  const ZOOM_MAX = 4;
+  const ZOOM_MIN = ZOOM_MIN_PERCENT / 100;
+  const ZOOM_MAX = ZOOM_MAX_PERCENT / 100;
   let zoom = $state(1);
-
-  // The slider runs on a log scale: equal drags multiply the zoom equally,
-  // so the low end moves in fine steps and the high end in coarse ones.
-  const ZOOM_STOPS = 100;
-  // One press of zoom out or in: a tenth of the slider, about a third larger
-  // or smaller.
-  const ZOOM_STEP = 10;
   /** Below this tool-column width (a phone) the desk shows one page per row
       and the toolbar keeps only undo, redo, the page navigation, fit width
       and the ⋯ menu (the 559px container rule in the styles). */
@@ -450,15 +449,6 @@
       "Page 1 right" move into the ⋯ menu and zoom steps by buttons, so the
       toolbar stays one row (the 959px container rule in the styles). */
   const MEDIUM_TOOL = 960;
-  const zoomPos = $derived(
-    Math.round(
-      (Math.log(zoom / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * ZOOM_STOPS,
-    ),
-  );
-  const setZoomPos = (p: number) =>
-    (zoom =
-      Math.round(ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (p / ZOOM_STOPS) * 100) /
-      100);
 
   // The desk's inner size, for the whole-page fit.
   let deskW = $state(0);
@@ -680,10 +670,8 @@
   // One row on. Back from partway down a row returns to that row's top first.
   function go(delta: number) {
     if (!desk) return;
-    const a = readAnchor(desk, rowEls.slice(0, spreads.length));
-    let row = rowIndex + delta;
-    if (delta < 0 && a && a.row === rowIndex && a.frac > 0.02) row = rowIndex;
-    const next = spreads[Math.max(0, Math.min(spreads.length - 1, row))];
+    const rows = rowEls.slice(0, spreads.length);
+    const next = spreads[pagingRow(desk, rows, rowIndex, delta)];
     if (!next) return;
     showPage(next.pages[0]);
     ed.select(0, null);
@@ -2036,6 +2024,8 @@
   const VIEW_COMPACT = 720;
   const viewCompact = $derived(toolW > 0 && toolW < VIEW_COMPACT);
   const viewMenu = $derived(inSheet || medium);
+  // Draw mode on a touch screen, which the toolbar shows.
+  const drawing = $derived(canEdit && coarse && ed.drawMode);
   let viewOpen = $state(false);
   // A press outside the View options closes them.
   function closeViewOutside(e: PointerEvent) {
@@ -2102,12 +2092,12 @@
         style={`--desk-h:${deskH}px`}
       >
         {#if !inSheet}
-          <div
-            class="ctoolbar vtoolbar"
-            class:drawing={canEdit && coarse && ed.drawMode}
-          >
-            {@render toolbarItems()}
-          </div>
+          <ViewerToolbar
+            class={drawing ? "drawing" : ""}
+            {narrow}
+            children={toolbarItems}
+            end={toolbarEnd}
+          />
         {/if}
         {#if helpOpen}
           <div
@@ -2140,11 +2130,16 @@
             role="group"
             aria-label={inSheet ? "View options and help" : "View options"}
           >
-            {#if !narrow && !step4}{@render viewOptions()}{/if}
+            {#if !narrow && !step4}<PageSpreadControls
+                {view}
+                {firstOnRight}
+                onview={(v) => (view = v)}
+                onfirstonright={(on) => (firstOnRight = on)}
+              />{/if}
             {#if viewCompact && !step4}
               <button
                 type="button"
-                class="chip-switch"
+                class="tbtn"
                 class:on={showBoxes}
                 aria-pressed={showBoxes}
                 title="Show or hide the boxes on the page"
@@ -2152,7 +2147,7 @@
               >
               <button
                 type="button"
-                class="chip-switch"
+                class="tbtn"
                 class:on={showOverlaps}
                 aria-pressed={showOverlaps}
                 disabled={!showBoxes}
@@ -2163,7 +2158,7 @@
               {#if hasPartPages}
                 <button
                   type="button"
-                  class="chip-switch"
+                  class="tbtn"
                   class:on={wholePage}
                   aria-pressed={wholePage}
                   title="Show the whole page, not only the part this piece covers"
@@ -2581,44 +2576,15 @@
          top of the side panel docked as a sheet on a phone (inSheet). -->
     <!-- How many pages a row shows: in the toolbar, or in the ⋯ menu below
          MEDIUM_TOOL. -->
-    {#snippet viewOptions()}
-      <div class="seg" title="How many pages are shown side by side">
-        <button
-          type="button"
-          class:on={view === "single"}
-          aria-pressed={view === "single"}
-          onclick={() => (view = "single")}
-          ><Icon name="page-one" />1 page</button
-        >
-        <button
-          type="button"
-          class:on={view === "double"}
-          aria-pressed={view === "double"}
-          onclick={() => (view = "double")}
-          ><Icon name="page-two" />2 pages</button
-        >
-      </div>
-      {#if view === "double"}
-        <button
-          type="button"
-          class="chip-switch"
-          class:on={firstOnRight}
-          aria-pressed={firstOnRight}
-          onclick={() => (firstOnRight = !firstOnRight)}
-          title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
-          >Page 1 right</button
-        >
-      {/if}
-    {/snippet}
-
     <!-- One order at every width: undo and redo, the view options, the zoom;
-         at the right end the paging, the help and the ⋯ menu. Where the
-         toolbar narrows, groups move into the ⋯ menu; none changes place. -->
+         at the right end (toolbarEnd) the paging, the help and the ⋯ menu.
+         Where the toolbar narrows, groups move into the ⋯ menu; none changes
+         place. -->
     {#snippet toolbarItems()}
       {#if canEdit}
         <button
           type="button"
-          class="btn btn-icon"
+          class="tbtn tbtn-icon"
           onclick={() => ed.undo()}
           disabled={!ed.canUndo}
           aria-label="Undo"
@@ -2626,7 +2592,7 @@
         >
         <button
           type="button"
-          class="btn btn-icon"
+          class="tbtn tbtn-icon"
           onclick={() => ed.redo()}
           disabled={!ed.canRedo}
           aria-label="Redo"
@@ -2650,69 +2616,22 @@
         >
         <span class="vline"></span>
       {/if}
-      {#if !medium && !step4}{@render viewOptions()}{/if}
+      {#if !medium && !step4}<PageSpreadControls
+          {view}
+          {firstOnRight}
+          onview={(v) => (view = v)}
+          onfirstonright={(on) => (firstOnRight = on)}
+        />{/if}
       {#if !viewCompact && !step4}{@render boxesButton()}{@render overlapButton()}{@render wholePageButton()}<span
           class="vline viewline"
         ></span>{/if}
-      {#if !step4}<span class="zoomset">
-          <button
-            type="button"
-            class="tbtn tbtn-icon zoomstep"
-            onclick={() => {
-              setZoomPos(Math.max(0, zoomPos - ZOOM_STEP));
-              fit = null;
-            }}
-            disabled={zoomPos <= 0}
-            aria-label="Zoom out"
-            title="Zoom out"><Icon name="zoom-out" /></button
-          >
-          <input
-            class="zoomslider"
-            type="range"
-            aria-label="Zoom"
-            aria-valuetext={`${Math.round(zoom * 100)}%`}
-            min={0}
-            max={ZOOM_STOPS}
-            step={1}
-            value={zoomPos}
-            oninput={(e) => {
-              setZoomPos(Number((e.target as HTMLInputElement).value));
-              fit = null;
-            }}
-          />
-          <span class="zval">{Math.round(zoom * 100)}%</span>
-          <button
-            type="button"
-            class="tbtn tbtn-icon zoomstep zoomin"
-            onclick={() => {
-              setZoomPos(Math.min(ZOOM_STOPS, zoomPos + ZOOM_STEP));
-              fit = null;
-            }}
-            disabled={zoomPos >= ZOOM_STOPS}
-            aria-label="Zoom in"
-            title="Zoom in"><Icon name="zoom-in" /></button
-          >
-          <button
-            type="button"
-            class="tbtn tbtn-icon fitwidth"
-            class:on={fit === "width"}
-            aria-pressed={fit === "width"}
-            onclick={() => (fit = "width")}
-            aria-label="Fit the page width"
-            title="Fit the page width"><FitIcon kind="width" /></button
-          >
-          <button
-            type="button"
-            class="tbtn tbtn-icon fitpage"
-            class:on={fit === "page"}
-            aria-pressed={fit === "page"}
-            onclick={fitWholePage}
-            aria-label="Fit the whole page"
-            title="Fit the whole page, top to bottom"
-            ><FitIcon kind="page" /></button
-          >
-        </span>{/if}
-      <span class="tspacer"></span>
+      {#if !step4}<ZoomLevel
+          bind:value={() => Math.round(zoom * 100), (v) => (zoom = v / 100)}
+          bind:fit
+          fitPage={narrow ? undefined : fitZoom() * 100}
+          layout={narrow && coarse ? "pinch" : medium ? "steps" : "slider"}
+          onfitpage={fitWholePage}
+        />{/if}
       <span class="vh" role="status"
         >{ed.armed
           ? `The ${HANDLES.find((h) => h.edges === ed.armed?.edges)?.side} is picked up. ${coarse ? "Tap" : "Click"} where it should go.`
@@ -2722,69 +2641,57 @@
               ? `Turn on Draw, or tap the ${boxName} twice, to select it.`
               : ""}</span
       >
-      <!-- Last in the toolbar, next to the side panel on the right. -->
-      <div class="pgnav">
-        {#if !step4}<button
-            type="button"
-            class="btn btn-icon pgbtn"
-            onclick={() => go(-1)}
-            disabled={atTop}
-            aria-label="Previous page"
-            title="Previous page"><Icon name="chevron-left" /></button
-          >
-          <!-- A phone or tablet row has room for the numbers only ("1–2 of 4"). -->
-          <span
-            class="pglabel"
-            style={`min-width:${pagesLabelCh(pages.length) - (medium ? "Pages ".length : 0)}ch`}
-            title={medium ? spreadLabel : undefined}
-            >{medium ? spreadLabel.replace(/^Pages? /, "") : spreadLabel}</span
-          >
-          <button
-            type="button"
-            class="btn btn-icon pgbtn"
-            onclick={() => go(1)}
-            disabled={atEnd}
-            aria-label="Next page"
-            title="Next page"><Icon name="chevron-right" /></button
-          >
-          <span class="vline helpline" class:hidden={inSheet && !viewMenu}
-          ></span>{/if}
+    {/snippet}
+
+    <!-- Last in the toolbar, next to the side panel on the right. -->
+    {#snippet toolbarEnd()}
+      {#if !step4}<!-- A phone or tablet row has room for the numbers only ("1–2 of 4"). --><PageNav
+          label={spreadLabel}
+          total={pages.length}
+          compact={medium}
+          atStart={atTop}
+          {atEnd}
+          ongo={go}
+        />
+        <span class="vline helpline" class:hidden={inSheet && !viewMenu}
+        ></span>{/if}
+      <button
+        type="button"
+        class="tbtn tbtn-icon helpbtn"
+        class:hidden={inSheet}
+        class:on={helpOpen}
+        aria-label="Editor help"
+        aria-expanded={helpOpen}
+        aria-controls="zone-help"
+        onclick={() => {
+          helpOpen = !helpOpen;
+          viewOpen = false;
+        }}><Icon name="help" size={18} /></button
+      >
+      {#if viewMenu && (inSheet || !step4)}
         <button
           type="button"
-          class="btn btn-icon helpbtn"
-          class:hidden={inSheet}
-          class:on={helpOpen}
-          aria-label="Editor help"
-          aria-expanded={helpOpen}
-          aria-controls="zone-help"
+          class="tbtn tbtn-icon viewbtn"
+          class:on={viewOpen}
+          aria-label={inSheet ? "View options and help" : "View options"}
+          aria-expanded={viewOpen}
+          aria-controls="zone-view"
           onclick={() => {
-            helpOpen = !helpOpen;
-            viewOpen = false;
-          }}><Icon name="help" size={18} /></button
+            viewOpen = !viewOpen;
+            helpOpen = false;
+          }}><Icon name="more" size={18} /></button
         >
-        {#if viewMenu && (inSheet || !step4)}
-          <button
-            type="button"
-            class="btn btn-icon viewbtn"
-            class:on={viewOpen}
-            aria-label={inSheet ? "View options and help" : "View options"}
-            aria-expanded={viewOpen}
-            aria-controls="zone-view"
-            onclick={() => {
-              viewOpen = !viewOpen;
-              helpOpen = false;
-            }}><Icon name="more" size={18} /></button
-          >
-        {/if}
-      </div>
+      {/if}
     {/snippet}
 
     {#snippet sheetBar()}
-      <div
-        class="ctoolbar vtoolbar insheet"
-        class:drawing={canEdit && coarse && ed.drawMode}
-      >
-        {@render toolbarItems()}
+      <div class="sheetbar">
+        <ViewerToolbar
+          class={drawing ? "drawing" : ""}
+          narrow
+          children={toolbarItems}
+          end={toolbarEnd}
+        />
       </div>
     {/snippet}
     <!-- The selected box's body and its resize handles, over the page in
@@ -3527,12 +3434,12 @@
     .steps {
       flex: 1 1 200px;
     }
-    .viewmenu .chip-switch,
+    .viewmenu :global(.tbtn),
     .viewmenu .btn {
       position: relative;
       min-height: 32px;
     }
-    .viewmenu .chip-switch::after,
+    .viewmenu :global(.tbtn)::after,
     .viewmenu .btn::after {
       content: "";
       position: absolute;
@@ -3700,87 +3607,6 @@
   .runrow:has(:global(.runstate)) {
     padding: 8px 0 0;
   }
-  /* The toolbar takes the shared viewer toolbar's look (.vtoolbar, ui.css). */
-  /* The zoom: the slider with its readout and the two fits; where the
-     slider gives way, zoom out and in either side of the readout. */
-  .zoomset {
-    flex: 0 1 auto;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .zoomstep {
-    display: none;
-  }
-  /* A medium tool column (MEDIUM_TOOL: a tablet, or a laptop beside the
-     side panel): the page-count switch moves into the ⋯ menu and the zoom
-     slider gives way to zoom out and in. */
-  @container (max-width: 959px) {
-    .zoomset > .zoomslider {
-      display: none;
-    }
-    .zoomset > .zoomstep {
-      display: inline-flex;
-    }
-    .zval {
-      min-width: 4ch;
-    }
-  }
-  /* On a touch screen the toolbar buttons are 32px and take a 44px press
-     through an invisible ::after. */
-  @media (pointer: coarse) {
-    .ctoolbar :global(.btn),
-    .ctoolbar :global(.tbtn) {
-      position: relative;
-      min-width: 32px;
-      min-height: 32px;
-    }
-    .ctoolbar :global(.btn)::after,
-    .ctoolbar :global(.tbtn)::after {
-      content: "";
-      position: absolute;
-      inset: -6px -3px;
-    }
-  }
-  /* Narrow tool column (NARROW_TOOL, a phone): the toolbar is one row at
-     touch size in the same order: undo and redo, fit width (with a mouse
-     also zoom out and in around the readout; on a touch screen a pinch
-     zooms), the paging, and help or the ⋯ menu. Fit page is hidden. */
-  @container (max-width: 559px) {
-    .ctoolbar {
-      gap: 4px;
-      padding: 4px 6px;
-    }
-    .ctoolbar .vline,
-    .zoomset > .zoomslider,
-    .zoomset > .fitpage {
-      display: none;
-    }
-    .zoomset {
-      flex: none;
-      gap: 2px;
-    }
-    /* The label gives up its reserved width so the row fits a phone. */
-    .pglabel {
-      min-width: 0 !important;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    /* 32px buttons that take a 44px press through an invisible ::after. */
-    .ctoolbar :global(.btn),
-    .ctoolbar :global(.tbtn) {
-      position: relative;
-      min-width: 32px;
-      min-height: 32px;
-    }
-    .ctoolbar :global(.btn)::after,
-    .ctoolbar :global(.tbtn)::after {
-      content: "";
-      position: absolute;
-      inset: -6px -3px;
-    }
-  }
   /* On a narrow touch screen the toolbar moves below the pages, within
      thumb reach; the help and the ⋯ menu open above it, over the pages, so
      the desk keeps its height. A pinch zooms: no zoom buttons or readout. */
@@ -3795,10 +3621,6 @@
         top: auto;
         bottom: 100%;
         margin: 0 0 8px;
-      }
-      .zoomset > .zval,
-      .zoomset > .zoomstep {
-        display: none;
       }
     }
   }
@@ -3829,9 +3651,9 @@
   .helpline.hidden {
     display: none;
   }
-  /* Its padding holds the buttons' 44px press areas inside the scrolling
-     row; the negative margin keeps the row 32px in the layout. */
-  .ctoolbar.insheet {
+  /* Its padding holds the buttons' 44px press areas; the negative margin
+     keeps the row 32px in the layout. */
+  .sheetbar :global(.vtoolbar.narrow) {
     min-height: 32px;
     padding: 6px 3px;
     margin: -6px -3px;
@@ -3842,17 +3664,14 @@
   }
   /* In draw mode the toolbar takes the stage's wash and line, so the mode
      shows over the pages. */
-  .ctoolbar.drawing {
+  .tbar :global(.vtoolbar.drawing) {
     background: var(--st-wash);
     border-color: var(--st);
   }
-  .ctoolbar.insheet.drawing {
+  .sheetbar :global(.vtoolbar.narrow.drawing) {
     background: var(--st-wash);
     border: 1px solid var(--st);
     border-radius: 12px;
-  }
-  .tspacer {
-    flex: 1;
   }
   /* The scroll position is kept by page (see `anchor`), not by the browser. */
   .desk {

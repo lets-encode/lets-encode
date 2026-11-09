@@ -29,11 +29,11 @@
   import {
     buildSpreads,
     defaultSpreadView,
-    pagesLabelCh,
     shownPagesLabel,
   } from "$lib/page-spreads.ts";
   import {
     applyAnchor,
+    pagingRow,
     readAnchor,
     rowView,
     scrollToRow,
@@ -46,7 +46,11 @@
     renderPage,
   } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
-  import FitIcon from "./FitIcon.svelte";
+  import PageNav from "$lib/components/PageNav.svelte";
+  import ViewerToolbar from "$lib/components/ViewerToolbar.svelte";
+  import PageSpreadControls from "$lib/components/PageSpreadControls.svelte";
+  import ZoomLevel, { ZOOM_MAX, ZOOM_MIN } from "./ZoomLevel.svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import type { PreviewPane } from "$lib/preview-pane.ts";
 
@@ -138,31 +142,17 @@
     writePreviewPane(choice);
   }
 
-  const PV_ZOOM_MIN = 0.2;
-  const PV_ZOOM_MAX = 4;
-  // The slider runs on a log scale: equal drags multiply the zoom equally,
-  // so the low end moves in fine steps and the high end in coarse ones.
-  const PV_ZOOM_STOPS = 100;
-  // One press of zoom out or in: a tenth of the slider, about a third larger
-  // or smaller.
-  const PV_ZOOM_STEP = 10;
+  const PV_ZOOM_MIN = ZOOM_MIN / 100;
+  const PV_ZOOM_MAX = ZOOM_MAX / 100;
+  /** Below this preview width the zoom slider gives way to zoom out and in
+      either side of the readout. */
+  const PV_STEPS = 900;
   /** Below this preview width the toolbar keeps only the panes and the page
       navigation (the narrow rule in the styles). */
   const PV_NARROW = 560;
   /** Below this preview width the toolbar's page label shows the numbers
       only (the compact rule in the styles). */
   const PV_COMPACT = 1100;
-  const pvZoomPos = $derived(
-    Math.round(
-      (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) *
-        PV_ZOOM_STOPS,
-    ),
-  );
-  const setPvZoomPos = (p: number) =>
-    (pvZoom =
-      Math.round(
-        PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100,
-      ) / 100);
   // The fit in force, if any: it keeps the zoom at the fit as the pane
   // resizes or the view changes, until the slider is moved.
   let pvFit = $state<"width" | "page" | null>("page");
@@ -175,6 +165,7 @@
   let pvW = $state(0);
   const pvNarrow = $derived(pvW > 0 && pvW < PV_NARROW);
   const pvCompact = $derived(pvW > 0 && pvW < PV_COMPACT);
+  const coarse = new MediaQuery("(pointer: coarse)", false);
   const pvShownView = $derived(pvNarrow ? "single" : pvView);
   const pvSpreads = $derived(
     buildSpreads(pvPageTotal, pvShownView, pvFirstOnRight),
@@ -383,10 +374,7 @@
   // One row on. Back from partway down a row returns to that row's top first.
   function pvGo(delta: number) {
     if (!pvScroller) return;
-    const a = readAnchor(pvScroller, pvRows());
-    let row = pvRow + delta;
-    if (delta < 0 && a && a.row === pvRow && a.frac > 0.02) row = pvRow;
-    const next = pvSpreads[Math.max(0, Math.min(pvSpreads.length - 1, row))];
+    const next = pvSpreads[pagingRow(pvScroller, pvRows(), pvRow, delta)];
     if (next) showPage(next.pages[0]);
   }
   function pvSetView(v: "single" | "double") {
@@ -626,7 +614,7 @@
 />
 
 <div class="preview" bind:clientWidth={pvW}>
-  <div class="ptoolbar vtoolbar">
+  <ViewerToolbar class="ptoolbar" narrow={pvNarrow}>
     {#if preview?.facs?.length}
       <!-- Where the toolbar is too narrow for the labels, the buttons carry
            their icon alone; the label stays for screen readers. -->
@@ -659,32 +647,15 @@
         >
       </div>
     {/if}
-    <div class="seg viewseg" title="How many pages are shown side by side">
-      <button
-        type="button"
-        class:on={pvView === "single"}
-        aria-pressed={pvView === "single"}
-        onclick={() => pvSetView("single")}
-        ><Icon name="page-one" /><span class="lbl">1 page</span></button
-      >
-      <button
-        type="button"
-        class:on={pvView === "double"}
-        aria-pressed={pvView === "double"}
-        onclick={() => pvSetView("double")}
-        ><Icon name="page-two" /><span class="lbl">2 pages</span></button
-      >
-    </div>
-    {#if pvView === "double"}
-      <button
-        type="button"
-        class="chip-switch pcheck"
-        class:on={pvFirstOnRight}
-        aria-pressed={pvFirstOnRight}
-        onclick={() => pvSetFirstOnRight(!pvFirstOnRight)}
-        title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
-        >Page 1 right</button
-      >
+    <!-- A narrow preview shows one page per row: nothing to group. -->
+    {#if !pvNarrow}
+      <PageSpreadControls
+        class="viewseg"
+        view={pvView}
+        firstOnRight={pvFirstOnRight}
+        onview={pvSetView}
+        onfirstonright={pvSetFirstOnRight}
+      />
     {/if}
     {#if facsVisible}
       <button
@@ -699,92 +670,29 @@
       >
     {/if}
     <span class="vline zoomline"></span>
-    <span class="zoomgrp">
-      <button
-        type="button"
-        class="tbtn tbtn-icon zoomstep"
-        onclick={() => {
-          setPvZoomPos(Math.max(0, pvZoomPos - PV_ZOOM_STEP));
-          pvFit = null;
-        }}
-        disabled={pvZoomPos <= 0}
-        aria-label="Zoom out"
-        title="Zoom out"><Icon name="zoom-out" /></button
-      >
-      <input
-        class="zoomslider"
-        type="range"
-        aria-label="Zoom"
-        aria-valuetext={`${Math.round(pvZoom * 100)}%`}
-        min={0}
-        max={PV_ZOOM_STOPS}
-        step={1}
-        value={pvZoomPos}
-        oninput={(e) => {
-          setPvZoomPos(Number((e.target as HTMLInputElement).value));
-          pvFit = null;
-        }}
-      />
-      <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
-      <button
-        type="button"
-        class="tbtn tbtn-icon zoomstep"
-        onclick={() => {
-          setPvZoomPos(Math.min(PV_ZOOM_STOPS, pvZoomPos + PV_ZOOM_STEP));
-          pvFit = null;
-        }}
-        disabled={pvZoomPos >= PV_ZOOM_STOPS}
-        aria-label="Zoom in"
-        title="Zoom in"><Icon name="zoom-in" /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon fitbtn"
-        class:on={pvFit === "width"}
-        aria-pressed={pvFit === "width"}
-        onclick={() => (pvFit = "width")}
-        aria-label="Fit the page width"
-        title="Fit the page width"><FitIcon kind="width" /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon fitbtn"
-        class:on={pvFit === "page"}
-        aria-pressed={pvFit === "page"}
-        onclick={pvFitWholePage}
-        aria-label="Fit the whole page"
-        title="Fit the whole page, top to bottom"
-        ><FitIcon kind="page" /></button
-      >
-    </span>
-    <span class="mspacer"></span>
-    <!-- Last in the toolbar, next to the side panel on the right. -->
-    <div class="pgnav">
-      <button
-        type="button"
-        class="btn btn-icon pgbtn"
-        onclick={() => pvGo(-1)}
-        disabled={pvAtTop}
-        aria-label="Previous page"
-        title="Previous page"><Icon name="chevron-left" /></button
-      >
+    <ZoomLevel
+      bind:value={() => Math.round(pvZoom * 100), (v) => (pvZoom = v / 100)}
+      bind:fit={pvFit}
+      fitPage={pvNarrow ? undefined : pvFitPage * 100}
+      layout={pvNarrow && coarse.current
+        ? "pinch"
+        : pvW > 0 && pvW < PV_STEPS
+          ? "steps"
+          : "slider"}
+      onfitpage={pvFitWholePage}
+    />
+    {#snippet end()}
       <!-- A compact toolbar has room for the numbers only ("1 of 4"). -->
-      <span
-        class="pglabel"
-        style={`min-width:${pagesLabelCh(pvPageTotal) - (pvCompact ? "Pages ".length : 0)}ch`}
-        title={pvCompact ? pvLabel : undefined}
-        >{pvCompact ? pvLabel.replace(/^Pages? /, "") : pvLabel}</span
-      >
-      <button
-        type="button"
-        class="btn btn-icon pgbtn"
-        onclick={() => pvGo(1)}
-        disabled={pvAtEnd}
-        aria-label="Next page"
-        title="Next page"><Icon name="chevron-right" /></button
-      >
-    </div>
-  </div>
+      <PageNav
+        label={pvLabel}
+        total={pvPageTotal}
+        compact={pvCompact}
+        atStart={pvAtTop}
+        atEnd={pvAtEnd}
+        ongo={pvGo}
+      />
+    {/snippet}
+  </ViewerToolbar>
   <div
     class="pbody-panes"
     {@attach zoomGestures({
@@ -964,14 +872,8 @@
 </div>
 
 <style>
-  .mono {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-  }
   .muted {
     color: var(--ink-faint);
-  }
-  .mspacer {
-    flex: 1;
   }
   .preview {
     flex: 1;
@@ -985,19 +887,14 @@
   }
 
   /* -------------------------------------------------------------- toolbar */
-  /* The shared viewer toolbar (.vtoolbar, ui.css), on one line: as the
+  /* The shared viewer toolbar (ViewerToolbar), on one line: as the
      preview narrows, labels give way to icons, then the zoom slider to zoom
      out and in. What still does not fit scrolls sideways. */
-  .ptoolbar {
+  .preview :global(.ptoolbar) {
     margin-bottom: 10px;
   }
   .paneseg {
     flex: none;
-  }
-  .zoomgrp {
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
   /* Below this the labels no longer fit beside the paging and zoom controls, so
      the pane buttons keep their icon and hide their label from sight only. */
@@ -1014,7 +911,7 @@
   /* Compact (PV_COMPACT): the page-count buttons keep their icon, the page
      label its numbers. */
   @container (max-width: 1099px) {
-    .viewseg .lbl {
+    .preview :global(.viewseg .lbl) {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -1023,78 +920,23 @@
       white-space: nowrap;
     }
   }
-  /* Narrower, the zoom slider gives way to zoom out and in either side of
-     the readout. */
-  .zoomstep {
-    display: none;
-  }
-  @container (max-width: 899px) {
-    .zoomgrp > .zoomslider {
-      display: none;
-    }
-    .zoomgrp > .zoomstep {
-      display: inline-flex;
-    }
-  }
   @container (max-width: 799px) {
     .zoomline {
       display: none;
     }
   }
-  /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size in
-     the same order: the pane switch, the zone button, the zoom and the
-     paging, each 32px with a 44px press area. The page-count switch and
-     "Page 1 right" (a phone shows one page) and fit page are hidden. On a
-     touch screen the toolbar moves below the pages, within thumb reach, and
-     a pinch zooms: no zoom buttons or readout. */
+  /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size
+     (ViewerToolbar) in the same order: the pane switch, the zone button,
+     the zoom and the paging. The page-count switch (a phone shows one page)
+     and fit page are left out. On a touch screen the toolbar moves below
+     the pages, within thumb reach, and a pinch zooms: no zoom buttons or
+     readout. */
   @media (pointer: coarse) {
     @container (max-width: 559px) {
-      .ptoolbar {
+      .preview :global(.ptoolbar) {
         order: 2;
         margin: 8px 0 0;
       }
-      .zoomgrp > .zval,
-      .zoomgrp > .zoomstep {
-        display: none;
-      }
-    }
-  }
-  @container (max-width: 559px) {
-    .ptoolbar {
-      gap: 4px;
-      padding: 4px 6px;
-      /* The 44px press areas reach past the toolbar's edge. */
-      overflow-x: visible;
-    }
-    .viewseg,
-    .pcheck,
-    .zoomline,
-    .zoomgrp > .zoomslider,
-    .zoomgrp > .fitbtn + .fitbtn {
-      display: none;
-    }
-    .zoomgrp {
-      flex: none;
-      gap: 2px;
-    }
-    .pglabel {
-      min-width: 0 !important;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .ptoolbar .pgbtn,
-    .ptoolbar .tbtn {
-      position: relative;
-      box-sizing: border-box;
-      min-width: 32px;
-      min-height: 32px;
-      justify-content: center;
-    }
-    .ptoolbar .pgbtn::after,
-    .ptoolbar .tbtn::after {
-      content: "";
-      position: absolute;
-      inset: -6px -3px;
     }
   }
   /* ---------------------------------------------------------------- panes */

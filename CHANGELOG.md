@@ -56,6 +56,12 @@ parentheses.
 - The next-task badge takes the purple of its stage.
 - Relative times come from one helper and say nothing for an unreadable time.
 - The dev scripts encode file paths and quote CSV like the app.
+- Claim and continue buttons take their label, tooltip, target and colour from one function everywhere.
+- A held encoding says Continue in mei-friend, and a held score-check task continues in the score check from Your open work too.
+- The score check's own claim button is encoding blue.
+- The score check and the score setup share their key, time signature and staff transposition fields.
+- The zones page and the score preview share one viewer toolbar with the same zoom, paging and page-grouping controls.
+- On a phone the step bar fits the screen and names only the active step.
 
 ## 2026-11-06
 

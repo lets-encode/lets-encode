@@ -539,11 +539,11 @@ button.chip {
    preview of review and View score) has one toolbar, .vtoolbar, in one
    order at every
    width: undo and redo · the view options · the zoom, then at the right end
-   the paging (.pgnav: .btn-icon .pgbtn arrows around a .pglabel), the help
-   and the ⋯ menu. Groups are divided by a .vline; where the toolbar
-   narrows, groups give way or move into the ⋯ menu, none changes place. It
-   sits above the pages, below them only on a narrow touch screen.
-   Its buttons are 32px soft circles (.btn-icon, .tbtn-icon). */
+   the paging (.pgnav: PageNav's .pgbtn arrows around a .pglabel), the help
+   and the ⋯ menu (ViewerToolbar). Groups are divided by a .vline; where the
+   toolbar narrows, groups give way or move into the ⋯ menu, none changes
+   place. It sits above the pages, below them only on a narrow touch screen.
+   Its icon buttons are 32px soft circles, .tbtn-icon. */
 .vtoolbar {
   flex: none;
   min-height: 46px;
@@ -575,10 +575,6 @@ button.chip {
   white-space: nowrap;
   text-align: center;
   flex: none;
-}
-.btn-icon.pgbtn {
-  width: 32px;
-  min-height: 32px;
 }
 /* The paging cluster. It is not sticky: Safari leaves text that changes
    inside a sticky element in a sideways-scrolling toolbar unpainted. */
@@ -1358,7 +1354,8 @@ select.ctl {
    numbered list joined by a line, each step with the glyph of what it marks
    (StepGlyph) and its count; the active step's number takes the stage's
    solid colour. Docked as a sheet the list becomes one row of equal cells
-   with the short name and count. Markup: <div class="steps" role="group">
+   with the short name and count; on a phone the cells show the number and
+   count, and the active cell, as wide as it needs, also the long name. Markup: <div class="steps" role="group">
    <button class="step" class:on><span class="stepno">1</span> glyph <span
    class="steplong"/><span class="stepshort"/><span class="stepcount"/><span
    class="stepn"/></button>…</div>. */
@@ -1446,6 +1443,7 @@ select.ctl {
 }
 @media (orientation: portrait) and (max-width: 1100px) {
   .steps {
+    min-width: 0;
     flex-direction: row;
     padding: 3px;
     background: var(--bg-tint);
@@ -1516,6 +1514,19 @@ select.ctl {
     width: 18px;
     height: 18px;
     font-size: 10.5px;
+  }
+  .step {
+    gap: 5px;
+  }
+  .step.on {
+    flex: none;
+  }
+  .stepshort {
+    display: none;
+  }
+  .step.on .steplong {
+    display: inline;
+    flex: 0 1 auto;
   }
 }
 

@@ -48,8 +48,9 @@
   import {
     handle,
     pageOfLocator,
-    preTaskHref,
     reviewHref,
+    taskAction,
+    taskActionHref,
   } from "$lib/campaign-graph.ts";
   import { encodingClaimOf } from "$lib/campaign-claim.ts";
   import {
@@ -1117,10 +1118,12 @@
     writeLastTask(campaign, found);
   });
 
+  // Claim an open task where taskAction sends it: a page in the app, else
+  // mei-friend through the editor command.
   function claimCard(card: BoardCard) {
     actedOn(card.task);
-    if (card.pre) goto(preTaskHref(campaign, card.locator, card.task));
-    else if (card.checksOpening) goto(`/${campaign}/check/${card.task}`);
+    const href = taskActionHref(campaign, card, taskAction(card, "claim"));
+    if (href) goto(href);
     else editor(card.task);
   }
   // Act on a card the viewer can work on: claim it when it is open, claim its

@@ -26,7 +26,11 @@
     doneLabel,
     stageOf,
   } from "$lib/campaign-board.ts";
-  import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
+  import {
+    pageOfLocator,
+    taskAction,
+    type TaskAction,
+  } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
@@ -145,25 +149,23 @@
   // A single-piece campaign keeps its one piece expanded.
   const lone = $derived(pieces.length === 1);
 
-  const actLabel = (c: BoardCard): string => {
-    if (viewer === "") return "Log in with GitHub to claim";
-    if (c.column === "ready")
-      return c.checksOpening
-        ? "Claim & open score check"
-        : claimLabel(c.locator);
-    if (c.column === "validation" && c.slots.some((s) => s.claimable))
-      return "Claim to review";
-    return "Open task";
-  };
+  // The card's claim: of the task when it is open, of a review when one is
+  // free; null when the button only opens the task.
+  const claimOf = (c: BoardCard): TaskAction | null =>
+    c.column === "ready"
+      ? taskAction(c, "claim")
+      : c.column === "validation" && c.slots.some((s) => s.claimable)
+        ? taskAction(c, "claim-review")
+        : null;
+  const actLabel = (c: BoardCard): string =>
+    viewer === ""
+      ? "Log in with GitHub to claim"
+      : (claimOf(c)?.label ?? "Open task");
   // What the card's button does, for its tooltip.
-  const actTitle = (c: BoardCard): string => {
-    if (viewer === "") return "Log in with GitHub to claim this task.";
-    if (c.column === "validation")
-      return "Claims a review of this task for you.";
-    if (c.pre)
-      return `Claims this task for you and opens the ${workPlace(c.locator)}.`;
-    return "Claims this task for you and opens the score in mei-friend.";
-  };
+  const actTitle = (c: BoardCard): string =>
+    viewer === ""
+      ? "Log in with GitHub to claim this task."
+      : (claimOf(c)?.title ?? "Opens the task.");
 
   // The stage a claim starts, as the button's colour class.
   const stageClass = (c: BoardCard) =>
@@ -388,7 +390,7 @@
                   title={actTitle(featured)}
                   >{actLabel(
                     featured,
-                  )}{#if viewer !== "" && featured.column === "ready" && !featured.pre}<Icon
+                  )}{#if viewer !== "" && claimOf(featured)?.target === "mei-friend"}<Icon
                       name="external"
                     />{/if}</button
                 >

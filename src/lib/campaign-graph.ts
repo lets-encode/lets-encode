@@ -192,6 +192,103 @@ export const claimLabel = (locator: string): string =>
     ? `Claim & open ${workStage(locator)}`
     : "Claim & open in mei-friend";
 
+/** What the viewer is about to do with a task: claim its encoding (or
+    pre-task), continue the one they hold, claim a review, or continue it. */
+export type TaskActionMode =
+  | "claim"
+  | "continue"
+  | "claim-review"
+  | "continue-review";
+
+/** A task's main button: its label, its tooltip, where it leads and the
+    stage whose colour it takes. */
+export interface TaskAction {
+  label: string;
+  title: string;
+  /** mei-friend (another site, opened by the editor command), the score
+      check, a pre-task's own editor, or the review view. */
+  target: "mei-friend" | "check" | "pre" | "review";
+  stage: "enc" | "pre" | "review";
+}
+
+/**
+ * The main button for `task` in `mode`, the same wherever a task is offered.
+ * A pre-task is worked on and reviewed in its own editor; an encoding that
+ * starts with a check of the score definition (checksOpening) goes through
+ * the score check, any other encoding to mei-friend.
+ */
+export function taskAction(
+  task: { locator: string; pre: boolean; checksOpening: boolean },
+  mode: TaskActionMode,
+): TaskAction {
+  const place = workPlace(task.locator);
+  if (mode === "claim-review")
+    return {
+      label: "Claim to review",
+      title: task.pre
+        ? `Claims a review of this task for you and opens the ${place}.`
+        : "Claims a review of this task for you and opens the review.",
+      target: task.pre ? "pre" : "review",
+      stage: "review",
+    };
+  if (mode === "continue-review")
+    return task.pre
+      ? {
+          label: `Continue in ${place}`,
+          title: `Opens the ${place} to review the submitted work.`,
+          target: "pre",
+          stage: "review",
+        }
+      : {
+          label: "Continue in review",
+          title:
+            "Opens the review view: score and facsimile side by side, with the Approve and Request changes buttons.",
+          target: "review",
+          stage: "review",
+        };
+  const claim = mode === "claim";
+  if (task.pre)
+    return {
+      label: claim ? claimLabel(task.locator) : `Continue in ${place}`,
+      title: claim
+        ? `Claims this task for you and opens the ${place}.`
+        : `Opens the ${place} of the task you hold.`,
+      target: "pre",
+      stage: "pre",
+    };
+  if (task.checksOpening)
+    return {
+      label: claim ? "Claim & open score check" : "Continue in score check",
+      title: claim
+        ? "Claims this task for you and opens the score check of the clefs, key signatures, meter and transpositions, before the draft opens in mei-friend."
+        : "Opens the score check of the task you hold, which opens the draft in mei-friend.",
+      target: "check",
+      stage: "enc",
+    };
+  return {
+    label: claim ? claimLabel(task.locator) : "Continue in mei-friend",
+    title: claim
+      ? "Claims this task for you and opens the score in mei-friend."
+      : "Opens the task you hold in mei-friend. Completing it there submits it for review.",
+    target: "mei-friend",
+    stage: "enc",
+  };
+}
+
+/** The app page a task's button leads to; null for mei-friend, which the
+    editor command opens. */
+export function taskActionHref(
+  campaign: string,
+  task: { task: string; locator: string },
+  action: TaskAction,
+): string | null {
+  if (action.target === "pre")
+    return preTaskHref(campaign, task.locator, task.task);
+  if (action.target === "check") return `/${campaign}/check/${task.task}`;
+  if (action.target === "review") return `/${campaign}/review/${task.task}`;
+  return null;
+}
+
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
  * subtask count. A task without validation subtasks has a threshold of 0 — it
