@@ -429,6 +429,34 @@ export function isLeftoverOperationBranch(
   );
 }
 
+/**
+ * The version of what the coordinator and the app exchange through pull
+ * requests and the tracking tables: raised with every change to it that the
+ * other side must know of. The coordinator's verdict comments carry it
+ * (contractMarker).
+ */
+export const AUTOMATION_CONTRACT = 1;
+
+const CONTRACT_MARKER = /\n*<!-- lets-encode-contract: (\d+) -->\s*$/;
+
+/** The hidden line that ends every verdict comment of the coordinator. */
+export const contractMarker = (): string =>
+  `<!-- lets-encode-contract: ${AUTOMATION_CONTRACT} -->`;
+
+/**
+ * A verdict comment's text without its contract line, and the contract
+ * number it carries; null for a comment without one.
+ */
+export function splitContract(comment: string): {
+  text: string;
+  contract: number | null;
+} {
+  const match = CONTRACT_MARKER.exec(comment);
+  return match
+    ? { text: comment.slice(0, match.index), contract: Number(match[1]) }
+    : { text: comment, contract: null };
+}
+
 /** The campaign branch holding the unsubmitted work of a task's expired claims. */
 export const keptWorkBranch = (task_id: string): string => `wip-${task_id}`;
 

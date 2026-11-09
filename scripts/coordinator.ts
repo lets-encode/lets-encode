@@ -79,6 +79,7 @@ import {
   classifyPullRequest,
   heldByOpenOperation,
   isAutomaticCommit,
+  contractMarker,
   isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkBranch,
@@ -98,7 +99,7 @@ import {
 } from "../src/lib/coordinator-policy.ts";
 import {
   compareCommitMessages,
-  getCommitMessage,
+  getPullRequestCommitMessages,
   getPullRequestDetails,
   getRepoFile,
   getRepoHead,
@@ -156,6 +157,18 @@ let headRef = "";
 // comments were submitted in even when their runs finish in another order;
 // lock, state, history rows and a fail's comment carry the processing time.
 let submittedAt = "";
+// Comment on the bound pull request and close it. Every verdict comment ends
+// with the automation's contract number, which the app compares with its own.
+function commentAndClose(body: string): Promise<void> {
+  return commentAndClosePr(
+    token,
+    owner,
+    repo,
+    prNumber,
+    `${body}\n\n${contractMarker()}`,
+  );
+}
+
 function bindPullRequest(pr: PullRequestContext): void {
   prNumber = pr.number;
   author = pr.author;
@@ -598,7 +611,7 @@ async function runClaim(
   // The branch is deleted only after the close: deleting the head branch of an
   // open pull request closes it as well, and a close request racing that
   // deletion fails with a validation error.
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -694,7 +707,7 @@ async function runRelease(
     ? `✅ Release accepted — ${authorLabel} abandoned ${target}.`
     : `❌ Release rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -830,7 +843,7 @@ async function runReviewEdit(
     ? `✅ Review edit accepted — \`${verdict.task}\` is back in editing, claimed by ${authorLabel}.`
     : `❌ Review edit rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -868,7 +881,8 @@ async function decideEncoding(
   // no grid, so its page span is taken from the fork wholesale. The first page
   // task of an 'omr-instruments' piece also brings the opening score
   // definition's clefs, keys, meter and transpositions. Whole-file tasks
-  // (empty locator) and pre-tasks take the fork verbatim.
+  // (empty locator) and pre-tasks take the fork's file with the campaign's
+  // header (assembleSubmission).
   //
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
@@ -907,11 +921,11 @@ async function decideEncoding(
 
   const isPageTask = task.locator.startsWith("surface-");
   const readStart = Date.now();
-  const [forkMei, baseMei, configText, commitMessage] = await Promise.all([
+  const [forkMei, baseMei, configText, commitMessages] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
     getRepoFile(token, owner, repo, task.fragment, sha),
     isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null,
-    getCommitMessage(token, headOwner, headRepo, headSha),
+    getPullRequestCommitMessages(token, owner, repo, prNumber),
   ]);
   logPhase("read_pr_files", readStart);
   const checkStart = Date.now();
@@ -927,23 +941,31 @@ async function decideEncoding(
     // file. Encodings are edited in mei-friend; a pre-task is edited in the app
     // itself, whose <application> entry every generated score already carries.
     // The expired claims whose unsubmitted work this submission continues are
-    // recorded first, each dated at its expiry.
+    // recorded first, each dated at its expiry. Contributors are named by
+    // login with their account id; a failed login lookup fails the run, which
+    // is retried, rather than naming someone by number. A deleted account is
+    // named "ghost", as GitHub shows it.
     const application = isPreTask(task.locator) ? undefined : "mei-friend";
     const contributions: Contribution[] = [];
     for (const row of keptWorkSince(pastHistory, task.task_id)) {
-      const login = await getUserLogin(token, Number(row.user_id)).catch(
-        () => null,
-      );
+      const login = await getUserLogin(token, Number(row.user_id));
       contributions.push({
-        name: login ?? row.user_id,
+        name: login ?? "ghost",
+        id: row.user_id,
         message: `Unsubmitted work on ${task.task_id}, kept when the claim expired.`,
         isodate: row.timestamp.slice(0, 10),
         application,
       });
     }
-    const message = commitMessage ?? `Encoding of ${task.task_id} accepted.`;
+    // The newest message the claimer wrote, not one of the app's commits.
+    const message =
+      commitMessages.filter((m) => !isAutomaticCommit(m)).at(-1) ??
+      `Encoding of ${task.task_id} accepted.`;
+    if (!authorLogin)
+      throw new Error(`Pull request #${prNumber} names no author login.`);
     contributions.push({
-      name: authorLabel,
+      name: authorLogin,
+      id: author,
       message: isReviewEdit(pastHistory, task.task_id, author)
         ? `Corrected during review: ${message}`
         : message,
@@ -1307,7 +1329,7 @@ async function runSubmit(
     : `❌ Submission rejected: ${explainReason(verdict.reason)}. No changes were made.` +
       (verdict.detail ? ` ${rejectionDetail(verdict.detail)}` : "");
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -1424,7 +1446,7 @@ async function runComment(
       : "✅ Comment recorded."
     : `❌ Comment rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -1590,13 +1612,7 @@ async function processPullRequest(
     console.warn(
       `PR #${prNumber}: every attempt lost the commit: ${e.message}`,
     );
-    await commentAndClosePr(
-      token,
-      owner,
-      repo,
-      prNumber,
-      `❌ Not recorded: ${explainReason("tables_busy")}.`,
-    );
+    await commentAndClose(`❌ Not recorded: ${explainReason("tables_busy")}.`);
     // An encoding's head branch holds the work, kept for the next attempt.
     if (kind !== "encoding") await cleanupHeadBranch();
   }

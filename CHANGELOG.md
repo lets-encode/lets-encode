@@ -14,6 +14,12 @@ parentheses.
 - The broker follows GitHub's redirect for a renamed campaign repository instead of passing it to the browser.
 - The campaign list shows only repositories the registry holds under their configured name.
 - The task branch is looked up in the repository the claim came from, not by current push access.
+- Score headers record each contributor's GitHub account id with the login.
+- The recorded change message is the newest commit the volunteer wrote, not one of the app's.
+- Your open work on the campaign list drops expired claims and updates its times every minute.
+- A background submission is followed until it is decided, once a minute after the first 70 minutes.
+- Verdict comments carry the automation's contract number, and the app reports a different one as an error.
+- The campaign workflow runs pull requests of up to 50 files and the coordinator action checks the entry point.
 
 ## 2026-11-06
 

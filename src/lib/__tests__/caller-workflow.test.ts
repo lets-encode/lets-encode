@@ -120,7 +120,8 @@ test("the cfg step validates the pointer fields before exporting them", () => {
     block,
     /\[\[ "\$repo" =~ \^\[A-Za-z0-9_.-\]\+\/\[A-Za-z0-9_.-\]\+\$ \]\]/,
   );
-  assert.match(block, /"\$path" != "scripts\/coordinator\.ts"/);
+  // The entry point is checked by the action, from the same checkout.
+  assert.match(action, /"\$CENTRAL_PATH" != "scripts\/coordinator\.ts"/);
 });
 
 // Each pull request queues its own runs; runs for different pull requests
@@ -135,11 +136,11 @@ test("pull request runs are gated on the event payload before a runner is assign
   const job = /^  run:\n((?:[ ]{4}.*\n)+?)[ ]{4}steps:/m.exec(workflow);
   assert.ok(job, "no run job");
   const guard = job![1].split("\n").find((l) => /^[ ]{4}if:/.test(l)) ?? "";
-  assert.match(guard, /pull_request\.changed_files <= 4/);
+  assert.match(guard, /pull_request\.changed_files <= 50/);
   assert.match(guard, /pull_request\.draft == false/);
   assert.match(guard, /pull_request\.user\.type == 'User'/);
   // The app names the same requirements when a run was skipped.
-  assert.match(RUN_REQUIREMENTS, /four files/);
+  assert.match(RUN_REQUIREMENTS, /50 files/);
   assert.match(RUN_REQUIREMENTS, /draft/);
   assert.match(RUN_REQUIREMENTS, /user account/);
 });

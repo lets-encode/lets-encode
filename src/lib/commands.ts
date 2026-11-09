@@ -79,6 +79,7 @@ import type {
 import {
   assembleSubmission,
   checksOpening,
+  AUTOMATION_CONTRACT,
   claimPullRequest,
   keptWorkBranch,
   keptWorkSince,
@@ -86,6 +87,7 @@ import {
   pieceKindForPath,
   priorDecision,
   REASON_TEXT,
+  splitContract,
 } from "./coordinator-policy.ts";
 import { firstElementOfPage } from "./mei-page-splice.ts";
 import {
@@ -292,13 +294,17 @@ type PrProcessingResult =
     }
   | { state: "run_failed"; runUrl: string }
   | { state: "run_skipped" }
+  /** The coordinator that decided the PR runs on another contract
+      (AUTOMATION_CONTRACT); `automation` is its number, null for one older
+      than the contract marker. */
+  | { state: "contract_mismatch"; automation: number | null }
   | { state: "timeout" };
 
 // What the campaign workflow requires of a pull request before it runs at all
 // (the job-level guard in campaign.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
-  "a submission must change at most four files, must not be a draft, and must come from a user account";
+  "a submission must change at most 50 files, must not be a draft, and must come from a user account";
 
 // Polls of the PR, and ticks of its run watch, that may fail in a row before
 // the wait, or the watching, ends.
@@ -368,11 +374,17 @@ async function waitForPrProcessed(
       pr.number,
     );
   };
-  // The bot's comment on the closed PR; null when there is none or it cannot
-  // be read, since the decision stands without the comment that explains it.
+  // The bot's comment on the closed PR, without its contract line; null when
+  // there is none or it cannot be read, since the decision stands without the
+  // comment that explains it. `contract` is the number the comment carries.
+  let contract: number | null = null;
   const comment = async (): Promise<string | null> => {
     try {
-      return await f.getLastIssueComment(owner, repo, pr.number);
+      const raw = await f.getLastIssueComment(owner, repo, pr.number);
+      if (raw === null) return null;
+      const split = splitContract(raw);
+      contract = split.contract;
+      return split.text;
     } catch (e) {
       console.warn(
         "[pr] could not read the verdict comment:",
@@ -381,6 +393,12 @@ async function waitForPrProcessed(
       return null;
     }
   };
+  // Whether `verdict` is a coordinator comment from another contract. Every
+  // verdict comment starts with ✅ or ❌.
+  const otherContract = (verdict: string | null): boolean =>
+    verdict !== null &&
+    /^[✅❌]/u.test(verdict) &&
+    contract !== AUTOMATION_CONTRACT;
   const decided = (
     row: { outcome: string; detail: string; timestamp: string } | null,
     verdict: string | null,
@@ -444,6 +462,7 @@ async function waitForPrProcessed(
           if (row) break;
           verdict = await comment();
           commented = true;
+          if (otherContract(verdict)) break;
           if (read > 0 && !verdict?.startsWith(ACCEPTED_MARK)) break;
         }
       } catch (e) {
@@ -451,6 +470,10 @@ async function waitForPrProcessed(
         continue;
       }
       if (!commented) verdict = await comment();
+      // A coordinator on another contract may record its decision
+      // differently, so neither its row nor its absence can be relied on.
+      if (otherContract(verdict))
+        return { state: "contract_mismatch", automation: contract };
       if (!row && verdict?.startsWith(ACCEPTED_MARK)) {
         console.log(
           "[pr] PR",
@@ -735,6 +758,12 @@ function verdictResult(
       prUrl,
     };
   }
+  if (result.state === "contract_mismatch") {
+    return {
+      error: `Submission #${prNumber} was processed by a campaign automation of another version (${result.automation === null ? "an older one" : `contract ${result.automation}`}; this app expects contract ${AUTOMATION_CONTRACT}), so its result cannot be read. Reload the page; if this stays, the campaign's automation needs updating.`,
+      prUrl,
+    };
+  }
   if (result.state === "run_skipped") {
     return {
       error: `The campaign automation did not run for submission #${prNumber}: ${RUN_REQUIREMENTS}. The submission was closed; correct it and submit again.`,
@@ -894,8 +923,9 @@ function openAndFinishInBackground(
 // sink entry `id` with it. `ctx` reports no progress: this runs in the
 // background.
 // A background submission is followed until it is decided, so its task's
-// controls hold meanwhile: past the hourly scheduled run that processes a pull
-// request whose own run was lost, polling every 15 s at most once it is slow.
+// controls hold meanwhile: for SETTLE_WAIT_MS polling every 15 s at most, then
+// once a minute, since a pull request whose own run was lost waits for a
+// scheduled run, which can come hours later.
 const SETTLE_WAIT_MS = 70 * 60_000;
 
 async function settleWhenProcessed(
@@ -909,13 +939,23 @@ async function settleWhenProcessed(
   const until = Date.now() + waitMs;
   let res: Result;
   let runFailed = false;
+  let contractMismatch = false;
   let decidedAt = "";
   try {
-    const outcome = await waitForPrProcessed(ctx, pr, {
+    let outcome = await waitForPrProcessed(ctx, pr, {
       waitMs,
       maxDelayMs: 15_000,
     });
-    runFailed = outcome.state === "run_failed";
+    // Past the wait, the PR is followed without a limit, until it is decided
+    // or its polls keep failing.
+    if (outcome.state === "timeout")
+      outcome = await waitForPrProcessed(ctx, pr, {
+        waitMs: Infinity,
+        maxDelayMs: 60_000,
+      });
+    // No verdict was read: the run failed, or its record cannot be read.
+    contractMismatch = outcome.state === "contract_mismatch";
+    runFailed = outcome.state === "run_failed" || contractMismatch;
     if (outcome.state === "decided") decidedAt = outcome.at;
     res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
   } catch (e) {
@@ -958,7 +998,8 @@ async function settleWhenProcessed(
   );
   // A failed run leaves the PR open for the scheduled run: the failure is
   // shown, and the PR is followed on without its run until it is decided.
-  if (runFailed) followAfterFailedRun(ctx, label, key, pr, until);
+  if (runFailed && !contractMismatch)
+    followAfterFailedRun(ctx, label, key, pr, until);
 }
 
 // Follow a PR whose run failed until it is decided, up to `until` (epoch
@@ -1782,7 +1823,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
   log: "pr",
   background: true,
   async run({ task_id }, ctx, envelope) {
-    const { forge: f, owner, repo, viewerLogin } = ctx;
+    const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
     return openAndFinishInBackground(
       ctx,
       `Encoding of ${task_id}`,
@@ -1842,6 +1883,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
             contributions: [
               {
                 name: viewerLogin,
+                id: viewer,
                 message: `Encoding of ${task_id}`,
                 isodate: new Date().toISOString().slice(0, 10),
                 application: "mei-friend",
@@ -2731,8 +2773,7 @@ async function submitFacsimile(
     const body = `${title}. Opened from the zone editor.`;
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
     // The corrected boxes, the layout model's raw output and the recognition
-    // record go next to the score, one file each per piece: the campaign
-    // workflow runs a pull request of at most four files. The score is
+    // record go next to the score, one file each per piece. The score is
     // committed when unchanged too, which gives the pull request a commit
     // when nothing differs from the campaign's (boxes confirmed as they
     // are).

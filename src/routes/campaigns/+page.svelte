@@ -118,8 +118,19 @@
   );
 
   // ----------------------------------------------------- the viewer's work
+  // The clock claim expiries count against, a minute at a time.
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(timer);
+  });
+  // A claim past its expiry is no longer the viewer's work.
   const tasks = $derived(
-    viewer ? stats.flatMap((s) => myTasksIn(s, viewer)) : ([] as MyTask[]),
+    viewer
+      ? stats
+          .flatMap((s) => myTasksIn(s, viewer))
+          .filter((t) => !t.expiresAt || Date.parse(t.expiresAt) > now)
+      : ([] as MyTask[]),
   );
   const encoding = $derived(tasks.filter((t) => t.group === "encoding"));
   const validating = $derived(tasks.filter((t) => t.group === "validating"));
@@ -350,11 +361,11 @@
   const taskHref = (slug: string, task: string) =>
     `/${slug}?task=${encodeURIComponent(task)}`;
   const ago = (iso: string) => {
-    const e = elapsed(iso);
+    const e = elapsed(iso, now);
     return e === "now" ? "just now" : `${e} ago`;
   };
   const claimExpiry = (t: MyTask): string => {
-    const e = expiresIn(t.expiresAt);
+    const e = expiresIn(t.expiresAt, now);
     return e && `claim ${e}`;
   };
   const claimMeta = (t: MyTask) =>

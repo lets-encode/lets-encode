@@ -1008,19 +1008,29 @@ export async function getRepoHead(
   };
 }
 
-/** A commit's message, or null when the commit cannot be read. */
-export async function getCommitMessage(
+/**
+ * The messages of a pull request's commits, oldest first. GitHub lists at
+ * most 250 commits of a pull request.
+ */
+export async function getPullRequestCommitMessages(
   token: string,
   owner: string,
   repo: string,
-  sha: string,
-): Promise<string | null> {
-  const res = await ghGet<{ message?: string }>(
-    `${apiRoot(token)}/repos/${owner}/${repo}/git/commits/${sha}`,
-    token,
-  );
-  if (!res.ok) return null;
-  return res.data.message ?? null;
+  number: number,
+): Promise<string[]> {
+  const messages: string[] = [];
+  for (let page = 1; ; page++) {
+    const data = await ghSend<unknown>(
+      "GET",
+      `/repos/${owner}/${repo}/pulls/${number}/commits?per_page=100&page=${page}`,
+      token,
+    );
+    if (!Array.isArray(data))
+      throw new Error("GitHub returned an invalid pull-request commit list.");
+    for (const c of data as { commit?: { message?: string } }[])
+      messages.push(c.commit?.message ?? "");
+    if (data.length < 100) return messages;
+  }
 }
 
 // Fork identities already ensured this session, keyed by upstream owner/repo.

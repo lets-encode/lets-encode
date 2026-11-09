@@ -22,6 +22,8 @@ import {
 export interface Contribution {
   /** The contributor's name, e.g. a GitHub login. */
   name: string;
+  /** The contributor's GitHub account id, recorded with the name. */
+  id?: string;
   /** What changed, one line — e.g. a commit message's first line. */
   message: string;
   /** When, as an ISO 8601 date or timestamp. */
@@ -36,8 +38,16 @@ function insertBefore(xml: string, closer: string, addition: string): string {
   return xml.slice(0, at) + addition + xml.slice(at);
 }
 
-/** The contributor among the file's responsibility statements, added once. */
-function withContributor(head: string, name: string): string {
+/** The attributes naming a contributor's GitHub account, when known. */
+const accountAttrs = (id?: string): string =>
+  id ? ` auth="GitHub" codedval="${xmlEscape(id)}"` : "";
+
+/**
+ * The contributor among the file's responsibility statements, added once: an
+ * entry with the account id stands for the account whatever name it carries,
+ * one without for the name.
+ */
+function withContributor(head: string, name: string, id?: string): string {
   const fileDesc = firstElement(head, "fileDesc");
   if (!fileDesc) return head;
   const titleStmt = firstElement(fileDesc.text, "titleStmt");
@@ -45,12 +55,15 @@ function withContributor(head: string, name: string): string {
 
   // Already named in the file's title statement (in any role): nothing to add.
   const named = [...elementsNamed(titleStmt.text, "persName")].some(
-    (persName) =>
-      stripTags(persName.inner).replace(/\s+/g, " ").trim() === name,
+    (persName) => {
+      const coded = /\scodedval="([^"]*)"/.exec(persName.tag)?.[1];
+      if (id && coded !== undefined) return xmlUnescape(coded) === id;
+      return stripTags(persName.inner).replace(/\s+/g, " ").trim() === name;
+    },
   );
   if (named) return head;
 
-  const entry = `${indent(5)}<persName role="contributor">${xmlEscape(name)}</persName>\n`;
+  const entry = `${indent(5)}<persName role="contributor"${accountAttrs(id)}>${xmlEscape(name)}</persName>\n`;
   const updated = titleStmt.text.includes("</respStmt>")
     ? insertBefore(titleStmt.text, "</respStmt>", entry)
     : insertBefore(
@@ -112,7 +125,7 @@ function withChange(head: string, c: Contribution): string {
   const change =
     `${indent(3)}<change n="${n}" isodate="${xmlEscape(c.isodate)}">\n` +
     `${indent(4)}<respStmt>\n` +
-    `${indent(5)}<persName>${xmlEscape(c.name)}</persName>\n` +
+    `${indent(5)}<persName${accountAttrs(c.id)}>${xmlEscape(c.name)}</persName>\n` +
     `${indent(4)}</respStmt>\n` +
     `${indent(4)}<changeDesc>\n` +
     `${indent(5)}<p>${xmlEscape(c.message)}</p>\n` +
@@ -185,7 +198,7 @@ export function recordContribution(mei: string, c: Contribution): string {
   ).trim();
 
   let head = match.text;
-  if (name) head = withContributor(head, name);
+  if (name) head = withContributor(head, name, c.id);
   if (c.application?.trim()) head = withApplication(head, c.application.trim());
   head = withChange(head, { ...c, name, message });
   return (

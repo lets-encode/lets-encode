@@ -10,6 +10,7 @@ import {
   type CommandContext,
 } from "../commands.ts";
 import { envelopeFromPrBody } from "../command-envelope.ts";
+import { contractMarker } from "../coordinator-policy.ts";
 import {
   HISTORY_COLUMNS,
   HISTORY_PATH,
@@ -18,6 +19,10 @@ import {
 } from "../campaign-tables.ts";
 import type { ForgeClient, OpenedChangeRequest } from "../forge/types.ts";
 import { fakeForge, type ForgeOverrides } from "./fake-forge.ts";
+
+// A coordinator verdict comment as the coordinator posts it: with the contract
+// line at its end.
+const bot = (text: string): string => `${text}\n\n${contractMarker()}`;
 
 function context(forge: ForgeClient): CommandContext {
   // viewer is the acting user's numeric id (written to the tables); viewerLogin
@@ -174,6 +179,30 @@ function runEncoding(
   });
 }
 
+test("a verdict from a coordinator on another contract is reported as an error, not as its verdict", async () => {
+  for (const comment of [
+    "✅ Claim accepted.",
+    "✅ Claim accepted.\n\n<!-- lets-encode-contract: 999 -->",
+  ]) {
+    const forge = claimForge(31, {
+      getPullRequestState: async () => "closed",
+      getLastIssueComment: async () => comment,
+      deleteBranch: async () => {},
+    });
+
+    const result = await withImmediateTimeouts(() =>
+      invoke(
+        commands.claimTask,
+        { task_id: "P0001" },
+        context(withDecision(forge, 31)),
+      ),
+    );
+
+    assert.equal(result.ok, undefined);
+    assert.match(result.error ?? "", /campaign automation of another version/);
+  }
+});
+
 test("readTables decodes generated quoted config values", async () => {
   const files: Record<string, string> = {
     "tracking/task.csv":
@@ -292,7 +321,7 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
       return opened;
     },
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
     deleteBranch: async (owner, repo, branch) => {
       deleted = [owner, repo, branch];
     },
@@ -381,7 +410,7 @@ test("a run from before the PR was opened is not taken for its own", async () =>
   const forge = claimForge(25, {
     pr: { headSha: "abc126" },
     getPullRequestState: async () => (polls++ < 2 ? "open" : "closed"),
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
     // An earlier pull request's failed run for the same commit.
     listWorkflowRuns: async () => [
       {
@@ -533,7 +562,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
 
   assert.match(
     result.error ?? "",
-    /did not run for submission #22: a submission must change at most four files/,
+    /did not run for submission #22: a submission must change at most 50 files/,
   );
   assert.match(result.error ?? "", /was closed/);
   assert.equal(closed, 1);
@@ -544,7 +573,7 @@ test("an accepted PR whose record is read late counts as accepted", async () => 
   const refs: (string | undefined)[] = [];
   const forge = claimForge(29, {
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
   });
   const decided = withDecision(forge, 29);
   const lagging = new Proxy(decided, {
@@ -577,7 +606,7 @@ test("an accepted PR whose record is read late counts as accepted", async () => 
 test("an accepted PR without a readable record is still being processed, not rejected", async () => {
   const forge = claimForge(30, {
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
   });
   const followed = captureVerdict();
 
@@ -622,7 +651,8 @@ test("a volunteer encoding submission cleans the encode branch in their fork", a
         return { number: 14, html_url: "https://example.test/pr/14" };
       },
       getPullRequestState: async () => "closed",
-      getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+      getLastIssueComment: async () =>
+        bot("✅ Submission accepted (encoding)."),
       deleteBranch: async (owner, repo, branch) => {
         deleted = [owner, repo, branch];
       },
@@ -653,7 +683,8 @@ test("an encoding submission comes from the repo the claim came from, whatever t
         return { number: 15, html_url: "https://example.test/pr/15" };
       },
       getPullRequestState: async () => "closed",
-      getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+      getLastIssueComment: async () =>
+        bot("✅ Submission accepted (encoding)."),
       deleteBranch: async () => {},
     },
     15,
@@ -707,7 +738,7 @@ test("a claim still pending is followed and its accepted verdict deletes the tas
       if (polls++ < 3) throw new Error("network down");
       return "closed";
     },
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
     getRepoHead: async () => ({
       sha: "head1",
       treeSha: "tree1",
@@ -745,7 +776,7 @@ test("a late accepted release keeps the task branch of a claim made since", asyn
           "T0001,,9001,2026-01-01T00:05:00Z,encoding,2026-01-02T00:05:00Z\n"
         : null,
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Release accepted.",
+    getLastIssueComment: async () => bot("✅ Release accepted."),
     ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
     deleteBranch: async (_owner, _repo, branch) => {
       deleted.push(branch);
@@ -773,7 +804,7 @@ test("a late accepted release keeps the task branch of a claim made since", asyn
 test("a submission followed again after a reload settles with its verdict", async () => {
   const forge = claimForge(19, {
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
   });
   const verdict = captureVerdict();
 
@@ -787,6 +818,37 @@ test("a submission followed again after a reload settles with its verdict", asyn
   );
 
   assert.equal((await verdict).state, "accepted");
+});
+
+test("a submission still open past the follow's first wait is followed until it is decided", async () => {
+  let polls = 0;
+  const header = `${HISTORY_COLUMNS.join(",")}\n`;
+  const forge = claimForge(21, {
+    // Open for a while after the first wait has run out; the decision is
+    // recorded when it closes.
+    getPullRequestState: async () => (polls++ < 5 ? "open" : "closed"),
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
+    getRepoFile: async (_owner, _repo, path) =>
+      path !== HISTORY_PATH
+        ? lockHeader
+        : polls > 5
+          ? `${header}2026-01-01T00:00:00Z,T0001,,9001,claim_encoding,accepted,,,,,21\n`
+          : header,
+  });
+  const verdict = captureVerdict();
+
+  await withImmediateTimeouts(async () => {
+    resumeFollowing(
+      context(forge),
+      "Encoding claim of T0001",
+      { kind: "claim", task: "T0001" },
+      "entry-1",
+      { number: 21, html_url: "https://example.test/pr/21" },
+      Date.now() - 2 * 60 * 60_000,
+    );
+    assert.equal((await verdict).state, "accepted");
+  });
+  assert.ok(polls > 5);
 });
 
 test("resolving a comment flips its replies in the PR payload too", async () => {
@@ -818,7 +880,7 @@ test("resolving a comment flips its replies in the PR payload too", async () => 
       };
     },
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Comment resolved.",
+    getLastIssueComment: async () => bot("✅ Comment resolved."),
   });
 
   const settled = captureVerdict();
@@ -865,7 +927,7 @@ test("a comment PR starts at the head its comment table was read at", async () =
       };
     },
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Comment recorded.",
+    getLastIssueComment: async () => bot("✅ Comment recorded."),
   });
 
   const settled = captureVerdict();
@@ -891,7 +953,8 @@ test("a rejected volunteer encoding keeps its fork branch for correction", async
       html_url: "https://example.test/pr/15",
     }),
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "❌ Submission rejected: `invalid_mei`.",
+    getLastIssueComment: async () =>
+      bot("❌ Submission rejected: `invalid_mei`."),
     deleteBranch: async () => {
       deleted = true;
     },
@@ -960,7 +1023,7 @@ test("openEditor claims first, then starts the task branch from the score as it 
       };
     },
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
     // A page is accepted while the claim is processed.
     getRepoHead: async () => ({
       sha: calls.includes("claim") ? "head2" : "head1",
@@ -1028,7 +1091,7 @@ test("openEditor selects the first note of a page task's page", async () => {
       head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
     }),
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
     getRepoHead: async () => ({
       sha: "head1",
       treeSha: "tree1",
@@ -1079,7 +1142,7 @@ async function openWithKeptWorkBranch(earlier: string) {
       head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
     }),
     getPullRequestState: async () => "closed",
-    getLastIssueComment: async () => "✅ Claim accepted.",
+    getLastIssueComment: async () => bot("✅ Claim accepted."),
     getRepoHead: async () => ({
       sha: "head1",
       treeSha: "tree1",
@@ -1238,7 +1301,8 @@ test("an encoding completed without changes gets a commit so its PR can open", a
         return "c2";
       },
       getPullRequestState: async () => "closed",
-      getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+      getLastIssueComment: async () =>
+        bot("✅ Submission accepted (encoding)."),
       listWorkflowRuns: async () => [],
       deleteBranch: async () => {},
     },

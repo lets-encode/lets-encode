@@ -13,7 +13,10 @@ import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
   assembleSubmission,
+  AUTOMATION_CONTRACT,
   checksOpening,
+  contractMarker,
+  splitContract,
   claimPullRequest,
   classifyPullRequest,
   heldByOpenOperation,
@@ -773,4 +776,15 @@ test("assembleSubmission keeps the campaign's header for a whole-file task", () 
     () => assembleSubmission({ ...input, baseMei: null }),
     /missing from the campaign/,
   );
+});
+
+test("a verdict comment's contract line is split off", () => {
+  assert.deepEqual(splitContract(`✅ Claim accepted.\n\n${contractMarker()}`), {
+    text: "✅ Claim accepted.",
+    contract: AUTOMATION_CONTRACT,
+  });
+  assert.deepEqual(splitContract("✅ Claim accepted."), {
+    text: "✅ Claim accepted.",
+    contract: null,
+  });
 });
