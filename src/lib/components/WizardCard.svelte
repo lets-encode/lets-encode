@@ -50,6 +50,7 @@
   import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
+  import { timeAgo } from "$lib/campaign-board.ts";
   import { releaseClaim, releaseFailedNote } from "$lib/campaign-resolve.ts";
   import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
@@ -223,10 +224,7 @@
   });
   const savedAgo = $derived.by(() => {
     if (draftStatus.savedAt === null) return null;
-    const minutes = Math.floor((now - draftStatus.savedAt) / 60_000);
-    if (minutes < 1) return "just now";
-    if (minutes < 60) return `${minutes} min ago`;
-    return `${Math.floor(minutes / 60)} h ago`;
+    return timeAgo(new Date(draftStatus.savedAt).toISOString(), now);
   });
 
   // Other setups of this account stored in the browser, listed so one of them

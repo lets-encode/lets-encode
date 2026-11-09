@@ -48,6 +48,14 @@ parentheses.
 - Only a locator of the form surface-N counts as a page task, everywhere.
 - Piece fields in config.yaml are read the same way, quoted or not, by the board, the app and the coordinator.
 - A failed relay request is attributed to the broker unless the service it reached is named as the source.
+- Browser storage is read and written through one module, so blocked site data no longer breaks a command.
+- The browser databases are opened by one helper that gives up after two seconds.
+- MEI and record attributes are read by one reader that takes exact names, either quote and spaced equals signs.
+- The campaign page takes the title and composer from the title statement, as the metadata form does.
+- Pre-task names, routes, stages and instructions come from one table, with the same wording on the card and in the task box.
+- The next-task badge takes the purple of its stage.
+- Relative times come from one helper and say nothing for an unreadable time.
+- The dev scripts encode file paths and quote CSV like the app.
 
 ## 2026-11-06
 

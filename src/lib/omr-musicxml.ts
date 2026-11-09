@@ -5,6 +5,7 @@
 
 import type { ScoreDefModel, StaffModel } from "./mei-facsimile.ts";
 import { clefTokenOf, clefXml } from "./omr-stitch.ts";
+import { tagAttribute } from "./mei-xml.ts";
 
 /** What the first `<attributes>` of a MusicXML part declares; absent parts are null. */
 export interface StaffAttributes {
@@ -45,7 +46,7 @@ export function readAttributes(musicxml: string): StaffAttributes {
         ? {
             beats,
             beatType,
-            symbol: /\bsymbol="([^"]*)"/.exec(timeTag![1])?.[1] ?? "",
+            symbol: tagAttribute(timeTag![0], "symbol") ?? "",
           }
         : null,
   };

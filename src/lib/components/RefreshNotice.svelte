@@ -8,6 +8,7 @@
 <script lang="ts">
   import { auth, login } from "$lib/auth.svelte.ts";
   import type { RefreshStatus } from "$lib/auto-refresh.ts";
+  import { minuteClock } from "$lib/forge/github-rest.ts";
   import Notice from "./Notice.svelte";
 
   let {
@@ -18,13 +19,6 @@
 
   // Failed updates in a row before the line shows: single failures pass.
   const SHOWN_AFTER = 3;
-
-  // A pause's end is rounded up to the minute so it is never early; the start
-  // of the failures is rounded down.
-  const clock = (ms: number, up: boolean) =>
-    new Date(
-      (up ? Math.ceil : Math.floor)(ms / 60_000) * 60_000,
-    ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 </script>
 
 {#if status.pausedUntil !== null}
@@ -32,7 +26,7 @@
     tone="warn"
     surface={bar ? "strip" : "card"}
     icon="clock-pause"
-    title={`Updates paused until ${clock(status.pausedUntil, true)}`}
+    title={`Updates paused until ${minuteClock(status.pausedUntil, true)}`}
     detail={status.limit === "broker"
       ? "Too many requests were sent in a short time."
       : status.limit === "anonymous"
@@ -46,7 +40,7 @@
   <Notice
     tone="warn"
     surface={bar ? "strip" : "card"}
-    title={`Updates have failed since ${clock(status.failingSince, false)}`}
+    title={`Updates have failed since ${minuteClock(status.failingSince, false)}`}
     detail={retrying ? "Retrying." : ""}
   />
 {/if}

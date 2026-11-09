@@ -56,7 +56,7 @@
     buildBoard,
     cardSummary,
     doneLabel,
-    elapsed,
+    timeAgo,
     expiresIn,
     initialOf,
     reviewWaitLabel,
@@ -1203,10 +1203,6 @@
   const lastReap = $derived(
     history.findLast((h) => h.action === "reap") ?? null,
   );
-  const elapsedLabel = (iso: string) => {
-    const e = elapsed(iso);
-    return e === "now" ? "just now" : `${e} ago`;
-  };
 </script>
 
 <svelte:head>
@@ -1591,9 +1587,7 @@
             <span class="cspacer"></span>
             <span class="reapline">
               {#if lastReap}
-                Expired claims were last released {elapsedLabel(
-                  lastReap.timestamp,
-                )}
+                Expired claims were last released {timeAgo(lastReap.timestamp)}
               {:else}
                 No expired claims have been released yet
               {/if}

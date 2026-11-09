@@ -14,7 +14,7 @@
   } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
   import ProgressBar from "./ProgressBar.svelte";
-  import { elapsed } from "$lib/campaign-board.ts";
+  import { timeAgo } from "$lib/campaign-board.ts";
   import { attentionCount, nextTask } from "$lib/campaign-stats.ts";
   import type { CampaignStats, NextTask } from "$lib/campaign-stats.ts";
   import { login } from "$lib/auth.svelte.ts";
@@ -43,11 +43,9 @@
   const next = $derived(nextTask(stats, viewer));
 
   const activity = $derived.by(() => {
-    if (stats.lastActivity) {
-      const e = elapsed(stats.lastActivity);
-      return e === "now" ? "active just now" : `active ${e} ago`;
-    }
-    if (stats.createdAt) return `created ${elapsed(stats.createdAt)} ago`;
+    if (timeAgo(stats.lastActivity))
+      return `active ${timeAgo(stats.lastActivity)}`;
+    if (timeAgo(stats.createdAt)) return `created ${timeAgo(stats.createdAt)}`;
     return "no activity yet";
   });
   const attention = $derived(owned ? attentionCount(stats) : 0);

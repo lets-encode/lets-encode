@@ -45,6 +45,12 @@ export const RELAY_RETRY_WAITS_MS = [
   500, 1000, 2000, 4000, 8000, 15000, 15000, 15000,
 ];
 
+/** A clock time to the minute ("14:05"), rounded up (never early) or down. */
+export const minuteClock = (ms: number, up: boolean): string =>
+  new Date(
+    (up ? Math.ceil : Math.floor)(ms / 60_000) * 60_000,
+  ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
 /**
  * Whether an answer through the broker came from the service it reached
  * (`github`, `iiif`, `musibot`), which the broker marks in
@@ -145,10 +151,7 @@ export class RateLimitError extends Error {
     const when = retryAfterSeconds
       ? `in about ${retryAfterSeconds} seconds`
       : resetAt
-        ? `at ${new Date(Math.ceil(resetAt / 60) * 60_000).toLocaleTimeString(
-            [],
-            { hour: "2-digit", minute: "2-digit" },
-          )}`
+        ? `at ${minuteClock(resetAt * 1000, true)}`
         : "later";
     super(
       source === "broker"
@@ -711,7 +714,7 @@ export async function createRepoFromTemplate(
 
 // A repo-relative path as a URL path: each segment percent-encoded, the
 // separators kept, so a %, ? or # in a file name stays part of the path.
-function encodeRepoPath(path: string): string {
+export function encodeRepoPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 

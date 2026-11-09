@@ -91,18 +91,71 @@ export interface TaskNode {
  * mei-friend.
  */
 export function isPreTask(locator: string): boolean {
-  return (
-    locator === "score-setup" ||
-    locator === "measure-zones" ||
-    locator === "omr-layout" ||
-    locator === "encoding-align"
-  );
+  return Object.hasOwn(PRE_TASKS, locator);
+}
+
+/** A task's work stage. */
+export type WorkStage =
+  | "score setup"
+  | "measure correction"
+  | "encoding alignment"
+  | "encoding";
+
+/** What the app knows of each kind of pre-task: the route segment of its own
+    editor, its work stage, its name, and what it asks for, briefly (the
+    board's card) and in full (the task box). */
+const PRE_TASKS: Record<
+  string,
+  {
+    route: "setup" | "zones" | "align";
+    stage: WorkStage;
+    name: string;
+    brief: string;
+    full: string;
+  }
+> = {
+  "score-setup": {
+    route: "setup",
+    stage: "score setup",
+    name: "Score setup",
+    brief:
+      "Copy the staves, clefs, key signature and time signature from the source's first measure.",
+    full: "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.",
+  },
+  "omr-layout": {
+    route: "zones",
+    stage: "measure correction",
+    name: "Measure correction",
+    brief:
+      "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.",
+    full: "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.",
+  },
+  "measure-zones": {
+    route: "zones",
+    stage: "measure correction",
+    name: "Measure correction",
+    brief: "Check the measure boxes on each page and correct the wrong ones.",
+    full: "Check the measure boxes on each page and correct the wrong ones.",
+  },
+  "encoding-align": {
+    route: "align",
+    stage: "encoding alignment",
+    name: "Encoding alignment",
+    brief:
+      "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.",
+    full: "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.",
+  },
+};
+
+/** What a pre-task asks for, briefly or in full; '' for any other locator. */
+export function preTaskInstruction(locator: string, full = false): string {
+  if (!isPreTask(locator)) return "";
+  return full ? PRE_TASKS[locator].full : PRE_TASKS[locator].brief;
 }
 
 /** The console route segment a pre-task's own editor lives under. */
 export function preTaskRoute(locator: string): string {
-  if (locator === "score-setup") return "setup";
-  return locator === "encoding-align" ? "align" : "zones";
+  return isPreTask(locator) ? PRE_TASKS[locator].route : "zones";
 }
 
 /** The console route of a pre-task's own editor. */
@@ -122,22 +175,9 @@ export const reviewHref = (
     ? preTaskHref(campaign, locator, task)
     : `/${campaign}/review/${task}`;
 
-/** A task's work stage. */
-export type WorkStage =
-  | "score setup"
-  | "measure correction"
-  | "encoding alignment"
-  | "encoding";
-
 /** A task's work stage from its locator; a send-back returns the task to it. */
 export const workStage = (locator: string): WorkStage =>
-  locator === "score-setup"
-    ? "score setup"
-    : locator === "measure-zones" || locator === "omr-layout"
-      ? "measure correction"
-      : locator === "encoding-align"
-        ? "encoding alignment"
-        : "encoding";
+  isPreTask(locator) ? PRE_TASKS[locator].stage : "encoding";
 
 /** Where a task's work happens: mei-friend for an encoding, the pre-task's own page otherwise. */
 export const workPlace = (locator: string): string =>
@@ -171,11 +211,7 @@ export function pageOfLocator(locator: string): number | null {
 /** What the task asks for, from its locator. An encoding task is called
     "Encode" whether it starts from scratch or from a recognised draft. */
 export function taskDescription(locator: string): string {
-  if (locator === "score-setup") return "Score setup";
-  if (locator === "measure-zones" || locator === "omr-layout")
-    return "Measure correction";
-  if (locator === "encoding-align") return "Encoding alignment";
-  return "Encode";
+  return isPreTask(locator) ? PRE_TASKS[locator].name : "Encode";
 }
 
 /** The part of the piece a task covers ("p. 3"); '' for the whole piece. */

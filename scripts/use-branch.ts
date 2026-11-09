@@ -18,6 +18,7 @@
 
 import { execFileSync } from "node:child_process";
 import { configString } from "../src/lib/campaign-tables.ts";
+import { encodeRepoPath } from "../src/lib/forge/github-rest.ts";
 
 const API = "https://api.github.com";
 const CONFIG = "config.yaml";
@@ -78,7 +79,7 @@ interface FileInfo {
 async function readFile(path: string): Promise<{ sha: string; text: string }> {
   const file = await api<FileInfo>(
     "GET",
-    `/repos/${owner}/${repo}/contents/${path}`,
+    `/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}`,
   );
   return {
     sha: file.sha,
@@ -92,7 +93,7 @@ async function writeFile(
   text: string,
   message: string,
 ): Promise<void> {
-  await api("PUT", `/repos/${owner}/${repo}/contents/${path}`, {
+  await api("PUT", `/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}`, {
     message,
     sha,
     content: Buffer.from(text, "utf8").toString("base64"),

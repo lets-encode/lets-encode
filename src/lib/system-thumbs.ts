@@ -7,6 +7,7 @@
 // Every call resolves; without IndexedDB or canvas the image is cut on every
 // visit, and a scan the browser cannot read resolves to null.
 
+import { storeOpener } from "./idb-store.ts";
 import type { MeasureBox } from "./mei-facsimile.ts";
 import type { PagePreview } from "./piece-previews.ts";
 
@@ -18,8 +19,6 @@ const WIDTH = 600;
 const ASPECT = 3;
 /** Margin above and below the system, as a share of its height. */
 const PAD = 0.12;
-/** Milliseconds to wait for the store to open. */
-const OPEN_TIMEOUT = 2000;
 
 /** The part of the page to cut, in the page's coordinate space. */
 export function systemRegion(
@@ -34,31 +33,7 @@ export function systemRegion(
   return { ulx: system.ulx, uly, lrx, lry };
 }
 
-let opening: Promise<IDBDatabase | null> | null = null;
-
-function open(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  if (opening) return opening;
-  // A store that could not be opened is tried again on the next call.
-  opening = new Promise<IDBDatabase | null>((resolve) => {
-    // An open that another tab's pending deletion holds fires no event; the
-    // images are then cut without the store.
-    setTimeout(() => resolve(null), OPEN_TIMEOUT);
-    try {
-      const request = indexedDB.open(DB, 1);
-      request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-  void opening.then((db) => {
-    if (!db) opening = null;
-  });
-  return opening;
-}
+const open = storeOpener(DB, STORE);
 
 async function read(key: string): Promise<Blob | null> {
   const db = await open();

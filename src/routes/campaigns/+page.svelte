@@ -26,7 +26,7 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed, expiresIn, reviewWaitLabel } from "$lib/campaign-board.ts";
+  import { expiresIn, reviewWaitLabel, timeAgo } from "$lib/campaign-board.ts";
   import {
     handle,
     isPreTask,
@@ -372,18 +372,16 @@
 
   const taskHref = (slug: string, task: string) =>
     `/${slug}?task=${encodeURIComponent(task)}`;
-  const ago = (iso: string) => {
-    const e = elapsed(iso, now);
-    return e === "now" ? "just now" : `${e} ago`;
-  };
   const claimExpiry = (t: MyTask): string => {
     const e = expiresIn(t.expiresAt, now);
     return e && `claim ${e}`;
   };
   const claimMeta = (t: MyTask) =>
-    `claimed ${ago(t.claimedAt)}${claimExpiry(t) ? ` · ${claimExpiry(t)}` : ""}`;
+    [`claimed ${timeAgo(t.claimedAt, now)}`.trim(), claimExpiry(t)]
+      .filter(Boolean)
+      .join(" · ");
   const reviewMeta = (t: MyTask) =>
-    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
+    `${timeAgo(t.submittedAt, now) ? `submitted ${timeAgo(t.submittedAt, now)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
 
   // Wide screens show the viewer's work in a side column; narrower ones fold
   // it behind a one-line summary bar.

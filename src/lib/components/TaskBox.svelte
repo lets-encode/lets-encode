@@ -20,6 +20,7 @@
     handle,
     pageOfLocator,
     preTaskHref,
+    preTaskInstruction,
     claimLabel,
     workPlace,
   } from "$lib/campaign-graph.ts";
@@ -29,7 +30,7 @@
   import {
     buildRecord,
     cardPill,
-    elapsed,
+    timeAgo,
     initialOf,
     stageOf,
   } from "$lib/campaign-board.ts";
@@ -184,14 +185,7 @@
             ? `Compare ${encoding} with the scan and approve it or request changes.`
             : `Compare ${encoding} with the scan in the review view and approve it or request changes.`;
     }
-    if (card.locator === "score-setup")
-      return "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.";
-    if (card.locator === "omr-layout")
-      return "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.";
-    if (card.locator === "measure-zones")
-      return "Check the measure boxes on each page and correct the wrong ones.";
-    if (card.locator === "encoding-align")
-      return "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.";
+    if (card.pre) return preTaskInstruction(card.locator, true);
     if (card.omr)
       return "Correct the notes of this page's draft, read automatically from the scan, in the mei-friend editor.";
     return card.scope
@@ -292,10 +286,10 @@
       <div class="subline">
         <span class="avatar">{initialOf(encoderLogin)}</span>
         <span class="subtext"
-          >submitted by <b>{encoderLogin}</b>{taskState?.encoded_at
-            ? elapsed(taskState.encoded_at) === "now"
-              ? " · just now"
-              : ` · ${elapsed(taskState.encoded_at)} ago`
+          >submitted by <b>{encoderLogin}</b>{timeAgo(
+            taskState?.encoded_at ?? "",
+          )
+            ? ` · ${timeAgo(taskState?.encoded_at ?? "")}`
             : ""}</span
         >
       </div>

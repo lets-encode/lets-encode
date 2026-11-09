@@ -8,6 +8,7 @@ import {
   blockedBy,
   canClaim,
   handle,
+  preTaskInstruction,
   taskDescription,
   taskName,
   taskScope,
@@ -45,6 +46,13 @@ export function elapsed(iso: string, now = Date.now()): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} h`;
   return `${Math.floor(hours / 24)} d`;
+}
+
+/** How long ago `iso` was: "just now", "5 min ago", "2 d ago"; '' when it
+    cannot be read. */
+export function timeAgo(iso: string, now = Date.now()): string {
+  const e = elapsed(iso, now);
+  return e === "" ? "" : e === "now" ? "just now" : `${e} ago`;
 }
 
 /** When a claim's lock runs out, from its `expires` time: "expires in
@@ -262,9 +270,8 @@ export function doneLabel(
   card: Pick<BoardCard, "doneLine" | "finishedAt">,
   now = Date.now(),
 ): string {
-  const e = card.finishedAt ? elapsed(card.finishedAt, now) : "";
-  const when = e === "" ? "" : e === "now" ? " · just now" : ` · ${e} ago`;
-  return `${card.doneLine || "done"}${when}`;
+  const ago = card.finishedAt ? timeAgo(card.finishedAt, now) : "";
+  return `${card.doneLine || "done"}${ago ? ` · ${ago}` : ""}`;
 }
 
 /** A card's one-sentence description of what the task asks for; '' for a
@@ -277,14 +284,7 @@ export function cardSummary(
     return card.pre
       ? "Check the submitted work and approve it or request changes."
       : "Compare the encoding with the scan and approve it or request changes.";
-  if (card.locator === "score-setup")
-    return "Copy the staves, clefs, key and time signature from the source's first measure.";
-  if (card.locator === "omr-layout")
-    return "Check the staff, grand staff and measure boxes on each page and correct the wrong ones.";
-  if (card.locator === "measure-zones")
-    return "Check the measure boxes on each page and correct the wrong ones.";
-  if (card.locator === "encoding-align")
-    return "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.";
+  if (card.pre) return preTaskInstruction(card.locator);
   if (card.omr) return "Correct the notes read automatically from this page.";
   return card.scope
     ? "Encode the music of this page."

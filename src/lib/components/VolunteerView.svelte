@@ -123,18 +123,17 @@
     ),
   );
 
-  // The kind filters over the open-task list; a card's kind is the stage its
-  // claim starts.
-  type Kind = "enc" | "review" | "pre";
-  const kindOf = (c: BoardCard): Kind =>
-    c.column === "validation" ? "review" : c.pre ? "pre" : "enc";
+  // The kind filters over the open-task list; a card's kind is its stage
+  // (stageOf), the stage its claim starts. Open tasks are never done.
+  type Kind = "encode" | "review" | "pre";
+  const kindOf = (c: BoardCard): Kind => stageOf(c) as Kind;
   const KINDS: { key: Kind; label: string }[] = [
-    { key: "enc", label: "Encoding" },
+    { key: "encode", label: "Encoding" },
     { key: "review", label: "Review" },
     { key: "pre", label: "Preparation" },
   ];
   let kinds = $state<Record<Kind, boolean>>({
-    enc: true,
+    encode: true,
     review: true,
     pre: true,
   });
@@ -333,7 +332,7 @@
              sit above it. The badge on its top edge names the card, as the
              board's "your next task" badge does. -->
         <div
-          class="nextcard stage-{kindOf(featured)}"
+          class="nextcard stage-{stageOf(featured)}"
           data-stage={stageOf(featured)}
         >
           <span
@@ -779,15 +778,11 @@
       border-color: var(--warn);
     }
   }
+  /* The badge's fill is the stage's solid colour (data-stage, ui.css). */
   .stage-pre .nextbadge,
   .stage-review .nextbadge {
     color: #fff;
-  }
-  .stage-pre .nextbadge {
-    background: var(--pre-solid);
-  }
-  .stage-review .nextbadge {
-    background: var(--warn-solid);
+    background: var(--st-solid);
   }
   .nextbadge.done {
     background: var(--ok);

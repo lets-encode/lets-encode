@@ -20,9 +20,9 @@ import {
   elementsNamedAny,
   firstElementNamed,
   indent,
+  tagAttribute,
   textOf,
   xmlEscape,
-  xmlUnescape,
 } from "./mei-xml.ts";
 
 /** One named agent in the statement of responsibility. */
@@ -416,7 +416,7 @@ export function parseSourceHead(xml: string): SourceMetadata {
     "persName",
     "corpName",
   ])) {
-    const role = xmlUnescape(/\brole="([^"]*)"/.exec(element.tag)?.[1] ?? "");
+    const role = tagAttribute(element.tag, "role") ?? "";
     const name = textOf(element.inner);
     if (!name) continue;
     if (role === "composer" && !meta.composer) {

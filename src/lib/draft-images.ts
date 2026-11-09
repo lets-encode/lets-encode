@@ -9,41 +9,26 @@
 // is continued from the upload step.
 
 import type { PageImage } from "./prepare-images.ts";
+import { storeOpener } from "./idb-store.ts";
 
-const DB_NAME = "lets-encode-setup";
 const STORE = "images";
+const open = storeOpener("lets-encode-setup", STORE);
 
-function openDb(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
-    if (typeof indexedDB === "undefined") {
-      reject(new Error("this browser offers no IndexedDB"));
-      return;
-    }
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () =>
-      reject(request.error ?? new Error("IndexedDB could not be opened"));
-  });
-}
-
-/** Run one request in its own transaction and resolve once that commits. */
+/** Run one request in its own transaction and resolve once that commits.
+    Throws when the store cannot be opened or the request fails. */
 async function inStore<T>(
   mode: IDBTransactionMode,
   make: (store: IDBObjectStore) => IDBRequest<T>,
 ): Promise<T> {
-  const db = await openDb();
-  try {
-    return await new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      const request = make(tx.objectStore(STORE));
-      tx.oncomplete = () => resolve(request.result);
-      tx.onerror = tx.onabort = () =>
-        reject(tx.error ?? request.error ?? new Error("IndexedDB failed"));
-    });
-  } finally {
-    db.close();
-  }
+  const db = await open();
+  if (!db) throw new Error("this browser's image store could not be opened");
+  return new Promise<T>((resolve, reject) => {
+    const tx = db.transaction(STORE, mode);
+    const request = make(tx.objectStore(STORE));
+    tx.oncomplete = () => resolve(request.result);
+    tx.onerror = tx.onabort = () =>
+      reject(tx.error ?? request.error ?? new Error("IndexedDB failed"));
+  });
 }
 
 // A setup's images are stored under its account and name.
@@ -85,11 +70,7 @@ export async function readDraftImages(
   paths: string[],
   sizes?: number[],
 ): Promise<PageImage[] | null> {
-  try {
-    (await openDb()).close();
-  } catch {
-    return null;
-  }
+  if (!(await open())) return null;
   try {
     const stored = await inStore<unknown>("readonly", (store) =>
       store.get(imagesKey(owner, handle)),

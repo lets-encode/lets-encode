@@ -21,6 +21,12 @@ import type { SourceMetadata } from "./source-metadata.ts";
 import type { Piece } from "./pieces.ts";
 import type { WizardClaim, WizardRepo, WizardStepId } from "./wizard.svelte.ts";
 import { discardDraftImages, moveUnkeyedDraftImages } from "./draft-images.ts";
+import {
+  localKeys,
+  readLocal,
+  removeLocal,
+  writeLocal,
+} from "./local-store.ts";
 
 /** Records written under any other version are ignored when read back. */
 export const DRAFT_VERSION = 1;
@@ -87,9 +93,6 @@ const STEP_IDS: readonly WizardStepId[] = [
   "preparation",
 ];
 
-// Storage is read through this so the module can be used where there is none.
-const store = () => (typeof localStorage === "undefined" ? null : localStorage);
-
 /**
  * A record from its stored JSON, or null if it is absent, unreadable, of another
  * version, or missing the entries a setup needs to be continued.
@@ -122,7 +125,7 @@ export function parseDraft(text: string | null): WizardDraft | null {
 
 /** The record `owner` stored for the setup named `handle`. */
 export function readDraft(owner: string, handle: string): WizardDraft | null {
-  return parseDraft(store()?.getItem(draftKey(owner, handle)) ?? null);
+  return parseDraft(readLocal(draftKey(owner, handle)));
 }
 
 /**
@@ -131,18 +134,11 @@ export function readDraft(owner: string, handle: string): WizardDraft | null {
  * and null when the record was stored.
  */
 export function writeDraft(draft: WizardDraft): string | null {
-  const storage = store();
-  if (!storage) return null;
-  try {
-    storage.setItem(draftKey(draft.owner, draft.handle), JSON.stringify(draft));
-    return null;
-  } catch (err) {
-    return (err as Error).message;
-  }
+  return writeLocal(draftKey(draft.owner, draft.handle), JSON.stringify(draft));
 }
 
 export function discardDraft(owner: string, handle: string): void {
-  store()?.removeItem(draftKey(owner, handle));
+  removeLocal(draftKey(owner, handle));
   discardDraftImages(owner, handle);
 }
 
@@ -154,24 +150,17 @@ export function discardDraft(owner: string, handle: string): void {
  * their page images.
  */
 export function resumableDrafts(owner: string): WizardDraft[] {
-  const storage = store();
-  if (!storage) return [];
-  const keys: string[] = [];
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
-    if (key?.startsWith(KEY_PREFIX)) keys.push(key);
-  }
   const drafts: WizardDraft[] = [];
-  for (const key of keys) {
-    const draft = parseDraft(storage.getItem(key));
+  for (const key of localKeys(KEY_PREFIX)) {
+    const draft = parseDraft(readLocal(key));
     if (!draft || draft.owner !== owner) continue;
     const ownKey = draftKey(owner, draft.handle);
     if (key === `${KEY_PREFIX}${draft.handle}`) {
       // A record already under the account's key is the newer one and is
       // listed on its own; a record that cannot be moved stays where it is.
-      if (storage.getItem(ownKey) !== null) storage.removeItem(key);
+      if (readLocal(ownKey) !== null) removeLocal(key);
       else if (writeDraft(draft) === null) {
-        storage.removeItem(key);
+        removeLocal(key);
         moveUnkeyedDraftImages(owner, draft.handle);
         drafts.push(draft);
       }

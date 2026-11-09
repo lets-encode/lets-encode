@@ -13,6 +13,7 @@
 // Handlers are self-contained: they read the tracking tables themselves rather
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
+import { readLocal, writeLocal } from "./local-store.ts";
 import type {
   FileChange,
   ForgeClient,
@@ -279,13 +280,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function muteOnce(ctx: CommandContext): Promise<void> {
   const { forge: f, repoId, owner, repo, viewer } = ctx;
   const key = `lets-encode:muted:${viewer}:${repoId}`;
-  const storage = typeof localStorage === "undefined" ? null : localStorage;
-  if (storage?.getItem(key)) return;
+  if (readLocal(key)) return;
   try {
     if (!(await f.getRepoSubscription(owner, repo))?.ignored) {
       await f.ignoreRepoNotifications(owner, repo);
     }
-    storage?.setItem(key, "1");
+    writeLocal(key, "1");
   } catch (e) {
     // The repo-subscription API requires the OAuth 'notifications' scope; a
     // 403/404 here usually means the token was granted without it.

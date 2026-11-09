@@ -14,7 +14,7 @@
 // Pure functions: MEI text in, plain data out. No DOM, forge or network access.
 
 import { parseScoreDef } from "./mei-facsimile.ts";
-import { elementsNamed, startTags, tagsIn, xmlUnescape } from "./mei-xml.ts";
+import { elementsNamed, startTags, tagAttribute, tagsIn } from "./mei-xml.ts";
 
 /** One measure of an MEI document, with the features the alignment compares. */
 export interface MeasureInfo {
@@ -62,11 +62,6 @@ const EVENTS = new Set([
   "multiRpt",
 ]);
 
-const attr = (tag: string, name: string): string | null => {
-  const m = new RegExp(`\\s${name.replace(".", "\\.")}="([^"]*)"`).exec(tag);
-  return m ? xmlUnescape(m[1]) : null;
-};
-
 /** The end offset of the element whose start tag ends at `tagEnd`. */
 function elementEnd(xml: string, name: string, tagEnd: number): number {
   const close = `</${name}>`;
@@ -80,7 +75,7 @@ function staffEvents(inner: string): Map<number, number> {
   let position = 0;
   for (const staff of elementsNamed(inner, "staff", true)) {
     position++;
-    const n = Number(attr(staff.tag, "n") ?? position);
+    const n = Number(tagAttribute(staff.tag, "n") ?? position);
     let count = 0;
     for (const tag of tagsIn(staff.inner))
       if (tag.kind !== "end" && EVENTS.has(tag.name)) count++;
@@ -114,7 +109,7 @@ export function readMeasures(mei: string): MeasureInfo[] {
       if (tag.name === "pb") pageStart = systemStart = true;
       else if (tag.name === "sb") systemStart = true;
       else if (tag.name === "ending")
-        ending = attr(text, "n") ?? attr(text, "label") ?? "";
+        ending = tagAttribute(text, "n") ?? tagAttribute(text, "label") ?? "";
       else if (tag.name === "scoreDef" || tag.name === "staffDef") {
         const end =
           tag.kind === "empty" ? tag.end : elementEnd(mei, tag.name, tag.end);
@@ -126,20 +121,24 @@ export function readMeasures(mei: string): MeasureInfo[] {
           tag.kind === "empty" ? tag.end : elementEnd(mei, "measure", tag.end);
         const inner = tag.kind === "empty" ? "" : mei.slice(tag.end, end - 10);
         const multiRest = [...startTags(inner, "multiRest")][0]?.tag;
-        const right = attr(text, "right") ?? "";
+        const right = tagAttribute(text, "right") ?? "";
         measures.push({
-          id: attr(text, "xml:id") ?? "",
-          label: attr(text, "n") ?? "",
+          id: tagAttribute(text, "xml:id") ?? "",
+          label: tagAttribute(text, "n") ?? "",
           start: tag.start,
           end,
           systemStart,
           pageStart,
           rptStart:
-            attr(text, "left") === "rptstart" || previousRight === "rptboth",
+            tagAttribute(text, "left") === "rptstart" ||
+            previousRight === "rptboth",
           rptEnd: right === "rptend" || right === "rptboth",
           ending,
-          pickup: attr(text, "metcon") === "false",
-          span: Math.max(1, Number(multiRest && attr(multiRest, "num")) || 1),
+          pickup: tagAttribute(text, "metcon") === "false",
+          span: Math.max(
+            1,
+            Number(multiRest && tagAttribute(multiRest, "num")) || 1,
+          ),
           events: staffEvents(inner),
           leading,
         });

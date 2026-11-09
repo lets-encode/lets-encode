@@ -32,7 +32,14 @@ import {
 import { staffCountOf, withCorrectedLayout } from "./omr-layout.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { applicationId, recordApplications } from "./mei-provenance.ts";
-import { elementsNamed, startTags, tagsIn, xmlEscape } from "./mei-xml.ts";
+import {
+  elementsNamed,
+  startTags,
+  tagAttribute,
+  tagsIn,
+  xmlEscape,
+  xmlUnescape,
+} from "./mei-xml.ts";
 
 /** The <appInfo> entry the staves filled from an uploaded file point to. */
 export const UPLOAD_APPLICATION = "Uploaded encoding";
@@ -87,9 +94,6 @@ function children(xml: string): Child[] {
   return out;
 }
 
-const attr = (tag: string, name: string): string | null =>
-  new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1] ?? null;
-
 /** The element with its start tag's attribute `name` set to `value`. */
 function withAttr(element: string, name: string, value: string): string {
   const tagEnd = element.indexOf(">");
@@ -108,12 +112,15 @@ function withAttr(element: string, name: string, value: string): string {
 
 /** The xml:ids an XML fragment declares. */
 const idsIn = (xml: string): string[] =>
-  [...xml.matchAll(/\bxml:id="([^"]*)"/g)].map((m) => m[1]);
+  [...tagsIn(xml)].flatMap((tag) => {
+    const id = tag.attributes?.get("xml:id");
+    return id === undefined ? [] : [xmlUnescape(id)];
+  });
 
 /** The ids a control event refers to through its pointing attributes. */
 function referencesOf(tag: string): string[] {
   return ["startid", "endid", "plist"].flatMap((name) =>
-    (attr(tag, name) ?? "")
+    (tagAttribute(tag, name) ?? "")
       .split(/\s+/)
       .filter((ref) => ref.startsWith("#"))
       .map((ref) => ref.slice(1)),
@@ -234,9 +241,9 @@ export function mergeEncoding(
       const source = fileChildren.find(
         (child) =>
           child.name === "staff" &&
-          mapStaff(Number(attr(child.tag, "n"))) === t,
+          mapStaff(Number(tagAttribute(child.tag, "n"))) === t,
       );
-      const n = source && Number(attr(source.tag, "n"));
+      const n = source && Number(tagAttribute(source.tag, "n"));
       const events = measure && n ? (measure.events.get(n) ?? 0) : 0;
       if (source && events > 0 && measure!.span > 1) {
         staves.push(
@@ -268,7 +275,7 @@ export function mergeEncoding(
             return [definition];
           const t =
             name === "staffDef"
-              ? mapStaff(Number(attr(definition, "n")))
+              ? mapStaff(Number(tagAttribute(definition, "n")))
               : null;
           if (t !== null) return [withAttr(definition, "n", String(t))];
           droppedDefinitions++;
@@ -285,7 +292,7 @@ export function mergeEncoding(
     const ownSigns = new Set(
       own
         .filter((child) => child.name === "repeatMark")
-        .map((child) => attr(child.tag, "func")),
+        .map((child) => tagAttribute(child.tag, "func")),
     );
     const events =
       measure && slot!.part === 0
@@ -293,10 +300,10 @@ export function mergeEncoding(
             if (child.name === "staff") return [];
             if (
               child.name === "repeatMark" &&
-              ownSigns.has(attr(child.tag, "func"))
+              ownSigns.has(tagAttribute(child.tag, "func"))
             )
               return [];
-            const staves = attr(child.tag, "staff");
+            const staves = tagAttribute(child.tag, "staff");
             const mapped = staves
               ? staves.split(/\s+/).map((n) => mapStaff(Number(n)))
               : [];
@@ -334,9 +341,9 @@ export function mergeEncoding(
       ...(measure && slot!.part === measure.span - 1 ? ["right"] : []),
     ];
     for (const side of sides) {
-      const barline = attr(fileOpen, side);
+      const barline = tagAttribute(fileOpen, side);
       if (
-        !attr(open, side) &&
+        !tagAttribute(open, side) &&
         barline &&
         !barline.startsWith("rpt") &&
         (barline !== "end" || endsMovement)
