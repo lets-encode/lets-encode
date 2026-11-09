@@ -195,7 +195,7 @@ const locatorsOf = (rows: TaskRow[]) =>
     .filter((r) => r.subtask_id === "")
     .map((r) => `${r.task_id}:${r.locator}`);
 
-test("replanPageTasks: a page without measures gets no task, the first task opens the first measured page", () => {
+test("replanPageTasks: a page without measures gets no task, the other pages keep their task ids", () => {
   const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
     "surface-2",
     "surface-3",
@@ -204,11 +204,11 @@ test("replanPageTasks: a page without measures gets no task, the first task open
   assert.deepEqual(locatorsOf(r.tasks), [
     "P0001:omr-layout",
     "P0002:score-setup",
-    "T0001:surface-2",
-    "T0002:surface-3",
+    "T0002:surface-2",
+    "T0003:surface-3",
     "T0004:",
   ]);
-  assert.equal(r.tasks.find((t) => t.task_id === "T0001")?.depends_on, "P0002");
+  assert.equal(r.tasks.find((t) => t.task_id === "T0002")?.depends_on, "P0002");
   assert.deepEqual(
     r.stateRows.map((row) => `${row.task_id}/${row.subtask_id}`),
     r.tasks.map((row) => `${row.task_id}/${row.subtask_id}`),
@@ -228,6 +228,19 @@ test("replanPageTasks: an extra measured page gets the next free id", () => {
     "T0002:surface-2",
     "T0003:surface-3",
     "T0005:surface-4",
+    "T0004:",
+  ]);
+});
+
+test("replanPageTasks: dropping a middle page leaves the later pages' task ids", () => {
+  const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
+    "surface-1",
+    "surface-3",
+  ]);
+  assert.ok(r);
+  assert.deepEqual(locatorsOf(r.tasks).slice(2), [
+    "T0001:surface-1",
+    "T0003:surface-3",
     "T0004:",
   ]);
 });
@@ -277,9 +290,9 @@ test("replanPageTasks: page tasks chained to the first page task stay chained", 
       .map((t) => `${t.task_id}:${t.locator}:${t.depends_on}`),
     [
       "P0001:omr-layout:",
-      "T0001:surface-2:P0001",
-      "T0002:surface-3:T0001",
-      "T0003:surface-4:T0001",
+      "T0002:surface-2:P0001",
+      "T0003:surface-3:T0002",
+      "T0004:surface-4:T0002",
     ],
   );
   assert.ok(

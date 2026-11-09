@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-09
+
+- A measure or layout correction leaves each remaining page with its own task id.
+
 ## 2026-11-06
 
 - The setup wizard continues only with page images or an uploaded encoding.
