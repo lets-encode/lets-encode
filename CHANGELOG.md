@@ -11,6 +11,9 @@ parentheses.
 - Accepted whole-file and pre-task submissions keep the campaign's score header.
 - Table reads without the batch query read every file at the same head commit.
 - Opening a claimed task in mei-friend starts from the score as it stands after the claim.
+- The broker follows GitHub's redirect for a renamed campaign repository instead of passing it to the browser.
+- The campaign list shows only repositories the registry holds under their configured name.
+- The task branch is looked up in the repository the claim came from, not by current push access.
 
 ## 2026-11-06
 

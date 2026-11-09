@@ -79,6 +79,7 @@ import type {
 import {
   assembleSubmission,
   checksOpening,
+  claimPullRequest,
   keptWorkBranch,
   keptWorkSince,
   pieceFieldForPath,
@@ -567,7 +568,7 @@ async function deleteTaskBranch(
   task_id: string,
 ): Promise<void> {
   try {
-    const workRepo = await workRepoOf(ctx);
+    const workRepo = await workRepoOf(ctx, task_id);
     await ctx.forge.deleteBranch(
       workRepo.owner,
       workRepo.repo,
@@ -578,13 +579,41 @@ async function deleteTaskBranch(
   }
 }
 
-// The repo the viewer's task branches live in: the campaign repo with push
-// access, their fork otherwise (a repo cannot be forked by its owner).
+// The head repo of a claim's pull request, per campaign repo id and number.
+const claimHeadRepos = new Map<
+  string,
+  Promise<{ owner: string; repo: string } | null>
+>();
+
+// The repo the viewer's task branch `encode-<task_id>` lives in: the repo
+// their accepted claim's pull request came from, where the campaign
+// automation also looks for it. Without one (or when that repo is gone), the
+// campaign repo with push access, their fork otherwise (a repo cannot be
+// forked by its owner).
 async function workRepoOf(
   ctx: CommandContext,
+  task_id: string,
 ): Promise<{ owner: string; repo: string }> {
   const { forge: f, owner, repo } = ctx;
-  const { canPush } = await f.getRepoHead(owner, repo);
+  const { sha, canPush } = await f.getRepoHead(owner, repo);
+  const pr = claimPullRequest(
+    parseHistoryCsv(
+      (await f.getRepoFile(owner, repo, HISTORY_PATH, sha)) ?? "",
+    ),
+    task_id,
+    ctx.viewer,
+  );
+  if (pr !== null) {
+    const key = `${ctx.repoId}#${pr}`;
+    let head = claimHeadRepos.get(key);
+    if (!head) {
+      head = f.getPullRequestHeadRepo(owner, repo, pr);
+      claimHeadRepos.set(key, head);
+      head.catch(() => claimHeadRepos.delete(key));
+    }
+    const found = await head;
+    if (found) return found;
+  }
   return canPush ? { owner, repo } : f.ensureFork(owner, repo);
 }
 
@@ -640,7 +669,7 @@ async function workSource(
   task: TaskRow,
 ): Promise<FileSource | null> {
   const { forge: f, owner, repo } = ctx;
-  const workRepo = await workRepoOf(ctx);
+  const workRepo = await workRepoOf(ctx, task.task_id);
   const own = { ...workRepo, ref: `encode-${task.task_id}` };
   const sha = await f.getBranchHead(own.owner, own.repo, own.ref);
   if (
@@ -1527,17 +1556,11 @@ const openEditor: CommandDef<
         "canPush",
         canPush,
       );
-      // Both roles commit to a per-task branch `encode-<task_id>`: owners and
-      // collaborators in the campaign repo itself (a repo cannot be forked by
-      // its owner), volunteers in their fork, which they can push to. The
-      // submission PR later names the same branch.
       const ref = `encode-${task_id}`;
-      const workRepo = canPush
-        ? { owner, repo }
-        : await f.ensureFork(owner, repo);
-
       let prUrl: string | undefined;
       let claimMessage = "";
+      // A newly accepted claim starts its task branch afresh.
+      let startsFresh = false;
       if (claiming) {
         ctx.progress({ step: "Opening the encoding claim…" });
         const pr = await openClaimPr(ctx, task_id, "", "encoding", envelope);
@@ -1578,11 +1601,7 @@ const openEditor: CommandDef<
           `Encoding claim #${pr.number} opened.`,
         );
         if (!res.error) {
-          // A new claim starts from the current score or the work kept from
-          // expired claims. The branch is deleted only once the claim is
-          // accepted: until then, an expired claim's work on it may still be
-          // being kept.
-          await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
+          startsFresh = true;
           claimMessage = `${res.message} `;
         } else if (
           // Claimed from another tab or device: its branch is kept.
@@ -1597,6 +1616,17 @@ const openEditor: CommandDef<
         // the editor opens.
         ({ sha } = await f.getRepoHead(owner, repo));
       }
+
+      // The task branch `encode-<task_id>` lives where the claim's pull
+      // request came from (workRepoOf): the campaign repo for owners and
+      // collaborators, the volunteer's fork otherwise. The submission PR
+      // later names the same branch.
+      const workRepo = await workRepoOf(ctx, task_id);
+      // A new claim starts from the current score or the work kept from
+      // expired claims. The branch is deleted only once the claim is
+      // accepted: until then, an expired claim's work on it may still be
+      // being kept.
+      if (startsFresh) await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
 
       ctx.progress({ step: "Preparing the score for mei-friend…" });
       // Whether the branch now sits at the head with nothing of its own on it.
@@ -1759,28 +1789,20 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
       { kind: "encode", task: task_id },
       async () => {
         await muteOnce(ctx);
-        const [{ branch: base, canPush }, taskCsv] = await Promise.all([
+        const [{ branch: base }, taskCsv] = await Promise.all([
           f.getRepoHead(owner, repo),
           f.getRepoFile(owner, repo, TASK_PATH),
         ]);
         const tasks = parseTaskCsv(taskCsv ?? "");
         const task = findRow(tasks, task_id, "");
         if (!task) throw new Error(`Unknown task ${task_id}.`);
-        // The claim/editor flow put the encoding on `encode-<task_id>` — in the
-        // campaign repo for owners/collaborators, in the volunteer's fork
-        // otherwise — so the head is fully determined; nothing to guess.
+        // The claim/editor flow put the encoding on `encode-<task_id>` in the
+        // repo the claim's pull request came from (workRepoOf).
         const branch = `encode-${task_id}`;
-        let head = branch;
-        let workRepo = { owner, repo };
-        let forkHead:
-          | { owner: string; repo: string; branch: string }
-          | undefined;
-        if (!canPush) {
-          const fork = await f.ensureFork(owner, repo);
-          head = `${fork.owner}:${branch}`;
-          workRepo = fork;
-          forkHead = { ...fork, branch };
-        }
+        const workRepo = await workRepoOf(ctx, task_id);
+        const inCampaign = workRepo.owner === owner && workRepo.repo === repo;
+        const head = inCampaign ? branch : `${workRepo.owner}:${branch}`;
+        const forkHead = inCampaign ? undefined : { ...workRepo, branch };
         // The branch holds mei-friend's commits. The score is assembled the way
         // the automation assembles it (assembleSubmission) — a page task
         // contributes only its page, spliced into the campaign's score — and
@@ -3085,7 +3107,7 @@ const saveDraft: CommandDef<DraftInput, Result & { sha?: string }> = {
         return {
           error: `The draft was not saved: you hold no claim on ${task.task_id}.`,
         };
-      const workRepo = await workRepoOf(ctx);
+      const workRepo = await workRepoOf(ctx, task.task_id);
       const ref = `encode-${task.task_id}`;
       const current = await f.getBranchHead(workRepo.owner, workRepo.repo, ref);
       if (current !== (input.base ?? null))

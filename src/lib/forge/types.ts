@@ -220,6 +220,13 @@ export interface ForgeClient {
     repo: string,
     number: number,
   ): Promise<string>;
+  /** The repo a pull/merge request's head branch is in; null when that repo
+      no longer exists. */
+  getPullRequestHeadRepo(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<{ owner: string; repo: string } | null>;
   /** Close a pull/merge request without merging it. */
   closePullRequest(owner: string, repo: string, number: number): Promise<void>;
   /** The most recent comment on a pull/merge request, or null. */

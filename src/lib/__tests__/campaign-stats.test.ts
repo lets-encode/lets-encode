@@ -316,6 +316,24 @@ test("loadAllCampaignStats: one unreadable repository is skipped but reported", 
   assert.equal(listing.failure?.message, "boom");
 });
 
+test("loadAllCampaignStats: a repository the registry does not hold under its name is left out", async () => {
+  const f = fakeForge(
+    [summary(9601, "real"), summary(9602, "copy")],
+    async () => null,
+  );
+  const shown: string[] = [];
+  const listing = await loadAllCampaignStats(f, "topic", {
+    onEach: (s) => shown.push(s.name),
+    registered: async (s) => s.repoId === 9601,
+  });
+  assert.deepEqual(
+    listing.stats.map((s) => s.name),
+    ["real"],
+  );
+  assert.deepEqual(shown, ["real"]);
+  assert.equal(listing.failed, 0);
+});
+
 test("loadAllCampaignStats: every repository failing throws instead of listing nothing", async () => {
   const f = fakeForge([summary(9201, "a"), summary(9202, "b")], async () => {
     throw rateLimit();

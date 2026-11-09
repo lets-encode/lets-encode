@@ -54,6 +54,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { registeredAs } from "$lib/campaign-resolve.ts";
   import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
 
@@ -80,6 +81,9 @@
 
   // Stats arrive one campaign at a time; each resolves into the grid as it
   // lands rather than waiting for the slowest repository.
+  // A listed repository is shown only under the name the registry holds for
+  // it, so its links and commands reach that repository.
+  const registered = (s: CampaignStats) => registeredAs(s.repoId, s.name);
   const placeRow = (s: CampaignStats) =>
     (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]);
 
@@ -88,7 +92,7 @@
       const listing = await loadAllCampaignStats(
         readForge(),
         provider.repoTopic,
-        { onEach: placeRow },
+        { onEach: placeRow, registered },
       );
       listFailed = listing.failed;
       listFailure = listing.failure;
@@ -226,6 +230,7 @@
         if (resumed)
           await loadAllCampaignStats(f, provider.repoTopic, {
             onEach: placeRow,
+            registered,
           });
         // All heads in one batch read where the client can; else one each.
         const polled = stats;

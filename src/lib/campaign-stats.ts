@@ -291,12 +291,16 @@ export interface CampaignListing {
  * search found repositories and not one of them could be read, that is a
  * failure of the listing itself (typically the anonymous rate limit), and it
  * throws rather than posing as an empty database. `onEach` streams results as
- * they land, for grids that fill in progressively.
+ * they land, for grids that fill in progressively. A repository `registered`
+ * answers false for is left out, as not the campaign its config names.
  */
 export async function loadAllCampaignStats(
   f: ForgeClient,
   topic: string,
-  opts: { onEach?: (stats: CampaignStats) => void } = {},
+  opts: {
+    onEach?: (stats: CampaignStats) => void;
+    registered?: (stats: CampaignStats) => Promise<boolean>;
+  } = {},
 ): Promise<CampaignListing> {
   const repos = await f.searchReposByTopic(topic);
   await batchStats(f, repos);
@@ -305,6 +309,7 @@ export async function loadAllCampaignStats(
     repos.map(async (repo) => {
       try {
         const stats = await loadCampaignStats(f, repo);
+        if (opts.registered && !(await opts.registered(stats))) return null;
         opts.onEach?.(stats);
         return stats;
       } catch (err) {
@@ -316,7 +321,7 @@ export async function loadAllCampaignStats(
   const loaded = all.filter((stats): stats is CampaignStats => stats !== null);
   // A rate-limit error carries the retry time — surface that one first.
   const cause = errors.find((e) => e instanceof RateLimitError) ?? errors[0];
-  if (repos.length > 0 && loaded.length === 0) throw cause;
+  if (errors.length > 0 && loaded.length === 0) throw cause;
   return {
     stats: loaded,
     failed: errors.length,

@@ -1439,6 +1439,101 @@ def omr_blob():
     )
 
 
+def refused(event, error, path):
+    """A 403 from the broker for a request it does not relay, logged."""
+    app.logger.warning(
+        "github_api %s",
+        json.dumps(
+            {
+                "source": "broker",
+                "event": event,
+                "method": request.method,
+                "endpoint": path,
+                "user": session.get("userLogin"),
+            },
+            separators=(",", ":"),
+        ),
+    )
+    response = jsonify(error=error, source="broker")
+    response.status_code = 403
+    response.headers["X-Lets-Encode-Upstream"] = "broker"
+    return response
+
+
+def relay_refusal(path):
+    """
+    The broker's answer when the proxy may not relay this request to the
+    api.github.com `path`, or None when it may.
+    """
+    # A "." or ".." segment would move the request to another endpoint:
+    # requests resolves them before sending.
+    if any(segment in (".", "..") for segment in path.split("/")):
+        return jsonify(error="Path not allowed"), 400
+    routes = PROXY_ROUTES.get(request.method)
+    if (
+        routes is None
+        or not routes.fullmatch(path)
+        or write_beyond_the_app(path)
+    ):
+        return refused(
+            "endpoint_refused", "That GitHub endpoint is not relayed", path
+        )
+    try:
+        outside = write_outside_campaigns(path)
+    except requests.Timeout:
+        return jsonify(error="Upstream request timed out"), 504
+    except RepositoryLookupFailed as e:
+        return repository_lookup_failure(e.response)
+    except (requests.RequestException, ValueError):
+        return jsonify(error="Upstream request failed"), 502
+    if outside:
+        return refused(
+            "write_refused", "Writes go to campaign repositories only", path
+        )
+    return None
+
+
+_MOVED_REPO = re.compile(r"/repositories/(\d+)(/.*)?")
+
+
+def moved_repository_url(location):
+    """
+    The URL a GitHub redirect to /repositories/<id>/… stands for under the
+    repository's current name, with the redirect's query; None for any other
+    redirect or when GitHub does not show the repository.
+    """
+    parts = urlsplit(location)
+    match = _MOVED_REPO.fullmatch(parts.path)
+    if (
+        parts.scheme != "https"
+        or parts.netloc not in ALLOWED_DOMAINS
+        or not match
+    ):
+        return None
+    lookup = requests.get(
+        "{}/repositories/{}".format(GITHUB_API, match.group(1)),
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "token " + session["githubToken"],
+        },
+        timeout=(10, 30),
+    )
+    full_name = json_field(lookup, "full_name") if lookup.ok else None
+    if not isinstance(full_name, str) or not _REPO_PATH.fullmatch(
+        "/repos/" + full_name
+    ):
+        return None
+    return urlunsplit(
+        (
+            "https",
+            parts.netloc,
+            "/repos/" + quote(full_name) + (match.group(2) or ""),
+            parts.query,
+            "",
+        )
+    )
+
+
 @app.route(
     "/proxy/<path:url>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
 )
@@ -1465,63 +1560,10 @@ def proxy(url):
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc not in ALLOWED_DOMAINS:
         return jsonify(error="Domain not allowed"), 400
-    # A "." or ".." segment would move the request to another endpoint:
-    # requests resolves them before sending.
-    if any(segment in (".", "..") for segment in parsed.path.split("/")):
-        return jsonify(error="Path not allowed"), 400
-    routes = PROXY_ROUTES.get(request.method)
-    if (
-        routes is None
-        or not routes.fullmatch(parsed.path)
-        or write_beyond_the_app(parsed.path)
-    ):
-        app.logger.warning(
-            "github_api %s",
-            json.dumps(
-                {
-                    "source": "broker",
-                    "event": "endpoint_refused",
-                    "method": request.method,
-                    "endpoint": parsed.path,
-                    "user": session.get("userLogin"),
-                },
-                separators=(",", ":"),
-            ),
-        )
-        response = jsonify(
-            error="That GitHub endpoint is not relayed", source="broker"
-        )
-        response.status_code = 403
-        response.headers["X-Lets-Encode-Upstream"] = "broker"
-        return response
-    try:
-        outside = write_outside_campaigns(parsed.path)
-    except requests.Timeout:
-        return jsonify(error="Upstream request timed out"), 504
-    except RepositoryLookupFailed as e:
-        return repository_lookup_failure(e.response)
-    except (requests.RequestException, ValueError):
-        return jsonify(error="Upstream request failed"), 502
-    if outside:
-        app.logger.warning(
-            "github_api %s",
-            json.dumps(
-                {
-                    "source": "broker",
-                    "event": "write_refused",
-                    "method": request.method,
-                    "endpoint": parsed.path,
-                    "user": session.get("userLogin"),
-                },
-                separators=(",", ":"),
-            ),
-        )
-        response = jsonify(
-            error="Writes go to campaign repositories only", source="broker"
-        )
-        response.status_code = 403
-        response.headers["X-Lets-Encode-Upstream"] = "broker"
-        return response
+    refusal = relay_refusal(parsed.path)
+    if refusal is not None:
+        return refusal
+    path = parsed.path
     if request.query_string:
         url += "?" + request.query_string.decode()
 
@@ -1553,13 +1595,43 @@ def proxy(url):
             timeout=(10, 60),
             allow_redirects=False,
         )
+        # A renamed or transferred repository answers its old name with a
+        # redirect to /repositories/<id>/…. The request is sent once more,
+        # to the repository's current name, after the same checks.
+        if response.status_code in (301, 302, 307, 308):
+            moved = moved_repository_url(
+                requests.structures.CaseInsensitiveDict(
+                    response.raw.headers
+                ).get("Location", "")
+            )
+            if moved is None:
+                return (
+                    jsonify(
+                        error="GitHub redirected the request elsewhere",
+                        source="broker",
+                    ),
+                    502,
+                )
+            path = urlsplit(moved).path
+            refusal = relay_refusal(path)
+            if refusal is not None:
+                return refusal
+            url = moved
+            response = requests.request(
+                request.method,
+                url,
+                headers=headers,
+                data=body,
+                timeout=(10, 60),
+                allow_redirects=False,
+            )
     except requests.Timeout:
         return jsonify(error="Upstream request timed out"), 504
     except requests.RequestException:
         return jsonify(error="Upstream request failed"), 502
     if (
         request.method == "POST"
-        and parsed.path.endswith("/generate")
+        and path.endswith("/generate")
         and response.status_code == 201
     ):
         created = json_field(response, "full_name")
@@ -1606,7 +1678,7 @@ def proxy(url):
             {
                 "source": "github",
                 "method": request.method,
-                "endpoint": parsed.path,
+                "endpoint": path,
                 "status": response.status_code,
                 "duration_ms": round((time.monotonic() - started_at) * 1000),
                 "user": session.get("userLogin"),

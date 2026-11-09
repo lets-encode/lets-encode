@@ -97,6 +97,10 @@ function claimForge(
       canPush: false,
     }),
     getRepoFile: async () => lockHeader,
+    getPullRequestHeadRepo: async () => ({
+      owner: "volunteer",
+      repo: "campaign",
+    }),
     openChangePr: async () => ({
       number,
       html_url: `https://example.test/pr/${number}`,
@@ -152,6 +156,10 @@ function runEncoding(
       canPush: false,
     }),
     ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    getPullRequestHeadRepo: async () => ({
+      owner: "volunteer",
+      repo: "campaign",
+    }),
     getRepoFile: async (_owner, _repo, path) => encodingFiles[path] ?? null,
     ...overrides,
   });
@@ -628,6 +636,33 @@ test("a volunteer encoding submission cleans the encode branch in their fork", a
   assert.deepEqual(deleted, ["volunteer", "campaign", "encode-T0001"]);
 });
 
+test("an encoding submission comes from the repo the claim came from, whatever the push access now", async (t) => {
+  let pullHead = "";
+  const { result } = await runEncoding(
+    t,
+    {
+      // Made a collaborator after claiming from the fork.
+      getRepoHead: async () => ({
+        branch: "main",
+        sha: "base-sha",
+        treeSha: "base-sha-tree",
+        canPush: true,
+      }),
+      createPullRequest: async (_owner, _repo, options) => {
+        pullHead = options.head;
+        return { number: 15, html_url: "https://example.test/pr/15" };
+      },
+      getPullRequestState: async () => "closed",
+      getLastIssueComment: async () => "✅ Submission accepted (encoding).",
+      deleteBranch: async () => {},
+    },
+    15,
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(pullHead, "volunteer:encode-T0001");
+});
+
 test("a poll failure settles a background submission as timeout, not rejection", async (t) => {
   const { result, verdict } = await runEncoding(t, {
     createPullRequest: async () => ({
@@ -934,6 +969,10 @@ test("openEditor claims first, then starts the task branch from the score as it 
       canPush: false,
     }),
     ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    getPullRequestHeadRepo: async () => ({
+      owner: "volunteer",
+      repo: "campaign",
+    }),
     deleteBranch: async (_owner, _repo, branch) => {
       calls.push(`delete ${branch}`);
     },
@@ -1048,6 +1087,10 @@ async function openWithKeptWorkBranch(earlier: string) {
       canPush: false,
     }),
     ensureFork: async () => ({ owner: "volunteer", repo: "campaign" }),
+    getPullRequestHeadRepo: async () => ({
+      owner: "volunteer",
+      repo: "campaign",
+    }),
     deleteBranch: async () => {},
     createBranch: async () => {},
     commitFiles: async (owner, repo, changes, _message, opts) => {

@@ -54,6 +54,18 @@ export function createGitHubForge(token: string): ForgeClient {
       gh.getPullRequestState(token, owner, repo, number),
     getPullRequestHead: async (owner, repo, number) =>
       (await gh.getPullRequestDetails(token, owner, repo, number)).headSha,
+    getPullRequestHeadRepo: async (owner, repo, number) => {
+      const { headRepo } = await gh.getPullRequestDetails(
+        token,
+        owner,
+        repo,
+        number,
+      );
+      const [headOwner, headName] = headRepo.split("/");
+      return headOwner && headName
+        ? { owner: headOwner, repo: headName }
+        : null;
+    },
     closePullRequest: (owner, repo, number) =>
       gh.closePullRequest(token, owner, repo, number),
     getLastIssueComment: (owner, repo, number) =>

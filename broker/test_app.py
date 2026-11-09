@@ -644,6 +644,69 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "broker")
         self.assertEqual(response.get_json()["source"], "broker")
 
+    def test_proxy_follows_a_renamed_repository_after_the_same_checks(self):
+        self.authenticate()
+
+        def redirect(location):
+            return SimpleNamespace(
+                content=b"",
+                status_code=301,
+                raw=SimpleNamespace(headers={"Location": location}),
+            )
+
+        ok = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        lookup = SimpleNamespace(
+            ok=True, status_code=200, json=lambda: {"full_name": "o/new-name"}
+        )
+        moved = "https://api.github.com/repositories/42"
+
+        with patch.object(
+            broker.requests, "get", return_value=lookup
+        ) as lookups, patch.object(
+            broker.requests,
+            "request",
+            side_effect=[redirect(moved + "/contents/a.csv?ref=abc"), ok],
+        ) as request_upstream:
+            response = self.client.get(
+                "/proxy/api.github.com/repos/o/old-name/contents/a.csv?ref=abc"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            lookups.call_args.args[0], "https://api.github.com/repositories/42"
+        )
+        self.assertEqual(
+            request_upstream.call_args.args,
+            (
+                "GET",
+                "https://api.github.com/repos/o/new-name/contents/a.csv?ref=abc",
+            ),
+        )
+
+        # The current name's endpoint is checked like any other.
+        with patch.object(
+            broker.requests, "get", return_value=lookup
+        ), patch.object(
+            broker.requests, "request", side_effect=[redirect(moved + "/hooks")]
+        ) as request_upstream:
+            with self.assertLogs(broker.app.logger.name, level="WARNING"):
+                response = self.client.get(
+                    "/proxy/api.github.com/repos/o/old-name"
+                )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(request_upstream.call_count, 1)
+
+        # A redirect anywhere else is not followed.
+        with patch.object(
+            broker.requests,
+            "request",
+            side_effect=[redirect("https://evil.test/repos/o/r")],
+        ) as request_upstream:
+            response = self.client.get("/proxy/api.github.com/repos/o/old-name")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(request_upstream.call_count, 1)
+
     def test_proxy_maps_upstream_timeouts(self):
         self.authenticate()
         with patch.object(

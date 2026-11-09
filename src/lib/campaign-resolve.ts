@@ -29,6 +29,33 @@ export interface SlugInfo {
   repo_id: number | null;
 }
 
+// Whether the registry holds `name` for repo id `repoId`, per id and name.
+const registrations = new Map<string, Promise<boolean>>();
+
+/**
+ * Whether the registry holds `name` as the live campaign of repo `repoId` on
+ * this deployment's forge. Answers are kept for the session; an unreachable
+ * registry answers true and is asked again next time.
+ */
+export function registeredAs(repoId: number, name: string): Promise<boolean> {
+  const key = `${repoId}/${name}`;
+  let known = registrations.get(key);
+  if (!known) {
+    known = lookupSlug(name).then(
+      (info) =>
+        info?.status === "active" &&
+        info.repo_id === repoId &&
+        (info.forge ?? provider.id) === provider.id,
+      () => {
+        registrations.delete(key);
+        return true;
+      },
+    );
+    registrations.set(key, known);
+  }
+  return known;
+}
+
 /**
  * Look up a name in the registry, or null for a malformed name (400), which no
  * campaign can have. Throws when the registry cannot be reached or does not
