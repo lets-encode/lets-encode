@@ -909,7 +909,7 @@ async function decideEncoding(
   const readStart = Date.now();
   const [forkMei, baseMei, configText, commitMessage] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
-    isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null,
+    getRepoFile(token, owner, repo, task.fragment, sha),
     isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null,
     getCommitMessage(token, headOwner, headRepo, headSha),
   ]);
@@ -918,7 +918,7 @@ async function decideEncoding(
   let mei: string | null = null;
   let detail =
     forkMei == null ? `${task.fragment} is missing from the fork.` : "";
-  if (forkMei != null && isPageTask && baseMei == null) {
+  if (forkMei != null && baseMei == null) {
     detail = `${task.fragment} is missing from the campaign.`;
   } else if (forkMei != null) {
     // The contribution is recorded in the assembled score's header — the

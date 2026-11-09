@@ -1794,14 +1794,10 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
             `${task.fragment} is missing from the submitted encoding.`,
           );
         const isPageTask = task.locator.startsWith("surface-");
-        const [baseMei, configYaml] = isPageTask
-          ? await Promise.all([
-              f.getRepoFile(owner, repo, task.fragment),
-              f.getRepoFile(owner, repo, CONFIG_PATH),
-            ])
-          : [null, null];
-        if (isPageTask && baseMei == null)
-          throw new Error(`${task.fragment} is missing from the campaign.`);
+        const [baseMei, configYaml] = await Promise.all([
+          f.getRepoFile(owner, repo, task.fragment),
+          isPageTask ? f.getRepoFile(owner, repo, CONFIG_PATH) : null,
+        ]);
         // The automation records the contribution in the header before its
         // check; this one stands in for it, so the header checked has the
         // same shape.

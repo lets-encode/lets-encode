@@ -8,6 +8,7 @@ import {
   parseScoreDef,
 } from "../mei-facsimile.ts";
 import { buildPieceHead, emptySourceMetadata } from "../source-metadata.ts";
+import { applicationNamesIn, recordApplications } from "../mei-provenance.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
@@ -709,4 +710,67 @@ test("assembleSubmission splices the page, takes a checked opening and records t
   assert.equal(parseScoreDef(mei).staves[0].clefShape, "F");
   assert.match(mei, /volunteer/);
   assert.match(mei, /Encoding of T0001/);
+});
+
+test("assembleSubmission keeps the campaign's header for a whole-file task", () => {
+  const base = buildFacsimileMei(
+    {
+      ...initialFacsimileModel([
+        {
+          image: "img/01.jpg",
+          width: 400,
+          height: 200,
+          measures: [{ ulx: 0, uly: 10, lrx: 90, lry: 90 }],
+        },
+      ]),
+      headXml: buildPieceHead(
+        { title: "Lied", composer: "" },
+        emptySourceMetadata(),
+        { date: "2026-11-06" },
+      ),
+    },
+    { withBreaks: true },
+  );
+  // The fork renames the piece, credits someone and adds two applications.
+  const fork = recordApplications(
+    base
+      .replace(/<mRest\b[^>]*\/>/g, '<note dur="4" oct="4" pname="c"/>')
+      .replace(">Lied</title>", ">Mallory's Lied</title>"),
+    ["Uploaded encoding", "Other tool"],
+  );
+  const task: TaskRow = {
+    task_id: "T0001",
+    subtask_id: "",
+    fragment: "sources/piece-01/score.mei",
+    locator: "",
+    allowlist: "",
+    blocklist: "",
+    depends_on: "",
+  };
+  const input = {
+    task,
+    tasks: [task],
+    configYaml: null,
+    forkMei: fork,
+    contributions: [
+      {
+        name: "volunteer",
+        message: "Encoding of T0001",
+        isodate: "2026-11-06",
+      },
+    ],
+  };
+
+  const mei = assembleSubmission({ ...input, baseMei: base });
+  assert.match(mei, /<note /);
+  assert.match(mei, />Lied<\/title>/);
+  assert.doesNotMatch(mei, /Mallory/);
+  const apps = applicationNamesIn(mei);
+  assert.ok(apps.includes("Uploaded encoding"));
+  assert.ok(!apps.includes("Other tool"));
+  assert.match(mei, /Encoding of T0001/);
+  assert.throws(
+    () => assembleSubmission({ ...input, baseMei: null }),
+    /missing from the campaign/,
+  );
 });
