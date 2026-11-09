@@ -1040,9 +1040,9 @@ async function decideEncoding(
           tasks,
           verdict.state,
           verdict.locks,
+          pastHistory,
           task.fragment,
           measuredSurfaceIds(mei!),
-          pastHistory.map((h) => h.task_id),
         )
       : null;
   const newState = replan

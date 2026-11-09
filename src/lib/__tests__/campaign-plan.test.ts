@@ -6,7 +6,7 @@ import {
   parseStateCsv,
   parseLockCsv,
 } from "../campaign-tables.ts";
-import type { TaskRow } from "../campaign-tables.ts";
+import type { HistoryRow, TaskRow } from "../campaign-tables.ts";
 import {
   checkPlan,
   nextTaskId,
@@ -61,16 +61,50 @@ const row = (
   depends_on,
 });
 
+const historyRow = (
+  task_id: string,
+  action: string,
+  outcome: string,
+): HistoryRow => ({
+  timestamp: "2026-07-01T09:00:00Z",
+  task_id,
+  subtask_id: "",
+  user_id: "42",
+  action,
+  outcome,
+  detail: "",
+});
+
 test("taskStarted: untouched, locked, and encoded tasks", () => {
-  assert.equal(taskStarted(freshState, [], "T0001"), false);
-  assert.equal(taskStarted(freshState, encodingLock, "T0001"), true);
-  assert.equal(taskStarted(startedState, [], "T0001"), true);
+  assert.equal(taskStarted(freshState, [], [], "T0001"), false);
+  assert.equal(taskStarted(freshState, encodingLock, [], "T0001"), true);
+  assert.equal(taskStarted(startedState, [], [], "T0001"), true);
+});
+
+test("taskStarted: a task reset by a failed review after an accepted encoding counts as started", () => {
+  const accepted = [historyRow("T0001", "submit_encoding", "accepted")];
+  assert.equal(taskStarted(freshState, [], accepted, "T0001"), true);
+  assert.equal(
+    taskStarted(
+      freshState,
+      [],
+      [historyRow("T0001", "submit_encoding", "rejected")],
+      "T0001",
+    ),
+    false,
+  );
+  const removed = copy(twoTasks).filter((r) => r.task_id !== "T0001");
+  removed[0].depends_on = "";
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], accepted, removed), {
+    ok: false,
+    reason: "task_in_progress",
+  });
 });
 
 test("a fresh plan may reorder, rewire, remove and add tasks", () => {
   const plan = copy(twoTasks);
   plan[2].depends_on = ""; // unwire T0002 from T0001
-  const v = checkPlan(twoTasks, freshState, [], plan);
+  const v = checkPlan(twoTasks, freshState, [], [], plan);
   assert.equal(v.ok, true);
 });
 
@@ -79,7 +113,7 @@ test("state rows follow the plan: kept rows carried over, new tasks start fresh"
     row("T0003", "", "surface-3", "T0002"),
     row("T0003", "S0001", "surface-3", ""),
   ]);
-  const v = checkPlan(twoTasks, startedState, [], plan);
+  const v = checkPlan(twoTasks, startedState, [], [], plan);
   assert.equal(v.ok, true);
   if (!v.ok) return;
   assert.equal(v.stateRows.length, 6);
@@ -96,19 +130,19 @@ test("removing or editing a started task is rejected", () => {
   // Removed: only T0002 remains.
   const removed = copy(twoTasks).filter((r) => r.task_id !== "T0001");
   removed[0].depends_on = "";
-  assert.deepEqual(checkPlan(twoTasks, startedState, [], removed), {
+  assert.deepEqual(checkPlan(twoTasks, startedState, [], [], removed), {
     ok: false,
     reason: "task_in_progress",
   });
   // Edited: the started task's locator changes.
   const edited = copy(twoTasks);
   edited[0].locator = "surface-9";
-  assert.deepEqual(checkPlan(twoTasks, startedState, [], edited), {
+  assert.deepEqual(checkPlan(twoTasks, startedState, [], [], edited), {
     ok: false,
     reason: "task_in_progress",
   });
   // A lock alone also counts as started.
-  assert.deepEqual(checkPlan(twoTasks, freshState, encodingLock, removed), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, encodingLock, [], removed), {
     ok: false,
     reason: "task_in_progress",
   });
@@ -117,36 +151,36 @@ test("removing or editing a started task is rejected", () => {
 test("dependency validation: unknown targets and cycles are rejected", () => {
   const unknown = copy(twoTasks);
   unknown[2].depends_on = "T0009";
-  assert.deepEqual(checkPlan(twoTasks, freshState, [], unknown), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], [], unknown), {
     ok: false,
     reason: "unknown_dependency",
   });
   const cycle = copy(twoTasks);
   cycle[0].depends_on = "T0002"; // T0001 → T0002 → T0001
-  assert.deepEqual(checkPlan(twoTasks, freshState, [], cycle), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], [], cycle), {
     ok: false,
     reason: "dependency_cycle",
   });
   const self = copy(twoTasks);
   self[0].depends_on = "T0001";
-  assert.deepEqual(checkPlan(twoTasks, freshState, [], self), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], [], self), {
     ok: false,
     reason: "dependency_cycle",
   });
 });
 
 test("structural validation: empty plans, duplicates and orphans are rejected", () => {
-  assert.deepEqual(checkPlan(twoTasks, freshState, [], []), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], [], []), {
     ok: false,
     reason: "empty_plan",
   });
   const dupe = copy(twoTasks).concat([{ ...twoTasks[0] }]);
-  assert.deepEqual(checkPlan(twoTasks, freshState, [], dupe), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], [], dupe), {
     ok: false,
     reason: "duplicate_row",
   });
   const orphan = copy(twoTasks).concat([row("T0009", "S0001", "", "")]);
-  assert.deepEqual(checkPlan(twoTasks, freshState, [], orphan), {
+  assert.deepEqual(checkPlan(twoTasks, freshState, [], [], orphan), {
     ok: false,
     reason: "orphan_subtask",
   });
@@ -196,10 +230,14 @@ const locatorsOf = (rows: TaskRow[]) =>
     .map((r) => `${r.task_id}:${r.locator}`);
 
 test("replanPageTasks: a page without measures gets no task, the other pages keep their task ids", () => {
-  const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
-    "surface-2",
-    "surface-3",
-  ]);
+  const r = replanPageTasks(
+    pieceTasks,
+    pieceState,
+    [],
+    [],
+    "sources/score.mei",
+    ["surface-2", "surface-3"],
+  );
   assert.ok(r);
   assert.deepEqual(locatorsOf(r.tasks), [
     "P0001:omr-layout",
@@ -216,12 +254,14 @@ test("replanPageTasks: a page without measures gets no task, the other pages kee
 });
 
 test("replanPageTasks: an extra measured page gets the next free id", () => {
-  const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
-    "surface-1",
-    "surface-2",
-    "surface-3",
-    "surface-4",
-  ]);
+  const r = replanPageTasks(
+    pieceTasks,
+    pieceState,
+    [],
+    [],
+    "sources/score.mei",
+    ["surface-1", "surface-2", "surface-3", "surface-4"],
+  );
   assert.ok(r);
   assert.deepEqual(locatorsOf(r.tasks).slice(2), [
     "T0001:surface-1",
@@ -233,10 +273,14 @@ test("replanPageTasks: an extra measured page gets the next free id", () => {
 });
 
 test("replanPageTasks: dropping a middle page leaves the later pages' task ids", () => {
-  const r = replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", [
-    "surface-1",
-    "surface-3",
-  ]);
+  const r = replanPageTasks(
+    pieceTasks,
+    pieceState,
+    [],
+    [],
+    "sources/score.mei",
+    ["surface-1", "surface-3"],
+  );
   assert.ok(r);
   assert.deepEqual(locatorsOf(r.tasks).slice(2), [
     "T0001:surface-1",
@@ -250,9 +294,9 @@ test("replanPageTasks: an extra page takes no id of a dropped task the history n
     pieceTasks,
     pieceState,
     [],
+    [historyRow("T0006", "submit_encoding", "rejected")],
     "sources/score.mei",
     ["surface-1", "surface-2", "surface-3", "surface-4"],
-    ["T0006"],
   );
   assert.ok(r);
   assert.equal(locatorsOf(r.tasks)[5], "T0007:surface-4");
@@ -278,7 +322,7 @@ test("replanPageTasks: page tasks chained to the first page task stay chained", 
         .map((t) => `${t},,encoding_required,,,\n${t},S0001,pending,,,\n`)
         .join(""),
   );
-  const r = replanPageTasks(chained, state, [], "sources/score.mei", [
+  const r = replanPageTasks(chained, state, [], [], "sources/score.mei", [
     "surface-2",
     "surface-3",
     "surface-4",
@@ -305,14 +349,14 @@ test("replanPageTasks: page tasks chained to the first page task stay chained", 
 test("replanPageTasks: matching or started page tasks are left as they are", () => {
   const same = ["surface-1", "surface-2", "surface-3"];
   assert.equal(
-    replanPageTasks(pieceTasks, pieceState, [], "sources/score.mei", same),
+    replanPageTasks(pieceTasks, pieceState, [], [], "sources/score.mei", same),
     null,
   );
   const claimed = parseLockCsv(
     LOCK_HEADER + "T0001,,42,2026-07-01T09:00:00Z,encoding\n",
   );
   assert.equal(
-    replanPageTasks(pieceTasks, pieceState, claimed, "sources/score.mei", [
+    replanPageTasks(pieceTasks, pieceState, claimed, [], "sources/score.mei", [
       "surface-2",
     ]),
     null,

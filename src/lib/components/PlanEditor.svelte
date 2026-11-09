@@ -84,7 +84,7 @@
         subs: taskDefs
           .filter((s) => s.task_id === t.task_id && s.subtask_id !== "")
           .map((s) => ({ ...s })),
-        editable: !taskStarted(parsedState, locks, t.task_id),
+        editable: !taskStarted(parsedState, locks, history, t.task_id),
       }));
   }
 

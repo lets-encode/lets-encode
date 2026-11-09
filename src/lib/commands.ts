@@ -2270,10 +2270,11 @@ const savePlan: CommandDef<{ tasks: TaskRow[]; base: TaskRow[] }, Result> = {
       const { sha, canPush } = await f.getRepoHead(owner, repo);
       if (!canPush)
         return { error: "Only the campaign owner can edit the plan." };
-      const [taskCsv, stateCsv, lockCsv] = await Promise.all([
+      const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
         f.getRepoFile(owner, repo, TASK_PATH, sha),
         f.getRepoFile(owner, repo, STATE_PATH, sha),
         f.getRepoFile(owner, repo, LOCK_PATH, sha),
+        f.getRepoFile(owner, repo, HISTORY_PATH, sha),
       ]);
       if (taskCsv == null || stateCsv == null)
         return { error: "Could not read the tracking tables." };
@@ -2284,6 +2285,7 @@ const savePlan: CommandDef<{ tasks: TaskRow[]; base: TaskRow[] }, Result> = {
         parseTaskCsv(taskCsv),
         state,
         parseLockCsv(lockCsv ?? ""),
+        parseHistoryCsv(historyCsv ?? ""),
         tasks,
       );
       if (!verdict.ok) {
