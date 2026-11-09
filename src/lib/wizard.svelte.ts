@@ -239,6 +239,7 @@ export function resetWizard(): void {
   setupCount++;
   savedHandle = null;
   storedHandle = null;
+  storedAt = null;
   resetDraftStatus();
   wizard.step = "name";
   wizard.handle = "";
@@ -295,8 +296,10 @@ function resetDraftStatus(): void {
 // repository exists would otherwise leave its earlier draft behind; its page
 // images move to the new name with it.
 let savedHandle: string | null = null;
-// The name of the record this tab last stored, or continued from.
+// The name of the record this tab last stored, or continued from, and that
+// record's updatedAt.
 let storedHandle: string | null = null;
+let storedAt: string | null = null;
 
 /** Everything a draft record carries, apart from the account it belongs to. */
 export interface DraftSnapshot {
@@ -353,27 +356,37 @@ export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
   )
     return;
   // A record stored for this setup and gone since was finished or discarded
-  // in another tab; it is not stored again.
-  if (storedHandle === name && readDraft(owner, name) === null) {
-    draftStatus.saveError = "it was finished or discarded in another tab";
-    return;
+  // in another tab; one stored since by another tab holds that tab's edits.
+  // Neither is overwritten.
+  if (storedHandle === name) {
+    const stored = readDraft(owner, name);
+    if (stored === null) {
+      draftStatus.saveError = "it was finished or discarded in another tab";
+      return;
+    }
+    if (stored.updatedAt !== storedAt) {
+      draftStatus.saveError = "it was changed in another tab";
+      return;
+    }
   }
   if (savedHandle && savedHandle !== name) {
     discardDraft(owner, savedHandle);
     if (wizard.images.length) void keepDraftImages(owner, name);
   }
   savedHandle = name;
+  const updatedAt = new Date().toISOString();
   draftStatus.saveError = writeDraft({
     version: DRAFT_VERSION,
     owner,
     handle: name,
-    updatedAt: new Date().toISOString(),
+    updatedAt,
     claim: snapshot.claim,
     repo: snapshot.repo,
     entries: snapshot.entries,
   });
   if (!draftStatus.saveError) {
     storedHandle = name;
+    storedAt = updatedAt;
     draftStatus.savedAt = Date.now();
   }
 }
@@ -428,6 +441,7 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   wizard.uploadKey = "";
   savedHandle = draft.handle;
   storedHandle = draft.handle;
+  storedAt = draft.updatedAt;
   resetDraftStatus();
   // Page images the draft records but that could not be read back: every step
   // after the upload works on them, so there is nothing to continue from until

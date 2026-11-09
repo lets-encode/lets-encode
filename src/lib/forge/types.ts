@@ -220,6 +220,14 @@ export interface ForgeClient {
     repo: string,
     number: number,
   ): Promise<string>;
+  /** The newest open pull/merge request by account `userId` whose head
+      branch starts with `branchPrefix`; null when there is none. */
+  findOpenChangeRequest(
+    owner: string,
+    repo: string,
+    userId: string,
+    branchPrefix: string,
+  ): Promise<OpenedChangeRequest | null>;
   /** The repo a pull/merge request's head branch is in; null when that repo
       no longer exists. */
   getPullRequestHeadRepo(

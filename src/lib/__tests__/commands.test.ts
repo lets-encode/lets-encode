@@ -12,6 +12,12 @@ import {
 import { envelopeFromPrBody } from "../command-envelope.ts";
 import { contractMarker } from "../coordinator-policy.ts";
 import {
+  buildFacsimileMei,
+  initialFacsimileModel,
+  parseFacsimileMei,
+} from "../mei-facsimile.ts";
+import { buildPieceHead, emptySourceMetadata } from "../source-metadata.ts";
+import {
   HISTORY_COLUMNS,
   HISTORY_PATH,
   serializeTaskCsv,
@@ -201,6 +207,79 @@ test("a verdict from a coordinator on another contract is reported as an error, 
     assert.equal(result.ok, undefined);
     assert.match(result.error ?? "", /campaign automation of another version/);
   }
+});
+
+test("a repeat measure correction follows the viewer's open pull request instead of opening another", async (t) => {
+  offline(t);
+  const score = buildFacsimileMei({
+    ...initialFacsimileModel([
+      {
+        image: "img/01.jpg",
+        width: 400,
+        height: 200,
+        measures: [{ ulx: 0, uly: 10, lrx: 90, lry: 90 }],
+      },
+    ]),
+    headXml: buildPieceHead(
+      { title: "Lied", composer: "" },
+      emptySourceMetadata(),
+      { date: "2026-11-09" },
+    ),
+  });
+  const files: Record<string, string> = {
+    [TASK_PATH]:
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
+      "P0001,,sources/score.mei,measure-zones,,,\n",
+    "sources/score.mei": score,
+  };
+  let opened = 0;
+  const forge = fakeForge({
+    getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
+    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    findOpenChangeRequest: async (_owner, _repo, userId, branchPrefix) =>
+      userId === "9001" && branchPrefix === "zones-P0001-"
+        ? {
+            number: 41,
+            html_url: "https://example.test/pr/41",
+            head: {
+              owner: "volunteer",
+              repo: "campaign",
+              branch: "zones-P0001-abcd",
+            },
+          }
+        : null,
+    openChangePr: async () => {
+      opened++;
+      throw new Error("a second pull request was opened");
+    },
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () => bot("✅ Submission accepted."),
+    getRepoHead: async () => ({
+      sha: "head1",
+      treeSha: "tree1",
+      branch: "main",
+      canPush: false,
+    }),
+    getPullRequestHeadRepo: async () => ({
+      owner: "volunteer",
+      repo: "campaign",
+    }),
+    deleteBranch: async () => {},
+  });
+  const verdict = captureVerdict();
+
+  const result = await withImmediateTimeouts(async () => {
+    const res = await invoke(
+      commands.submitZones,
+      { task_id: "P0001", pages: parseFacsimileMei(score).pages },
+      context(withDecision(forge, 41)),
+    );
+    await verdict;
+    return res;
+  });
+
+  assert.equal(result.background, true);
+  assert.equal(opened, 0);
 });
 
 test("readTables decodes generated quoted config values", async () => {

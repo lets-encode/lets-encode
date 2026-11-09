@@ -13,7 +13,11 @@
 // Handlers are self-contained: they read the tracking tables themselves rather
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
-import type { FileChange, ForgeClient } from "./forge/types.ts";
+import type {
+  FileChange,
+  ForgeClient,
+  OpenedChangeRequest,
+} from "./forge/types.ts";
 import { RateLimitError } from "./forge/github-rest.ts";
 import {
   parseTaskCsv,
@@ -2791,13 +2795,19 @@ async function submitFacsimile(
       { kind: "encode", task: task_id },
       async () => {
         console.log("[zones] opening PR", { task_id });
-        const pr = await f.openChangePr(owner, repo, {
-          branch: `${layout ? "layout" : "zones"}-${task_id}-${rand()}`,
-          files,
-          message: title,
-          title,
-          body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-        });
+        const pr = await openPreTaskSubmission(
+          ctx,
+          layout ? "layout" : "zones",
+          task_id,
+          (branch) =>
+            f.openChangePr(owner, repo, {
+              branch,
+              files,
+              message: title,
+              title,
+              body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+            }),
+        );
         console.log("[zones] PR opened", pr.number, pr.html_url);
         return { ...pr, cleanup: "accepted", taskBranch: task_id };
       },
@@ -2805,6 +2815,24 @@ async function submitFacsimile(
   } catch (e) {
     return { error: `Submission failed: ${(e as Error).message}` };
   }
+}
+
+// The viewer's pre-task submission on `task_id` still open, from another tab
+// or device (head branch `<prefix>-<task_id>-…`), which a repeat submission
+// follows instead of opening a second pull request that would be rejected;
+// else the one `open` opens on a new branch.
+async function openPreTaskSubmission(
+  ctx: CommandContext,
+  prefix: string,
+  task_id: string,
+  open: (branch: string) => Promise<OpenedChangeRequest>,
+): Promise<OpenedChangeRequest> {
+  const { forge: f, owner, repo, viewer } = ctx;
+  const branchPrefix = `${prefix}-${task_id}-`;
+  return (
+    (await f.findOpenChangeRequest(owner, repo, viewer, branchPrefix)) ??
+    open(`${branchPrefix}${rand()}`)
+  );
 }
 
 // Measure correction: submit stage C — the corrected zones with one generated
@@ -2979,21 +3007,27 @@ const submitScoreSetup: CommandDef<
         { kind: "encode", task: task_id },
         async () => {
           console.log("[setup] opening PR", { task_id });
-          const pr = await f.openChangePr(owner, repo, {
-            branch: `setup-${task_id}-${rand()}`,
-            // The score is committed when unchanged too, which gives the
-            // pull request a commit when the definition is confirmed as it
-            // is.
-            files: [
-              { path: fragment, content },
-              ...(recordChanged
-                ? [{ path: recordPath, content: record! }]
-                : []),
-            ],
-            message: title,
-            title,
-            body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-          });
+          const pr = await openPreTaskSubmission(
+            ctx,
+            "setup",
+            task_id,
+            (branch) =>
+              f.openChangePr(owner, repo, {
+                branch,
+                // The score is committed when unchanged too, which gives the
+                // pull request a commit when the definition is confirmed as it
+                // is.
+                files: [
+                  { path: fragment, content },
+                  ...(recordChanged
+                    ? [{ path: recordPath, content: record! }]
+                    : []),
+                ],
+                message: title,
+                title,
+                body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+              }),
+          );
           console.log("[setup] PR opened", pr.number, pr.html_url);
           return { ...pr, cleanup: "accepted", taskBranch: task_id };
         },
@@ -3065,21 +3099,27 @@ const submitEncodingAlignment: CommandDef<
         { kind: "encode", task: task_id },
         async () => {
           console.log("[align] opening PR", { task_id });
-          const pr = await f.openChangePr(owner, repo, {
-            branch: `align-${task_id}-${rand()}`,
-            // The score is committed when unchanged too, which gives the
-            // pull request a commit when the alignment is confirmed as it
-            // is.
-            files: [
-              { path: task.fragment, content },
-              ...(recordChanged
-                ? [{ path: recordPath, content: aligned.record }]
-                : []),
-            ],
-            message: title,
-            title,
-            body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-          });
+          const pr = await openPreTaskSubmission(
+            ctx,
+            "align",
+            task_id,
+            (branch) =>
+              f.openChangePr(owner, repo, {
+                branch,
+                // The score is committed when unchanged too, which gives the
+                // pull request a commit when the alignment is confirmed as it
+                // is.
+                files: [
+                  { path: task.fragment, content },
+                  ...(recordChanged
+                    ? [{ path: recordPath, content: aligned.record }]
+                    : []),
+                ],
+                message: title,
+                title,
+                body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+              }),
+          );
           console.log("[align] PR opened", pr.number, pr.html_url);
           return { ...pr, cleanup: "accepted", taskBranch: task_id };
         },

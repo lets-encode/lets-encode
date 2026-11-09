@@ -20,6 +20,8 @@ parentheses.
 - A background submission is followed until it is decided, once a minute after the first 70 minutes.
 - Verdict comments carry the automation's contract number, and the app reports a different one as an error.
 - The campaign workflow runs pull requests of up to 50 files and the coordinator action checks the entry point.
+- A repeated pre-task submission follows the one already open from another tab instead of opening a second.
+- A campaign setup open in two tabs stops saving in the tab that did not save last.
 
 ## 2026-11-06
 
