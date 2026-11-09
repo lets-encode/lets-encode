@@ -36,6 +36,7 @@ import { canClaim } from "./campaign-graph.ts";
 import { CampaignResolution } from "./campaign-resolution.svelte.ts";
 import { CommandRunner, viewerId } from "./command-runner.svelte.ts";
 import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
+import { startAutoRefresh } from "./auto-refresh.ts";
 
 export interface PreTaskHooks {
   /** Fill the editor's working copy from a fresh load. */
@@ -260,6 +261,39 @@ export class PreTaskSession {
         }
       }),
     );
+
+    // Other people's claims, verdicts and comments: the tables are read again
+    // whenever the default branch has moved since the last read. The
+    // read-only view reloads when the task's own state row changed; an edit
+    // session only takes the new tables, as above.
+    $effect(() => {
+      const { owner, repo } = this.campaign;
+      if (auth.status !== "authenticated" || !owner || !repo) return;
+      return startAutoRefresh({
+        interval: () => 10_000,
+        held: () => !this.tables || this.loading || this.busy,
+        poll: async () => {
+          const f = forge();
+          const shown = this.tables;
+          if (!f || !shown) return;
+          const { sha } = await f.getRepoHead(owner, repo);
+          if (sha === shown.headSha) return;
+          const read = await invoke(commands.readTables, {}, this.ctx(f));
+          // A load that ran meanwhile has newer tables.
+          if (this.tables !== shown) return;
+          this.tables = read;
+          const task = this.#taskId();
+          if (
+            !this.canEdit &&
+            JSON.stringify(findRow(shown.rows, task, "")) !==
+              JSON.stringify(findRow(read.rows, task, ""))
+          ) {
+            this.data = null;
+            this.#attempted = false;
+          }
+        },
+      });
+    });
   }
 
   /**

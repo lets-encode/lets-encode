@@ -21,6 +21,7 @@
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
+  import { startAutoRefresh } from "$lib/auto-refresh.ts";
   import { anchorCell } from "$lib/campaign-submit.ts";
   import type {
     CommandContext,
@@ -189,16 +190,22 @@
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
 
+  // The default branch's head commit the shown tables were read at; null when
+  // it could not be read.
+  let headSha: string | null = null;
+
   // Read the tracking tables for the task's record, discussion and controls.
   // Only the first read shows the loading state; refreshes update in place.
-  async function load() {
+  // A background poll's failed read keeps the shown tables and throws.
+  async function load(background = false) {
     const f = readForge();
     // The title is recorded under the name it was read for.
     const name = campaign;
     if (!loaded) loading = true;
-    loadError = null;
+    if (!background) loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
+      headSha = tables.headSha;
       notInitialised = tables.notInitialised;
       recordCampaignTitle(name, tables.title);
       canPush = tables.canPush;
@@ -214,6 +221,7 @@
       allowSelfValidation = tables.allowSelfValidation;
       loaded = true;
     } catch (e) {
+      if (background) throw e;
       loadError = campaignLoadFailure(e);
     } finally {
       loading = false;
@@ -222,6 +230,20 @@
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
+  });
+
+  // Other reviewers' verdicts, review edits and comments: the tables are read
+  // again whenever the default branch has moved since the last read.
+  $effect(() => {
+    if (!owner || !repo) return;
+    return startAutoRefresh({
+      interval: () => (auth.user ? 10_000 : 300_000),
+      held: () => !loaded || loading || runner.busy,
+      poll: async () => {
+        const { sha } = await readForge().getRepoHead(owner, repo);
+        if (sha !== headSha) await load(true);
+      },
+    });
   });
 
   // Background verdicts on this campaign refresh the tables when they land —
