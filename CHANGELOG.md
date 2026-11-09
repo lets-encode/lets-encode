@@ -9,6 +9,8 @@ parentheses.
 - The plan editor keeps a task whose encoding was accepted, even after a failed review.
 - The review page and the pre-task editors pick up other people's changes to the campaign while open.
 - Accepted whole-file and pre-task submissions keep the campaign's score header.
+- Table reads without the batch query read every file at the same head commit.
+- Opening a claimed task in mei-friend starts from the score as it stands after the claim.
 
 ## 2026-11-06
 

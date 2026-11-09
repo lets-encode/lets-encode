@@ -1260,8 +1260,9 @@ async function fetchTableFiles({
     // The per-file reads pass through the broker too.
     if (err instanceof RateLimitError && err.source === "broker") throw err;
   }
-  // The head is read before the files: a commit that lands during the read
-  // moves the branch past `headSha`, and the next read sees it.
+  // The files are read at the head commit, so they match `headSha` even where
+  // the Contents API lags a branch update; without a head they are read at the
+  // default branch.
   let headSha: string | null;
   try {
     headSha = (await f.getRepoHead(owner, repo)).sha;
@@ -1270,7 +1271,9 @@ async function fetchTableFiles({
   }
   const [access, ...contents] = await Promise.all([
     f.getRepoAccess(owner, repo),
-    ...TABLE_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+    ...TABLE_PATHS.map((path) =>
+      f.getRepoFile(owner, repo, path, headSha ?? undefined),
+    ),
   ]);
   return {
     headSha,
@@ -1511,7 +1514,9 @@ const openEditor: CommandDef<
         if (limited) return { error: limited };
       }
 
-      const { sha, canPush } = await f.getRepoHead(owner, repo);
+      const head = await f.getRepoHead(owner, repo);
+      const { canPush } = head;
+      let { sha } = head;
       console.log(
         "[editor] task",
         task_id,
@@ -1588,6 +1593,9 @@ const openEditor: CommandDef<
             prUrl,
           };
         }
+        // Pages accepted while the claim was processed are on the branch
+        // the editor opens.
+        ({ sha } = await f.getRepoHead(owner, repo));
       }
 
       ctx.progress({ step: "Preparing the score for mei-friend…" });

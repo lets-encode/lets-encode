@@ -384,14 +384,17 @@ async function fetchStats(
 ): Promise<CampaignStats> {
   const owner = ownerOf(summary);
   const repo = summary.name;
-  // The head is read before the tables: a commit that lands during the read
-  // moves the branch past `headSha`, and the next poll reads again.
+  // The tables are read at the head commit, so they match `headSha` even where
+  // the Contents API lags a branch update; without a head they are read at the
+  // default branch.
   const headSha = await f.getRepoHead(owner, repo).then(
     (h) => h.sha,
     () => "",
   );
   const files = await Promise.all(
-    STATS_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+    STATS_PATHS.map((path) =>
+      f.getRepoFile(owner, repo, path, headSha || undefined),
+    ),
   );
   return buildStats(f, summary, headSha, files);
 }

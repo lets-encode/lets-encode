@@ -192,6 +192,28 @@ test("readTables decodes generated quoted config values", async () => {
   assert.equal(result.isPrivate, true);
 });
 
+test("readTables without a batch read reads every table at the head it reports", async () => {
+  const refs = new Set<string | undefined>();
+  const forge = fakeForge({
+    getRepoHead: async () => ({
+      sha: "head7",
+      treeSha: "tree7",
+      branch: "main",
+      canPush: false,
+    }),
+    getRepoFile: async (_owner, _repo, path, ref) => {
+      refs.add(ref);
+      return path === "tracking/lock.csv" ? lockHeader : null;
+    },
+    getRepoAccess: async () => ({ isPrivate: false, canPush: false }),
+  });
+
+  const result = await invoke(commands.readTables, {}, context(forge));
+
+  assert.equal(result.headSha, "head7");
+  assert.deepEqual([...refs], ["head7"]);
+});
+
 test("table reads started together share one batch read", async () => {
   const files: Record<string, string> = {
     "tracking/task.csv":
@@ -887,7 +909,7 @@ function editorFiles(lockCsv: string): Record<string, string> {
   };
 }
 
-test("openEditor claims first, then starts the task branch from the current score", async () => {
+test("openEditor claims first, then starts the task branch from the score as it stands after the claim", async () => {
   const files = editorFiles(lockHeader);
   const calls: string[] = [];
   const forge = fakeForge({
@@ -904,8 +926,9 @@ test("openEditor claims first, then starts the task branch from the current scor
     },
     getPullRequestState: async () => "closed",
     getLastIssueComment: async () => "✅ Claim accepted.",
+    // A page is accepted while the claim is processed.
     getRepoHead: async () => ({
-      sha: "head1",
+      sha: calls.includes("claim") ? "head2" : "head1",
       treeSha: "tree1",
       branch: "main",
       canPush: false,
@@ -933,7 +956,7 @@ test("openEditor claims first, then starts the task branch from the current scor
     "claim",
     "delete claim-x",
     "delete encode-T0001",
-    "create volunteer/encode-T0001@head1",
+    "create volunteer/encode-T0001@head2",
   ]);
   const url = new URL(result.meiFriendUrl!);
   assert.equal(url.origin, "https://mei-friend.example");
