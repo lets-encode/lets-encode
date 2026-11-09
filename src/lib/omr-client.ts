@@ -6,7 +6,11 @@
 //
 // Browser and Node: fetch only, no DOM.
 
-import { brokerFetch, RELAY_RETRY_WAITS_MS } from "./forge/github-rest.ts";
+import {
+  brokerFetch,
+  fromUpstream,
+  RELAY_RETRY_WAITS_MS,
+} from "./forge/github-rest.ts";
 
 /** A pipeline or model of the service, identified by name and version. */
 export interface OmrPipeline {
@@ -146,7 +150,7 @@ export function createOmrClient(
       }
       const brokerLimited =
         res.status === 429 &&
-        res.headers.get("X-Lets-Encode-Upstream") === "broker" &&
+        !fromUpstream(res, "musibot") &&
         res.headers.get("X-Lets-Encode-Limit") !== "daily";
       if (!brokerLimited || attempt >= RELAY_RETRY_WAITS_MS.length) break;
       await sleep(RELAY_RETRY_WAITS_MS[attempt]);
@@ -160,10 +164,9 @@ export function createOmrClient(
     } catch {
       // Not JSON: the status alone names the failure.
     }
-    const refusedBy =
-      res.headers.get("X-Lets-Encode-Upstream") === "broker"
-        ? "The OMR relay refused"
-        : `The OMR service returned ${res.status} for`;
+    const refusedBy = fromUpstream(res, "musibot")
+      ? `The OMR service returned ${res.status} for`
+      : `The OMR relay answered ${res.status} for`;
     throw new OmrError(
       `${refusedBy} ${method} ${url}${detail ? `: ${detail}` : "."}`,
       res.status,

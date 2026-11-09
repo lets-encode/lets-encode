@@ -52,6 +52,8 @@ import {
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
+  configEntryZones,
+  configPieceEntries,
   configString,
 } from "../src/lib/campaign-tables.ts";
 import {
@@ -153,33 +155,19 @@ async function read(path: string): Promise<string | null> {
 
 /** The pieces of config.yaml, read as configPieces reads them, with the fields the task plan needs. */
 function configPieces(yaml: string): ConfigPiece[] {
-  const block = /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(yaml)?.[1] ?? "";
-  return block
-    .split(/^ {2}- /m)
-    .slice(1)
-    .map((entry) => ({
-      id: configString(entry, "id"),
-      kind: configString(entry, "kind"),
-      path: configString(entry, "path"),
-      preparation: configString(entry, "preparation") || undefined,
-      encoding: configString(entry, "encoding") || undefined,
-      pages: Number(configString(entry, "pages")) || undefined,
-      zones: [
-        ...entry.matchAll(
-          /\{ surface: (\d+), ulx: (\d+), uly: (\d+), lrx: (\d+), lry: (\d+) \}/g,
-        ),
-      ].map(([, surface, ulx, uly, lrx, lry]) => ({
-        surface: Number(surface),
-        ulx: Number(ulx),
-        uly: Number(uly),
-        lrx: Number(lrx),
-        lry: Number(lry),
-      })),
-      header: {
-        title: configString(entry, "title"),
-        composer: configString(entry, "composer"),
-      },
-    }));
+  return configPieceEntries(yaml).map((entry) => ({
+    id: configString(entry, "id"),
+    kind: configString(entry, "kind"),
+    path: configString(entry, "path"),
+    preparation: configString(entry, "preparation") || undefined,
+    encoding: configString(entry, "encoding") || undefined,
+    pages: Number(configString(entry, "pages")) || undefined,
+    zones: configEntryZones(entry),
+    header: {
+      title: configString(entry, "title"),
+      composer: configString(entry, "composer"),
+    },
+  }));
 }
 
 /**

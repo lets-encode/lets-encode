@@ -70,7 +70,7 @@ import { replanPageTasks } from "../src/lib/campaign-plan.ts";
 import type { Contribution } from "../src/lib/mei-provenance.ts";
 import { reapedLocks, reapLocks } from "../src/lib/campaign-reaper.ts";
 import type { ReapLocksResult } from "../src/lib/campaign-reaper.ts";
-import { isPreTask } from "../src/lib/campaign-graph.ts";
+import { isPreTask, pageOfLocator } from "../src/lib/campaign-graph.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
@@ -921,7 +921,7 @@ async function decideEncoding(
     };
   }
 
-  const isPageTask = task.locator.startsWith("surface-");
+  const isPageTask = pageOfLocator(task.locator) !== null;
   const readStart = Date.now();
   const [forkMei, baseMei, configText, commitMessages] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),

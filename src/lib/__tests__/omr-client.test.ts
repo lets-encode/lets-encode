@@ -302,10 +302,22 @@ test("a failing relay status carries the relay's message and the status", async 
     assert.equal(err.status, 503);
     assert.match(
       err.message,
-      /returned 503 .*: OMR is not configured on this instance/,
+      /answered 503 .*: OMR is not configured on this instance/,
     );
     return true;
   });
+});
+
+test("an unmarked gateway error is the relay's, not the OMR service's", async () => {
+  const { fetch } = fakeFetch({
+    [`POST ${BASE}/api/musicorpus-pages`]: () =>
+      Response.json({ error: "Upstream request timed out" }, { status: 504 }),
+  });
+  const client = createOmrClient("/auth", { fetch, ...noSleep });
+  await assert.rejects(
+    client.createPage(),
+    /^Error: The OMR relay answered 504 for POST .*: Upstream request timed out/,
+  );
 });
 
 test("a call past the login's daily allowance fails at once with the relay's reason", async () => {
@@ -332,7 +344,7 @@ test("a call past the login's daily allowance fails at once with the relay's rea
   const client = createOmrClient("/auth", { fetch, ...noSleep });
   await assert.rejects(
     client.run("p1", { name: "mzk-staff", version: "1" }, ["a.jpg"]),
-    /^Error: The OMR relay refused POST .*: This account has reached today's limit for OMR runs/,
+    /^Error: The OMR relay answered 429 for POST .*: This account has reached today's limit for OMR runs/,
   );
   assert.equal(calls, 1);
 });

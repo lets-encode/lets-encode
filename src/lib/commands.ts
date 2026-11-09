@@ -1887,7 +1887,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
           throw new Error(
             `${task.fragment} is missing from the submitted encoding.`,
           );
-        const isPageTask = task.locator.startsWith("surface-");
+        const isPageTask = pageOfLocator(task.locator) !== null;
         const [baseMei, configYaml] = await Promise.all([
           f.getRepoFile(owner, repo, task.fragment),
           isPageTask ? f.getRepoFile(owner, repo, CONFIG_PATH) : null,

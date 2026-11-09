@@ -317,7 +317,7 @@ test("an encoding submission resolves by its envelope, else its task branch", ()
   );
 });
 
-test("pieceFieldForPath and pieceKindForPath read one quoted field of the piece at a path", () => {
+test("pieceFieldForPath and pieceKindForPath read one field of the piece at a path", () => {
   const config =
     "pieces:\n" +
     '  - id: "piece-01"\n' +
@@ -353,6 +353,26 @@ test("pieceFieldForPath and pieceKindForPath read one quoted field of the piece 
   );
   assert.equal(pieceKindForPath(config, "sources/piece-09/score.mei"), null);
   assert.equal(pieceKindForPath(null, "sources/piece-01/score.mei"), null);
+});
+
+test("pieceFieldForPath reads an unquoted field as the board does", () => {
+  const config =
+    "pieces:\n" +
+    "  - id: piece-01\n" +
+    "    kind: physical-only\n" +
+    "    preparation: omr-instruments  # set by hand\n" +
+    "    path: sources/piece-01/score.mei\n" +
+    "    zones: []\n" +
+    "fragmentation:\n" +
+    "  strategy: page\n";
+  assert.equal(
+    pieceKindForPath(config, "sources/piece-01/score.mei"),
+    "physical-only",
+  );
+  assert.equal(
+    pieceFieldForPath(config, "sources/piece-01/score.mei", "preparation"),
+    "omr-instruments",
+  );
 });
 
 test("priorDecision: the last history row of the pull request, or null", () => {
@@ -565,6 +585,12 @@ test("checksOpening: the page task of an omr-instruments piece that waits for it
     true,
     "after the encoding alignment",
   );
+  // A locator that is not a page (pageOfLocator) is a whole-file task.
+  const loose = [
+    row("P0001", "omr-layout"),
+    row("T0001", "surface-1a", "P0001"),
+  ];
+  assert.equal(checksOpening(loose[1], loose, "omr-instruments"), false);
 });
 
 test("isLeftoverOperationBranch takes old operation branches without an open pull request", () => {

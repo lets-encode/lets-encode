@@ -19,7 +19,11 @@
 // pure logic can be tested outside a browser. The broker's base URL is passed in
 // rather than read from config, keeping this module free of SvelteKit's env.
 
-import { brokerFetch, RELAY_RETRY_WAITS_MS } from "./forge/github-rest.ts";
+import {
+  brokerFetch,
+  fromUpstream,
+  RELAY_RETRY_WAITS_MS,
+} from "./forge/github-rest.ts";
 import { pad2 } from "./pieces.ts";
 
 /** A page image ready to commit: repo-relative path and its bytes. */
@@ -400,12 +404,6 @@ function createPacer(wait: (ms: number) => Promise<void>) {
 
 type Pacer = ReturnType<typeof createPacer>;
 
-// The broker names the origin of every status it returns from the relay: `iiif`
-// is the source server's own answer, passed through, and anything else — its own
-// marker, or no header on the errors it raises before reaching out — is the
-// broker's. So the header's value attributes a failure, not its presence.
-const RELAY_MARKER = "x-lets-encode-upstream";
-const SOURCE_MARKER = "iiif";
 // The relay's refusal once an account has used the day's allowance of IIIF
 // downloads carries this header with the value `daily`. The relay refuses every
 // further request until 00:00 UTC, so it is not re-attempted.
@@ -426,7 +424,7 @@ const reattempt = (res: Response) =>
  * past each, which says nothing about the source it was pointed at.
  */
 function relayFailure(res: Response, what: string): string {
-  if (res.headers.get(RELAY_MARKER) === SOURCE_MARKER) {
+  if (fromUpstream(res, "iiif")) {
     return `${what}: the source server returned ${res.status}.`;
   }
   if (res.headers.get(LIMIT_MARKER) === "daily") {

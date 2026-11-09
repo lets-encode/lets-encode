@@ -1,5 +1,7 @@
 import {
   COMMENT_COLUMNS,
+  configPieceEntries,
+  configString,
   parseCsv,
   COMMENT_PATH,
   LOCK_COLUMNS,
@@ -26,6 +28,7 @@ import {
   type Contribution,
 } from "./mei-provenance.ts";
 import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
+import { pageOfLocator } from "./campaign-graph.ts";
 import { replaceMeiHead } from "./mei-facsimile.ts";
 import { firstElementNamed } from "./mei-xml.ts";
 import { UPLOAD_APPLICATION } from "./encoding-merge.ts";
@@ -38,27 +41,19 @@ export type PullRequestKind =
   | "encoding";
 
 /**
- * One quoted scalar field (`kind`, `preparation`, …) of the config.yaml piece
- * whose path is `path`, or null when no piece carries the path or the piece
- * has no such field. Reads the canonical shape configToYaml emits — each
- * piece entry opens with `- id:` and lists its fields as quoted scalars — so
- * the coordinator and the console need no YAML parser.
+ * One scalar field (`kind`, `preparation`, …) of the config.yaml piece whose
+ * path is `path`, quoted or not, read as configPieces reads the pieces; null
+ * when no piece carries the path or the piece has no such field.
  */
 export function pieceFieldForPath(
   configText: string | null,
   path: string,
   key: string,
 ): string | null {
-  for (const entry of (configText ?? "").split(/^\s*- id:/m).slice(1)) {
-    const entryPath = /^\s*path:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
-    if (!entryPath || JSON.parse(`"${entryPath[1]}"`) !== path) continue;
-    const value = new RegExp(
-      `^\\s*${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"`,
-      "m",
-    ).exec(entry);
-    return value ? JSON.parse(`"${value[1]}"`) : null;
-  }
-  return null;
+  const entry = configPieceEntries(configText).find(
+    (e) => configString(e, "path") === path,
+  );
+  return (entry && configString(entry, key)) || null;
 }
 
 /**
@@ -74,7 +69,7 @@ export function checksOpening(
   preparation: string | null | undefined,
 ): boolean {
   return (
-    task.locator.startsWith("surface-") &&
+    pageOfLocator(task.locator) !== null &&
     preparation === "omr-instruments" &&
     tasks.some(
       (t) =>
@@ -115,7 +110,7 @@ export function assembleSubmission({
   if (baseMei == null)
     throw new Error(`${task.fragment} is missing from the campaign.`);
   let mei = forkMei;
-  if (task.locator.startsWith("surface-")) {
+  if (pageOfLocator(task.locator) !== null) {
     mei =
       pieceKindForPath(configYaml, task.fragment) === "physical-only"
         ? splicePageSpan(baseMei, forkMei, task.locator)

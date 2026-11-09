@@ -46,6 +46,18 @@ export const RELAY_RETRY_WAITS_MS = [
 ];
 
 /**
+ * Whether an answer through the broker came from the service it reached
+ * (`github`, `iiif`, `musibot`), which the broker marks in
+ * `X-Lets-Encode-Upstream` on every answer it passes on. Any other answer —
+ * the broker's own, marked or not, or one from a proxy in front of it — is
+ * the broker's side.
+ */
+export const fromUpstream = (
+  res: { headers: Headers },
+  upstream: "github" | "iiif" | "musibot",
+): boolean => res.headers.get("x-lets-encode-upstream") === upstream;
+
+/**
  * fetch() for the broker's own endpoints (the registry and the relays): the
  * broker's own 401 means its session has ended, as for a proxied SESSION call.
  * A 401 the relays pass on from a source or service they reach (marked
@@ -241,8 +253,14 @@ function recordRequest(
   const headers = res?.headers ?? new Headers();
   const method = (init?.method ?? "GET").toUpperCase();
   const conditional = new Headers(init?.headers).has("If-None-Match");
+  // A request sent to GitHub directly is answered by GitHub.
+  const viaBroker =
+    sessionApiBase !== null &&
+    (input instanceof Request ? input.url : String(input)).startsWith(
+      sessionApiBase,
+    );
   const source: "github" | "broker" =
-    headers.get("X-Lets-Encode-Upstream") === "broker" ? "broker" : "github";
+    viaBroker && !fromUpstream({ headers }, "github") ? "broker" : "github";
   const resource = headers.get("X-RateLimit-Resource");
   const entry = {
     request: ++requestTelemetry.total,

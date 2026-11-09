@@ -400,16 +400,22 @@ export interface PieceRef {
   preparation?: string;
 }
 
+/** The text of each piece entry in config.yaml, in config order: the
+    indented lines under `pieces:`, split on their entries. */
+export function configPieceEntries(yaml: string | null): string[] {
+  const block =
+    /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(yaml ?? "")?.[1] ?? "";
+  return block.split(/^ {2}- /m).slice(1);
+}
+
 /**
  * The pieces from config.yaml, in config order, read the same way as
  * configString: the indented lines under `pieces:`, split on their entries.
  * Entries without a path are skipped, having no score to address.
  */
 export function configPieces(yaml: string | null): PieceRef[] {
-  const block =
-    /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(yaml ?? "")?.[1] ?? "";
   const pieces: PieceRef[] = [];
-  for (const entry of block.split(/^ {2}- /m).slice(1)) {
+  for (const entry of configPieceEntries(yaml)) {
     const path = configString(entry, "path");
     // The only `title:` in an entry is its header's.
     if (path) {
@@ -440,6 +446,22 @@ export interface PageRegion {
  * the score page showing `source.images[n - 1]`. A page without regions gets
  * an empty list, as do all pages of a piece without regions.
  */
+/** A zone of a piece entry in config.yaml, as written: its source page
+    (1-based, of `source.images`) and its box. */
+export interface ConfigZone extends PageRegion {
+  surface: number;
+}
+
+/** The zones of one piece entry (configPieceEntries), in written order. */
+export function configEntryZones(entry: string): ConfigZone[] {
+  const zone =
+    /\{\s*surface:\s*(\d+),\s*ulx:\s*(-?\d+),\s*uly:\s*(-?\d+),\s*lrx:\s*(-?\d+),\s*lry:\s*(-?\d+)\s*\}/g;
+  return [...entry.matchAll(zone)].map((m) => {
+    const [surface, ulx, uly, lrx, lry] = m.slice(1).map(Number);
+    return { surface, ulx, uly, lrx, lry };
+  });
+}
+
 export function configPieceRegions(
   yaml: string | null,
   path: string,
@@ -453,19 +475,13 @@ export function configPieceRegions(
     .split("\n")
     .filter(Boolean)
     .map((line) => configString(line.replace(/^\s*- /, "v: "), "v"));
-  const block = /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(text)?.[1] ?? "";
-  const entry = block
-    .split(/^ {2}- /m)
-    .slice(1)
-    .find((e) => configString(e, "path") === path);
+  const entry = configPieceEntries(text).find(
+    (e) => configString(e, "path") === path,
+  );
   const regions = pageImages.map((): PageRegion[] => []);
-  const zone =
-    /\{\s*surface:\s*(\d+),\s*ulx:\s*(-?\d+),\s*uly:\s*(-?\d+),\s*lrx:\s*(-?\d+),\s*lry:\s*(-?\d+)\s*\}/g;
-  for (const m of (entry ?? "").matchAll(zone)) {
-    const page = pageImages.indexOf(images[Number(m[1]) - 1] ?? null);
-    if (page < 0) continue;
-    const [ulx, uly, lrx, lry] = m.slice(2).map(Number);
-    regions[page].push({ ulx, uly, lrx, lry });
+  for (const { surface, ...box } of configEntryZones(entry ?? "")) {
+    const page = pageImages.indexOf(images[surface - 1] ?? null);
+    if (page >= 0) regions[page].push(box);
   }
   return regions;
 }

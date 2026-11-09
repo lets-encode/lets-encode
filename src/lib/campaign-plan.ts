@@ -7,6 +7,7 @@
 // over verbatim. No GitHub.
 
 import { findRow, isPassVerdict } from "./campaign-tables.ts";
+import { pageOfLocator } from "./campaign-graph.ts";
 import type {
   HistoryRow,
   LockRow,
@@ -192,7 +193,7 @@ export function replanPageTasks(
   measuredSurfaces: string[],
 ): { tasks: TaskRow[]; stateRows: StateRow[] } | null {
   const isPageRow = (r: TaskRow) =>
-    r.fragment === fragment && /^surface-\d+$/.test(r.locator);
+    r.fragment === fragment && pageOfLocator(r.locator) !== null;
   const pageTasks = current.filter((r) => isPageRow(r) && r.subtask_id === "");
   if (pageTasks.length === 0 || measuredSurfaces.length === 0) return null;
   if (

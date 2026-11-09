@@ -45,6 +45,9 @@ parentheses.
 - Facsimile images that fail to load show an error in the score preview and the crop view.
 - Page images whose size cannot be read are reported in the pieces step.
 - The setup preview's render error is shown as an error.
+- Only a locator of the form surface-N counts as a page task, everywhere.
+- Piece fields in config.yaml are read the same way, quoted or not, by the board, the app and the coordinator.
+- A failed relay request is attributed to the broker unless the service it reached is named as the source.
 
 ## 2026-11-06
 

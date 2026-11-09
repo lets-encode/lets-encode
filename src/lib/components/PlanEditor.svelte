@@ -10,7 +10,11 @@
   import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
-  import { taskDescription, handle } from "$lib/campaign-graph.ts";
+  import {
+    taskDescription,
+    handle,
+    pageOfLocator,
+  } from "$lib/campaign-graph.ts";
   import type { Logins } from "$lib/campaign-graph.ts";
   import { nextTaskId, taskStarted } from "$lib/campaign-plan.ts";
   import type {
@@ -117,7 +121,7 @@
       ? cardTitle(g.task.fragment, g.task.locator, pieceNames)
       : g.task.task_id;
   const sizeOf = (g: Group): string => {
-    if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
+    if (pageOfLocator(g.task.locator) !== null) return "1 page";
     if (
       g.task.locator === "measure-zones" ||
       g.task.locator === "omr-layout" ||
