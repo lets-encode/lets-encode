@@ -1,5 +1,5 @@
 <!--
-  One stroke icon set for the console: 24-unit grid, 2px round strokes,
+  One stroke icon set for the app: 24-unit grid, 2px round strokes,
   drawn in currentColor so it takes the text colour of its parent. Decorative
   by default (aria-hidden); pass a label when the icon stands alone.
 -->

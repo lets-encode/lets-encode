@@ -208,7 +208,6 @@ export class CampaignFinisher {
       // Creating the repository may have renewed the reservation.
       sameSetup();
       claim = wizard.claim ?? claim;
-      sameSetup();
       if (!committed) {
         // The commit goes on this head only: the same setup finished from
         // another tab in the meantime refuses it instead of being replaced.

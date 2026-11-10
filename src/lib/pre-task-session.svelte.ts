@@ -225,7 +225,7 @@ export class PreTaskSession {
     });
 
     // Opening the editor claims the task, the same way opening a score in
-    // mei-friend does — a read-only look is served by the console's score
+    // mei-friend does — a read-only look is served by the app's score
     // preview, so reaching the editor means intent to edit. Fire once per
     // task, and only when the campaign automation would grant the claim and
     // no submission on the task is still being processed — any other claim

@@ -188,7 +188,7 @@
   });
 
   const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo });
+    runner.context(f, { repoId, owner, repo, campaign });
 
   // The default branch's head commit the shown tables were read at; null when
   // it could not be read.

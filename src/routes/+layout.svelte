@@ -10,6 +10,7 @@
   import TouchTooltip from "$lib/components/TouchTooltip.svelte";
   import { bugReportHref } from "$lib/bug-report.ts";
   import { campaignTitle } from "$lib/campaign-title.svelte.ts";
+  import { writeLocal } from "$lib/local-store.ts";
   import "./theme.css";
   import "./ui.css";
 
@@ -30,11 +31,8 @@
     theme = theme === "dark" ? "light" : "dark";
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
-    try {
-      localStorage.setItem("theme", theme);
-    } catch (e) {
-      /* storage unavailable — theme still applies for this visit */
-    }
+    // Where storage is unavailable, the theme applies for this visit only.
+    writeLocal("theme", theme);
   }
 
   // The main screen, the campaign view, the wizard, the pre-task editors, the

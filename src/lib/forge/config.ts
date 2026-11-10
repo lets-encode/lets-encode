@@ -24,12 +24,12 @@ export interface ProviderConfig {
 
 export const provider: ProviderConfig = {
   id: env.PUBLIC_FORGE || "github",
-  brokerUrl: env.PUBLIC_BROKER_URL || "/auth",
+  brokerUrl: "/auth",
   template: {
     owner: env.PUBLIC_TEMPLATE_OWNER || "",
     repo: env.PUBLIC_TEMPLATE_REPO || "",
   },
-  repoTopic: env.PUBLIC_REPO_TOPIC || "created-with-instigation",
+  repoTopic: env.PUBLIC_REPO_TOPIC || "",
 };
 
 /**
@@ -41,7 +41,7 @@ export const provider: ProviderConfig = {
  * it and registers a new name against its GitHub repo id after creating the
  * repo.
  */
-export const registryUrl = env.PUBLIC_REGISTRY_URL || "/registry";
+export const registryUrl = "/registry";
 
 /** The mei-friend instance volunteers are handed off to for editing. */
 export const meiFriendUrl = env.PUBLIC_MEI_FRIEND_URL;
@@ -64,7 +64,7 @@ export const omr: { layoutModel: OmrPipeline; staffPipeline: OmrPipeline } =
  * from; an immutable tag/SHA is the production-release hardening.
  */
 export const automation = {
-  central_repository: env.PUBLIC_AUTOMATION_REPO || "lets-encode/lets-encode",
+  central_repository: "lets-encode/lets-encode",
   ref: env.PUBLIC_AUTOMATION_REF || "main",
-  path: env.PUBLIC_AUTOMATION_PATH || "scripts/coordinator.ts",
+  path: "scripts/coordinator.ts",
 };

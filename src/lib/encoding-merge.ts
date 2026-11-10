@@ -29,6 +29,7 @@ import {
   parseFacsimileMei,
   parseScoreDef,
   replaceScoreDef,
+  type PageModel,
   type ScoreDefModel,
   type StaffModel,
 } from "./mei-facsimile.ts";
@@ -608,18 +609,26 @@ export function layoutSkeleton(
   corrected: string | null,
   omr: boolean,
 ): string {
+  return skeletonWithPages(current, corrected, omr).mei;
+}
+
+/** The layout skeleton (layoutSkeleton) and the pages it is built from. */
+function skeletonWithPages(
+  current: string,
+  corrected: string | null,
+  omr: boolean,
+): { mei: string; pages: PageModel[] } {
   const parsed = parseFacsimileMei(current);
+  const pages = omr
+    ? withCorrectedLayout(parsed.pages, corrected)
+    : parsed.pages;
   const rebuilt = buildFacsimileMei(
-    {
-      headXml: parsed.headXml,
-      scoreDef: parsed.scoreDef,
-      pages: omr ? withCorrectedLayout(parsed.pages, corrected) : parsed.pages,
-    },
+    { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
     { withBreaks: true, emptyMeasures: true, padZones: omr },
   );
   const from = opening(current);
   const to = opening(rebuilt);
-  if (from.length !== to.length) return rebuilt;
+  if (from.length !== to.length) return { mei: rebuilt, pages };
   let out = "";
   let last = 0;
   to.forEach((at, k) => {
@@ -627,7 +636,7 @@ export function layoutSkeleton(
       rebuilt.slice(last, at.start) + current.slice(from[k].start, from[k].end);
     last = at.end;
   });
-  return out + rebuilt.slice(last);
+  return { mei: out + rebuilt.slice(last), pages };
 }
 
 /**
@@ -787,7 +796,11 @@ export function alignEncoding(input: EncodingInput): AlignedEncoding {
   const omr =
     input.preparation === "omr" || input.preparation === "omr-instruments";
   const named = input.preparation === "omr-instruments";
-  const skeleton = layoutSkeleton(input.current, input.corrected, omr);
+  const { mei: skeleton, pages } = skeletonWithPages(
+    input.current,
+    input.corrected,
+    omr,
+  );
   const withIds = addXmlIds(input.upload, "u-");
   const fileEdits = input.fileEdits ?? { removed: [], added: [] };
   const upload = applyFileEdits(withIds, fileEdits);
@@ -802,12 +815,7 @@ export function alignEncoding(input: EncodingInput): AlignedEncoding {
   const layoutCount = named
     ? ownStaves.length
     : omr
-      ? staffCountOf(
-          withCorrectedLayout(
-            parseFacsimileMei(skeleton).pages,
-            input.corrected,
-          ),
-        )
+      ? staffCountOf(pages)
       : null;
   const chosen = input.scoreStaves;
   const valid =

@@ -11,6 +11,7 @@
   import { page } from "$app/state";
   import Icon from "./Icon.svelte";
   import { bugReportHref } from "$lib/bug-report.ts";
+  import { readLocal, writeLocal } from "$lib/local-store.ts";
 
   const SEEN_KEY = "construction-notice-seen";
   const CLOSED_KEY = "construction-banner-closed";
@@ -22,14 +23,7 @@
 
   const reportHref = $derived(bugReportHref(page.url.pathname));
 
-  function seen(): boolean {
-    try {
-      return localStorage.getItem(SEEN_KEY) === "1";
-    } catch (e) {
-      return false;
-    }
-  }
-  let confirmed = $state(seen());
+  let confirmed = $state(readLocal(SEEN_KEY) === "1");
 
   function readClosed(): boolean {
     try {
@@ -54,11 +48,8 @@
   }
 
   function confirm() {
-    try {
-      localStorage.setItem(SEEN_KEY, "1");
-    } catch (e) {
-      /* storage unavailable — the dialog opens again on the next visit */
-    }
+    // Where storage is unavailable, the dialog opens again on the next visit.
+    writeLocal(SEEN_KEY, "1");
     confirmed = true;
     dialog?.close();
   }

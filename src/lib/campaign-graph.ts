@@ -10,7 +10,7 @@ import type { TaskRow, StateRow, LockRow } from "./campaign-tables.ts";
 
 /**
  * Numeric account id → current login. The tables key people by their stable
- * numeric id; the console resolves logins for display and passes them in. An
+ * numeric id; the app resolves logins for display and passes them in. An
  * unresolved id falls back to showing the id itself.
  */
 export type Logins = Record<string, string>;
@@ -153,12 +153,12 @@ export function preTaskInstruction(locator: string, full = false): string {
   return full ? PRE_TASKS[locator].full : PRE_TASKS[locator].brief;
 }
 
-/** The console route segment a pre-task's own editor lives under. */
+/** The app route segment a pre-task's own editor lives under. */
 export function preTaskRoute(locator: string): string {
   return isPreTask(locator) ? PRE_TASKS[locator].route : "zones";
 }
 
-/** The console route of a pre-task's own editor. */
+/** The app route of a pre-task's own editor. */
 export const preTaskHref = (
   campaign: string,
   locator: string,

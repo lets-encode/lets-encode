@@ -1,9 +1,9 @@
 <!--
-  The console's plan editor: task.csv as an editable table over the board's
+  The plan editor: task.csv as an editable table over the board's
   place. Only untouched tasks — unclaimed, unencoded, no verdicts — can be
   changed (dependency, score file, locator), added or removed; started tasks
   show greyed for context and can only be reordered. Saving hands the complete
-  new task table to the console, which runs the savePlan command.
+  new task table to the campaign page, which runs the savePlan command.
 -->
 <script lang="ts">
   import { untrack } from "svelte";
@@ -108,14 +108,10 @@
     if (lock) return "encoding";
     return "open";
   };
+  /** Who holds the task's encoding lock; empty without one. */
   const workerOf = (task: string): string => {
     const lock = locks.find((l) => l.task_id === task && l.kind === "encoding");
-    const row = rows.find((r) => r.task_id === task && r.subtask_id === "");
-    return lock
-      ? handle(logins, lock.user_id)
-      : row?.encoder
-        ? handle(logins, row.encoder)
-        : "";
+    return lock ? handle(logins, lock.user_id) : "";
   };
   const titleOf = (g: Group) =>
     g.task.fragment

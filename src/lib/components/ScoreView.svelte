@@ -115,7 +115,8 @@
   });
   const task = $derived(card?.task ?? "");
   // A campaign comment names this piece with its anchor; a task comment
-  // carries the anchor only when the task is on this piece.
+  // carries the anchor only when the task is on this piece. A reply carries
+  // none.
   const selectionAnchor = (): CommentAnchorInput | undefined =>
     selected && (task === "" || cardOnPiece)
       ? {
@@ -230,7 +231,13 @@
         ondeselect={card ? ondeselect : undefined}
         onanchor={showAnchor}
         oncomment={(kind, body, parent_id) =>
-          oncomment(task, kind, body, parent_id, selectionAnchor())}
+          oncomment(
+            task,
+            kind,
+            body,
+            parent_id,
+            kind === "comment" ? selectionAnchor() : undefined,
+          )}
         {onresolve}
       />
     </div>

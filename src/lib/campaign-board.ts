@@ -96,7 +96,7 @@ export const fragmentPieceName = (
 export function cardTitle(
   fragment: string,
   locator: string,
-  names: PieceNames = {},
+  names: PieceNames,
 ): string {
   return `${taskName(locator)} · ${fragmentPieceName(fragment, names)}`;
 }
@@ -247,6 +247,7 @@ export interface Board {
   /** Tasks done, of all tasks. */
   done: number;
   total: number;
+  /** Tasks not done with unresolved comments or open change requests. */
   attention: number;
   /** Tasks someone is actively working on (claims and running reviews). */
   inFlight: number;
@@ -336,7 +337,7 @@ export const stageOf = (
  * names its kind), the worker on a claimed task, and numeric pass progress
  * ("n of m") in validation and done.
  */
-export function cardPill(card: BoardCard, viewer = ""): string {
+export function cardPill(card: BoardCard, viewer: string): string {
   switch (card.column) {
     case "blocked":
       return "blocked";
@@ -451,14 +452,13 @@ export function buildBoard(
       a.finishedAt < b.finishedAt ? 1 : a.finishedAt > b.finishedAt ? -1 : 0,
     );
 
-  // The campaign's attention count (the hero counter): unresolved comments
-  // plus open change requests, on non-completed tasks — summed from the card counts
-  // computed above.
+  // The campaign's attention count (the hero counter): non-completed tasks
+  // with unresolved comments or open change requests.
   const attention = columns
     .filter((column) => column.key !== "done")
     .reduce(
       (n, column) =>
-        n + column.cards.reduce((m, card) => m + countsTotal(card.counts), 0),
+        n + column.cards.filter((card) => countsTotal(card.counts) > 0).length,
       0,
     );
 

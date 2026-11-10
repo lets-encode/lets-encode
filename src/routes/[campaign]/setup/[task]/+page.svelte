@@ -64,7 +64,7 @@
   } from "$lib/omr-layout.ts";
   import {
     clefStaff,
-    clefToken,
+    plainClef,
     proposeScoreDef,
     staffClefToken,
   } from "$lib/omr-musicxml.ts";
@@ -427,26 +427,36 @@
   // keeps at least a fifth of the width.
   let desk = $state<HTMLDivElement>();
 
-  const submit = () =>
-    run(
-      (c) =>
-        invoke(
-          commands.submitScoreSetup,
-          {
-            task_id: taskId,
-            scoreDef,
-            ...(omr && recognition
-              ? {
-                  omr: serializeOmrRecord(
-                    withClefCorrections(recognition.record),
-                  ),
-                }
-              : {}),
-          },
-          c,
-        ),
-      { overviewOnSuccess: true },
-    );
+  // True from Submit until the command has finished. The submission runs
+  // without the overlay, so the button shows the check until the pull
+  // request's pending entry takes over.
+  let submitting = $state(false);
+  const submit = async () => {
+    submitting = true;
+    try {
+      await run(
+        (c) =>
+          invoke(
+            commands.submitScoreSetup,
+            {
+              task_id: taskId,
+              scoreDef,
+              ...(omr && recognition
+                ? {
+                    omr: serializeOmrRecord(
+                      withClefCorrections(recognition.record),
+                    ),
+                  }
+                : {}),
+            },
+            c,
+          ),
+        { overviewOnSuccess: true },
+      );
+    } finally {
+      submitting = false;
+    }
+  };
 
   // ------------------------------------------------------------------------
   // Recognition (OMR-prepared pieces)
@@ -501,10 +511,7 @@
   /** Clef tokens of the form's staves for placing the boxes. */
   const formParts = () =>
     staves.map((s) => ({
-      clef:
-        s.clefShape === "perc" || s.clefShape === "TAB"
-          ? s.clefShape
-          : `${s.clefShape}${s.clefLine}`,
+      clef: plainClef(staffClefToken(s)),
       label: s.label.trim(),
     }));
   const pitched = (token: string) => /^[GFC]\d/.test(token);
@@ -593,10 +600,7 @@
     const proposal = proposeScoreDef(fullestXmls, same ? [] : firstXmls);
     // Each staff opens in the clef of its first appearance, placed by the fullest system's clefs.
     const placedBy = proposal.staves.map((staff) => ({
-      clef:
-        staff.clefShape === "perc" || staff.clefShape === "TAB"
-          ? staff.clefShape
-          : `${staff.clefShape}${staff.clefLine}`,
+      clef: plainClef(staffClefToken(staff)),
       label: "",
     }));
     openingClefs(
@@ -611,17 +615,16 @@
     // The fullest system shows every staff of the definition, in order.
     const read = fullestEntries.map((e) => e?.label ?? "");
     if (!same) {
-      const token = (staff: StaffModel) =>
-        staff.clefShape === "perc" || staff.clefShape === "TAB"
-          ? staff.clefShape
-          : `${staff.clefShape}${staff.clefLine}`;
       const onFirst = suggestStaffAssignment(
         first.staves.map((box, i) => ({
           box,
-          clef: clefToken(firstXmls[i]),
+          clef: plainClef(staffClefToken(firstXmls[i])),
           label: "",
         })),
-        proposal.staves.map((staff) => ({ clef: token(staff), label: "" })),
+        proposal.staves.map((staff) => ({
+          clef: plainClef(staffClefToken(staff)),
+          label: "",
+        })),
         fullest.staves,
       );
       onFirst.forEach((n, i) => {
@@ -1819,7 +1822,9 @@
               ? "The staves have to be transcribed before the setup can be submitted"
               : "Submit the staves, clefs, key signature and time signature for review"}
           >
-            Submit setup
+            {submitting && runner.busy && !runner.overlay
+              ? "Checking the score…"
+              : "Submit setup"}
           </button>
         {/if}
       </div>

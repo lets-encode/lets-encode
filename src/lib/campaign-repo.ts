@@ -18,11 +18,10 @@ import { readDraft, writeDraft } from "./wizard-draft.ts";
 import { claimName } from "./campaign-resolve.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import { CONFIG_PATH } from "./campaign-tables.ts";
+import { sleep } from "./util.ts";
 
 /** A file of the campaign template: a generated repository has contents once it is there. */
 const TEMPLATE_MARKER = ".github/workflows/caller.yml";
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // A fetch that never reached the server (connection drop, DNS, CORS block)
 // surfaces as a TypeError with a browser-worded message, not an API error.

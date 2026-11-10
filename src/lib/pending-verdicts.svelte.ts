@@ -11,6 +11,7 @@
 
 import { resumeFollowing, sameKey, setVerdictSink } from "./commands.ts";
 import type { CommandContext, FollowedPr, PendingKey } from "./commands.ts";
+import { shortId } from "./util.ts";
 
 export type PendingState =
   | "opening"
@@ -119,7 +120,7 @@ class PendingVerdictStore {
     target: Target & { viewer: string };
     pr?: FollowedPr;
   }): string {
-    const id = crypto.randomUUID().slice(0, 8);
+    const id = shortId();
     const { repoId, owner, repo, viewer } = entry.target;
     this.entries = [
       ...this.entries,

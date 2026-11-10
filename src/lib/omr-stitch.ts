@@ -34,6 +34,8 @@
 // each system ends up with is reported for the draft insertion to check
 // against the measure boxes.
 
+import { clefXml, staffClefToken } from "./omr-musicxml.ts";
+
 /** One system's transcriptions, top staff first; null for a staff that was not transcribed. */
 export type SystemTranscriptions = (string | null)[];
 
@@ -85,38 +87,6 @@ export interface StitchedPage {
   changes: StitchChange[];
   /** The clef per part, key and meter in force at the end of the page: the next page's start. */
   end: { clefs: string[]; keys: number[] } & PageSignatures;
-}
-
-const DEFAULT_LINE: Record<string, number> = { G: 2, F: 4, C: 3 };
-
-/**
- * A MusicXML <clef> for a clef token: `G2`, `F4`, `C3`, with an octave change
- * as a signed suffix (`G2-1` for a treble clef an octave down), `perc`, `TAB`.
- */
-export function clefXml(token: string): string {
-  if (token === "perc") return "<clef><sign>percussion</sign></clef>";
-  if (token === "TAB") return "<clef><sign>TAB</sign></clef>";
-  const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
-  if (!m) return "<clef><sign>G</sign><line>2</line></clef>";
-  const octave = m[3]
-    ? `<clef-octave-change>${Number(m[3])}</clef-octave-change>`
-    : "";
-  return `<clef><sign>${m[1]}</sign><line>${m[2]}</line>${octave}</clef>`;
-}
-
-/** The token of a MusicXML <clef> element; see `clefXml`. */
-export function clefTokenOf(clef: string): string | null {
-  const sign = /<sign>\s*([^<]*?)\s*<\/sign>/.exec(clef)?.[1];
-  if (!sign) return null;
-  if (sign === "percussion") return "perc";
-  if (sign === "TAB") return "TAB";
-  const line =
-    /<line>\s*(\d+)\s*<\/line>/.exec(clef)?.[1] ?? DEFAULT_LINE[sign] ?? 2;
-  const octave = Number(
-    /<clef-octave-change>\s*(-?\d+)\s*<\/clef-octave-change>/.exec(clef)?.[1] ??
-      0,
-  );
-  return `${sign}${line}${octave ? (octave > 0 ? `+${octave}` : `${octave}`) : ""}`;
 }
 
 const keyXml = (fifths: number): string =>
@@ -332,7 +302,7 @@ export function stitchPage(
       const read = measures[0]
         ? element(openingAttributes(measures[0]) ?? "", "clef")
         : null;
-      const token = read ? clefTokenOf(read) : null;
+      const token = read ? staffClefToken(read) : null;
       let clef: string | null | undefined;
       if (token && token !== inForce)
         changes.push({ system: s, kind: "clef", part: k });
@@ -346,7 +316,7 @@ export function stitchPage(
       for (const c of measures
         .join("")
         .match(/<clef\b[^>]*>[\s\S]*?<\/clef>/g) ?? []) {
-        clefs[k] = clefTokenOf(c) ?? clefs[k];
+        clefs[k] = staffClefToken(c) ?? clefs[k];
       }
       while (measures.length < count) measures.push("<measure/>");
       const key = opens || newFifths !== null ? keyXml(keys[k]) : null;

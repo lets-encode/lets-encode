@@ -5,7 +5,7 @@
 // repo-id map: the repo id is stable across renames/transfers, so resolving a
 // name to its id and then to the repo's current owner/name (getRepoById)
 // survives a rename that a bare name→search never could. The registry is reached
-// same-origin via the PUBLIC_REGISTRY_URL mount, so no CORS is involved. A
+// same-origin via the /registry mount, so no CORS is involved. A
 // name without a campaign is a registry answer (status `free`); an unreachable
 // registry is a failure, never a miss. There is no name-search fallback.
 

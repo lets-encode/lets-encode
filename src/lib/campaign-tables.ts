@@ -3,7 +3,7 @@
 // subtask_id addresses the whole task (the unit of encoding), a row with a
 // subtask_id addresses one validation portion. Pure functions: CSV text in,
 // plain objects out (and back) — plus the scalar readers for config.yaml and
-// the id → login resolution both the console and the stats layer use. No
+// the id → login resolution both the campaign page and the stats layer use. No
 // GitHub client of its own, no filesystem.
 //
 // Table layouts are defined in DESIGN.md §5. The five base state columns are
@@ -38,7 +38,7 @@ export interface LockRow {
 
 /**
  * An append-only history row from history.csv. `command`, `version` and
- * `input` record the console command behind the event, when there was one: the
+ * `input` record the app command behind the event, when there was one: the
  * command's id, its version, and its input as JSON. They stay empty for events
  * that arrived without a command envelope (hand-opened PRs, scheduled reaps).
  * `pr` is the number of the pull request the row decides, empty for events
@@ -185,6 +185,7 @@ export const csvRow = (fields: unknown[]): string =>
 
 /** Parse CSV text into an array of rows (each an array of string fields). */
 export function parseCsv(text: string): string[][] {
+  if (text.startsWith("\uFEFF")) text = text.slice(1);
   const rows: string[][] = [];
   let row: string[] = [];
   let field = "";
@@ -389,7 +390,7 @@ export function configString(yaml: string | null, key: string): string {
   return value.replace(/\s+#.*$/, "").trim();
 }
 
-/** A piece of the campaign as the console addresses it: its score and its name. */
+/** A piece of the campaign as the app addresses it: its score and its name. */
 export interface PieceRef {
   id: string;
   /** Repo path of the piece's MEI — the `fragment` its tasks address. */
@@ -610,7 +611,7 @@ export async function resolveLogins(
   for (const c of d.comments) if (c.author_id) ids.add(c.author_id);
   for (const r of d.rows) {
     for (const cell of Object.values(r)) {
-      if (/^(pass|fail)\|/.test(cell)) ids.add(cell.split("|")[1]);
+      if (isPassVerdict(cell)) ids.add(cell.split("|")[1]);
     }
   }
   const logins: Record<string, string> = {};

@@ -93,6 +93,7 @@
   import SidePanel from "$lib/components/SidePanel.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
   import VolunteerView from "$lib/components/VolunteerView.svelte";
+  import PreviewFailed from "$lib/components/PreviewFailed.svelte";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
   // from it (name → stable repo id → current owner/name) — see resolveCampaign.
@@ -389,8 +390,11 @@
   const stripVersion = $derived(
     railPiece ? scoreVersion(history, taskDefs, railPiece.piece.path) : "",
   );
+  // Raised by "Try again" to load a failed strip preview anew.
+  let stripAttempt = $state(0);
   $effect(() => {
     const piece = railPiece?.piece;
+    void stripAttempt;
     stripPreview = null;
     if (!piece || !owner) return;
     const path = piece.path;
@@ -658,7 +662,7 @@
   // The context every command runs against; progress updates feed the busy
   // overlay's step log.
   const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo });
+    runner.context(f, { repoId, owner, repo, campaign });
 
   // A table read again replaces the shown one only when its content differs,
   // so an unchanged table keeps its identity and nothing derived from it
@@ -670,7 +674,7 @@
   // it could not be read.
   let headSha: string | null = null;
 
-  // Read the tracking tables (and privacy/config) for the console. Only the
+  // Read the tracking tables (and privacy/config) for the campaign page. Only the
   // first read shows the loading state; refreshes update the tables in place.
   // A background poll's failed read keeps the shown tables and throws. Of
   // reads that overlap, only the latest one started is shown.
@@ -863,7 +867,7 @@
 
   // Claiming a validation slot opens the place the review happens — a
   // pre-task's own editor, or the review view for encoding tasks — but only
-  // on a clean claim, so a rejected claim leaves you on the console.
+  // on a clean claim, so a rejected claim leaves you on the campaign page.
   const claimValidate = async (task_id: string, subtask_id: string) => {
     actedOn(task_id);
     const result = await run((c) =>
@@ -1191,6 +1195,13 @@
       }));
     return cols;
   });
+  // The Open column across every piece, under the board filter, for the
+  // rail's "All pieces" count.
+  const railOpenCount = $derived(
+    boardScope === "open"
+      ? displayColumns[0].cards.filter(actionable).length
+      : displayColumns[0].cards.length,
+  );
 
   // The reaper's last trace in the history, for the manage header.
   const lastReap = $derived(
@@ -1358,9 +1369,9 @@
           {#if workedOn.length}
             {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
                 class="mono"
-                href={readForge().userWebUrl(logins[u] || u)}
+                href={readForge().userWebUrl(handle(logins, u))}
                 target="_blank"
-                rel="noreferrer">@{logins[u] || u}</a
+                rel="noreferrer">@{handle(logins, u)}</a
               >{/each}
           {:else}—{/if}
         </span>
@@ -1766,7 +1777,7 @@
                       progress={pieceProgress}
                       counts={railCounts}
                       attention={attentionByPiece}
-                      openCount={displayColumns[0].cards.length}
+                      openCount={railOpenCount}
                       selected={selectedPiece}
                       onselect={(sel) => (selectedPiece = sel)}
                     />
@@ -1784,7 +1795,7 @@
                           progress={pieceProgress}
                           counts={railCounts}
                           attention={attentionByPiece}
-                          openCount={displayColumns[0].cards.length}
+                          openCount={railOpenCount}
                           selected={selectedPiece}
                           onselect={(sel) => (selectedPiece = sel)}
                         />
@@ -1818,6 +1829,8 @@
                       <div class="ctxincipit">
                         {#if stripPreview?.incipit}
                           {@html stripPreview.incipit}
+                        {:else if stripPreview?.failed}
+                          <PreviewFailed onretry={() => stripAttempt++} />
                         {:else if stripPreview?.incipitPending}
                           <span class="ctxincnote"
                             >incipit appears after the setup tasks</span

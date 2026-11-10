@@ -53,6 +53,14 @@ test("parseCsv: quoting, escaped quotes, embedded newlines, trailing and blank l
         ["1", "2"],
       ],
     ],
+    [
+      "a leading UTF-8 byte order mark is not part of the first field",
+      "﻿x,y\n1,2\n",
+      [
+        ["x", "y"],
+        ["1", "2"],
+      ],
+    ],
   ];
   for (const [label, input, expected] of cases) {
     assert.deepEqual(parseCsv(input), expected, label);
@@ -288,6 +296,13 @@ test("configPieces: reads the pieces configToYaml writes, in order", () => {
     buildCampaignConfig(
       {
         name: "campaign",
+        title: "",
+        description: "",
+        license: "CC-BY-4.0",
+        sourceKind: "facsimile",
+        sourceHeader: { title: "", composer: "", publisher: "", date: "" },
+        images: [],
+        rightsAcknowledged: "",
         pieces: [
           {
             id: "piece-01",
@@ -331,11 +346,17 @@ test("configPieceRegions: maps a piece's regions to its score pages by image", (
     buildCampaignConfig(
       {
         name: "campaign",
+        title: "",
+        description: "",
+        license: "CC-BY-4.0",
+        sourceKind: "facsimile",
+        sourceHeader: { title: "", composer: "", publisher: "", date: "" },
         images: [
           "sources/img/01.jpg",
           "sources/img/02.jpg",
           "sources/img/03.jpg",
         ],
+        rightsAcknowledged: "",
         pieces: [
           {
             id: "piece-01",

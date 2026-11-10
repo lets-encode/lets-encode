@@ -75,7 +75,7 @@ function measuresOf(
 }
 
 /** An MEI `<clef>` for a clef token (`G2`, `F4`, `G2-1`, `perc`, `TAB`; see `clefXml`). */
-export function meiClef(token: string): string {
+function meiClef(token: string): string {
   const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
   if (!m) return `<clef shape="${token === "TAB" ? "TAB" : "perc"}"/>`;
   const octaves = Math.abs(Number(m[3] ?? 0));

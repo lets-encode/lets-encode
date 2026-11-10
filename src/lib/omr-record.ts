@@ -12,7 +12,7 @@ import type { MeasureBox } from "./mei-facsimile.ts";
 import type { OmrPipeline } from "./omr-client.ts";
 import { tagAttribute, xmlEscape, xmlUnescape } from "./mei-xml.ts";
 
-export const OMR_RECORD_SCHEMA = 1;
+const OMR_RECORD_SCHEMA = 1;
 
 export interface OmrStaffEntry {
   /** The staff box's key: `staff-zone-P-K` for page P's K-th staff box in `layout-corrected.json`. */

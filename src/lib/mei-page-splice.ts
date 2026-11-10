@@ -28,8 +28,9 @@ import {
 
 /**
  * A page splice failed on a precondition of the base score: the page's
- * `<pb>`, or the next page's, is missing from it, or a measure of the page
- * stands outside the page's span in it.
+ * `<pb>`, or the next page's, is missing from it, a measure of the page
+ * stands outside the page's span in it, or the part of it outside the page
+ * already breaks an integrity check (assertSpliceIntegrity).
  */
 export class BaseScoreError extends Error {}
 
@@ -140,34 +141,43 @@ function unplacedPageBreaks(xml: string): number {
 /**
  * Assert the structural invariants a page splice must keep: the result carries
  * exactly the base's `<pb>` markers (one per surface, none smuggled in or
- * lost), and no measure xml:id appears twice document-wide. Throws a
- * descriptive Error on the first violation; the checks are what turn a fork
- * that would silently corrupt the score into a loud rejection.
+ * lost), and no measure xml:id appears twice document-wide. `forkPart` is the
+ * range of the result taken from the fork. Throws a descriptive Error on the
+ * first violation, a BaseScoreError when every tag involved lies outside
+ * `forkPart`, i.e. the violation is in the base score already; the checks are
+ * what turn a fork that would silently corrupt the score into a loud
+ * rejection.
  */
 function assertSpliceIntegrity(
   baseMei: string,
   splicedMei: string,
   locator: string,
+  forkPart: { from: number; to: number },
 ): void {
+  const fault = (...offsets: number[]) =>
+    offsets.every((at) => at < forkPart.from || at >= forkPart.to)
+      ? BaseScoreError
+      : Error;
   const baseSurfaces = new Set(pbSurfaces(baseMei));
-  const counts = new Map<string, number>();
-  for (const surface of pbSurfaces(splicedMei)) {
-    counts.set(surface, (counts.get(surface) ?? 0) + 1);
+  const breaks = new Map<string, number[]>();
+  for (const pb of pageBreaks(splicedMei)) {
+    if (pb.surface === null) continue;
+    breaks.set(pb.surface, [...(breaks.get(pb.surface) ?? []), pb.start]);
   }
-  for (const [surface, count] of counts) {
+  for (const [surface, starts] of breaks) {
     if (!baseSurfaces.has(surface)) {
       throw new Error(
         `Splicing ${locator} introduced a page break for ${surface} the base score does not have.`,
       );
     }
-    if (count > 1) {
-      throw new Error(
-        `${count} page breaks for ${surface} after splicing ${locator}.`,
+    if (starts.length > 1) {
+      throw new (fault(...starts))(
+        `${starts.length} page breaks for ${surface} after splicing ${locator}.`,
       );
     }
   }
   for (const surface of baseSurfaces) {
-    if (!counts.has(surface)) {
+    if (!breaks.has(surface)) {
       throw new Error(
         `The page break for ${surface} is missing after splicing ${locator}.`,
       );
@@ -180,51 +190,24 @@ function assertSpliceIntegrity(
     );
   }
 
-  const measureIds = new Set<string>();
+  const measureIds = new Map<string, number>();
   for (const tag of tagsIn(splicedMei)) {
     if (tag.name !== "measure" || tag.kind === "end") continue;
     if (tag.attributes === null) {
-      throw new Error(
+      throw new (fault(tag.start))(
         `A measure's attributes cannot be read after splicing ${locator}.`,
       );
     }
     const id = tag.attributes.get("xml:id");
     if (id === undefined) continue;
-    if (measureIds.has(id)) {
-      throw new Error(
+    const first = measureIds.get(id);
+    if (first !== undefined) {
+      throw new (fault(first, tag.start))(
         `Duplicate measure xml:id "${id}" after splicing ${locator}.`,
       );
     }
-    measureIds.add(id);
+    measureIds.set(id, tag.start);
   }
-}
-
-/** Replace the base's page span with the fork's, both delimited by `locator`'s `<pb>`. */
-function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
-  // Which surface follows the page is the base's to say.
-  const surfaces = pbSurfaces(baseMei);
-  const at = surfaces.indexOf(locator);
-  const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
-  const base = pageSpanAt(baseMei, locator, nextSurface, BaseScoreError);
-  const fork = pageSpanAt(forkMei, locator, nextSurface);
-  // A measure drawn on the page outside its span would keep the base's
-  // content, or lose the fork's.
-  for (const [side, mei, span, Fault] of [
-    ["base score", baseMei, base, BaseScoreError],
-    ["submitted score", forkMei, fork, Error],
-  ] as const) {
-    const missed = pageMeasuresOutside(mei, locator, span);
-    if (missed.length)
-      throw new Fault(
-        `Measure ${missed[0]} of ${locator} lies outside the page in the ${side}.`,
-      );
-  }
-  const spliced =
-    baseMei.slice(0, base.from) +
-    forkMei.slice(fork.from, fork.to) +
-    baseMei.slice(base.to);
-  assertSpliceIntegrity(baseMei, spliced, locator);
-  return spliced;
 }
 
 /**
@@ -273,33 +256,44 @@ export function firstElementOfPage(
  * Splice the fork's encoding of one page into the base score. `locator` is the
  * page's `surface-N` id; the base's span for that page is replaced by the
  * fork's span content wholesale, and everything outside it is preserved from
- * the base. Throws if either side is missing the page break or the result
- * fails the integrity checks (assertSpliceIntegrity); a failure on the base
- * score is a BaseScoreError.
+ * the base, so per-page tasks cannot touch each other's pages. A facsimile
+ * piece's measures and a physical piece's measures, which the encoder adds and
+ * numbers, are taken alike. Throws if either side is missing the page break or
+ * the result fails the integrity checks (assertSpliceIntegrity); a failure on
+ * the base score is a BaseScoreError.
  */
 export function splicePage(
   baseMei: string,
   forkMei: string,
   locator: string,
 ): string {
-  return spliceSpan(baseMei, forkMei, locator);
-}
-
-/**
- * Splice the fork's encoding of one page into the base score by replacing the
- * page's whole `<pb>` span with the fork's. Used for physical pieces, whose
- * pages hold no fixed measure grid — the encoder transcribes from the source,
- * so measures are theirs to add and number and the page's content is taken
- * wholesale. Both files must carry the page's `<pb facs="#surface-N"/>`
- * marker; everything outside the span is kept from the base verbatim, so
- * per-page tasks still cannot touch each other's pages.
- */
-export function splicePageSpan(
-  baseMei: string,
-  forkMei: string,
-  locator: string,
-): string {
-  return spliceSpan(baseMei, forkMei, locator);
+  // Which surface follows the page is the base's to say.
+  const surfaces = pbSurfaces(baseMei);
+  const at = surfaces.indexOf(locator);
+  const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
+  const base = pageSpanAt(baseMei, locator, nextSurface, BaseScoreError);
+  const fork = pageSpanAt(forkMei, locator, nextSurface);
+  // A measure drawn on the page outside its span would keep the base's
+  // content, or lose the fork's.
+  for (const [side, mei, span, Fault] of [
+    ["base score", baseMei, base, BaseScoreError],
+    ["submitted score", forkMei, fork, Error],
+  ] as const) {
+    const missed = pageMeasuresOutside(mei, locator, span);
+    if (missed.length)
+      throw new Fault(
+        `Measure ${missed[0]} of ${locator} lies outside the page in the ${side}.`,
+      );
+  }
+  const spliced =
+    baseMei.slice(0, base.from) +
+    forkMei.slice(fork.from, fork.to) +
+    baseMei.slice(base.to);
+  assertSpliceIntegrity(baseMei, spliced, locator, {
+    from: base.from,
+    to: base.from + fork.to - fork.from,
+  });
+  return spliced;
 }
 
 /**

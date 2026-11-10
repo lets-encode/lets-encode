@@ -1,6 +1,6 @@
-// Cross-campaign statistics for the dashboard views: per campaign, the
+// Cross-campaign statistics for the campaign list: per campaign, the
 // tracking tables condensed into the numbers a tile or card shows (progress,
-// claimable tasks, activity), plus the raw tables so the personal dashboard
+// claimable tasks, activity), plus the raw tables so the campaign list
 // can pull one user's work out of them. Derivations are pure functions of the
 // tables; loadCampaignStats does the fetching and caches per repo id.
 
@@ -57,7 +57,7 @@ const titleOf = (
   def: TaskRow,
 ): string => cardTitle(def.fragment, def.locator, stats.pieceNames);
 
-/** One campaign's tracking tables condensed for the dashboard views. */
+/** One campaign's tracking tables condensed for the campaign list. */
 export interface CampaignStats {
   repoId: number;
   owner: string;
@@ -266,10 +266,9 @@ export function nextTask(
 
 const cache = new Map<number, Promise<CampaignStats>>();
 
-/** Drop the cached stats so the next load re-reads the tables. */
-export function invalidateStats(repoId?: number): void {
-  if (repoId === undefined) cache.clear();
-  else cache.delete(repoId);
+/** Drop a campaign's cached stats so its next load re-reads the tables. */
+export function invalidateStats(repoId: number): void {
+  cache.delete(repoId);
 }
 
 /** Load one campaign's stats, cached per repo id for the session. */
@@ -446,7 +445,7 @@ async function buildStats(
     const id = history[i].user_id;
     if (id && !contributorIds.includes(id)) contributorIds.push(id);
   }
-  // Everyone the dashboard may need to name; lookups are memoised in the
+  // Everyone the campaign list may need to name; lookups are memoised in the
   // forge client.
   const logins = await resolveLogins((n) => f.getUserLogin(n), {
     rows: state.rows,
@@ -510,7 +509,7 @@ async function buildStats(
 // ---------------------------------------------------------------------------
 // One user's work across campaigns
 
-/** One task of the viewer's, grouped for the personal dashboard. */
+/** One task of the viewer's, grouped for the campaign list. */
 export interface MyTask {
   group: "encoding" | "validating" | "awaiting" | "done";
   campaign: string;
@@ -527,7 +526,8 @@ export interface MyTask {
   title: string;
   /** The claim's ISO timestamp (encoding group). */
   claimedAt: string;
-  /** When the claim goes stale (ISO); '' when the reaper is not configured. */
+  /** When the claim goes stale (ISO), from its lock; '' for a task the
+      viewer does not hold. */
   expiresAt: string;
   /** Awaiting group: validation progress on the task's subtasks. */
   passes: number;

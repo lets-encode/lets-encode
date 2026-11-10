@@ -6,7 +6,6 @@ import {
   firstElementOfPage,
   spliceOpeningScoreDef,
   splicePage,
-  splicePageSpan,
 } from "../mei-page-splice.ts";
 import {
   initialFacsimileModel,
@@ -216,8 +215,8 @@ const blankFork = blank.replace(
     '<measure xml:id="m-c" n="3"><staff n="1"><layer n="1"><note dur="4" oct="4" pname="e"/></layer></staff></measure>',
 );
 
-test("splicePageSpan takes the whole page span from the fork, added measures included", () => {
-  const spliced = splicePageSpan(blank, blankFork, "surface-2");
+test("splicePage takes the whole page span from the fork, added measures included", () => {
+  const spliced = splicePage(blank, blankFork, "surface-2");
   // Page 1 keeps its seed measure; page 2 carries the fork's three measures.
   assert.ok(spliced.includes('<measure xml:id="measure-1"'));
   assert.ok(!spliced.includes('<measure xml:id="measure-2"'));
@@ -227,21 +226,21 @@ test("splicePageSpan takes the whole page span from the fork, added measures inc
   assert.ok(spliced.includes('<pb xml:id="pb-2"'));
 });
 
-test("splicePageSpan leaves other pages as the base has them", () => {
+test("splicePage leaves other pages as the base has them", () => {
   // The fork also "changed" page 1, but only page 2 is being submitted.
   const forkBoth = blankFork.replace(
     /<measure xml:id="measure-1"[\s\S]*?<\/measure>/,
     '<measure xml:id="m-x" n="0"><staff n="1"><layer n="1"><note dur="4" oct="4" pname="g"/></layer></staff></measure>',
   );
-  const spliced = splicePageSpan(blank, forkBoth, "surface-2");
+  const spliced = splicePage(blank, forkBoth, "surface-2");
   assert.ok(spliced.includes('<measure xml:id="measure-1"'));
   assert.ok(!spliced.includes("m-x"));
 });
 
-test("splicePageSpan throws when the fork is missing the page break", () => {
+test("splicePage throws when the fork is missing the page break", () => {
   const forkNoPb = blankFork.replace(/<pb xml:id="pb-2"[^>]*>/, "");
   assert.throws(
-    () => splicePageSpan(blank, forkNoPb, "surface-2"),
+    () => splicePage(blank, forkNoPb, "surface-2"),
     /No page break found/,
   );
 });
@@ -258,7 +257,7 @@ test("the last page's span ends at the enclosing close, nested sections included
     /<measure xml:id="measure-2"[\s\S]*?<\/measure>/,
     nested,
   );
-  const spliced = splicePageSpan(blank, forkNested, "surface-2");
+  const spliced = splicePage(blank, forkNested, "surface-2");
   assert.ok(spliced.includes("s-inner"));
   assert.ok(
     spliced.includes("m-b"),
@@ -340,6 +339,28 @@ test("a fault of the base score is a BaseScoreError", () => {
         "surface-2",
       ),
     (err: Error) => !(err instanceof BaseScoreError),
+  );
+});
+
+test("an integrity fault outside the page is the base score's", () => {
+  // Page 1 of the base score repeats a measure id.
+  const repeated = base.replace('xml:id="measure-2"', 'xml:id="measure-1"');
+  assert.throws(
+    () => splicePage(repeated, forkAll, "surface-2"),
+    (err: Error) =>
+      err instanceof BaseScoreError &&
+      /Duplicate measure xml:id "measure-1"/.test(err.message),
+  );
+  // The submitted page repeats a measure id of page 1.
+  const forkRepeats = forkAll.replace(
+    'xml:id="measure-3"',
+    'xml:id="measure-1"',
+  );
+  assert.throws(
+    () => splicePage(base, forkRepeats, "surface-2"),
+    (err: Error) =>
+      !(err instanceof BaseScoreError) &&
+      /Duplicate measure xml:id "measure-1"/.test(err.message),
   );
 });
 

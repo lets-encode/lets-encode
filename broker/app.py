@@ -1,5 +1,5 @@
 """
-OAuth session broker for the instigation SPA (Flask).
+OAuth session broker for the app (Flask).
 
 The full OAuth flow runs server-side (/login -> GitHub -> /authorize), the
 token is stored in a server-side session, and the browser holds only an opaque
@@ -123,10 +123,8 @@ class SessionFiles(FileSystemCache):
     """
     Session files without a file limit: on a write, expired files are removed
     instead, at most every SWEEP_S seconds per process, and the GitHub tokens
-    they hold are revoked. Past cachelib's own limit the live sessions that
-    expire soonest are removed, which logs their users out. A session without
-    a GitHub token, as /login starts one, holds only the OAuth round trip and
-    is kept PRELOGIN_S at most.
+    they hold are revoked. A session without a GitHub token, as /login starts
+    one, holds only the OAuth round trip and is kept PRELOGIN_S at most.
 
     The GitHub token is stored encrypted with a key derived from `secret`, so
     the files alone do not yield working tokens. A token that does not
@@ -725,10 +723,10 @@ RELAY_SAFETY_HEADERS = [
     ("Content-Security-Policy", "sandbox"),
 ]
 
-# /omr relay: the Musibot OMR service, for the console's OMR preparation. The
+# /omr relay: the Musibot OMR service, for the app's OMR preparation. The
 # service sends no CORS headers and its API token is institutional, so the
-# browser reaches it only through here. Only the endpoints the console uses
-# are relayed, matched against these patterns. Every page under the shared
+# browser reaches it only through here. Only the endpoints the app uses are
+# relayed, matched against these patterns. Every page under the shared
 # token belongs to whoever holds it, and one user must not see another's: the
 # page listing is not relayed, a page only to the login that created it
 # through the relay, and an execution only on the page it was started on.

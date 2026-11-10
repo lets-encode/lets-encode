@@ -1,4 +1,4 @@
-// The console command layer: every user-facing campaign operation is a named,
+// The app command layer: every user-facing campaign operation is a named,
 // versioned command with JSON-serialisable input, run through invoke(). The
 // UI is one caller among possible others (an agent can drive the same
 // registry), and every MUTATING command fills the command columns of one row
@@ -14,6 +14,7 @@
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
 import { readLocal, writeLocal } from "./local-store.ts";
+import { shortId, sleep } from "./util.ts";
 import type {
   FileChange,
   ForgeClient,
@@ -208,7 +209,11 @@ export async function invoke<I extends Record<string, unknown>, O>(
           input: def.envelopeInput ? def.envelopeInput(input) : input,
         };
   console.log("[command]", def.id, input);
-  ctx.progress({ command: def.id, background: def.background });
+  ctx.progress({
+    command: def.id,
+    background: def.background,
+    task: typeof input.task_id === "string" ? input.task_id : undefined,
+  });
   const output = await def.run(input, ctx, envelope);
   if (def.log === "direct" && envelope) {
     const result = output as Result;
@@ -270,9 +275,6 @@ async function logDirect(
 
 // ---------------------------------------------------------------------------
 // Shared helpers
-
-const rand = () => crypto.randomUUID().slice(0, 8);
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Mute the repo's notifications for this user before they author their first PR
 // against it. GitHub auto-subscribes a PR's author, so the automation's
@@ -342,7 +344,7 @@ const ACCEPTED_MARK = "✅";
 // the PR is closed, its run has ended or the wait runs out. A PR closed
 // without one was rejected without a record (a malformed operation). A
 // timeout means the run is still in flight, not failed. Once the PR is closed, a `head` branch
-// the console created in the user's fork is deleted: the automation deletes
+// the app created in the user's fork is deleted: the automation deletes
 // the head branches of PRs opened within the campaign repo itself, but it has
 // no rights on a fork, so that half of the cleanup happens here with the
 // user's own session.
@@ -1201,7 +1203,8 @@ async function openClaimPr(
     expires: "",
   });
   const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
-  const body = `Reserves ${target} for ${kind} work by ${viewerLogin}. Opened from the campaign console.`;
+  const work = kind === "validation" ? "review" : kind;
+  const body = `Reserves ${target} for ${work} work by ${viewerLogin}. Opened from the app.`;
   console.log("[claim] opening claim PR", {
     task_id,
     subtask_id,
@@ -1209,10 +1212,10 @@ async function openClaimPr(
     user: viewer,
   });
   return f.openChangePr(owner, repo, {
-    branch: `claim-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
+    branch: `claim-${task_id}${subtask_id ? "-" + subtask_id : ""}-${shortId()}`,
     files: [{ path: LOCK_PATH, content: serializeLockCsv(lockRows) }],
-    message: `Claim ${target} (${kind})`,
-    title: `Claim ${target} (${kind})`,
+    message: `Claim ${target} (${work})`,
+    title: `Claim ${target} (${work})`,
     body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
     baseSha: sha,
   });
@@ -1269,7 +1272,7 @@ async function claimAndWait(
 // ---------------------------------------------------------------------------
 // The commands
 
-/** The parsed campaign tables (and privacy/config) the console renders. */
+/** The parsed campaign tables (and privacy/config) the campaign page renders. */
 export interface CampaignTables {
   notInitialised: boolean;
   isPrivate: boolean;
@@ -1493,12 +1496,13 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
       );
       if (kept.length === locks.length)
         return { error: `You hold no claim on ${target}.` };
-      const body = `Abandons ${target} (${kind === "validation" ? "review" : kind}) by ${viewerLogin}. Opened from the campaign console.`;
+      const work = kind === "validation" ? "review" : kind;
+      const body = `Abandons ${target} (${work}) by ${viewerLogin}. Opened from the app.`;
       const pr = await f.openChangePr(owner, repo, {
-        branch: `release-${task_id}${subtask_id ? "-" + subtask_id : ""}-${rand()}`,
+        branch: `release-${task_id}${subtask_id ? "-" + subtask_id : ""}-${shortId()}`,
         files: [{ path: LOCK_PATH, content: serializeLockCsv(kept) }],
-        message: `Abandon ${target} (${kind})`,
-        title: `Abandon ${target} (${kind})`,
+        message: `Abandon ${target} (${work})`,
+        title: `Abandon ${target} (${work})`,
         body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         baseSha: sha,
       });
@@ -1927,7 +1931,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
             `the encoding fails the MEI schema check (${meiError}). Fix it in mei-friend and complete the task again.`,
           );
         }
-        const body = `Submits the encoding of ${task_id} by ${viewerLogin}, edited in mei-friend. Opened from the campaign console.`;
+        const body = `Submits the encoding of ${task_id} by ${viewerLogin}, edited in mei-friend. Opened from the app.`;
         console.log("[submitpr] opening PR", { head, base });
         const request = {
           title: `Encoding of ${task_id}`,
@@ -2043,7 +2047,7 @@ const submitValidation: CommandDef<
             ]),
           });
         }
-        const body = `Submits a ${verdict} validation for ${task_id}/${subtask_id}. Opened from the campaign console.`;
+        const body = `Submits a ${verdict} review of ${task_id}/${subtask_id}. Opened from the app.`;
         console.log("[validate] opening validation PR", {
           task_id,
           subtask_id,
@@ -2051,10 +2055,10 @@ const submitValidation: CommandDef<
           slot,
         });
         const pr = await f.openChangePr(owner, repo, {
-          branch: `validate-${task_id}-${subtask_id}-${rand()}`,
+          branch: `validate-${task_id}-${subtask_id}-${shortId()}`,
           files,
-          message: `Validate ${task_id}/${subtask_id} (${verdict})`,
-          title: `Validate ${task_id}/${subtask_id} (${verdict})`,
+          message: `Review ${task_id}/${subtask_id} (${verdict})`,
+          title: `Review ${task_id}/${subtask_id} (${verdict})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
           baseSha: sha,
         });
@@ -2104,9 +2108,9 @@ const reviewEdit: CommandDef<
         return { error: `Your review claim on ${target} has run out.` };
       if (!locks.some(mine))
         return { error: `You hold no review claim on ${target}.` };
-      const body = `Switches the review of ${target} by ${viewerLogin} to editing. Opened from the campaign console.`;
+      const body = `Switches the review of ${target} by ${viewerLogin} to editing. Opened from the app.`;
       const pr = await f.openChangePr(owner, repo, {
-        branch: `review-edit-${task_id}-${rand()}`,
+        branch: `review-edit-${task_id}-${shortId()}`,
         files: [
           {
             path: LOCK_PATH,
@@ -2261,9 +2265,9 @@ const submitComment: CommandDef<
             fragment: input.fragment,
           },
         ]);
-        const body = `Adds a ${input.kind} on ${target}. Opened from the campaign console.`;
+        const body = `Adds a ${input.kind} on ${target}. Opened from the app.`;
         const pr = await f.openChangePr(owner, repo, {
-          branch: `comment-${input.task_id || "campaign"}-${rand()}`,
+          branch: `comment-${input.task_id || "campaign"}-${shortId()}`,
           files: [{ path: COMMENT_PATH, content }],
           message: `Comment on ${target} (${input.kind})`,
           title: `Comment on ${target} (${input.kind})`,
@@ -2310,9 +2314,9 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
       { kind: "resolve", task: row.task_id, comment: comment_id },
       async () => {
         await muteOnce(ctx);
-        const body = `Resolves comment ${comment_id} on ${row.task_id || "the campaign"}. Opened from the campaign console.`;
+        const body = `Resolves comment ${comment_id} on ${row.task_id || "the campaign"}. Opened from the app.`;
         const pr = await f.openChangePr(owner, repo, {
-          branch: `resolve-${comment_id}-${rand()}`,
+          branch: `resolve-${comment_id}-${shortId()}`,
           files: [
             { path: COMMENT_PATH, content: serializeCommentCsv(resolved) },
           ],
@@ -2329,7 +2333,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 };
 
 // Rewrite the task plan (task.csv + the matching state.csv rows) from the
-// console's plan editor. Owner-only: the rewrite is committed directly, so it
+// app's plan editor. Owner-only: the rewrite is committed directly, so it
 // requires push access; checkPlan re-validates against fresh tables so a claim
 // that landed while editing rejects the save rather than being overwritten.
 // `base` is the task table the editor opened with: a task.csv changed since
@@ -2796,7 +2800,7 @@ async function submitFacsimile(
     const title = layout
       ? `Correct the layout (${task_id})`
       : `Correct measure zones (${task_id})`;
-    const body = `${title}. Opened from the zone editor.`;
+    const body = `${title}. Opened from the app.`;
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
     // The corrected boxes, the layout model's raw output and the recognition
     // record go next to the score, one file each per piece. The score is
@@ -2860,7 +2864,7 @@ async function openPreTaskSubmission(
     viewer,
     branchPrefix,
   );
-  if (!pending) return open(`${branchPrefix}${rand()}`);
+  if (!pending) return open(`${branchPrefix}${shortId()}`);
   const { head } = pending;
   const held = await Promise.all(
     files.map((file) =>
@@ -3314,7 +3318,7 @@ const saveDraft: CommandDef<DraftInput, Result & { sha?: string }> = {
   },
 };
 
-/** The console command registry. */
+/** The app command registry. */
 export const commands = {
   readTables,
   claimValidation,

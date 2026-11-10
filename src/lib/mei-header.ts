@@ -1,4 +1,4 @@
-// Read-only view of a score's <meiHead>, for display in the campaign console.
+// Read-only view of a score's <meiHead>, for display in the app.
 // Same conventions as mei-facsimile.ts: pure regex/string parsing, no DOM,
 // filesystem or network access.
 
@@ -16,7 +16,7 @@ export interface HeaderPerson {
   role: string;
 }
 
-/** The header fields the console displays. */
+/** The header fields the app displays. */
 export interface MeiHeader {
   title: string;
   composer: string;

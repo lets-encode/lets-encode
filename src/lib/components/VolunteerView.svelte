@@ -33,6 +33,7 @@
   } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
+  import PreviewFailed from "$lib/components/PreviewFailed.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { PagePreview, PiecePreview } from "$lib/piece-previews.ts";
@@ -53,7 +54,6 @@
     pieceIndex,
     busy,
     shownTask,
-    expandedPiece = $bindable(null),
     onact,
     onopen,
   }: {
@@ -80,8 +80,6 @@
     busy: boolean;
     /** The task the side panel shows, or null. */
     shownTask: string | null;
-    /** The piece row expanded to its task list. */
-    expandedPiece?: string | null;
     /** Perform a card's action (claim, or open its detail). */
     onact: (card: BoardCard) => void;
     /** Open a task's panel. */
@@ -148,6 +146,8 @@
   const tintOf = (i: number) => `--piece-tint: var(--zone-${pieceZone(i)})`;
   // A single-piece campaign keeps its one piece expanded.
   const lone = $derived(pieces.length === 1);
+  /** The piece row expanded to its task list. */
+  let expandedPiece = $state<string | null>(null);
 
   // The card's claim: of the task when it is open, of a review when one is
   // free; null when the button only opens the task.
@@ -181,18 +181,26 @@
   // shown stays until the new one is there.
   let previews = $state<Record<string, PiecePreview>>({});
   const loadedVersions: Record<string, string> = {};
+  const loadPreview = (path: string, version: string) => {
+    loadedVersions[path] = version;
+    piecePreview(readForge(), owner, repo, path, true, version).then(
+      (preview) => {
+        previews[path] = preview;
+      },
+    );
+  };
   $effect(() => {
-    const f = readForge();
     for (const piece of pieces) {
       const path = piece.path;
       const version = scoreVersion(history, taskDefs, path);
-      if (loadedVersions[path] === version) continue;
-      loadedVersions[path] = version;
-      piecePreview(f, owner, repo, path, true, version).then((preview) => {
-        previews[path] = preview;
-      });
+      if (loadedVersions[path] !== version) loadPreview(path, version);
     }
   });
+  // "Try again" on a failed preview: loads it anew.
+  const retryPreview = (path: string) => {
+    delete previews[path];
+    loadPreview(path, scoreVersion(history, taskDefs, path));
+  };
 
   const nextPiece = $derived(
     featured ? pieces[pieceIndex.get(featured.task) ?? 0] : undefined,
@@ -356,6 +364,11 @@
               />
             {:else if nextPreview?.incipit}
               <div class="incipit">{@html nextPreview.incipit}</div>
+            {:else if nextPreview?.failed && nextPiece}
+              {@const path = nextPiece.path}
+              <div class="cropnote">
+                <PreviewFailed onretry={() => retryPreview(path)} />
+              </div>
             {/if}
             {#if nextPage}
               <span class="croplabel">p. {nextPage}</span>
@@ -846,6 +859,12 @@
     align-items: center;
     padding: 8px;
     box-sizing: border-box;
+  }
+  .cropnote {
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .incipit :global(svg) {
     width: 100%;

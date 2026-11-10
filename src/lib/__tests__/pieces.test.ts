@@ -33,7 +33,7 @@ function facsimilePiece(id: string, zones: Piece["zones"]): Piece {
 
 test("numbers piece ids in sequence, skipping ones already taken", () => {
   assert.equal(nextPieceId([]), "piece-01");
-  const one = createPiece([]);
+  const one = createPiece([], "facsimile");
   assert.equal(one.id, "piece-01");
   assert.equal(nextPieceId([one]), "piece-02");
   // A gap left by a removed piece must not produce a duplicate id.
@@ -48,7 +48,7 @@ test("cycles colours once there are more pieces than hues", () => {
 });
 
 test("copies only the fields a piece can own, without sharing the contributor objects", () => {
-  const original = createPiece([]).meta;
+  const original = createPiece([], "facsimile").meta;
   original.title = "First piece";
   original.composer = "L. van Beethoven";
   original.lyricist = "J. W. von Goethe";

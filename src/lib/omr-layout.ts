@@ -36,7 +36,7 @@ export interface LayoutRecord {
   pages: { image: string; layout: CocoLayout }[];
 }
 
-export const LAYOUT_RECORD_NOTE =
+const LAYOUT_RECORD_NOTE =
   "Raw output of the layout model, not corrected. The corrected boxes are in layout-corrected.json.";
 
 /** The layout record's path for a score: `layout.json` in the score's directory. */

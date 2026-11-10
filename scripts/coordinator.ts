@@ -84,6 +84,7 @@ import {
   contractMarker,
   rejectionOutcome,
   isLeftoverOperationBranch,
+  isOperationBranch,
   isReviewEdit,
   keptWorkBranch,
   keptWorkSince,
@@ -115,6 +116,7 @@ import {
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
+  isTransientError,
   listWorkflowRuns,
 } from "../src/lib/forge/github-rest.ts";
 import type {
@@ -124,6 +126,7 @@ import type {
 } from "../src/lib/forge/github-rest.ts";
 import { validateMei } from "./mei-validate.ts";
 import type { MeiCheck } from "../src/lib/mei-schema.ts";
+import { shortId } from "../src/lib/util.ts";
 
 const token = process.env.GH_TOKEN ?? "";
 const [owner, repo] = (process.env.BASE_REPO ?? "").split("/");
@@ -316,10 +319,10 @@ const expiredLocks = (
 // their own. The copy starts from `main` at `sha` and carries the task's
 // score and side files; a later expiry moves `wip-<task>` to the new copy once
 // it exists. Returns the locks whose work was kept. A claim whose pull request,
-// repo or branch no longer exists has none. A write GitHub refused for good
-// (REFUSED_WRITE), or any failure on the decision's last attempt, is logged
-// and its claim is released without kept work; any other failure throws, so
-// the attempt is retried.
+// repo or branch no longer exists has none. A failure a retry may get past
+// (retryable) throws, so the attempt is retried; any other failure, or any
+// failure on the decision's last attempt, is logged and its claim is released
+// without kept work.
 async function keepExpiredWork(
   removed: LockRow[],
   historyCsv: string | null,
@@ -380,7 +383,7 @@ async function keepExpiredWork(
       kept.add(lock);
     } catch (e) {
       const message = (e as Error).message;
-      if (!lastAttempt && !REFUSED_WRITE.test(message)) throw e;
+      if (!lastAttempt && retryable(e)) throw e;
       console.warn(
         `The unsubmitted work on ${lock.task_id} was not kept; its expired claim is released without it: ${message}`,
       );
@@ -402,13 +405,14 @@ function checkMeiOnce(mei: string): Promise<MeiCheck> {
   return check;
 }
 
-// Random id for a comment row the automation authors.
-const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
-
-// A write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
-const REFUSED_WRITE = /\((?:401|403|404) [A-Z]+ /;
-// A non-forced branch update GitHub refused because the branch moved on.
+// A non-forced branch update GitHub refused because the branch moved on. A
+// write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
 const LOST_RACE = /\(422 PATCH \S*\/git\/refs\/heads\//;
+
+// Whether another attempt may get past `e`: a commit lost to another run's,
+// or a failure of GitHub's that may pass (isTransientError).
+const retryable = (e: unknown): boolean =>
+  isTransientError(e) || LOST_RACE.test((e as Error).message);
 
 // Every attempt of a decision lost the commit to other runs' commits. The
 // pull request is closed with that reason rather than left open, so the
@@ -422,11 +426,11 @@ class HeadMoved extends Error {}
 // Whether withRetry is running the last attempt of a decision.
 let lastAttempt = false;
 
-// Run one optimistic decide-and-apply pass, retrying when it throws — most
-// often the non-fast-forward commit failing because the branch head moved.
-// Every error is retried (up to MAX_ATTEMPTS) but a write GitHub refused for
-// good (401, 403 or 404): each attempt re-reads the tables before writing, so
-// retrying a transient read failure is equally safe.
+// Run one optimistic decide-and-apply pass, retrying (up to MAX_ATTEMPTS) when
+// it throws an error another attempt may get past (retryable) — most often
+// the non-fast-forward commit failing because the branch head moved. Each
+// attempt re-reads the tables before writing, so retrying a failed read is
+// equally safe. Any other error is thrown at once.
 // Runs for different pull requests execute concurrently — several at once when
 // operations are submitted in quick succession — so a random pause that grows
 // with each retry (up to 8 s) spreads competing writers apart until each has
@@ -437,14 +441,11 @@ async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
     try {
       return await attempt();
     } catch (e) {
-      if (e instanceof HeadMoved) throw e;
-      if (i === MAX_ATTEMPTS - 1 && LOST_RACE.test((e as Error).message))
-        throw new TablesBusy((e as Error).message);
-      if (i === MAX_ATTEMPTS - 1 || REFUSED_WRITE.test((e as Error).message))
-        throw e;
-      console.warn(
-        `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
-      );
+      if (!retryable(e)) throw e;
+      const message = (e as Error).message;
+      if (i === MAX_ATTEMPTS - 1)
+        throw LOST_RACE.test(message) ? new TablesBusy(message) : e;
+      console.warn(`Attempt ${i + 1} failed, retrying: ${message}`);
       await new Promise((resolve) =>
         setTimeout(resolve, Math.random() * Math.min(8_000, 500 * 2 ** i)),
       );
@@ -460,17 +461,11 @@ const logPhase = (phase: string, startedAt: number): void =>
   );
 
 // Whether the PR author can push to the campaign repo — the privilege behind
-// owner-only operations (resolving someone else's comment). A failed lookup means no.
+// owner-only operations (resolving someone else's comment). A failed lookup
+// throws.
 async function authorCanPush(): Promise<boolean> {
   if (!authorLogin) return false;
-  try {
-    return await getCollaboratorCanPush(token, owner, repo, authorLogin);
-  } catch (e) {
-    console.warn(
-      `Collaborator lookup for ${authorLogin} failed: ${(e as Error).message}`,
-    );
-    return false;
-  }
+  return getCollaboratorCanPush(token, owner, repo, authorLogin);
 }
 
 // Delete the PR's head branch once we've closed it — but only when it lives in
@@ -830,7 +825,7 @@ async function attemptReviewEdit(
           ...parseCommentCsv(commentCsv ?? ""),
           {
             ...added![0],
-            comment_id: newCommentId(),
+            comment_id: shortId(),
             author_id: author,
             timestamp: now,
             resolved: "",
@@ -900,21 +895,21 @@ async function decideEncoding(
   if (!task) return { ok: false, reason: "unknown_task" };
 
   // A page task (locator `surface-N`) contributes only its page: we splice the
-  // fork's page into the base score, leaving other pages as they stand. A
-  // facsimile piece's page is joined measure by measure (matched by xml:id —
-  // its measure grid is fixed by the measure correction); a physical piece has
-  // no grid, so its page span is taken from the fork wholesale. The first page
-  // task of an 'omr-instruments' piece also brings the opening score
-  // definition's clefs, keys, meter and transpositions. Whole-file tasks
+  // fork's page into the base score, leaving other pages as they stand: the
+  // page's span is taken from the fork wholesale. The first page task of an
+  // 'omr-instruments' piece also brings the opening score definition's
+  // clefs, keys, meter and transpositions. Whole-file tasks
   // (empty locator) and pre-tasks take the fork's file with the campaign's
   // header (assembleSubmission).
   //
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
   // in `detail`, since the reason code is what the tables record. A page
-  // whose file passes the schema on its own while the assembled score fails,
-  // or the splice fails on the campaign's score (BaseScoreError), is
-  // `splice_invalid`: the join is at fault, not the encoding.
+  // whose file passes the schema on its own while the assembled score fails
+  // is `splice_invalid`: the join is at fault, not the encoding. So is every
+  // submission the campaign's side fails (baseFailed): its score is missing,
+  // a page task's config.yaml is missing, or the splice fails on the
+  // campaign's score (BaseScoreError).
   // Everything but the MEI check is decided before the fork's file is read:
   // a submitter who holds no claim cannot make the run parse their file.
   const precheck = checkEncoding({
@@ -961,6 +956,10 @@ async function decideEncoding(
     forkMei == null ? `${task.fragment} is missing from the fork.` : "";
   if (forkMei != null && baseMei == null) {
     detail = `${task.fragment} is missing from the campaign.`;
+    baseFailed = true;
+  } else if (forkMei != null && isPageTask && configText == null) {
+    detail = `${CONFIG_PATH} is missing from the campaign.`;
+    baseFailed = true;
   } else if (forkMei != null) {
     // The contribution is recorded in the assembled score's header — the
     // revision, the contributor, and the editing application — before the
@@ -1019,7 +1018,7 @@ async function decideEncoding(
   }
 
   let meiValid = false;
-  let joinFailed = baseFailed && (await checkMeiOnce(forkMei!)).ok;
+  let joinFailed = baseFailed;
   if (mei != null) {
     const check = await checkMeiOnce(mei);
     meiValid = check.ok;
@@ -1216,7 +1215,7 @@ async function decideValidation(
     // timestamp, which is what pairs the two in the tables.
     const authoredComment: CommentRow = {
       ...failComment!,
-      comment_id: newCommentId(),
+      comment_id: shortId(),
       author_id: author,
       timestamp: now,
       resolved: "",
@@ -1408,7 +1407,7 @@ async function attemptComment(
       author,
       changedPaths,
       now: submittedAt,
-      newId: newCommentId(),
+      newId: shortId(),
     });
     verdict = check;
     if (check.ok) nextComments = [...comments, check.row];
@@ -1606,7 +1605,7 @@ async function processPullRequest(
   }
   submittedAt = createdAt || new Date().toISOString();
   const changedPaths = files.map((f) => f.filename);
-  // The PR body may carry the console command's envelope; treated as data,
+  // The PR body may carry the app command's envelope; treated as data,
   // it names the task and feeds the command columns of the history row this
   // run authors.
   const envelope = envelopeFromPrBody(body);
@@ -1811,7 +1810,7 @@ async function closeUndecided(
 // the campaign repo; the scheduled pass deletes those (isLeftoverOperationBranch).
 async function sweepOperationBranches(): Promise<void> {
   const [branches, open] = await Promise.all([
-    listBranchCommitTimes(token, owner, repo),
+    listBranchCommitTimes(token, owner, repo, isOperationBranch),
     listOpenPullRequests(token, owner, repo),
   ]);
   const openHeads = new Set(open.map((pr) => pr.head.ref));

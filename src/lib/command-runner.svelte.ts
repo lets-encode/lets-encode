@@ -6,6 +6,7 @@
 import { auth, forge } from "./auth.svelte.ts";
 import { meiFriendUrl, omr } from "./forge/config.ts";
 import { createForge } from "./forge/index.ts";
+import { readLocal, removeLocal, writeLocal } from "./local-store.ts";
 import type { ForgeClient } from "./forge/index.ts";
 import { ProgressLog } from "./progress-log.svelte.ts";
 import type { ProgressStep } from "./progress-log.svelte.ts";
@@ -27,16 +28,21 @@ const handOffKey = (campaign: string, task: string) =>
 const HAND_OFF_MAX_AGE_MS = 24 * 60 * 60_000;
 
 function recordHandOff(url: string): void {
+  let params: URLSearchParams;
   try {
-    const params = new URL(url).searchParams;
-    const campaign = params.get("le_campaignname");
-    const task = params.get("le_taskid");
-    if (campaign && task)
-      localStorage.setItem(handOffKey(campaign, task), String(Date.now()));
+    params = new URL(url).searchParams;
   } catch {
-    /* without the record the return asks before acting */
+    return; // without the record the return asks before acting
   }
+  const campaign = params.get("le_campaignname");
+  const task = params.get("le_taskid");
+  if (campaign && task)
+    writeLocal(handOffKey(campaign, task), String(Date.now()));
 }
+
+// Commands after which no hand-off may act unasked: the task was submitted or
+// given back in the app. They remove the record of their campaign and task.
+const ENDS_HAND_OFF = new Set(["campaign.submitEncoding", "campaign.abandon"]);
 
 /**
  * True when this browser handed `task` to mei-friend within the last
@@ -44,14 +50,10 @@ function recordHandOff(url: string): void {
  * return.
  */
 export function takeHandOff(campaign: string, task: string): boolean {
-  try {
-    const key = handOffKey(campaign, task);
-    const recorded = Number(localStorage.getItem(key));
-    localStorage.removeItem(key);
-    return recorded > 0 && Date.now() - recorded < HAND_OFF_MAX_AGE_MS;
-  } catch {
-    return false;
-  }
+  const key = handOffKey(campaign, task);
+  const recorded = Number(readLocal(key));
+  removeLocal(key);
+  return recorded > 0 && Date.now() - recorded < HAND_OFF_MAX_AGE_MS;
 }
 
 /** A command that finished cleanly with a mei-friend hand-off URL. */
@@ -72,6 +74,8 @@ export interface CommandTarget {
   repoId: number;
   owner: string;
   repo: string;
+  /** The campaign's name in the app's URLs, which keys its hand-off records. */
+  campaign?: string;
 }
 
 /** A CommandContext against `target` for the signed-in viewer. */
@@ -107,12 +111,21 @@ export class CommandRunner {
   private queue: Promise<void> = Promise.resolve();
   /** The running command's id, from the `command` progress update. */
   private command = "";
+  /** The running command's task, from the `command` progress update. */
+  private task = "";
+  /** The campaign of the latest context. */
+  private campaign = "";
 
   /** A CommandContext against `target`, its progress wired to the busy log. */
-  context(f: ForgeClient, target: CommandTarget): CommandContext {
+  context(
+    f: ForgeClient,
+    { campaign, ...target }: CommandTarget,
+  ): CommandContext {
+    this.campaign = campaign ?? "";
     return commandContext(f, target, (u) => {
       if (u.command) {
         this.command = u.command;
+        this.task = u.task ?? "";
         this.overlay = !u.background;
       }
       if (u.step) this.log.step(u.step);
@@ -150,10 +163,18 @@ export class CommandRunner {
     this.busy = true;
     this.overlay = true;
     this.command = "";
+    this.task = "";
     this.log.clear();
     try {
       const result = (this.result = await command());
       if (result?.meiFriendUrl) recordHandOff(result.meiFriendUrl);
+      if (
+        result?.ok &&
+        ENDS_HAND_OFF.has(this.command) &&
+        this.campaign &&
+        this.task
+      )
+        removeLocal(handOffKey(this.campaign, this.task));
       // A command that resolved to an error stopped in its open step; mark
       // it so the log shows where, rather than closing it as got-through.
       if (result?.error) this.log.fail();

@@ -5,10 +5,12 @@ import {
   clefStaff,
   correctClef,
   keysigFor,
+  plainClef,
   proposeScoreDef,
   readAttributes,
   staffClefToken,
 } from "../omr-musicxml.ts";
+import { scoreStaves } from "../omr-timeline.ts";
 
 // The shape the staff model writes: one part, attributes on the first measure.
 const staff = (attributes: string) =>
@@ -245,6 +247,63 @@ test("clef tokens and staff values convert both ways", () => {
   for (const token of ["G2", "F4", "C3", "G2-1", "F4+2", "perc", "TAB"]) {
     assert.equal(staffClefToken(clefStaff(token)), token);
   }
+});
+
+// Every clef the OMR code handles: its MusicXML <clef> content, its staff
+// values (shape, line, displacement, place), and its token with and without
+// the octave displacement.
+const CLEFS: [string, string, number, string, string, string, string][] = [
+  ["<sign>G</sign><line>2</line>", "G", 2, "", "", "G2", "G2"],
+  ["<sign>F</sign><line>4</line>", "F", 4, "", "", "F4", "F4"],
+  ["<sign>F</sign>", "F", 4, "", "", "F4", "F4"],
+  ["<sign>C</sign><line>3</line>", "C", 3, "", "", "C3", "C3"],
+  ["<sign>C</sign><line>4</line>", "C", 4, "", "", "C4", "C4"],
+  [
+    "<sign>G</sign><line>2</line><clef-octave-change>-1</clef-octave-change>",
+    "G",
+    2,
+    "8",
+    "below",
+    "G2-1",
+    "G2",
+  ],
+  [
+    "<sign>G</sign><line>2</line><clef-octave-change>1</clef-octave-change>",
+    "G",
+    2,
+    "8",
+    "above",
+    "G2+1",
+    "G2",
+  ],
+  ["<sign>percussion</sign>", "perc", 3, "", "", "perc", "perc"],
+  ["<sign>TAB</sign><line>5</line>", "TAB", 3, "", "", "TAB", "TAB"],
+];
+
+test("clef tokens agree for every clef, read from MusicXML or a score staff", () => {
+  for (const [
+    content,
+    clefShape,
+    clefLine,
+    clefDis,
+    clefDisPlace,
+    token,
+    plain,
+  ] of CLEFS) {
+    const xml = `<clef>${content}</clef>`;
+    const values = { clefShape, clefLine, clefDis, clefDisPlace };
+    assert.equal(staffClefToken(xml), token, xml);
+    assert.equal(staffClefToken(staff(xml)), token, xml);
+    assert.equal(plainClef(staffClefToken(staff(xml))), plain, xml);
+    assert.equal(staffClefToken(values), token, xml);
+    const scoreDef = {
+      staves: [{ ...values, lines: 5, notationType: "", label: "" }],
+    };
+    assert.equal(scoreStaves({ scoreDef } as never)[0].clef, plain, xml);
+  }
+  assert.equal(staffClefToken("<clef/>"), null);
+  assert.equal(staffClefToken(staff("<key><fifths>0</fifths></key>")), null);
+  assert.equal(plainClef(staffClefToken(null)), null);
 });
 
 test("correctClef keeps the alter of a note tied from the measure before", () => {

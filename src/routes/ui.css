@@ -1,5 +1,5 @@
 /* =========================================================================
-   Let's Encode! — shared UI rules for the instigation app.
+   Let's Encode! — shared UI rules for the app.
 
    Everything here is global: the classes are applied in component markup, and
    the components keep only the styling that is theirs alone. Colours, radii
@@ -750,11 +750,6 @@ select.ctl {
   font-size: 0.85rem;
   color: var(--danger);
 }
-.msg-progress {
-  margin: 1.25rem 0 0;
-  font-size: 0.9rem;
-  color: var(--ink-soft);
-}
 /* What a final action will do, stated above its button. */
 .finish-note {
   margin: 10px 0 0;
@@ -1067,16 +1062,32 @@ select.ctl {
 
 /* ---- Command overlays -----------------------------------------------
    The modal card a command's progress or outcome shows on, over a dimmed
-   page. */
+   page. Markup: <dialog class="overlay"> opened with showModal(); the rules
+   below replace the dialog's default box and backdrop. */
 .overlay {
   position: fixed;
   inset: 0;
   z-index: 60;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  color: var(--ink);
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--scrim);
   backdrop-filter: blur(2px);
+}
+.overlay:not([open]) {
+  display: none;
+}
+.overlay::backdrop {
+  background: transparent;
 }
 .overlay-card {
   display: flex;

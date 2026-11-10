@@ -9,10 +9,10 @@
 // digitised source is read once, cheaply, and only the pages kept cost full
 // rasterisation, a full-size download, and a place in the commit.
 //
-// A PDF is rasterised with pdf.js; raster images are used as-is unless they
-// exceed the size cap, in which case they are downscaled and re-encoded; IIIF
-// canvases are fetched already downscaled via the Image API; MusicXML/MXL is
-// converted to MEI by verovio. Measure detection is not part of this path — it
+// A PDF is rasterised with pdf.js; raster images are used as-is unless their
+// EXIF orientation is not upright, in which case they are re-encoded upright;
+// IIIF canvases are fetched already downscaled via the Image API; MusicXML/MXL
+// is converted to MEI by verovio. Measure detection is not part of this path — it
 // runs per piece once the pieces are known.
 //
 // The browser-only steps (canvas, pdf.js, verovio, fetch) are injectable so the
@@ -25,6 +25,7 @@ import {
   RELAY_RETRY_WAITS_MS,
 } from "./forge/github-rest.ts";
 import { pad2 } from "./pieces.ts";
+import { sleep } from "./util.ts";
 
 /** A page image ready to commit: repo-relative path and its bytes. */
 export interface PageImage {
@@ -90,7 +91,8 @@ export const IIIF_PREVIEW_REQUESTS = 4;
 export const IIIF_REQUESTS_PER_SECOND = 16;
 const JPEG_QUALITY = 0.85;
 // Committed pages keep the source's resolution, as the OMR staff model is run
-// on the source image itself: uploads are committed byte-for-byte, IIIF images
+// on the source image itself: uploads are committed byte-for-byte (re-encoded
+// at full size only when their EXIF orientation is not upright), IIIF images
 // at the largest size the server gives, and PDF pages rendered at 300dpi (a
 // scale of the 72dpi default page box).
 const PDF_RENDER_SCALE = 300 / 72;
@@ -265,6 +267,8 @@ export interface PrepareImagesOptions {
   renderPdf?: (file: File, options: PdfRenderOptions) => Promise<Blob[]>;
   /** Downscale a raster to fit the cap; injectable for non-browser tests. */
   downscale?: (blob: Blob, maxEdge: number) => Promise<Blob>;
+  /** Re-encode a raster with its EXIF orientation applied; injectable for non-browser tests. */
+  upright?: (blob: Blob) => Promise<Blob>;
   /** MusicXML/MEI → MEI conversion; injectable for non-browser tests. */
   toMei?: (file: File) => Promise<string>;
   /** Network access, for IIIF manifests and canvases. */
@@ -354,6 +358,24 @@ export async function downscaleImage(
     return blob;
   }
   const scale = maxEdge / longEdge;
+  return bitmapToJpeg(bitmap, scale);
+}
+
+/**
+ * Re-encode a raster at full size with its EXIF orientation applied. The
+ * bitmap is decoded already rotated (`from-image`) and drawn as it is, so the
+ * orientation is applied once, by the decoder; the JPEG written carries no
+ * EXIF orientation of its own.
+ */
+export async function uprightImage(blob: Blob): Promise<Blob> {
+  const bitmap = await createImageBitmap(blob, {
+    imageOrientation: "from-image",
+  });
+  return bitmapToJpeg(bitmap, 1);
+}
+
+/** Draw a bitmap scaled by `scale` onto a canvas and encode it as JPEG; closes the bitmap. */
+async function bitmapToJpeg(bitmap: ImageBitmap, scale: number): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
@@ -365,6 +387,75 @@ export async function downscaleImage(
   ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
   bitmap.close();
   return canvasToJpeg(canvas);
+}
+
+/** The value of the TIFF Orientation tag (0x0112) in IFD0 of a TIFF block, or 1. */
+function tiffOrientation(bytes: Uint8Array, start: number): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (start + 8 > bytes.length) return 1;
+  const order = view.getUint16(start);
+  if (order !== 0x4949 && order !== 0x4d4d) return 1;
+  const little = order === 0x4949;
+  if (view.getUint16(start + 2, little) !== 42) return 1;
+  const ifd = start + view.getUint32(start + 4, little);
+  if (ifd + 2 > bytes.length) return 1;
+  const entries = view.getUint16(ifd, little);
+  for (let i = 0; i < entries; i++) {
+    const entry = ifd + 2 + i * 12;
+    if (entry + 12 > bytes.length) return 1;
+    if (view.getUint16(entry, little) !== 0x0112) continue;
+    const value = view.getUint16(entry + 8, little);
+    return value >= 1 && value <= 8 ? value : 1;
+  }
+  return 1;
+}
+
+/**
+ * The EXIF orientation (1–8) of a JPEG (APP1 "Exif" segment) or PNG (eXIf
+ * chunk), from its bytes. Returns 1, upright, when there is none or the data
+ * cannot be read.
+ */
+export function exifOrientation(bytes: Uint8Array): number {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (bytes.length >= 4 && view.getUint16(0) === 0xffd8) {
+    let offset = 2;
+    while (offset + 4 <= bytes.length) {
+      if (bytes[offset] !== 0xff) return 1;
+      const marker = bytes[offset + 1];
+      // Fill bytes before a marker.
+      if (marker === 0xff) {
+        offset++;
+        continue;
+      }
+      // Start of scan or end of image: no metadata segments follow.
+      if (marker === 0xda || marker === 0xd9) return 1;
+      const length = view.getUint16(offset + 2);
+      const exif = offset + 4;
+      if (
+        marker === 0xe1 &&
+        exif + 6 <= bytes.length &&
+        String.fromCharCode(...bytes.subarray(exif, exif + 6)) === "Exif\0\0"
+      ) {
+        return tiffOrientation(bytes, exif + 6);
+      }
+      offset += 2 + length;
+    }
+    return 1;
+  }
+  const png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (png.every((b, i) => bytes[i] === b)) {
+    let offset = 8;
+    while (offset + 8 <= bytes.length) {
+      const length = view.getUint32(offset);
+      const type = String.fromCharCode(
+        ...bytes.subarray(offset + 4, offset + 8),
+      );
+      if (type === "eXIf") return tiffOrientation(bytes, offset + 8);
+      if (type === "IEND") return 1;
+      offset += 12 + length;
+    }
+  }
+  return 1;
 }
 
 /**
@@ -384,9 +475,6 @@ async function encodingToMei(file: File): Promise<string> {
   }
   return toolkit.getMEI();
 }
-
-const sleep = (ms: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Admits its callers one at a time, `1000 / IIIF_REQUESTS_PER_SECOND` ms apart,
@@ -608,6 +696,7 @@ export async function resolvePages(
   options: PrepareImagesOptions = {},
 ): Promise<PageImage[]> {
   const renderPdf = options.renderPdf ?? pdfToImages;
+  const upright = options.upright ?? uprightImage;
   const doFetch = options.fetchFn ?? brokerFetch;
   const pacer = createPacer(options.wait ?? sleep);
 
@@ -647,8 +736,14 @@ export async function resolvePages(
       raster = blob;
     } else if (page.source.kind === "file") {
       onProgress?.({ step: `Preparing ${page.label} ${nth}` });
-      raster = page.source.file;
-      extension = imageExtension(page.source.file);
+      const file = page.source.file;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (exifOrientation(bytes) !== 1) {
+        raster = await upright(file);
+      } else {
+        raster = file;
+        extension = imageExtension(file);
+      }
     } else {
       if (!options.brokerUrl) {
         throw new Error("A broker URL is required to fetch IIIF images.");

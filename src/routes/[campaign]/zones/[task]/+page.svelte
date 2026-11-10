@@ -97,6 +97,7 @@
     type CocoLayout,
     type LayoutGroup,
     type LayoutInstruments,
+    type PageLayout,
   } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
   import {
@@ -1297,6 +1298,9 @@
       let measures = 0;
       let staves = 0;
       let grandstaves = 0;
+      // The pages take their boxes once every page is detected: a run that
+      // fails part way leaves all pages without boxes, which offers the retry.
+      const detected: { layout: CocoLayout; boxes: PageLayout }[] = [];
       for (const [p, pg] of pages.entries()) {
         runner.log.step(
           `Detecting the layout of page ${p + 1} of ${pages.length}`,
@@ -1316,7 +1320,6 @@
             layout,
           );
         }
-        rawLayouts[p] = layout;
         // The model reads the whole page; the piece keeps the boxes in its
         // regions.
         const all = layoutBoxes(layout, pg);
@@ -1326,6 +1329,16 @@
           staves: all.staves.filter(inPiece),
           grandstaves: all.grandstaves.filter(inPiece),
         };
+        detected.push({ layout, boxes });
+        measures += boxes.measures.length;
+        staves += boxes.staves.length;
+        grandstaves += boxes.grandstaves.length;
+        runner.log.detail(
+          `${boxes.staves.length} staves, ${boxes.grandstaves.length} grand staves, ${boxes.measures.length} measures`,
+        );
+      }
+      for (const [p, { layout, boxes }] of detected.entries()) {
+        rawLayouts[p] = layout;
         pages[p].zones = boxes.measures.map((box) => ({
           box,
           override: null,
@@ -1339,12 +1352,6 @@
         pages[p].grandstaves = boxes.grandstaves.map((box) => ({ box }));
         resortStaves(p);
         resortStaves(p, "grandstaves");
-        measures += boxes.measures.length;
-        staves += boxes.staves.length;
-        grandstaves += boxes.grandstaves.length;
-        runner.log.detail(
-          `${boxes.staves.length} staves, ${boxes.grandstaves.length} grand staves, ${boxes.measures.length} measures`,
-        );
       }
       seedLayout();
       setLayoutStep(1);

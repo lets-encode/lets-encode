@@ -6,6 +6,8 @@
 // cookie. A real token (CI scripts) or no token (anonymous public reads) goes
 // straight to the API. Browser- and Node-safe (fetch / atob / TextDecoder).
 
+import { sleep } from "../util.ts";
+
 const API = "https://api.github.com";
 /** The website the repos and accounts are shown on. */
 export const WEB = "https://github.com";
@@ -172,6 +174,29 @@ export class RateLimitError extends Error {
   }
 }
 
+/**
+ * A non-2xx answer to a request, with its HTTP status. The message ends in
+ * "(status METHOD path)".
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+/**
+ * Whether the same request may succeed when it is sent again: GitHub or the
+ * broker reported a rate limit, answered with a 5xx, or no answer arrived
+ * (fetch rejects with a TypeError).
+ */
+export const isTransientError = (error: unknown): boolean =>
+  error instanceof RateLimitError ||
+  error instanceof TypeError ||
+  (error instanceof ApiError && error.status >= 500);
+
 export interface GitHubRequestTelemetry {
   total: number;
   conditional: number;
@@ -288,7 +313,7 @@ function recordRequest(
   requestTelemetry.byResource[bucket] =
     (requestTelemetry.byResource[bucket] ?? 0) + 1;
   requestTelemetry.last = entry;
-  if (resource || res == null || source === "broker") {
+  if (res == null || res.status >= 400 || source === "broker") {
     console.info("[github-api]", entry);
   }
   return entry;
@@ -373,7 +398,8 @@ const etagCache = new Map<
  * A GitHub JSON GET with ETag conditional-request caching and rate-limit
  * detection. On 304 the remembered body is returned (status normalised to 200);
  * on a fresh 200 the response ETag and body are stored. Throws RateLimitError
- * when the quota is exhausted. Returns the HTTP status, parsed JSON (null on
+ * when the quota is exhausted, and an ApiError on a 5xx that persists through
+ * the repeats (retryingGet). Returns the HTTP status, parsed JSON (null on
  * an empty or non-JSON body), and the pagination `Link` header (remembered
  * alongside the ETag). Pass `cache: false` to skip the ETag store while
  * keeping the rate-limit guard.
@@ -443,6 +469,18 @@ async function rawGet(
   if (res.status === 304 && cached)
     return { status: 200, ok: true, text: cached.body, link: cached.link };
   const text = await res.text();
+  if (res.status >= 500) {
+    let detail: { message?: string; error?: string } = {};
+    try {
+      detail = JSON.parse(text) ?? {};
+    } catch {
+      // A 5xx body need not be JSON.
+    }
+    throw new ApiError(
+      res.status,
+      `${detail.message || detail.error || "GitHub API error"} (${res.status} GET ${endpointFrom(url)})`,
+    );
+  }
   const etag = res.headers.get("ETag");
   const link = res.headers.get("Link");
   if (cache && res.ok && etag) etagCache.set(url, { etag, body: text, link });
@@ -458,7 +496,7 @@ async function retryingGet(send: () => Promise<Response>): Promise<Response> {
   let res = await send();
   for (const delayMs of GET_RETRY_DELAYS_MS) {
     if (res.status < 500) break;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await sleep(delayMs);
     res = await send();
   }
   return res;
@@ -467,9 +505,9 @@ async function retryingGet(send: () => Promise<Response>): Promise<Response> {
 /**
  * A GitHub JSON request without ETag caching — the write path, plus reads that
  * treat any non-2xx as failure. `path` is API-root-relative (e.g.
- * `/repos/o/r/pulls`); `body` is sent as JSON when given. Throws on a non-2xx
- * response with the body's `message` (or the broker's `error`) suffixed
- * `(status METHOD path)`. Returns the parsed JSON body ({} when empty).
+ * `/repos/o/r/pulls`); `body` is sent as JSON when given. Throws an ApiError
+ * on a non-2xx response, with the body's `message` (or the broker's `error`)
+ * suffixed `(status METHOD path)`. Returns the parsed JSON body ({} when empty).
  */
 async function ghSend<T>(
   method: string,
@@ -488,7 +526,8 @@ async function ghSend<T>(
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data as { message?: string; error?: string };
-    throw new Error(
+    throw new ApiError(
+      res.status,
       `${detail.message || detail.error || "GitHub API error"} (${res.status} ${method} ${path})`,
     );
   }
@@ -1100,9 +1139,44 @@ export function clearRequestCaches(): void {
 }
 
 /**
+ * Thrown when GitHub cannot bring a fork's default branch up to date with the
+ * campaign because the branch has commits of its own (merge-upstream answers
+ * 409). Its message tells the volunteer how to discard them.
+ */
+export class ForkDivergedError extends Error {
+  constructor(fork: string, branch: string) {
+    super(
+      `Your fork ${fork} has commits of its own on ${branch}, so it cannot take the campaign's latest changes. On GitHub, open the fork, choose "Sync fork" and discard the commits, then try again.`,
+    );
+    this.name = "ForkDivergedError";
+  }
+}
+
+// Bring the fork's default branch up to date with the upstream repo.
+async function syncFork(
+  token: string,
+  fork: { owner: string; repo: string; branch: string },
+): Promise<void> {
+  try {
+    await ghSend(
+      "POST",
+      `/repos/${fork.owner}/${fork.repo}/merge-upstream`,
+      token,
+      { branch: fork.branch },
+    );
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409)
+      throw new ForkDivergedError(`${fork.owner}/${fork.repo}`, fork.branch);
+    throw e;
+  }
+}
+
+/**
  * Ensure the authenticated user has a fork of `owner/repo`, waiting until it's
- * ready (forking is async). Returns the fork's { owner, repo }. Used when a
- * volunteer without push access proposes work — they fork and PR upstream.
+ * ready (forking is async), and its default branch synced with upstream.
+ * Returns the fork's { owner, repo }. Used when a volunteer without push
+ * access proposes work — they fork and PR upstream. Throws a
+ * ForkDivergedError when the fork's default branch has commits of its own.
  */
 export async function ensureFork(
   token: string,
@@ -1118,14 +1192,10 @@ export async function ensureFork(
   if (known) {
     // A fork deleted or renamed since is looked up again below.
     try {
-      await ghSend(
-        "POST",
-        `/repos/${known.owner}/${known.repo}/merge-upstream`,
-        token,
-        { branch: known.branch },
-      );
+      await syncFork(token, known);
       return { owner: known.owner, repo: known.repo };
-    } catch {
+    } catch (e) {
+      if (e instanceof ForkDivergedError) throw e;
       knownForks.delete(`${owner}/${repo}`);
     }
   }
@@ -1155,23 +1225,16 @@ export async function ensureFork(
         `Fork ${forkOwner}/${forkRepo} could not be read (${r.status}).`,
       );
     if (r.ok) {
-      await ghSend(
-        "POST",
-        `/repos/${forkOwner}/${forkRepo}/merge-upstream`,
-        token,
-        {
-          branch: data.default_branch,
-        },
-      );
-      knownForks.set(`${owner}/${repo}`, {
+      const fork = {
         owner: forkOwner,
         repo: forkRepo,
         branch: data.default_branch,
-      });
+      };
+      await syncFork(token, fork);
+      knownForks.set(`${owner}/${repo}`, fork);
       return { owner: forkOwner, repo: forkRepo };
     }
-    if (i < attempts - 1)
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    if (i < attempts - 1) await sleep(delayMs);
   }
   throw new Error(`Fork ${forkOwner}/${forkRepo} was not ready in time.`);
 }
@@ -1225,8 +1288,8 @@ export async function getRepoAccess(
 
 /**
  * Whether `username` can push to the repo, via the collaborator-permission
- * lookup. Returns false when the user is not a collaborator or the lookup
- * fails — callers treat push access as a privilege to be proven.
+ * lookup. Returns false when the user is not a collaborator or does not
+ * exist (404); throws when the lookup fails otherwise.
  */
 export async function getCollaboratorCanPush(
   token: string,
@@ -1234,11 +1297,19 @@ export async function getCollaboratorCanPush(
   repo: string,
   username: string,
 ): Promise<boolean> {
-  const { ok, data } = await ghGet<{ permission?: string }>(
+  const { status, ok, data } = await ghGet<{
+    permission?: string;
+    message?: string;
+  }>(
     `${apiRoot(token)}/repos/${owner}/${repo}/collaborators/${encodeURIComponent(username)}/permission`,
     token,
   );
-  if (!ok) return false;
+  if (status === 404) return false;
+  if (!ok)
+    throw new ApiError(
+      status,
+      `${data?.message || "Failed to read the collaborator permission"} (${status} GET collaborators/${username}/permission)`,
+    );
   return data?.permission === "admin" || data?.permission === "write";
 }
 
@@ -1571,7 +1642,7 @@ export async function getLastIssueComment(
   return newestByBot(probe.data);
 }
 
-/** A workflow run, as far as the console follows it. */
+/** A workflow run, as far as the app follows it. */
 export interface WorkflowRunInfo {
   id: number;
   /** queued | in_progress | completed (GitHub also has waiting/pending states). */
@@ -1714,7 +1785,7 @@ export async function waitForRepoContents(
   for (let i = 0; i < attempts; i++) {
     const content = await getRepoFile(token, owner, repo, path);
     if (content !== null) return content;
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    await sleep(delayMs);
   }
   throw new Error(
     `Timed out waiting for ${path} to appear in ${owner}/${repo}.`,
@@ -1977,11 +2048,15 @@ export async function fastForwardBranch(
   );
 }
 
-/** The repo's branches, each with the commit time of its head. */
+/**
+ * The repo's branches whose name passes `keep`, each with the commit time of
+ * its head.
+ */
 export async function listBranchCommitTimes(
   token: string,
   owner: string,
   repo: string,
+  keep: (name: string) => boolean,
 ): Promise<{ name: string; committedAt: string }[]> {
   const root = `${apiRoot(token)}/repos/${owner}/${repo}`;
   const refs = await ghGet<{ ref: string; object: { sha: string } }[]>(
@@ -1990,17 +2065,20 @@ export async function listBranchCommitTimes(
     { cache: false },
   );
   if (!refs.ok) throw new Error(`Failed to list the branches of ${repo}.`);
+  const kept = refs.data
+    .map(({ ref, object }) => ({
+      name: ref.slice("refs/heads/".length),
+      sha: object.sha,
+    }))
+    .filter(({ name }) => keep(name));
   return Promise.all(
-    refs.data.map(async ({ ref, object }) => {
+    kept.map(async ({ name, sha }) => {
       const commit = await ghGet<{ committer: { date: string } }>(
-        `${root}/git/commits/${object.sha}`,
+        `${root}/git/commits/${sha}`,
         token,
       );
-      if (!commit.ok) throw new Error(`Failed to read commit ${object.sha}.`);
-      return {
-        name: ref.slice("refs/heads/".length),
-        committedAt: commit.data.committer.date,
-      };
+      if (!commit.ok) throw new Error(`Failed to read commit ${sha}.`);
+      return { name, committedAt: commit.data.committer.date };
     }),
   );
 }
@@ -2103,7 +2181,7 @@ export async function createPullRequest(
 
 /**
  * Commit `files` onto a fresh branch and open a pull request to `owner/repo`
- * from it — the way the campaign console stands in for a volunteer client (its
+ * from it — the way the app stands in for a volunteer client (its
  * PR triggers the claim/submission Actions). Returns { number, html_url } plus
  * `head`, the repo and branch the PR's head was created in, so the caller can
  * delete the branch once the PR is resolved.

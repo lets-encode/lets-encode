@@ -1,5 +1,5 @@
 <!--
-  The main screen — the app's only dashboard. Top to bottom, for a logged-in
+  The main screen — the campaign list. Top to bottom, for a logged-in
   viewer: what needs their attention (unresolved comments on their work),
   their open work, every campaign as a searchable list of
   full-width rows (each carrying its suggested next task, claimable in
@@ -476,6 +476,11 @@
   let searchInput = $state<HTMLInputElement>();
   let filter = $state(oneOf(initial.get("filter"), FILTERS, "all"));
   let sort = $state(oneOf(initial.get("sort"), SORTS, "active"));
+  // "Yours" has no button without a login; a link with it shows every
+  // campaign.
+  $effect(() => {
+    if (auth.status === "anonymous" && filter === "yours") filter = "all";
+  });
   // Search, filter and sort live in the URL, so Back and a shared link
   // restore them; the defaults stay out of it.
   $effect(() => {
@@ -696,7 +701,7 @@
                       {#if t.group === "encoding"}
                         <span class="chip">encoding</span>
                       {:else}
-                        <span class="chip">review · reviewing</span>
+                        <span class="chip">reviewing</span>
                       {/if}
                       {#if t.group === "encoding"}
                         {@const act = taskAction(t, "continue")}

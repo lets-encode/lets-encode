@@ -5,6 +5,8 @@
 //   run_id, event, pr_number, pr_kind, queue_s, step_name, step_s, conclusion, detail
 // plus synthetic rows per run sharing the same columns:
 //   job_total                 — the job's started_at → completed_at wall time
+//   run_created_to_job_started — run creation → job start, including any
+//                               concurrency-group hold that queue_s misses
 //   pr_created_to_run_created — PR creation → run creation gap (PR runs only)
 //   coordinator/<phase>       — the coordinator's `[phase-timing]` log lines
 //   github-api-summary        — the coordinator's request telemetry, JSON in `detail`

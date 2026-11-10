@@ -1,4 +1,4 @@
-// The command envelope: the machine-readable record of one console command
+// The command envelope: the machine-readable record of one app command
 // invocation (which command, which version, what input). Commands whose
 // mutation travels as a pull request embed the envelope in the PR body; the
 // campaign automation extracts it and fills the command columns of the

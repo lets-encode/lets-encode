@@ -16,6 +16,8 @@ import {
   commentAndClosePr,
   commitFiles,
   ensureFork,
+  ForkDivergedError,
+  isTransientError,
   fastForwardBranch,
   deleteBranch,
   openChangePr,
@@ -671,6 +673,59 @@ test("ensureFork waits for readiness and syncs its default branch with upstream"
     method: "POST",
     body: { branch: "main" },
   });
+});
+
+test("ensureFork names a fork whose default branch has commits of its own", async (t) => {
+  t.mock.method(console, "info", () => {});
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/repos/upstream-owner/diverged/forks"))
+      return Response.json(
+        { full_name: "volunteer/diverged", default_branch: "main" },
+        { status: 202 },
+      );
+    if (url.endsWith("/repos/volunteer/diverged/git/ref/heads/main"))
+      return Response.json({ object: { sha: "fork-sha" } });
+    if (url.endsWith("/repos/volunteer/diverged/merge-upstream"))
+      return Response.json(
+        { message: "There are merge conflicts" },
+        { status: 409 },
+      );
+    throw new Error(`Unexpected request: ${url}`);
+  });
+
+  await assert.rejects(
+    ensureFork("token", "upstream-owner", "diverged"),
+    (err: Error) =>
+      err instanceof ForkDivergedError &&
+      /volunteer\/diverged has commits of its own on main/.test(err.message) &&
+      /"Sync fork"/.test(err.message),
+  );
+});
+
+test("isTransientError takes 5xx answers and failed fetches, not refusals", async (t) => {
+  t.mock.method(console, "info", () => {});
+  t.mock.method(globalThis, "fetch", async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.endsWith("/owner/unavailable"))
+      return Response.json({ message: "Server Error" }, { status: 502 });
+    if (url.endsWith("/owner/offline")) throw new TypeError("fetch failed");
+    return Response.json({ message: "Not Found" }, { status: 404 });
+  });
+  const failure = (repo: string) =>
+    getRepoAccess("token", "owner", repo).then(
+      () => assert.fail("expected a failure"),
+      (e: unknown) => e,
+    );
+  const unavailable = await failure("unavailable");
+  assert.match((unavailable as Error).message, /Server Error \(502 GET /);
+  assert.equal(isTransientError(unavailable), true);
+  assert.equal(isTransientError(await failure("offline")), true);
+  assert.equal(isTransientError(await failure("missing")), false);
+  await assert.rejects(
+    commentAndClosePr("token", "owner", "missing", 1, "body"),
+    (e: unknown) => !isTransientError(e),
+  );
 });
 
 test("fastForwardBranch distinguishes non-fast-forward conflicts from API failures", async (t) => {

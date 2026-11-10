@@ -15,13 +15,4 @@ export function createForge(token: string): ForgeClient {
   }
 }
 
-export { provider } from "./config.ts";
-export type {
-  ForgeClient,
-  RepoHead,
-  ChangeRequest,
-  FileChange,
-  GitHubUser,
-  RepoData,
-  RepoSummary,
-} from "./types.ts";
+export type { ForgeClient } from "./types.ts";
