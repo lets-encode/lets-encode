@@ -5,14 +5,13 @@
 // tables; loadCampaignStats does the fetching and caches per repo id.
 
 import {
-  blockedBy,
   buildGraph,
   isPreTask,
   pageOfLocator,
   workStage,
   taskThreshold,
 } from "./campaign-graph.ts";
-import type { GraphData, WorkStage } from "./campaign-graph.ts";
+import type { GraphData, TaskActionMode, WorkStage } from "./campaign-graph.ts";
 import { cardTitle } from "./campaign-board.ts";
 import {
   configFlag,
@@ -20,7 +19,7 @@ import {
   passThresholdOf,
   configString,
   findRow,
-  isFinalValidation,
+  isPassVerdict,
   parseCommentCsv,
   parseHistoryCsv,
   parseLockCsv,
@@ -48,6 +47,7 @@ import type {
 import type { ForgeClient } from "./forge/types.ts";
 import { RateLimitError } from "./forge/github-rest.ts";
 import { liveLocks } from "./campaign-reaper.ts";
+import { claimRefusal } from "./campaign-claim.ts";
 import { checksOpening } from "./coordinator-policy.ts";
 import type { RepoSummary } from "./forge/github-rest.ts";
 
@@ -103,48 +103,44 @@ export interface CampaignStats {
   headSha: string;
 }
 
-/** Tasks claimable right now (unclaimed, unblocked encoding_required). */
+// Whether anyone (no particular account) may claim the row's task (subtask
+// '') or a review of its subtask now, by the campaign automation's rule.
+const openToClaim = (
+  d: Pick<GraphData, "taskDefs" | "rows" | "validationColumns" | "locks"> &
+    Partial<Pick<GraphData, "passThreshold" | "allowSelfValidation">>,
+  r: StateRow,
+): boolean =>
+  claimRefusal({
+    tasks: d.taskDefs,
+    state: d,
+    locks: d.locks,
+    intent: {
+      task_id: r.task_id,
+      subtask_id: r.subtask_id,
+      kind: r.subtask_id ? "validation" : "encoding",
+    },
+    author: "",
+    allowSelfValidation: d.allowSelfValidation,
+    passThreshold: d.passThreshold,
+  }) === null;
+
+/** Tasks claimable right now. */
 export function readyCount(
   d: Pick<GraphData, "taskDefs" | "rows" | "locks">,
 ): number {
-  return d.rows.filter(
-    (r) =>
-      r.subtask_id === "" &&
-      r.status === "encoding_required" &&
-      !blockedBy(d as GraphData, r.task_id) &&
-      !d.locks.some(
-        (l) =>
-          l.task_id === r.task_id &&
-          l.subtask_id === "" &&
-          l.kind === "encoding",
-      ),
-  ).length;
+  const all = { ...d, validationColumns: [] };
+  return d.rows.filter((r) => r.subtask_id === "" && openToClaim(all, r))
+    .length;
 }
 
-/** Tasks with a validation slot open to claim (a slot neither decided nor locked). */
+/** Tasks with a review open to claim. */
 export function validationReadyCount(
-  d: Pick<GraphData, "rows" | "validationColumns" | "locks">,
+  d: Pick<GraphData, "taskDefs" | "rows" | "validationColumns" | "locks"> &
+    Partial<Pick<GraphData, "passThreshold" | "allowSelfValidation">>,
 ): number {
-  const hasOpenSlot = (r: StateRow): boolean => {
-    const finals = d.validationColumns.filter((c) =>
-      isFinalValidation(r[c] ?? ""),
-    ).length;
-    const held = d.locks.filter(
-      (l) =>
-        l.task_id === r.task_id &&
-        l.subtask_id === r.subtask_id &&
-        l.kind === "validation",
-    ).length;
-    return finals + held < d.validationColumns.length;
-  };
   const tasks = new Set(
     d.rows
-      .filter(
-        (r) =>
-          r.subtask_id !== "" &&
-          r.status === "validation_required" &&
-          hasOpenSlot(r),
-      )
+      .filter((r) => r.subtask_id !== "" && openToClaim(d, r))
       .map((r) => r.task_id),
   );
   return tasks.size;
@@ -173,6 +169,16 @@ export interface NextTask {
   /** The work's stage, for labelling the suggestion. */
   kind: WorkStage | "review";
 }
+
+/** The button mode (taskAction) of a next task the viewer can act on. */
+export const nextTaskMode = (n: NextTask): TaskActionMode =>
+  n.action === "encode"
+    ? "claim"
+    : n.action === "review"
+      ? "claim-review"
+      : n.kind === "review"
+        ? "continue-review"
+        : "continue";
 
 /**
  * The campaign's suggested next task: the first task the viewer can act on
@@ -286,6 +292,8 @@ export interface CampaignListing {
   failed: number;
   /** Why (the first failure — a rate-limit one preferred); null when none. */
   failure: Error | null;
+  /** The forge's search stopped before it was done: campaigns may be missing. */
+  incomplete: boolean;
 }
 
 /**
@@ -295,20 +303,25 @@ export interface CampaignListing {
  * search found repositories and not one of them could be read, that is a
  * failure of the listing itself (typically the anonymous rate limit), and it
  * throws rather than posing as an empty database. `onEach` streams results as
- * they land, for grids that fill in progressively.
+ * they land, for grids that fill in progressively. A repository `registered`
+ * answers false for is left out, as not the campaign its config names.
  */
 export async function loadAllCampaignStats(
   f: ForgeClient,
   topic: string,
-  opts: { onEach?: (stats: CampaignStats) => void } = {},
+  opts: {
+    onEach?: (stats: CampaignStats) => void;
+    registered?: (stats: CampaignStats) => Promise<boolean>;
+  } = {},
 ): Promise<CampaignListing> {
-  const repos = await f.searchReposByTopic(topic);
+  const { repos, incomplete } = await f.searchReposByTopic(topic);
   await batchStats(f, repos);
   const errors: unknown[] = [];
   const all = await Promise.all(
     repos.map(async (repo) => {
       try {
         const stats = await loadCampaignStats(f, repo);
+        if (opts.registered && !(await opts.registered(stats))) return null;
         opts.onEach?.(stats);
         return stats;
       } catch (err) {
@@ -320,7 +333,7 @@ export async function loadAllCampaignStats(
   const loaded = all.filter((stats): stats is CampaignStats => stats !== null);
   // A rate-limit error carries the retry time — surface that one first.
   const cause = errors.find((e) => e instanceof RateLimitError) ?? errors[0];
-  if (repos.length > 0 && loaded.length === 0) throw cause;
+  if (errors.length > 0 && loaded.length === 0) throw cause;
   return {
     stats: loaded,
     failed: errors.length,
@@ -329,6 +342,7 @@ export async function loadAllCampaignStats(
         ? cause
         : new Error(String(cause))
       : null,
+    incomplete,
   };
 }
 
@@ -388,14 +402,17 @@ async function fetchStats(
 ): Promise<CampaignStats> {
   const owner = ownerOf(summary);
   const repo = summary.name;
-  // The head is read before the tables: a commit that lands during the read
-  // moves the branch past `headSha`, and the next poll reads again.
+  // The tables are read at the head commit, so they match `headSha` even where
+  // the Contents API lags a branch update; without a head they are read at the
+  // default branch.
   const headSha = await f.getRepoHead(owner, repo).then(
     (h) => h.sha,
     () => "",
   );
   const files = await Promise.all(
-    STATS_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+    STATS_PATHS.map((path) =>
+      f.getRepoFile(owner, repo, path, headSha || undefined),
+    ),
   );
   return buildStats(f, summary, headSha, files);
 }
@@ -463,9 +480,12 @@ async function buildStats(
     total: tasks.length,
     ready: readyCount({ taskDefs, rows: state.rows, locks }),
     toValidate: validationReadyCount({
+      taskDefs,
       rows: state.rows,
       validationColumns: state.validationColumns,
       locks,
+      passThreshold,
+      allowSelfValidation: configFlag(yaml, "allow_self_validation"),
     }),
     nearlyDone: isNearlyDone(done, tasks.length),
     contributorIds,
@@ -501,6 +521,9 @@ export interface MyTask {
   subtask: string;
   /** The task's locator, which says whether it is a pre-task. */
   locator: string;
+  pre: boolean;
+  /** The task is claimed and continued in the app's score check (checksOpening). */
+  checksOpening: boolean;
   title: string;
   /** The claim's ISO timestamp (encoding group). */
   claimedAt: string;
@@ -578,7 +601,7 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       (l) => l.kind === "validation" && l.task_id === task,
     );
     const dots = cells.map((cell) =>
-      isFinalValidation(cell) ? ("pass" as const) : ("open" as const),
+      isPassVerdict(cell) ? ("pass" as const) : ("open" as const),
     );
     return {
       campaign: stats.title,
@@ -587,6 +610,14 @@ export function myTasksIn(stats: CampaignStats, viewer: string): MyTask[] {
       task,
       subtask: "",
       locator: def?.locator ?? "",
+      pre: isPreTask(def?.locator ?? ""),
+      checksOpening:
+        !!def &&
+        checksOpening(
+          def,
+          stats.taskDefs,
+          stats.piecePreparations[def.fragment],
+        ),
       title: def ? titleOf(stats, def) : task,
       claimedAt: "",
       expiresAt: "",

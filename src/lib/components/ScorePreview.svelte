@@ -5,7 +5,9 @@
   preview-pane.ts), so it carries from one preview to the next.
 
   A caller can pass a measure range to highlight, which marks those measures in
-  both panes.
+  both panes, and the score's text in place of the file at `fragment` (a
+  score built in the browser); new text for the same score keeps the view
+  where it is.
 -->
 <script module lang="ts">
   // Once the user picks a view or flips the recto toggle, the choice holds for
@@ -17,19 +19,21 @@
 <script lang="ts">
   import { type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { tick, untrack } from "svelte";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
+  import { startTags } from "$lib/mei-xml.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import {
     buildSpreads,
     defaultSpreadView,
-    pagesLabelCh,
     shownPagesLabel,
   } from "$lib/page-spreads.ts";
   import {
     applyAnchor,
+    pagingRow,
     readAnchor,
     rowView,
     scrollToRow,
@@ -42,7 +46,11 @@
     renderPage,
   } from "$lib/verovio-render.ts";
   import { readPreviewPane, writePreviewPane } from "$lib/preview-pane.ts";
-  import FitIcon from "./FitIcon.svelte";
+  import PageNav from "$lib/components/PageNav.svelte";
+  import ViewerToolbar from "$lib/components/ViewerToolbar.svelte";
+  import PageSpreadControls from "$lib/components/PageSpreadControls.svelte";
+  import ZoomLevel, { ZOOM_MAX, ZOOM_MIN } from "./ZoomLevel.svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import type { PreviewPane } from "$lib/preview-pane.ts";
 
@@ -55,6 +63,7 @@
     initialPane = null,
     initialView = null,
     initialZones = true,
+    mei = null,
     onmeasureselect,
   }: {
     owner: string;
@@ -71,8 +80,17 @@
     initialView?: "single" | "double" | null;
     /** Whether the measure-zone overlay starts visible. */
     initialZones?: boolean;
-    /** Reports the selected measure's label; null when deselected. */
-    onmeasureselect?: (label: string | null) => void;
+    /**
+     * The score's text, shown in place of the file at `fragment`; the
+     * facsimile images are still resolved relative to `fragment`.
+     */
+    mei?: string | null;
+    /**
+     * Reports the selected measure's label and its position among the
+     * score's measures (0-based; null when not known); both null when
+     * deselected.
+     */
+    onmeasureselect?: (label: string | null, index: number | null) => void;
   } = $props();
 
   /** One facsimile page in the preview: image plus its measure zones. */
@@ -82,6 +100,8 @@
     h: number;
     zones: { box: MeasureBox; label: string }[];
   };
+  // Facsimile image addresses that failed to load.
+  let failedFacs = $state<Record<string, true>>({});
   let preview = $state<{
     /** The fragment this state belongs to — a late load for another one is dropped. */
     key: string;
@@ -95,6 +115,8 @@
     encAspect: number;
     /** Rendered encoding pages, filled lazily as they near the view (1-based). */
     svgs: Record<number, string>;
+    /** The xml:ids of the score's measures in document order; '' for none. */
+    measureIds?: string[];
   } | null>(null);
 
   // Display state: which panes show, the rows of one or two pages and the zoom
@@ -120,31 +142,17 @@
     writePreviewPane(choice);
   }
 
-  const PV_ZOOM_MIN = 0.2;
-  const PV_ZOOM_MAX = 4;
-  // The slider runs on a log scale: equal drags multiply the zoom equally,
-  // so the low end moves in fine steps and the high end in coarse ones.
-  const PV_ZOOM_STOPS = 100;
-  // One press of zoom out or in: a tenth of the slider, about a third larger
-  // or smaller.
-  const PV_ZOOM_STEP = 10;
+  const PV_ZOOM_MIN = ZOOM_MIN / 100;
+  const PV_ZOOM_MAX = ZOOM_MAX / 100;
+  /** Below this preview width the zoom slider gives way to zoom out and in
+      either side of the readout. */
+  const PV_STEPS = 900;
   /** Below this preview width the toolbar keeps only the panes and the page
       navigation (the narrow rule in the styles). */
   const PV_NARROW = 560;
   /** Below this preview width the toolbar's page label shows the numbers
       only (the compact rule in the styles). */
   const PV_COMPACT = 1100;
-  const pvZoomPos = $derived(
-    Math.round(
-      (Math.log(pvZoom / PV_ZOOM_MIN) / Math.log(PV_ZOOM_MAX / PV_ZOOM_MIN)) *
-        PV_ZOOM_STOPS,
-    ),
-  );
-  const setPvZoomPos = (p: number) =>
-    (pvZoom =
-      Math.round(
-        PV_ZOOM_MIN * (PV_ZOOM_MAX / PV_ZOOM_MIN) ** (p / PV_ZOOM_STOPS) * 100,
-      ) / 100);
   // The fit in force, if any: it keeps the zoom at the fit as the pane
   // resizes or the view changes, until the slider is moved.
   let pvFit = $state<"width" | "page" | null>("page");
@@ -157,6 +165,7 @@
   let pvW = $state(0);
   const pvNarrow = $derived(pvW > 0 && pvW < PV_NARROW);
   const pvCompact = $derived(pvW > 0 && pvW < PV_COMPACT);
+  const coarse = new MediaQuery("(pointer: coarse)", false);
   const pvShownView = $derived(pvNarrow ? "single" : pvView);
   const pvSpreads = $derived(
     buildSpreads(pvPageTotal, pvShownView, pvFirstOnRight),
@@ -255,13 +264,18 @@
   // The selected measure, linking the panes: clicking a zone on the facsimile
   // or a measure on the rendered encoding highlights it on both. Zone labels
   // and Verovio's data-n both carry the measure's number (@n), so the label is
-  // the shared key.
+  // the shared key. Labels restart in each movement; `selectedAt`, the
+  // measure's position, tells measures of equal label apart. A facsimile
+  // score's zones and measures are in the same order.
   let selected = $state<string | null>(null);
-  function selectMeasure(label: string | null) {
-    selected = selected === label ? null : label;
-    onmeasureselect?.(selected);
+  let selectedAt = $state<number | null>(null);
+  function selectMeasure(label: string | null, at: number | null = null) {
+    const off = label === null || (selected === label && selectedAt === at);
+    selected = off ? null : label;
+    selectedAt = off ? null : at;
+    onmeasureselect?.(selected, selectedAt);
     if (selected) {
-      const p = pageOfMeasure(selected);
+      const p = pageOfMeasure(selected, selectedAt);
       const shown = pvShownRows.some((r) => pvSpreads[r]?.pages.includes(p));
       if (p >= 0 && !shown) showPage(p);
     }
@@ -271,10 +285,8 @@
   // reaches no measure element — those fall back to the measures' bounding
   // boxes, making the whole measure rectangle the hit area.
   function encClick(e: MouseEvent) {
-    let n = (e.target as Element)
-      .closest?.("g.measure")
-      ?.getAttribute("data-n");
-    if (!n) {
+    let hit = (e.target as Element).closest?.("g.measure[data-n]");
+    if (!hit) {
       for (const g of (e.currentTarget as Element).querySelectorAll(
         "g.measure[data-n]",
       )) {
@@ -285,12 +297,15 @@
           e.clientY >= r.top &&
           e.clientY <= r.bottom
         ) {
-          n = g.getAttribute("data-n");
+          hit = g;
           break;
         }
       }
     }
-    if (n) selectMeasure(n);
+    if (!hit) return;
+    // Verovio writes each measure's xml:id as its id.
+    const at = hit.id ? (preview?.measureIds?.indexOf(hit.id) ?? -1) : -1;
+    selectMeasure(hit.getAttribute("data-n"), at < 0 ? null : at);
   }
 
   // Whether a facsimile zone falls in the anchored measure range (zone labels
@@ -308,6 +323,8 @@
   function flagSvg(svg: string): string {
     const a = anchor;
     const sel = selected;
+    const selId =
+      selectedAt === null ? "" : (preview?.measureIds?.[selectedAt] ?? "");
     if (!svg || (!a && sel === null)) return svg;
     try {
       const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -319,7 +336,8 @@
         const n = Number(label);
         if (a && Number.isFinite(n) && n >= a.m1 && n <= a.m2)
           g.classList.add("m-flag");
-        if (sel !== null && label === sel) g.classList.add("m-sel");
+        if (sel !== null && (selId ? g.id === selId : label === sel))
+          g.classList.add("m-sel");
       }
       return new XMLSerializer().serializeToString(doc);
     } catch {
@@ -356,10 +374,7 @@
   // One row on. Back from partway down a row returns to that row's top first.
   function pvGo(delta: number) {
     if (!pvScroller) return;
-    const a = readAnchor(pvScroller, pvRows());
-    let row = pvRow + delta;
-    if (delta < 0 && a && a.row === pvRow && a.frac > 0.02) row = pvRow;
-    const next = pvSpreads[Math.max(0, Math.min(pvSpreads.length - 1, row))];
+    const next = pvSpreads[pagingRow(pvScroller, pvRows(), pvRow, delta)];
     if (next) showPage(next.pages[0]);
   }
   function pvSetView(v: "single" | "double") {
@@ -372,10 +387,18 @@
   }
 
   /**
-   * Which page a measure sits on, read from the facsimile's zone labels; -1
+   * Which page a measure sits on, read from the facsimile's zones: the zone
+   * at position `at` when given, else the first zone labelled `label`; -1
    * when the score has no facsimile to say.
    */
-  export function pageOfMeasure(label: string): number {
+  export function pageOfMeasure(
+    label: string,
+    at: number | null = null,
+  ): number {
+    if (at !== null)
+      return at < measureOrder.length
+        ? zoneStart.findLastIndex((start) => start <= at)
+        : -1;
     return (
       preview?.facs?.findIndex((pg) =>
         pg.zones.some((z) => z.label === label),
@@ -410,21 +433,36 @@
   const measureOrder = $derived(
     (preview?.facs ?? []).flatMap((pg) => pg.zones.map((z) => z.label)),
   );
+  // Per facsimile page, the position of its first zone in measureOrder.
+  const zoneStart = $derived.by(() => {
+    let start = 0;
+    return (preview?.facs ?? []).map((pg) => {
+      const first = start;
+      start += pg.zones.length;
+      return first;
+    });
+  });
+  // Whether the zone at position `zi` of page `p` is the selected measure.
+  const zoneSelected = (p: number, zi: number, label: string): boolean =>
+    selectedAt !== null ? selectedAt === zoneStart[p] + zi : selected === label;
+  // The selected measure's position in measureOrder; -1 when not in it.
+  const selectedIndex = (): number =>
+    selected === null ? -1 : (selectedAt ?? measureOrder.indexOf(selected));
   /** Whether a measure comes before (-1) or after (1) the selected one. */
   export function canStepMeasure(dir: 1 | -1): boolean {
-    if (selected === null) return false;
-    const i = measureOrder.indexOf(selected);
+    const i = selectedIndex();
     return i >= 0 && measureOrder[i + dir] !== undefined;
   }
   /** Select the measure before (-1) or after (1) the selected one. */
   export function stepMeasure(dir: 1 | -1) {
     if (!canStepMeasure(dir)) return;
-    selectMeasure(measureOrder[measureOrder.indexOf(selected!) + dir]);
+    const i = selectedIndex() + dir;
+    selectMeasure(measureOrder[i], i);
   }
 
   /** Clear the measure selection. */
   export function clearSelection() {
-    if (selected !== null) selectMeasure(selected);
+    if (selected !== null) selectMeasure(selected, selectedAt);
   }
 
   /** Show or hide the measure zones on the facsimile. */
@@ -434,24 +472,36 @@
 
   // Preview both sides of the score: the facsimile pages (when the score
   // references any) and the rendered encoding (when it holds measures).
-  async function loadPreview(path: string, from: number) {
+  // Each load's number; a load finishing after a later one started is dropped.
+  let loads = 0;
+  async function loadPreview(path: string, from: number, text: string | null) {
     const f = readForge();
-    preview = {
-      key: path,
-      loading: true,
-      pageCount: 0,
-      encAspect: A4_ASPECT,
-      svgs: {},
-    };
-    pvAnchor = { page: 0, frac: 0 };
-    pvNearPages = [];
-    // A selection belongs to the score it was made on.
-    if (selected !== null) {
-      selected = null;
-      onmeasureselect?.(null);
+    const load = ++loads;
+    // New text for the score already shown keeps the view and the selection.
+    const again =
+      text !== null &&
+      preview?.key === path &&
+      !preview.loading &&
+      !preview.error;
+    if (!again) {
+      preview = {
+        key: path,
+        loading: true,
+        pageCount: 0,
+        encAspect: A4_ASPECT,
+        svgs: {},
+      };
+      pvAnchor = { page: 0, frac: 0 };
+      pvNearPages = [];
+      // A selection belongs to the score it was made on.
+      if (selected !== null) {
+        selected = null;
+        selectedAt = null;
+        onmeasureselect?.(null, null);
+      }
     }
     try {
-      const mei = await f.getRepoFile(owner, repo, path);
+      const mei = text ?? (await f.getRepoFile(owner, repo, path));
       if (mei == null) throw new Error(`Could not read ${path}.`);
       const parsed = parseFacsimileMei(mei);
 
@@ -500,7 +550,7 @@
         pageCount = tk.getPageCount();
       }
 
-      if (preview?.key === path) {
+      if (load === loads) {
         preview = {
           key: path,
           loading: false,
@@ -508,18 +558,24 @@
           pageCount,
           encAspect,
           svgs: {},
+          measureIds: [...startTags(mei, "measure")].map(
+            ({ tag }) => /\bxml:id="([^"]*)"/.exec(tag)?.[1] ?? "",
+          ),
         };
+        if (again) {
+          renderNear();
+          return;
+        }
         const total = Math.max(facs?.length ?? 0, pageCount);
         if (initialView) pvView = initialView;
         else if (!viewChosen)
           ({ view: pvView, firstOnRight: pvFirstOnRight } =
             defaultSpreadView(total));
         await tick();
-        if (preview?.key === path)
-          showPage(Math.min(from, Math.max(0, total - 1)));
+        if (load === loads) showPage(Math.min(from, Math.max(0, total - 1)));
       }
     } catch (e) {
-      if (preview?.key === path)
+      if (load === loads)
         preview = {
           key: path,
           loading: false,
@@ -535,29 +591,40 @@
   // put in front of it.
   $effect(() => {
     const path = fragment;
-    untrack(() => loadPreview(path, startPage));
+    const text = mei;
+    untrack(() => loadPreview(path, startPage, text));
   });
 </script>
 
 <!-- Escape clears a measure selection before the page's own Escape (closing
      the score view) sees it: the capture phase runs first, and the page skips
-     a handled key. -->
+     a handled key. A and D select the measure before and after. -->
 <svelte:window
   onkeydowncapture={(e) => {
-    if (e.key !== "Escape" || e.defaultPrevented || selected === null) return;
+    if (e.defaultPrevented || selected === null) return;
     if (
       (e.target as Element).closest(
         "input, textarea, select, [contenteditable]",
       )
     )
       return;
-    e.preventDefault();
-    clearSelection();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      clearSelection();
+    } else if (
+      (e.key === "a" || e.key === "A" || e.key === "d" || e.key === "D") &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      stepMeasure(e.key === "a" || e.key === "A" ? -1 : 1);
+    }
   }}
 />
 
 <div class="preview" bind:clientWidth={pvW}>
-  <div class="ptoolbar vtoolbar">
+  <ViewerToolbar class="ptoolbar" narrow={pvNarrow}>
     {#if preview?.facs?.length}
       <!-- Where the toolbar is too narrow for the labels, the buttons carry
            their icon alone; the label stays for screen readers. -->
@@ -590,32 +657,15 @@
         >
       </div>
     {/if}
-    <div class="seg viewseg" title="How many pages are shown side by side">
-      <button
-        type="button"
-        class:on={pvView === "single"}
-        aria-pressed={pvView === "single"}
-        onclick={() => pvSetView("single")}
-        ><Icon name="page-one" /><span class="lbl">1 page</span></button
-      >
-      <button
-        type="button"
-        class:on={pvView === "double"}
-        aria-pressed={pvView === "double"}
-        onclick={() => pvSetView("double")}
-        ><Icon name="page-two" /><span class="lbl">2 pages</span></button
-      >
-    </div>
-    {#if pvView === "double"}
-      <button
-        type="button"
-        class="chip-switch pcheck"
-        class:on={pvFirstOnRight}
-        aria-pressed={pvFirstOnRight}
-        onclick={() => pvSetFirstOnRight(!pvFirstOnRight)}
-        title="Whether page 1 is a right-hand page, so a spread pairs 2–3, 4–5, … the way the score opens"
-        >Page 1 right</button
-      >
+    <!-- A narrow preview shows one page per row: nothing to group. -->
+    {#if !pvNarrow}
+      <PageSpreadControls
+        class="viewseg"
+        view={pvView}
+        firstOnRight={pvFirstOnRight}
+        onview={pvSetView}
+        onfirstonright={pvSetFirstOnRight}
+      />
     {/if}
     {#if facsVisible}
       <button
@@ -630,92 +680,29 @@
       >
     {/if}
     <span class="vline zoomline"></span>
-    <span class="zoomgrp">
-      <button
-        type="button"
-        class="tbtn tbtn-icon zoomstep"
-        onclick={() => {
-          setPvZoomPos(Math.max(0, pvZoomPos - PV_ZOOM_STEP));
-          pvFit = null;
-        }}
-        disabled={pvZoomPos <= 0}
-        aria-label="Zoom out"
-        title="Zoom out"><Icon name="zoom-out" /></button
-      >
-      <input
-        class="zoomslider"
-        type="range"
-        aria-label="Zoom"
-        aria-valuetext={`${Math.round(pvZoom * 100)}%`}
-        min={0}
-        max={PV_ZOOM_STOPS}
-        step={1}
-        value={pvZoomPos}
-        oninput={(e) => {
-          setPvZoomPos(Number((e.target as HTMLInputElement).value));
-          pvFit = null;
-        }}
-      />
-      <span class="zval mono">{Math.round(pvZoom * 100)}%</span>
-      <button
-        type="button"
-        class="tbtn tbtn-icon zoomstep"
-        onclick={() => {
-          setPvZoomPos(Math.min(PV_ZOOM_STOPS, pvZoomPos + PV_ZOOM_STEP));
-          pvFit = null;
-        }}
-        disabled={pvZoomPos >= PV_ZOOM_STOPS}
-        aria-label="Zoom in"
-        title="Zoom in"><Icon name="zoom-in" /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon fitbtn"
-        class:on={pvFit === "width"}
-        aria-pressed={pvFit === "width"}
-        onclick={() => (pvFit = "width")}
-        aria-label="Fit the page width"
-        title="Fit the page width"><FitIcon kind="width" /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon fitbtn"
-        class:on={pvFit === "page"}
-        aria-pressed={pvFit === "page"}
-        onclick={pvFitWholePage}
-        aria-label="Fit the whole page"
-        title="Fit the whole page, top to bottom"
-        ><FitIcon kind="page" /></button
-      >
-    </span>
-    <span class="mspacer"></span>
-    <!-- Last in the toolbar, next to the side panel on the right. -->
-    <div class="pgnav">
-      <button
-        type="button"
-        class="btn btn-icon pgbtn"
-        onclick={() => pvGo(-1)}
-        disabled={pvAtTop}
-        aria-label="Previous page"
-        title="Previous page"><Icon name="chevron-left" /></button
-      >
+    <ZoomLevel
+      bind:value={() => Math.round(pvZoom * 100), (v) => (pvZoom = v / 100)}
+      bind:fit={pvFit}
+      fitPage={pvNarrow ? undefined : pvFitPage * 100}
+      layout={pvNarrow && coarse.current
+        ? "pinch"
+        : pvW > 0 && pvW < PV_STEPS
+          ? "steps"
+          : "slider"}
+      onfitpage={pvFitWholePage}
+    />
+    {#snippet end()}
       <!-- A compact toolbar has room for the numbers only ("1 of 4"). -->
-      <span
-        class="pglabel"
-        style={`min-width:${pagesLabelCh(pvPageTotal) - (pvCompact ? "Pages ".length : 0)}ch`}
-        title={pvCompact ? pvLabel : undefined}
-        >{pvCompact ? pvLabel.replace(/^Pages? /, "") : pvLabel}</span
-      >
-      <button
-        type="button"
-        class="btn btn-icon pgbtn"
-        onclick={() => pvGo(1)}
-        disabled={pvAtEnd}
-        aria-label="Next page"
-        title="Next page"><Icon name="chevron-right" /></button
-      >
-    </div>
-  </div>
+      <PageNav
+        label={pvLabel}
+        total={pvPageTotal}
+        compact={pvCompact}
+        atStart={pvAtTop}
+        atEnd={pvAtEnd}
+        ongo={pvGo}
+      />
+    {/snippet}
+  </ViewerToolbar>
   <div
     class="pbody-panes"
     {@attach zoomGestures({
@@ -764,6 +751,13 @@
                             <figcaption class="page-label">
                               Page {p + 1} · Facsimile
                             </figcaption>
+                            {#if pg.url && failedFacs[pg.url]}
+                              <Notice
+                                tone="err"
+                                title={`The facsimile of page ${p + 1} could not be loaded`}
+                                detail="The zones are shown without their reference image."
+                              />
+                            {/if}
                             <svg
                               viewBox={`0 0 ${pg.w} ${pg.h}`}
                               role="img"
@@ -774,6 +768,7 @@
                                   href={pg.url}
                                   width={pg.w}
                                   height={pg.h}
+                                  onerror={() => (failedFacs[pg.url!] = true)}
                                 />
                               {:else}
                                 <rect
@@ -790,7 +785,7 @@
                                     class:flagged={anchor &&
                                       p + 1 === anchor.page &&
                                       zoneFlagged(z.label)}
-                                    class:sel={selected === z.label}
+                                    class:sel={zoneSelected(p, zi, z.label)}
                                     role="button"
                                     tabindex={0}
                                     aria-label={`Measure ${z.label}: highlight in both panes`}
@@ -798,11 +793,15 @@
                                     y={z.box.uly}
                                     width={z.box.lrx - z.box.ulx}
                                     height={z.box.lry - z.box.uly}
-                                    onclick={() => selectMeasure(z.label)}
+                                    onclick={() =>
+                                      selectMeasure(z.label, zoneStart[p] + zi)}
                                     onkeydown={(e) => {
                                       if (e.key === "Enter" || e.key === " ") {
                                         e.preventDefault();
-                                        selectMeasure(z.label);
+                                        selectMeasure(
+                                          z.label,
+                                          zoneStart[p] + zi,
+                                        );
                                       }
                                     }}
                                   />
@@ -811,7 +810,7 @@
                                     class:flagged={anchor &&
                                       p + 1 === anchor.page &&
                                       zoneFlagged(z.label)}
-                                    class:sel={selected === z.label}
+                                    class:sel={zoneSelected(p, zi, z.label)}
                                     x={z.box.ulx + 6}
                                     y={z.box.uly + 30}>{z.label}</text
                                   >
@@ -883,14 +882,8 @@
 </div>
 
 <style>
-  .mono {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-  }
   .muted {
     color: var(--ink-faint);
-  }
-  .mspacer {
-    flex: 1;
   }
   .preview {
     flex: 1;
@@ -904,19 +897,14 @@
   }
 
   /* -------------------------------------------------------------- toolbar */
-  /* The shared viewer toolbar (.vtoolbar, ui.css), on one line: as the
+  /* The shared viewer toolbar (ViewerToolbar), on one line: as the
      preview narrows, labels give way to icons, then the zoom slider to zoom
      out and in. What still does not fit scrolls sideways. */
-  .ptoolbar {
+  .preview :global(.ptoolbar) {
     margin-bottom: 10px;
   }
   .paneseg {
     flex: none;
-  }
-  .zoomgrp {
-    display: flex;
-    align-items: center;
-    gap: 6px;
   }
   /* Below this the labels no longer fit beside the paging and zoom controls, so
      the pane buttons keep their icon and hide their label from sight only. */
@@ -933,7 +921,7 @@
   /* Compact (PV_COMPACT): the page-count buttons keep their icon, the page
      label its numbers. */
   @container (max-width: 1099px) {
-    .viewseg .lbl {
+    .preview :global(.viewseg .lbl) {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -942,78 +930,23 @@
       white-space: nowrap;
     }
   }
-  /* Narrower, the zoom slider gives way to zoom out and in either side of
-     the readout. */
-  .zoomstep {
-    display: none;
-  }
-  @container (max-width: 899px) {
-    .zoomgrp > .zoomslider {
-      display: none;
-    }
-    .zoomgrp > .zoomstep {
-      display: inline-flex;
-    }
-  }
   @container (max-width: 799px) {
     .zoomline {
       display: none;
     }
   }
-  /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size in
-     the same order: the pane switch, the zone button, the zoom and the
-     paging, each 32px with a 44px press area. The page-count switch and
-     "Page 1 right" (a phone shows one page) and fit page are hidden. On a
-     touch screen the toolbar moves below the pages, within thumb reach, and
-     a pinch zooms: no zoom buttons or readout. */
+  /* Narrow (PV_NARROW, a phone): the toolbar is one row at touch size
+     (ViewerToolbar) in the same order: the pane switch, the zone button,
+     the zoom and the paging. The page-count switch (a phone shows one page)
+     and fit page are left out. On a touch screen the toolbar moves below
+     the pages, within thumb reach, and a pinch zooms: no zoom buttons or
+     readout. */
   @media (pointer: coarse) {
     @container (max-width: 559px) {
-      .ptoolbar {
+      .preview :global(.ptoolbar) {
         order: 2;
         margin: 8px 0 0;
       }
-      .zoomgrp > .zval,
-      .zoomgrp > .zoomstep {
-        display: none;
-      }
-    }
-  }
-  @container (max-width: 559px) {
-    .ptoolbar {
-      gap: 4px;
-      padding: 4px 6px;
-      /* The 44px press areas reach past the toolbar's edge. */
-      overflow-x: visible;
-    }
-    .viewseg,
-    .pcheck,
-    .zoomline,
-    .zoomgrp > .zoomslider,
-    .zoomgrp > .fitbtn + .fitbtn {
-      display: none;
-    }
-    .zoomgrp {
-      flex: none;
-      gap: 2px;
-    }
-    .pglabel {
-      min-width: 0 !important;
-      overflow: hidden;
-      text-overflow: ellipsis;
-    }
-    .ptoolbar .pgbtn,
-    .ptoolbar .tbtn {
-      position: relative;
-      box-sizing: border-box;
-      min-width: 32px;
-      min-height: 32px;
-      justify-content: center;
-    }
-    .ptoolbar .pgbtn::after,
-    .ptoolbar .tbtn::after {
-      content: "";
-      position: absolute;
-      inset: -6px -3px;
     }
   }
   /* ---------------------------------------------------------------- panes */

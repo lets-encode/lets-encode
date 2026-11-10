@@ -10,17 +10,26 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { goto } from "$app/navigation";
+  import { onDestroy } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
+  import DiscardSetupConfirm from "$lib/components/DiscardSetupConfirm.svelte";
   import {
-    discardDraft,
     readDraft,
     resumableDrafts,
     type WizardDraft,
   } from "$lib/wizard-draft.ts";
-  import { releaseClaim } from "$lib/campaign-resolve.ts";
-  import { WIZARD_STEPS, resumeDraft, stepIndex } from "$lib/wizard.svelte.ts";
+  import {
+    WIZARD_STEPS,
+    discardSetup,
+    discardedRelease,
+    registeredNote,
+    resumeDraft,
+    stepIndex,
+  } from "$lib/wizard.svelte.ts";
 
   let drafts = $state<WizardDraft[]>([]);
+  // The note on a name not given back is shown on this visit only.
+  onDestroy(() => (discardedRelease.note = null));
   let busy = $state<string | null>(null);
   let confirming = $state<string | null>(null);
   let error = $state<string | null>(null);
@@ -43,12 +52,12 @@
     confirming = null;
     busy = draft.handle;
     try {
-      await resumeDraft(draft.handle);
+      await resumeDraft(draft.owner, draft.handle);
       await goto("/new");
     } catch (err) {
       // A row whose record is gone — finished or discarded in another tab —
       // has nothing left to continue.
-      if (!readDraft(draft.handle))
+      if (!readDraft(draft.owner, draft.handle))
         drafts = drafts.filter((d) => d.handle !== draft.handle);
       console.error("Continuing a setup failed:", (err as Error).message);
       error = `Could not continue “${draft.handle}”: ${(err as Error).message}`;
@@ -57,12 +66,9 @@
   }
 
   async function discard(draft: WizardDraft) {
-    discardDraft(draft.handle);
     drafts = drafts.filter((d) => d.handle !== draft.handle);
     confirming = null;
-    // Give the name back, so it is free again straight away instead of staying
-    // reserved until the reservation runs out on its own.
-    if (draft.claim) await releaseClaim(draft.claim.name, draft.claim.token);
+    await discardSetup(draft.owner, draft.handle, draft.claim);
   }
 </script>
 
@@ -77,7 +83,7 @@
         </span>
         <button
           type="button"
-          class="linkish"
+          class="btn"
           onclick={() => continueSetup(draft)}
           disabled={busy !== null}
         >
@@ -91,31 +97,23 @@
         <span class="spacer"></span>
         {#if confirming === draft.handle}
           <span class="dnote">
-            Discard everything entered so far?{#if draft.repo}
-              Discarding frees the name but leaves the repository
-              <a href={draft.repo.html_url} target="_blank" rel="noreferrer"
-                >{draft.repo.full_name}</a
-              > — delete it yourself if you don't want it.{/if}
+            <DiscardSetupConfirm
+              repo={draft.repo}
+              onconfirm={() => discard(draft)}
+              oncancel={() => (confirming = null)}
+              disabled={busy !== null}
+            />
           </span>
-          <button
-            type="button"
-            class="btn btn-danger"
-            onclick={() => discard(draft)}
-            disabled={busy !== null}
-          >
-            Discard for good
-          </button>
-          <button type="button" class="btn" onclick={() => (confirming = null)}>
-            Cancel
-          </button>
         {:else}
           <button
             type="button"
             class="btn btn-icon btn-danger"
             onclick={() => (confirming = draft.handle)}
-            disabled={busy !== null}
+            disabled={busy !== null || draft.claim?.registered}
             aria-label="Discard this setup"
-            title="Discard this setup"><Icon name="trash" /></button
+            title={draft.claim?.registered
+              ? registeredNote(draft.claim.name)
+              : "Discard this setup"}><Icon name="trash" /></button
           >
         {/if}
       </div>
@@ -125,6 +123,9 @@
       <p class="msg-error" role="alert">{error}</p>
     {/if}
   </section>
+{/if}
+{#if discardedRelease.note}
+  <p class="msg-warn" role="status">{discardedRelease.note}</p>
 {/if}
 
 <style>
@@ -159,19 +160,11 @@
     white-space: nowrap;
   }
   /* The question, with the repository note, is a sentence the reader needs
-     whole: it takes its own line above its buttons. */
+     whole: it takes the row's full width, above its buttons. */
   .dnote {
     flex: 1 1 100%;
-    font-size: 12px;
-    color: var(--ink-soft);
-  }
-  .dnote a {
-    color: var(--link);
   }
   .spacer {
     flex: 1;
-  }
-  .linkish {
-    flex: none;
   }
 </style>

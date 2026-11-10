@@ -10,6 +10,7 @@
 // registry is a failure, never a miss. There is no name-search fallback.
 
 import { provider, registryUrl } from "./forge/config.ts";
+import { brokerFetch } from "./forge/github-rest.ts";
 import type { ForgeClient } from "./forge/types.ts";
 
 /** A campaign name resolved to its repo's stable id and current owner/name. */
@@ -28,6 +29,33 @@ export interface SlugInfo {
   repo_id: number | null;
 }
 
+// Whether the registry holds `name` for repo id `repoId`, per id and name.
+const registrations = new Map<string, Promise<boolean>>();
+
+/**
+ * Whether the registry holds `name` as the live campaign of repo `repoId` on
+ * this deployment's forge. Answers are kept for the session; an unreachable
+ * registry answers true and is asked again next time.
+ */
+export function registeredAs(repoId: number, name: string): Promise<boolean> {
+  const key = `${repoId}/${name}`;
+  let known = registrations.get(key);
+  if (!known) {
+    known = lookupSlug(name).then(
+      (info) =>
+        info?.status === "active" &&
+        info.repo_id === repoId &&
+        (info.forge ?? provider.id) === provider.id,
+      () => {
+        registrations.delete(key);
+        return true;
+      },
+    );
+    registrations.set(key, known);
+  }
+  return known;
+}
+
 /**
  * Look up a name in the registry, or null for a malformed name (400), which no
  * campaign can have. Throws when the registry cannot be reached or does not
@@ -36,10 +64,13 @@ export interface SlugInfo {
 export async function lookupSlug(name: string): Promise<SlugInfo | null> {
   let res: Response;
   try {
-    res = await fetch(`${registryUrl}/api/slug/${encodeURIComponent(name)}`, {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
+    res = await brokerFetch(
+      `${registryUrl}/api/slug/${encodeURIComponent(name)}`,
+      {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      },
+    );
   } catch {
     throw new Error("The campaign registry could not be reached.");
   }
@@ -56,8 +87,18 @@ export async function lookupSlug(name: string): Promise<SlugInfo | null> {
 
 /** A held name's token, or why the name could not be held. */
 export type ClaimResult =
-  | { token: string }
-  | { error: "taken" | "invalid" | "limit" | "unreachable" };
+  | { token: string; expiresAt: string }
+  | { error: "taken" | "invalid" | "limit" }
+  /** `detail` is the registry's answer when it gave one. */
+  | { error: "unreachable"; detail?: string };
+
+/** The registry's answer to a failed request: its error text and status. */
+async function registryRefusal(res: Response): Promise<string> {
+  const { error } = (await res.json().catch(() => ({}))) as {
+    error?: string;
+  };
+  return `${error || "no reason given"} (${res.status})`;
+}
 
 /**
  * Hold a name in the registry before the repo it will belong to exists, so the
@@ -68,25 +109,31 @@ export type ClaimResult =
  */
 export async function claimName(name: string): Promise<ClaimResult> {
   try {
-    const res = await fetch(`${registryUrl}/claim`, {
+    const res = await brokerFetch(`${registryUrl}/claim`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     });
-    if (res.ok)
-      return {
-        token: ((await res.json()) as { claim_token: string }).claim_token,
+    if (res.ok) {
+      const held = (await res.json()) as {
+        claim_token: string;
+        expires_at: string;
       };
+      return { token: held.claim_token, expiresAt: held.expires_at };
+    }
     if (res.status === 409) return { error: "taken" };
     if (res.status === 422) return { error: "invalid" };
     // The login holds the registry's limit of claims (MAX_PENDING_CLAIMS).
     if (res.status === 429) {
-      const { reason } = (await res.json().catch(() => ({}))) as {
+      const { reason } = (await res
+        .clone()
+        .json()
+        .catch(() => ({}))) as {
         reason?: string;
       };
       if (reason === "too_many_claims") return { error: "limit" };
     }
-    return { error: "unreachable" };
+    return { error: "unreachable", detail: await registryRefusal(res) };
   } catch {
     return { error: "unreachable" };
   }
@@ -102,7 +149,7 @@ export async function releaseClaim(
   token: string,
 ): Promise<boolean> {
   try {
-    const res = await fetch(
+    const res = await brokerFetch(
       `${registryUrl}/claim/${encodeURIComponent(name)}`,
       {
         method: "DELETE",
@@ -116,6 +163,10 @@ export async function releaseClaim(
   }
 }
 
+/** What a failed releaseClaim of `name` means for the name. */
+export const releaseFailedNote = (name: string): string =>
+  `“${name}” could not be given back, so it stays reserved for up to 24 hours before it is free again.`;
+
 /** The outcome of registering a name against a repo id. */
 export type RegisterResult =
   | "ok"
@@ -123,7 +174,8 @@ export type RegisterResult =
   | "renamed"
   | "repo_taken"
   | "invalid"
-  | "error";
+  /** `error` is the registry's answer, "" when it gave none. */
+  | { error: string };
 
 /**
  * Register a campaign name against its repo id on `forge`, after the repo has
@@ -140,7 +192,7 @@ export async function registerCampaign(
   claimToken: string,
 ): Promise<RegisterResult> {
   try {
-    const res = await fetch(`${registryUrl}/register`, {
+    const res = await brokerFetch(`${registryUrl}/register`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -160,9 +212,9 @@ export async function registerCampaign(
       return "conflict";
     }
     if (res.status === 422) return "invalid";
-    return "error";
+    return { error: await registryRefusal(res) };
   } catch {
-    return "error";
+    return { error: "" };
   }
 }
 

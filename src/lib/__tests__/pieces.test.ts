@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  campaignPieces,
   copyMetadata,
   createEncodedPiece,
   createPiece,
+  followPages,
   formatRanges,
   initialPieces,
   nextPieceId,
@@ -12,6 +14,7 @@ import {
   pieceColour,
   pieceForBox,
   partitionPages,
+  startFromEncoding,
   zonesOverlap,
   PIECE_COLOURS,
   type Piece,
@@ -235,13 +238,13 @@ test("starts one encoded piece per upload, a facsimile piece for images, else on
       false,
       ["encoded", "encoded"],
     ],
+    ["encoding and images", ["prelude.musicxml"], true, ["facsimile"]],
     [
-      "encoding and images",
-      ["prelude.musicxml"],
+      "encodings and images",
+      ["prelude.musicxml", "fugue.mei"],
       true,
-      ["encoded", "facsimile"],
+      ["encoded", "encoded", "facsimile"],
     ],
-    ["neither", [], false, ["physical-only"]],
     ["one encoding, no images", ["sonata.mei"], false, ["encoded"]],
   ];
   for (const [label, encodingNames, hasImages, kinds] of cases) {
@@ -276,4 +279,56 @@ test("createEncodedPiece links the upload and takes its title from the file name
   assert.equal(piece.encodingName, "sonata.musicxml");
   assert.equal(piece.meta.title, "sonata");
   assert.equal(piece.id, "piece-02");
+});
+
+test("one encoding with page images is the facsimile piece's starting point", () => {
+  const [piece] = initialPieces(["sonata.mei"], true);
+  assert.equal(piece.kind, "facsimile");
+  assert.equal(piece.encodingName, "sonata.mei");
+});
+
+test("startFromEncoding moves a file from its encoded piece to a facsimile piece", () => {
+  let pieces = initialPieces(["prelude.mei", "fugue.mei"], true);
+  pieces = startFromEncoding(pieces, 2, "fugue.mei");
+  assert.deepEqual(
+    pieces.map((p) => [p.kind, p.encodingName]),
+    [
+      ["encoded", "prelude.mei"],
+      ["facsimile", "fugue.mei"],
+    ],
+  );
+  pieces = startFromEncoding(pieces, 1, undefined);
+  assert.equal(pieces[1].encodingName, undefined);
+  assert.equal(pieces.length, 2, "clearing removes no piece");
+  assert.equal(
+    startFromEncoding(pieces, 0, "fugue.mei"),
+    pieces,
+    "an encoded piece is left alone",
+  );
+});
+
+test("followPages moves regions with their pages and drops those on pages left out", () => {
+  const zone = (surface: number) => ({ surface, ...box(0, 0, 10, 10) });
+  const pieces = [facsimilePiece("P1", [zone(0), zone(1), zone(2)])];
+  const [moved] = followPages(
+    pieces,
+    ["page-1", "page-2", "page-3"],
+    ["page-3", "page-1"],
+  );
+  assert.deepEqual(
+    moved.zones.map((z) => z.surface),
+    [1, 0],
+  );
+});
+
+test("campaignPieces leaves out a piece that covers no regions on purpose", () => {
+  const zone = { surface: 0, ...box(0, 0, 10, 10) };
+  const none = { ...facsimilePiece("piece-01", []), noRegions: true };
+  const marked = facsimilePiece("piece-02", [zone]);
+  // A region marked after the switch was set counts.
+  const both = { ...facsimilePiece("piece-03", [zone]), noRegions: true };
+  assert.deepEqual(
+    campaignPieces([none, marked, both]).map((p) => p.id),
+    ["piece-02", "piece-03"],
+  );
 });

@@ -8,10 +8,11 @@
 
 import type { VerovioToolkit } from "verovio/esm";
 import type { ForgeClient } from "./forge/types.ts";
+import type { HistoryRow, TaskRow } from "./campaign-tables.ts";
 import { parseFacsimileMei } from "./mei-facsimile.ts";
 import type { MeasureBox } from "./mei-facsimile.ts";
 import { resolveFacsimileImageUrls } from "./facsimile-images.ts";
-import { renderPage } from "./verovio-render.ts";
+import { createToolkit, renderPage } from "./verovio-render.ts";
 
 export interface PagePreview {
   /** Download URL of the page image; '' = none reachable. */
@@ -61,9 +62,33 @@ const MAX_PREVIEW_BYTES = 10 * 1024 * 1024;
 const cache = new Map<string, Promise<PiecePreview>>();
 
 /**
- * The cached preview of one piece, loading it on first request. With
- * `incipit` false the incipit is not rendered (its field stays ''), which
- * spares loading the Verovio toolkit; a cached full preview still serves it.
+ * A version of the piece's score, from the campaign history: it changes with
+ * every accepted submission on one of the piece's tasks, the only change to
+ * a score once the campaign exists.
+ */
+export function scoreVersion(
+  history: HistoryRow[],
+  taskDefs: TaskRow[],
+  fragment: string,
+): string {
+  const tasks = new Set(
+    taskDefs.filter((t) => t.fragment === fragment).map((t) => t.task_id),
+  );
+  return String(
+    history.filter(
+      (h) =>
+        h.action === "submit_encoding" &&
+        h.outcome === "accepted" &&
+        tasks.has(h.task_id),
+    ).length,
+  );
+}
+
+/**
+ * The cached preview of one piece at `version` (scoreVersion), loading it on
+ * first request. With `incipit` false the incipit is not rendered (its field
+ * stays ''), which spares loading the Verovio toolkit; a cached full preview
+ * still serves it.
  */
 export function piecePreview(
   f: ForgeClient,
@@ -71,8 +96,9 @@ export function piecePreview(
   repo: string,
   path: string,
   incipit = true,
+  version = "",
 ): Promise<PiecePreview> {
-  const full = `${owner}/${repo}/${path}`;
+  const full = `${owner}/${repo}/${path}@${version}`;
   const key = incipit ? full : `${full}#thumb`;
   let loading = cache.get(full) ?? cache.get(key);
   if (!loading) {
@@ -183,7 +209,7 @@ const INCIPIT_OPTIONS = {
   footer: "none",
   svgViewBox: true,
   breaks: "auto",
-};
+} as const;
 
 let toolkitLoading: Promise<VerovioToolkit> | null = null;
 
@@ -196,9 +222,7 @@ function getIncipitToolkit(): Promise<VerovioToolkit> {
 }
 
 async function loadToolkit(): Promise<VerovioToolkit> {
-  const [{ default: createVerovioModule }, { VerovioToolkit }] =
-    await Promise.all([import("verovio/wasm"), import("verovio/esm")]);
-  const tk = new VerovioToolkit(await createVerovioModule());
+  const tk = await createToolkit();
   tk.setOptions(INCIPIT_OPTIONS);
   return tk;
 }

@@ -61,14 +61,14 @@ const resultPath = (k: number) => `Staves/${k + 1}/transcription.musicxml`;
  * Run the staff pipeline once over all crops, on one page, and return each
  * staff's MusicXML in crop order; null where the pipeline wrote nothing. The
  * pipeline writes no file for a staff it failed on, and the execution fails
- * only when every staff failed.
+ * only when every staff failed; `error` is then the execution's reason.
  */
 export async function transcribeStaves(
   client: OmrClient,
   pipeline: OmrPipeline,
   crops: Blob[],
-): Promise<(string | null)[]> {
-  if (!crops.length) return [];
+): Promise<{ xmls: (string | null)[]; error: string | null }> {
+  if (!crops.length) return { xmls: [], error: null };
   return client.withPage(async (pageId) => {
     await client.upload(
       pageId,
@@ -79,17 +79,22 @@ export async function transcribeStaves(
       pipeline,
       crops.map((_, k) => cropPath(k)),
     );
-    if (execution.state !== "completed") return crops.map(() => null);
+    if (execution.state !== "completed")
+      return {
+        xmls: crops.map(() => null),
+        error: execution.error ?? `the run ended as ${execution.state}`,
+      };
     const written = new Set(await client.files(pageId));
     const files = await client.download(
       pageId,
       crops.map((_, k) => resultPath(k)).filter((path) => written.has(path)),
     );
-    return Promise.all(
+    const xmls = await Promise.all(
       crops.map(async (_, k) => {
         const file = files[resultPath(k)];
         return file ? file.text() : null;
       }),
     );
+    return { xmls, error: null };
   });
 }

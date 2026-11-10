@@ -75,6 +75,31 @@ test("adds a contributor and an application only once", () => {
   assert.equal((twice.match(/<name>mei-friend<\/name>/g) ?? []).length, 1);
 });
 
+test("records the contributor's account id and matches a renamed account by it", () => {
+  const first = recordContribution(pieceScore(), {
+    ...CONTRIBUTION,
+    id: "4242",
+  });
+  assert.match(
+    first,
+    /<persName role="contributor" auth="GitHub" codedval="4242">octocat<\/persName>/,
+  );
+  assert.match(
+    first,
+    /<change n="2"[\s\S]*?<persName auth="GitHub" codedval="4242">octocat<\/persName>/,
+  );
+  // The same account under a new login is not added again; another account
+  // with the old login is.
+  const renamed = recordContribution(first, {
+    ...CONTRIBUTION,
+    name: "octocat-2",
+    id: "4242",
+  });
+  assert.equal((renamed.match(/role="contributor"/g) ?? []).length, 1);
+  const other = recordContribution(first, { ...CONTRIBUTION, id: "777" });
+  assert.equal((other.match(/role="contributor"/g) ?? []).length, 2);
+});
+
 test("a contributor already named in the title statement is not repeated", () => {
   const out = recordContribution(pieceScore(), {
     ...CONTRIBUTION,

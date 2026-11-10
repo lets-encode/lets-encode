@@ -320,3 +320,50 @@ test("ends a reported pause on time while polls are held", async () => {
   await clock.advance(50_000);
   assert.deepEqual(statuses.at(-1), REFRESH_OK);
 });
+
+test("a tab shown again while a poll runs gets one resumed poll after it", async () => {
+  const clock = fakeEnv();
+  const polls: boolean[] = [];
+  let finish: () => void = () => {};
+  startAutoRefresh(
+    {
+      interval: () => 10_000,
+      poll: (r) => {
+        polls.push(r);
+        return polls.length === 1
+          ? new Promise<void>((resolve) => (finish = resolve))
+          : Promise.resolve();
+      },
+    },
+    clock.surface,
+  );
+  await clock.advance(10_000);
+  await clock.setHidden(true);
+  await clock.setHidden(false);
+  finish();
+  await new Promise((r) => setImmediate(r));
+  await clock.advance(0);
+  assert.deepEqual(polls, [false, true]);
+});
+
+test("a resumed poll during a rate-limit pause runs when the pause ends, also without an interval", async () => {
+  const clock = fakeEnv();
+  const polls: boolean[] = [];
+  startAutoRefresh(
+    {
+      interval: () => null,
+      poll: async (r) => {
+        polls.push(r);
+        if (polls.length === 1) throw rateLimit(30);
+      },
+    },
+    clock.surface,
+  );
+  await clock.setHidden(true);
+  await clock.setHidden(false);
+  await clock.setHidden(true);
+  await clock.setHidden(false);
+  assert.deepEqual(polls, [true]);
+  await clock.advance(30_000);
+  assert.deepEqual(polls, [true, true]);
+});

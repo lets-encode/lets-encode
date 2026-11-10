@@ -56,12 +56,12 @@ export function takeHandOff(campaign: string, task: string): boolean {
 
 /** A command that finished cleanly with a mei-friend hand-off URL. */
 const handsOff = (result: Result | null): boolean =>
-  Boolean(result?.ok && !result.warn && result.meiFriendUrl);
+  Boolean(result?.ok && result.outcome !== "pending" && result.meiFriendUrl);
 
 /**
  * Navigate this tab to mei-friend for a command that finished cleanly with a
  * hand-off URL. mei-friend returns the volunteer to the campaign in the same
- * tab. A result with a warning keeps the link in the result banner instead.
+ * tab. A pending result keeps the link in the result banner instead.
  */
 export function openMeiFriend(result: Result | null): void {
   if (handsOff(result)) window.location.assign(result!.meiFriendUrl!);
@@ -73,6 +73,21 @@ export interface CommandTarget {
   owner: string;
   repo: string;
 }
+
+/** A CommandContext against `target` for the signed-in viewer. */
+export const commandContext = (
+  f: ForgeClient,
+  target: CommandTarget,
+  progress: CommandContext["progress"] = () => {},
+): CommandContext => ({
+  forge: f,
+  ...target,
+  viewer: viewerId(),
+  viewerLogin: auth.user?.login ?? "",
+  meiFriendUrl,
+  omr,
+  progress,
+});
 
 /**
  * The busy flag, progress log and result banner behind a page's commands,
@@ -88,27 +103,21 @@ export class CommandRunner {
   readonly log = new ProgressLog();
   result = $state<Result | null>(null);
   private release: (() => void) | null = null;
+  /** Settles when the last queued command has finished. */
+  private queue: Promise<void> = Promise.resolve();
   /** The running command's id, from the `command` progress update. */
   private command = "";
 
   /** A CommandContext against `target`, its progress wired to the busy log. */
   context(f: ForgeClient, target: CommandTarget): CommandContext {
-    return {
-      forge: f,
-      ...target,
-      viewer: viewerId(),
-      viewerLogin: auth.user?.login ?? "",
-      meiFriendUrl,
-      omr,
-      progress: (u) => {
-        if (u.command) {
-          this.command = u.command;
-          this.overlay = !u.background;
-        }
-        if (u.step) this.log.step(u.step);
-        if (u.detail) this.log.detail(u.detail);
-      },
-    };
+    return commandContext(f, target, (u) => {
+      if (u.command) {
+        this.command = u.command;
+        this.overlay = !u.background;
+      }
+      if (u.step) this.log.step(u.step);
+      if (u.detail) this.log.detail(u.detail);
+    });
   }
 
   /**
@@ -118,15 +127,26 @@ export class CommandRunner {
    * after that press, while still busy — the page's refresh (or navigation)
    * after a command lands. A clean mei-friend hand-off neither holds nor
    * runs `after`: the page is left for mei-friend right away, or, with
-   * `holdHandOff`, once the overlay's Continue is pressed. Resolves to
-   * the command's result, or null when another command was still running
-   * and this one did not start.
+   * `holdHandOff`, once the overlay's Continue is pressed. A command run
+   * while another one is still running starts once that one has finished.
+   * Resolves to the command's result.
    */
-  async run(
+  run(
     command: () => Promise<Result>,
     after?: (result: Result) => Promise<void> | void,
-  ): Promise<Result | null> {
-    if (this.busy) return null;
+  ): Promise<Result> {
+    const turn = this.queue.then(() => this.#run(command, after));
+    this.queue = turn.then(
+      () => {},
+      () => {},
+    );
+    return turn;
+  }
+
+  async #run(
+    command: () => Promise<Result>,
+    after?: (result: Result) => Promise<void> | void,
+  ): Promise<Result> {
     this.busy = true;
     this.overlay = true;
     this.command = "";

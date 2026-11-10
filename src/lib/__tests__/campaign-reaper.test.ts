@@ -1,8 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { claimRanOut, liveLocks, reapLocks } from "../campaign-reaper.ts";
-import type { LockRow } from "../campaign-tables.ts";
+import {
+  claimRanOut,
+  liveLocks,
+  reapedLocks,
+  reapLocks,
+} from "../campaign-reaper.ts";
+import type { HistoryRow, LockRow } from "../campaign-tables.ts";
 
 const NOW = "2026-06-25T12:00:00Z";
 const lock = (
@@ -50,13 +55,13 @@ test("the boundary is strict: exactly at expires is kept, just after is removed"
   assert.equal(over.removed.length, 1);
 });
 
-test("keeps locks when either time is unparseable or expires is empty", () => {
+test("removes locks whose expires is unparseable or empty; keeps all when now is unparseable", () => {
   const { kept, removed } = reapLocks({
     locks: [lock("T1", "not-a-date"), lock("T2", "")],
     now: NOW,
   });
-  assert.equal(kept.length, 2);
-  assert.equal(removed.length, 0);
+  assert.equal(kept.length, 0);
+  assert.equal(removed.length, 2);
 
   const invalidNow = reapLocks({
     locks: [lock("T1", "2026-06-25T09:00:00Z")],
@@ -93,4 +98,39 @@ test("claimRanOut matches only the author's own lock on the row and kind", () =>
     claimRanOut(expired, { ...key, kind: "validation" }, "bob"),
     false,
   );
+});
+
+test("reapedLocks lists reaped locks not claimed again by their holder", () => {
+  const row = (
+    task_id: string,
+    user_id: string,
+    action: string,
+    outcome: string,
+    detail = "",
+  ): HistoryRow => ({
+    timestamp: NOW,
+    task_id,
+    subtask_id: "",
+    user_id,
+    action,
+    outcome,
+    detail,
+  });
+  const reaped = reapedLocks([
+    row("T1", "bob", "claim_encoding", "accepted"),
+    row("T1", "bob", "reap", "released", "encoding"),
+    row("T2", "bob", "reap", "released_with_work", "encoding"),
+    row("T2", "bob", "claim_encoding", "accepted"),
+    row("T3", "bob", "reap", "released", "encoding"),
+    row("T3", "bob", "claim_encoding", "rejected", "max_claims"),
+    row("T4", "bob", "reap", "released", "encoding"),
+    row("T4", "carol", "claim_encoding", "accepted"),
+  ]);
+  assert.deepEqual(
+    reaped.map((l) => `${l.task_id}:${l.user_id}:${l.kind}`),
+    ["T1:bob:encoding", "T3:bob:encoding", "T4:bob:encoding"],
+  );
+  const key = { task_id: "T1", subtask_id: "", kind: "encoding" };
+  assert.equal(claimRanOut(reaped, key, "bob"), true);
+  assert.equal(claimRanOut(reaped, { ...key, task_id: "T2" }, "bob"), false);
 });

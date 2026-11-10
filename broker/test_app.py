@@ -63,7 +63,7 @@ class BrokerTest(unittest.TestCase):
 
     def known_campaigns(self, *names):
         with self.client.session_transaction() as current:
-            current["campaignRepos"] = list(names)
+            current["campaignRepos"] = {name: time.time() for name in names}
 
     def test_return_path_is_same_origin_and_auth_error_preserves_query(self):
         self.assertEqual(
@@ -87,11 +87,11 @@ class BrokerTest(unittest.TestCase):
             (RuntimeError("x"), "failed"),
         ):
             with self.client.session_transaction() as current:
-                current["return_to"] = "/campaign/my-campaign?view=table"
+                current["return_to:s1"] = "/campaign/my-campaign?view=table"
             with patch.object(
                 broker.github, "authorize_access_token", side_effect=error
             ):
-                response = self.client.get("/authorize")
+                response = self.client.get("/authorize?state=s1")
             location = urlsplit(response.headers["Location"])
             self.assertEqual(location.path, "/campaign/my-campaign")
             self.assertEqual(
@@ -191,7 +191,7 @@ class BrokerTest(unittest.TestCase):
             )
             # Another key reads the session without its token.
             other = broker.SessionFiles(directory, "other-secret")
-            self.assertEqual(other.get("in"), {"userLogin": "a"})
+            self.assertEqual(other.get("in"), {})
 
     def test_expired_sessions_have_their_tokens_revoked(self):
         def run_now(target, args, daemon):
@@ -481,7 +481,11 @@ class BrokerTest(unittest.TestCase):
         def lookup(url, **_options):
             name = url.split("/repos/", 1)[1]
             body = repositories.get(name)
-            return SimpleNamespace(ok=body is not None, json=lambda: body)
+            return SimpleNamespace(
+                ok=body is not None,
+                status_code=200 if body is not None else 404,
+                json=lambda: body,
+            )
 
         upstream = SimpleNamespace(
             content=b'{"full_name":"alice/new-campaign"}',
@@ -555,6 +559,44 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 504)
         request_upstream.assert_not_called()
 
+    def test_proxy_passes_on_github_failures_of_the_campaign_lookup(self):
+        self.authenticate()
+        for status, headers, expected in (
+            (401, {}, 401),
+            (
+                403,
+                {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "99"},
+                403,
+            ),
+            (500, {}, 502),
+        ):
+            failed = SimpleNamespace(
+                ok=False,
+                status_code=status,
+                headers=headers,
+                json=lambda: {"message": "GitHub says no"},
+            )
+            with patch.object(
+                broker.requests, "get", return_value=failed
+            ), patch.object(broker.requests, "request") as request_upstream:
+                response = self.client.post(
+                    "/proxy/api.github.com/repos/o/r/git/blobs", json={}
+                )
+            self.assertEqual(response.status_code, expected, status)
+            self.assertNotEqual(
+                (response.get_json() or {}).get("error"),
+                "Writes go to campaign repositories only",
+            )
+            if status == 403:
+                self.assertEqual(response.headers["X-RateLimit-Reset"], "99")
+            if expected != 502:
+                self.assertEqual(
+                    response.headers.get("X-Lets-Encode-Upstream"),
+                    "github",
+                    status,
+                )
+            request_upstream.assert_not_called()
+
     def test_proxy_refuses_dot_segments(self):
         self.authenticate()
         with patch.object(broker.requests, "request") as upstream:
@@ -606,6 +648,69 @@ class BrokerTest(unittest.TestCase):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "broker")
         self.assertEqual(response.get_json()["source"], "broker")
+
+    def test_proxy_follows_a_renamed_repository_after_the_same_checks(self):
+        self.authenticate()
+
+        def redirect(location):
+            return SimpleNamespace(
+                content=b"",
+                status_code=301,
+                raw=SimpleNamespace(headers={"Location": location}),
+            )
+
+        ok = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        lookup = SimpleNamespace(
+            ok=True, status_code=200, json=lambda: {"full_name": "o/new-name"}
+        )
+        moved = "https://api.github.com/repositories/42"
+
+        with patch.object(
+            broker.requests, "get", return_value=lookup
+        ) as lookups, patch.object(
+            broker.requests,
+            "request",
+            side_effect=[redirect(moved + "/contents/a.csv?ref=abc"), ok],
+        ) as request_upstream:
+            response = self.client.get(
+                "/proxy/api.github.com/repos/o/old-name/contents/a.csv?ref=abc"
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            lookups.call_args.args[0], "https://api.github.com/repositories/42"
+        )
+        self.assertEqual(
+            request_upstream.call_args.args,
+            (
+                "GET",
+                "https://api.github.com/repos/o/new-name/contents/a.csv?ref=abc",
+            ),
+        )
+
+        # The current name's endpoint is checked like any other.
+        with patch.object(
+            broker.requests, "get", return_value=lookup
+        ), patch.object(
+            broker.requests, "request", side_effect=[redirect(moved + "/hooks")]
+        ) as request_upstream:
+            with self.assertLogs(broker.app.logger.name, level="WARNING"):
+                response = self.client.get(
+                    "/proxy/api.github.com/repos/o/old-name"
+                )
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(request_upstream.call_count, 1)
+
+        # A redirect anywhere else is not followed.
+        with patch.object(
+            broker.requests,
+            "request",
+            side_effect=[redirect("https://evil.test/repos/o/r")],
+        ) as request_upstream:
+            response = self.client.get("/proxy/api.github.com/repos/o/old-name")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(request_upstream.call_count, 1)
 
     def test_proxy_maps_upstream_timeouts(self):
         self.authenticate()
@@ -896,6 +1001,22 @@ class BrokerTest(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 415)
 
+        # A source's error page is passed on as its status, marked as the
+        # source's, without its body.
+        response, _ = self.iiif_get(
+            "https://ex.test/page",
+            self.iiif_response(
+                b"<html>busy</html>",
+                "text/html",
+                status=429,
+                headers={"retry-after": "30"},
+            ),
+        )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response.headers["X-Lets-Encode-Upstream"], "iiif")
+        self.assertEqual(response.headers["Retry-After"], "30")
+        self.assertNotIn(b"busy", response.data)
+
         # A redirect to a private address must be caught on the second hop.
         redirect = SimpleNamespace(
             status_code=302,
@@ -1016,6 +1137,8 @@ class BrokerTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200, path)
             upstream.assert_called_once()
         self.assertEqual(self.relay_store.used("alice", "omr_runs"), 1)
+        # The deleted page's record went with it.
+        self.assertIsNone(self.relay_store.page_creator("p1"))
 
         # An execution not started on the page through the relay, and every
         # call on another login's page, are refused before anything reaches
@@ -1182,6 +1305,72 @@ class BrokerTest(unittest.TestCase):
         with self.client.session_transaction() as current:
             self.assertEqual(current["githubToken"], "fresh-token")
 
+    def test_two_logins_started_at_once_each_return_where_they_started(self):
+        def state_of(response):
+            query = parse_qs(urlsplit(response.headers["Location"]).query)
+            return query["state"][0]
+
+        first = state_of(self.client.get("/login?return_to=/a"))
+        second = state_of(self.client.get("/login?return_to=/b"))
+        token = {"access_token": "fresh-token"}
+        user = SimpleNamespace(ok=True, json=lambda: {"login": "alice"})
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                response = self.client.get(f"/authorize?state={first}")
+        self.assertEqual(urlsplit(response.headers["Location"]).path, "/a")
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                response = self.client.get(f"/authorize?state={second}")
+        self.assertEqual(urlsplit(response.headers["Location"]).path, "/b")
+
+    def test_a_login_github_does_not_name_is_refused(self):
+        self.client.get("/login?return_to=/a")
+        token = {"access_token": "fresh-token"}
+        user = SimpleNamespace(ok=True, json=lambda: {"login": ""})
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(broker.github, "get", return_value=user):
+                response = self.client.get("/authorize")
+        location = urlsplit(response.headers["Location"])
+        self.assertEqual(parse_qs(location.query), {"auth_error": ["user"]})
+        with self.client.session_transaction() as current:
+            self.assertNotIn("githubToken", current)
+
+    def test_a_login_whose_user_lookup_fails_ends_as_a_login_error(self):
+        self.client.get("/login?return_to=/a")
+        token = {"access_token": "fresh-token"}
+        with patch.object(
+            broker.github, "authorize_access_token", return_value=token
+        ):
+            with patch.object(
+                broker.github,
+                "get",
+                side_effect=broker.requests.ConnectionError("down"),
+            ):
+                response = self.client.get("/authorize")
+        location = urlsplit(response.headers["Location"])
+        self.assertEqual(parse_qs(location.query), {"auth_error": ["user"]})
+
+    def test_a_campaign_repo_is_looked_up_again_after_a_while(self):
+        with broker.app.test_request_context():
+            broker.session["githubToken"] = "server-side-token"
+            broker.session["campaignRepos"] = {
+                "o/fresh": time.time(),
+                "o/stale": time.time() - broker.CAMPAIGN_REPO_CHECK_S - 1,
+            }
+            with patch.object(
+                broker, "fetch_repository", return_value=None
+            ) as lookup:
+                self.assertTrue(broker.campaign_repository("o/fresh"))
+                lookup.assert_not_called()
+                self.assertFalse(broker.campaign_repository("o/stale"))
+                lookup.assert_called_once_with("o/stale")
+
     def test_logout_revokes_then_clears_the_session(self):
         self.authenticate()
         with patch.object(broker, "revoke_github_token") as revoke:
@@ -1191,6 +1380,18 @@ class BrokerTest(unittest.TestCase):
         with self.client.session_transaction() as current:
             self.assertNotIn("githubToken", current)
             self.assertNotIn("userLogin", current)
+
+    def test_a_revoke_github_refuses_is_logged(self):
+        for status, logged in ((204, False), (404, False), (401, True)):
+            with patch.object(
+                broker.requests,
+                "delete",
+                return_value=SimpleNamespace(status_code=status),
+            ), self.assertLogs(broker.app.logger, "WARNING") as logs:
+                broker.app.logger.warning("marker")
+                broker.revoke_github_token("token")
+            revoke_lines = [r for r in logs.output if "revoke_failed" in r]
+            self.assertEqual(bool(revoke_lines), logged, status)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@
 // Usage: GH_TOKEN=... node scripts/use-branch.ts <owner>/<repo> [<branch> [<workflow-ref>]]
 
 import { execFileSync } from "node:child_process";
+import { configString } from "../src/lib/campaign-tables.ts";
+import { encodeRepoPath } from "../src/lib/forge/github-rest.ts";
 
 const API = "https://api.github.com";
 const CONFIG = "config.yaml";
@@ -77,7 +79,7 @@ interface FileInfo {
 async function readFile(path: string): Promise<{ sha: string; text: string }> {
   const file = await api<FileInfo>(
     "GET",
-    `/repos/${owner}/${repo}/contents/${path}`,
+    `/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}`,
   );
   return {
     sha: file.sha,
@@ -91,7 +93,7 @@ async function writeFile(
   text: string,
   message: string,
 ): Promise<void> {
-  await api("PUT", `/repos/${owner}/${repo}/contents/${path}`, {
+  await api("PUT", `/repos/${owner}/${repo}/contents/${encodeRepoPath(path)}`, {
     message,
     sha,
     content: Buffer.from(text, "utf8").toString("base64"),
@@ -109,7 +111,7 @@ function withAutomationRef(yaml: string, ref: string): string {
     (l, i) => i > start && i < end && /^\s+ref:/.test(l),
   );
   if (at < 0) throw new Error(`${CONFIG} has no automation.ref.`);
-  lines[at] = `  ref: "${ref}"`;
+  lines[at] = `  ref: ${JSON.stringify(ref)}`;
   return lines.join("\n");
 }
 
@@ -121,9 +123,7 @@ function withWorkflowRef(yaml: string, ref: string): string {
 }
 
 const config = await readFile(CONFIG);
-const central = /^\s+central_repository:\s*"?([^"\s]+)"?/m.exec(
-  config.text,
-)?.[1];
+const central = configString(config.text, "central_repository");
 if (!central)
   throw new Error(`${CONFIG} has no automation.central_repository.`);
 // Both refs must exist in the central repository; a missing one fails every run.

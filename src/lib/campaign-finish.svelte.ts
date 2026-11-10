@@ -26,6 +26,7 @@ import {
   buildCommentCsv,
   buildCampaignReadme,
   piecePath,
+  uploadPath,
   usesOmr,
   type PieceSurfaces,
 } from "./campaign-init.ts";
@@ -37,12 +38,16 @@ import {
   relinkFacsimileImages,
   replaceMeiHead,
 } from "./mei-facsimile.ts";
-import { partitionPages, type DetectedPage } from "./pieces.ts";
+import { campaignPieces, partitionPages, type DetectedPage } from "./pieces.ts";
 import {
   wizard,
   clearFinishedSetup,
+  currentSetup,
+  draftSnapshot,
+  saveDraft,
   COPYRIGHT_ACKNOWLEDGEMENT,
 } from "./wizard.svelte.ts";
+import { discardDraft } from "./wizard-draft.ts";
 import { ProgressLog } from "./progress-log.svelte.ts";
 import type { FileChange } from "./forge/types.ts";
 import {
@@ -61,7 +66,7 @@ import {
  */
 export function finishSummary(owner: string): string {
   const name = wizard.handle.trim();
-  const pieces = wizard.pieces.length;
+  const pieces = campaignPieces(wizard.pieces).length;
   const pages = wizard.images.length;
   const content = [
     `${pieces} piece${pieces === 1 ? "" : "s"}`,
@@ -96,9 +101,10 @@ export class CampaignFinisher {
   /**
    * Every page with its size and, for the measure-detection preparation, its
    * detected measure boxes. One result per page image, not per piece: two
-   * pieces sharing a page share its measures. Pages the detector fails on come
-   * back empty rather than failing the whole campaign. With OMR the measures
-   * are found later, in each piece's layout task, so only the sizes are read.
+   * pieces sharing a page share its measures. A page the detector fails on is
+   * tried once more; a second failure stops the finish before anything is
+   * created. With OMR the measures are found later, in each piece's layout
+   * task, so only the sizes are read.
    */
   private async measurePages(): Promise<DetectedPage[]> {
     const pagesOut: DetectedPage[] = [];
@@ -118,7 +124,18 @@ export class CampaignFinisher {
         `Detecting measures on page ${i + 1} of ${wizard.images.length}`,
       );
       this.log.detail(name(i));
-      const { width, height, boxes, tookMs } = await this.detection.page(i);
+      let result = await this.detection.page(i);
+      if (result.detectorFailed) {
+        this.log.detail(
+          `${name(i)}: the measure detector failed, trying again`,
+        );
+        result = await this.detection.page(i);
+      }
+      if (result.detectorFailed)
+        throw new Error(
+          `the measure detector failed on page ${i + 1} (${name(i)}). Try again in a few minutes`,
+        );
+      const { width, height, boxes, tookMs } = result;
       this.log.detail(
         boxes.length
           ? `${name(i)}: ${boxes.length} measure(s) found`
@@ -141,7 +158,7 @@ export class CampaignFinisher {
     this.error = null;
     const user = auth.user;
     const f = forge();
-    const claim = wizard.claim;
+    let claim = wizard.claim;
     if (this.busy) return;
     if (!user || !f) {
       this.error =
@@ -158,6 +175,15 @@ export class CampaignFinisher {
 
     this.busy = true;
     this.log.clear();
+    // The run reads this setup from the wizard as it goes; once another setup
+    // is opened it stops before reading the other one's entries.
+    const setup = currentSetup();
+    const sameSetup = () => {
+      if (setup !== currentSetup())
+        throw new Error(
+          "another setup was opened while this one was being finished",
+        );
+    };
     const logRepo = ({ step, detail }: ProgressUpdate) => {
       if (step) this.log.step(step);
       if (detail) this.log.detail(detail);
@@ -177,14 +203,23 @@ export class CampaignFinisher {
       // that fails leaves nothing behind.
       if (!committed && !this.detected)
         this.detected = await this.measurePages();
+      sameSetup();
       const repo = await ensureCampaignRepo(f, user.login, logRepo);
+      // Creating the repository may have renewed the reservation.
+      sameSetup();
+      claim = wizard.claim ?? claim;
+      sameSetup();
       if (!committed) {
+        // The commit goes on this head only: the same setup finished from
+        // another tab in the meantime refuses it instead of being replaced.
+        const { sha: base } = await f.getRepoHead(repo.owner, repo.name);
         const detected = this.detected ?? [];
 
         // Every piece is published under the campaign's licence, so it is stated
         // in each piece's header as well as in the config.
         const license = wizard.license;
-        const split = partitionPages(wizard.pieces, detected);
+        const pieces = campaignPieces(wizard.pieces);
+        const split = partitionPages(pieces, detected);
         // The committed pages, as an uploaded encoding's facsimile is relinked to
         // them: every one was measured at its committed size.
         const images = detected.map((page) => ({
@@ -195,12 +230,12 @@ export class CampaignFinisher {
         const surfaces: PieceSurfaces = {};
         const scores: FileChange[] = [];
 
-        wizard.pieces.forEach((piece, i) => {
+        pieces.forEach((piece, i) => {
           const name = piece.meta.title.trim() || pieceIdLabel(piece.id);
           // Building a score is a string operation: it reports what it did, not
           // how long it took.
           this.log.step(
-            `Building the score for ${name} (${i + 1} of ${wizard.pieces.length})`,
+            `Building the score for ${name} (${i + 1} of ${pieces.length})`,
             {
               timed: false,
             },
@@ -268,6 +303,19 @@ export class CampaignFinisher {
             path: piecePath(piece.id),
             content: buildFacsimileMei({ ...model, headXml: head }),
           });
+          // The encoding the piece starts from is kept as uploaded; its
+          // measures are aligned with the corrected ones later.
+          if (piece.encodingName) {
+            const encoding = wizard.encodings.find(
+              (e) => e.name === piece.encodingName,
+            );
+            if (!encoding)
+              throw new Error(
+                `The encoding for ${piece.id} is no longer available.`,
+              );
+            this.log.detail(`starts from the encoding ${encoding.name}`);
+            scores.push({ path: uploadPath(piece.id), content: encoding.mei });
+          }
           if (!usesOmr(wizard.preparation))
             surfaces[piece.id] = split[i].measuredSurfaces;
         });
@@ -293,7 +341,7 @@ export class CampaignFinisher {
             rightsAcknowledged: wizard.copyrightAccepted
               ? COPYRIGHT_ACKNOWLEDGEMENT.version
               : "",
-            pieces: wizard.pieces.map((piece) => ({
+            pieces: pieces.map((piece) => ({
               id: piece.id,
               kind: piece.kind,
               path: piecePath(piece.id),
@@ -302,6 +350,9 @@ export class CampaignFinisher {
                 : {}),
               ...(piece.kind === "facsimile"
                 ? { preparation: wizard.preparation }
+                : {}),
+              ...(piece.kind === "facsimile" && piece.encodingName
+                ? { encoding: uploadPath(piece.id) }
                 : {}),
               zones: piece.zones.map((zone) => ({
                 // config records the source's page numbers, 1-based.
@@ -352,18 +403,29 @@ export class CampaignFinisher {
             contentBase64: await blobToBase64(image.blob),
           });
         }
+        sameSetup();
         this.log.step(`Committing the campaign (${files.length} file(s))`);
-        await f.commitFiles(
-          repo.owner,
-          repo.name,
-          files,
-          "Initialise campaign",
-          {
-            deletePaths: TEMPLATE_ONLY_PATHS,
-            onUpload: (done, total) =>
-              this.log.detail(`uploading ${done} of ${total}`),
-          },
-        );
+        try {
+          await f.commitFiles(
+            repo.owner,
+            repo.name,
+            files,
+            "Initialise campaign",
+            {
+              baseSha: base,
+              deletePaths: TEMPLATE_ONLY_PATHS,
+              onUpload: (done, total) =>
+                this.log.detail(`uploading ${done} of ${total}`),
+            },
+          );
+        } catch (e) {
+          if (
+            !/\(422 PATCH /.test((e as Error).message) ||
+            (await f.getRepoFile(repo.owner, repo.name, CONFIG_PATH)) == null
+          )
+            throw e;
+          this.log.step("The campaign was committed from another tab");
+        }
       }
 
       // There is a campaign now, so the name it was reserved under becomes its
@@ -386,10 +448,16 @@ export class CampaignFinisher {
               ? `Everything was committed to ${repo.full_name}, but the repository has since been renamed on GitHub. Rename it back to “${claim.name}”, then try again.`
               : registration === "repo_taken"
                 ? `Everything was committed to ${repo.full_name}, but that repository is already registered under another campaign name.`
-                : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered, so the campaign has no address yet. Try again.`;
+                : `Everything was committed to ${repo.full_name}, but the name “${claim.name}” could not be registered${typeof registration === "object" && registration.error ? ` (${registration.error})` : ""}, so the campaign has no address yet. Try again.`;
         this.busy = false;
         this.log.fail();
         return;
+      }
+      // The campaign is reachable under its name from here on; the setup can
+      // only be finished, not discarded.
+      if (setup === currentSetup()) {
+        wizard.claim = { ...claim, registered: true };
+        saveDraft(user.login, draftSnapshot());
       }
 
       // The topic is what puts a campaign in the listing, so a campaign missing it
@@ -416,8 +484,16 @@ export class CampaignFinisher {
       // is cleared once the campaign has opened, since emptying the wizard while
       // the step is still on screen would show the first step again.
       this.log.done();
-      await goto(`/${repo.name}`);
-      clearFinishedSetup();
+      // Finished after another setup was opened: only this one's draft goes.
+      if (setup !== currentSetup()) {
+        discardDraft(user.login, claim.name);
+        this.busy = false;
+        return;
+      }
+      // A failed client-side navigation must not report the finished
+      // campaign as failed: the page is loaded afresh instead.
+      await goto(`/${repo.name}`).catch(() => location.assign(`/${repo.name}`));
+      clearFinishedSetup(user.login);
     } catch (err) {
       console.error("Finishing the campaign failed:", (err as Error).message);
       this.error = `Could not finish the campaign: ${(err as Error).message}`;

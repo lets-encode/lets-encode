@@ -8,7 +8,12 @@ export const load: LayoutLoad = ({ params, url }) => {
   const name = params.campaign.toLowerCase();
   // A segment of another shape addresses no campaign; the pages also build
   // links from it.
-  if (!isValidHandle(name)) error(404, "Not found");
+  if (!isValidHandle(name))
+    error(404, {
+      message: `${params.campaign} can't be a campaign name`,
+      detail:
+        "Names are 3–40 characters: lowercase letters, digits, and single internal hyphens.",
+    });
   if (name !== params.campaign)
     redirect(
       308,

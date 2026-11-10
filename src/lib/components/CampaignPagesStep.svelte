@@ -16,8 +16,10 @@
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { resolvePages } from "$lib/prepare-images.ts";
+  import { followPages } from "$lib/pieces.ts";
   import {
     wizard,
+    currentSetup,
     draftSnapshot,
     keepDraftImages,
     saveDraft,
@@ -27,7 +29,9 @@
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
+  import ProgressBar from "./ProgressBar.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ViewerToolbar from "./ViewerToolbar.svelte";
   import ZoomLevel, {
     fitPageZoom,
     nearFit,
@@ -263,6 +267,11 @@
     return wizard.candidates.map((page) => (page.include ? ++n : 0));
   });
 
+  // A campaign needs page images or an encoding to work from.
+  const noMaterial = $derived(
+    wizard.candidates.length > 0 && !chosen.length && !wizard.encodings.length,
+  );
+
   // Only an attempt that stopped part way is a retry.
   const continueLabel = $derived(
     busy
@@ -271,7 +280,9 @@
         ? "Try again"
         : chosen.length
           ? `Use ${chosen.length} page${chosen.length === 1 ? "" : "s"}`
-          : "Continue without pages",
+          : noMaterial
+            ? "Continue"
+            : "Continue without pages",
   );
 
   // The material toolbar names what the pages came from.
@@ -323,6 +334,8 @@
     busy = true;
     failed = false;
     log.clear();
+    // The pages belong to this setup; another one opened meanwhile is left alone.
+    const setup = currentSetup();
     try {
       // The chosen pages are fetched and rendered at committing size here; the
       // final step commits them to the repository it creates.
@@ -337,13 +350,25 @@
             { brokerUrl: provider.brokerUrl },
           )
         : [];
+      if (setup !== currentSetup()) {
+        busy = false;
+        return;
+      }
       // Only a run that had pages to choose from replaces what the step already
       // produced. A continued setup, whose files cannot be picked again, keeps
       // the images it already holds.
       if (wizard.candidates.length) {
+        // Regions marked on the pieces stay on their pages.
+        const ids = chosen.map((page) => page.id);
+        wizard.pieces = followPages(wizard.pieces, wizard.imageCandidates, ids);
         wizard.images = images;
+        wizard.imageCandidates = ids;
         log.step("Keeping the pages in this browser", { timed: false });
-        await keepDraftImages(wizard.handle);
+        await keepDraftImages(user.login, wizard.handle);
+        if (setup !== currentSetup()) {
+          busy = false;
+          return;
+        }
       }
       saveDraft(user.login, draftSnapshot());
 
@@ -368,41 +393,41 @@
 
 {#snippet material()}
   <div class="material-card">
-    <div class="material-toolbar">
+    <ViewerToolbar>
       {#if sourceName}
         <span class="toolbar-name">{sourceName}</span>
       {/if}
-      <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
       <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
-      <div class="toolbar-rule"></div>
-      <span class="tbtn-pair keep">
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={chosen.length === wizard.candidates.length}
-          aria-pressed={chosen.length === wizard.candidates.length}
-          aria-label="Keep all"
-          title="Keep all"
-          onclick={() => setAll(true)}
-          disabled={busy}
-        >
-          <Icon name="pages" size={16} />
-        </button>
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={chosen.length === 0}
-          aria-pressed={chosen.length === 0}
-          aria-label="Keep none"
-          title="Keep none"
-          onclick={() => setAll(false)}
-          disabled={busy}
-        >
-          <Icon name="page-none" size={16} />
-        </button>
-      </span>
-    </div>
+      {#snippet end()}
+        <span class="tbtn-pair">
+          <button
+            type="button"
+            class="tbtn tbtn-icon"
+            class:on={chosen.length === wizard.candidates.length}
+            aria-pressed={chosen.length === wizard.candidates.length}
+            aria-label="Keep all"
+            title="Keep all"
+            onclick={() => setAll(true)}
+            disabled={busy}
+          >
+            <Icon name="pages" size={16} />
+          </button>
+          <button
+            type="button"
+            class="tbtn tbtn-icon"
+            class:on={chosen.length === 0}
+            aria-pressed={chosen.length === 0}
+            aria-label="Keep none"
+            title="Keep none"
+            onclick={() => setAll(false)}
+            disabled={busy}
+          >
+            <Icon name="page-none" size={16} />
+          </button>
+        </span>
+      {/snippet}
+    </ViewerToolbar>
     <div
       class="material-body"
       bind:clientWidth={bodyW}
@@ -536,16 +561,17 @@
      the card's body. -->
 {#snippet minibar()}
   <div class="minibar">
-    <div class="progress">
-      <div
-        class="progress-fill"
-        style="width: {(chosen.length / wizard.candidates.length) * 100}%"
-      ></div>
-    </div>
-    <span class="minibar-count"
-      ><b>{chosen.length}</b> of {wizard.candidates.length} kept</span
-    >
+    <ProgressBar
+      done={chosen.length}
+      total={wizard.candidates.length}
+      label={keptLabel}
+    />
   </div>
+{/snippet}
+{#snippet keptLabel()}
+  <span class="minibar-count"
+    ><b>{chosen.length}</b> of {wizard.candidates.length} kept</span
+  >
 {/snippet}
 
 <WizardCard
@@ -556,7 +582,10 @@
   onBack={previousStep}
   backDisabled={busy}
   onNext={prepareAndContinue}
-  nextDisabled={busy}
+  nextDisabled={busy || noMaterial}
+  nextReason={!busy && noMaterial
+    ? "Keep at least one page, or upload an encoding."
+    : undefined}
   nextLabel={continueLabel}
   material={wizard.candidates.length ? material : undefined}
   info={hints}
@@ -576,13 +605,12 @@
       <span class="count">{chosen.length}</span>
       <span class="count-of">of {wizard.candidates.length} pages kept</span>
     </div>
-    <div class="progress">
-      <div
-        class="progress-fill"
-        style="width: {wizard.candidates.length
-          ? (chosen.length / wizard.candidates.length) * 100
-          : 0}%"
-      ></div>
+    <div class="keptbar">
+      <ProgressBar
+        done={chosen.length}
+        total={wizard.candidates.length}
+        label={null}
+      />
     </div>
     {@render hints()}
   {/if}
@@ -616,26 +644,9 @@
     font-size: 14px;
     color: var(--ink-faint);
   }
-  .progress {
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-tint);
-    margin-top: 10px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--green));
-  }
+  .keptbar,
   .minibar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
     margin-top: 10px;
-  }
-  .minibar .progress {
-    flex: 1;
-    margin: 0;
   }
   /* A window 500px tall or less shows the count in the step rail beside the
      card, so the pages get this row too. */
@@ -661,17 +672,6 @@
     gap: 9px;
     font-size: 12.5px;
     color: var(--ink-soft);
-  }
-
-  /* Phone-width panes: the view controls start the row and Keep all / Keep
-     none end it. */
-  @container material (max-width: 479px) {
-    .material-toolbar .toolbar-gap {
-      display: none;
-    }
-    .keep {
-      margin-left: auto;
-    }
   }
 
   /* ---- Page tiles in the material pane ---- */

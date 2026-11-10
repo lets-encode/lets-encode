@@ -108,7 +108,7 @@
     >
       <span class="dot"></span>
       <span class="railname">All pieces</span>
-      <span class="openpill">{openCount} open</span>
+      <span class="countpill openpill">{openCount} open</span>
     </button>
     {#each pieces as piece, index (piece.path)}
       {@const count = attention.get(piece.path) ?? 0}
@@ -125,21 +125,7 @@
           <span class="dot"></span>
           <span class="railname">{clipTitle(pieceLabel(piece))}</span>
           {#if count > 0}
-            <span class="attn">
-              <svg
-                width="10"
-                height="10"
-                viewBox="0 0 16 16"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M14 7.7c0 2.9-2.7 5.2-6 5.2-.8 0-1.6-.1-2.3-.4L2.5 13.7l.9-2.6C2.5 10.2 2 9 2 7.7 2 4.8 4.7 2.5 8 2.5s6 2.3 6 5.2z"
-                /></svg
-              >{count}</span
-            >
+            <span class="attn"> <Icon name="comment" size={10} />{count}</span>
           {:else if complete(piece.path)}
             <span class="alldone"><Icon name="check" size={11} /></span>
           {/if}
@@ -206,11 +192,6 @@
   }
   .openpill {
     margin-left: auto;
-    font-size: 11px;
-    font-weight: 600;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 1px 7px;
   }
   .railtop {
     display: flex;
@@ -284,9 +265,6 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--danger);
-  }
-  .attn svg {
-    flex: none;
   }
   .alldone {
     flex: none;

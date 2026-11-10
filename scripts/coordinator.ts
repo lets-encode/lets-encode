@@ -4,9 +4,9 @@
 // applies the result with optimistic concurrency. Every outcome — accepted,
 // rejected, reaped — is appended to the campaign's history table, except the
 // rejection of a pull request that does not parse as any operation
-// (AUDIT_FREE_REJECTS) and the closing of a pull request over the per-author
-// cap. Scheduled runs reap stale locks and then process any open pull request
-// whose own run was lost (runCatchUp).
+// (AUDIT_FREE_REJECTS). Scheduled runs process any open pull request whose
+// own run was lost or that its run left open over the per-author cap
+// (runCatchUp), and then reap stale locks.
 // See DESIGN.md §4 (the caller) & §6 (PR contract).
 //
 // Runs in the BASE (campaign) repo's context with a write token. The pull
@@ -61,35 +61,33 @@ import {
   checkResolveComment,
   checkReviewEdit,
   checkValidation,
+  completeReachedReviews,
   resolveChangeRequests,
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
-import {
-  spliceOpeningScoreDef,
-  splicePage,
-  splicePageSpan,
-} from "../src/lib/mei-page-splice.ts";
 import { measuredSurfaceIds } from "../src/lib/mei-facsimile.ts";
+import { BaseScoreError } from "../src/lib/mei-page-splice.ts";
 import { replanPageTasks } from "../src/lib/campaign-plan.ts";
-import {
-  applicationNamesIn,
-  recordApplications,
-  recordContribution,
-} from "../src/lib/mei-provenance.ts";
-import { reapLocks } from "../src/lib/campaign-reaper.ts";
+import type { Contribution } from "../src/lib/mei-provenance.ts";
+import { reapedLocks, reapLocks } from "../src/lib/campaign-reaper.ts";
+import type { ReapLocksResult } from "../src/lib/campaign-reaper.ts";
+import { isPreTask, pageOfLocator } from "../src/lib/campaign-graph.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
-  checksOpening,
+  assembleSubmission,
   claimPullRequest,
   classifyPullRequest,
+  heldByOpenOperation,
   isAutomaticCommit,
+  locksAtOpening,
+  contractMarker,
+  rejectionOutcome,
   isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkBranch,
   keptWorkSince,
-  pieceFieldForPath,
-  pieceKindForPath,
+  lockIntentFromRow,
   MAX_OPEN_PRS_PER_AUTHOR,
   priorDecision,
   REASON_TEXT,
@@ -98,13 +96,13 @@ import {
   resolveEncodingTask,
   resolvedCommentFromPatch,
   shouldCleanupSubmission,
-  touchesCampaignPaths,
+  isCampaignOperation,
   validationIntentFromPatch,
   validationVerdict,
 } from "../src/lib/coordinator-policy.ts";
 import {
   compareCommitMessages,
-  getCommitMessage,
+  getPullRequestCommitMessages,
   getPullRequestDetails,
   getRepoFile,
   getRepoHead,
@@ -117,6 +115,7 @@ import {
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
+  listWorkflowRuns,
 } from "../src/lib/forge/github-rest.ts";
 import type {
   FileChange,
@@ -124,6 +123,7 @@ import type {
   PullRequestFile,
 } from "../src/lib/forge/github-rest.ts";
 import { validateMei } from "./mei-validate.ts";
+import type { MeiCheck } from "../src/lib/mei-schema.ts";
 
 const token = process.env.GH_TOKEN ?? "";
 const [owner, repo] = (process.env.BASE_REPO ?? "").split("/");
@@ -160,6 +160,19 @@ let headRef = "";
 // comments were submitted in even when their runs finish in another order;
 // lock, state, history rows and a fail's comment carry the processing time.
 let submittedAt = "";
+// Comment on pull request `number` (the bound one by default) and close it.
+// Every verdict comment ends with the automation's contract number, which the
+// app compares with its own.
+function commentAndClose(body: string, number = prNumber): Promise<void> {
+  return commentAndClosePr(
+    token,
+    owner,
+    repo,
+    number,
+    `${body}\n\n${contractMarker()}`,
+  );
+}
+
 function bindPullRequest(pr: PullRequestContext): void {
   prNumber = pr.number;
   author = pr.author;
@@ -178,7 +191,7 @@ function coAuthored(message: string): string {
   return `${message}\n\nCo-authored-by: ${authorLogin} <${author}+${authorLogin}@users.noreply.github.com>`;
 }
 
-const MAX_ATTEMPTS = 5;
+const MAX_ATTEMPTS = 10;
 // The scheduled catch-up pass (runCatchUp) picks up open pull requests older
 // than the minimum age — a run of their own may still be under way before
 // that — and younger than the maximum, processing at most CATCHUP_MAX_PRS
@@ -246,6 +259,32 @@ function priorVerdict(
   return { ok, reason: ok ? undefined : row.detail, row };
 }
 
+// The campaign's open pull requests as this run last listed them.
+let openPullRequests: OpenPullRequest[] = [];
+
+// Split `locks` into those in force at `now` and those dropped as expired. A
+// lock past its `expires` stays while another open pull request of its holder
+// still needs it (heldByOpenOperation): that pull request's run judges it at
+// its opening time. The bound pull request itself is decided against
+// locksAtOpening, where such a lock of its author counts as expired.
+function reapAt(locks: LockRow[], now: string): ReapLocksResult {
+  const { removed } = reapLocks({ locks, now });
+  const nowMs = Date.parse(now);
+  const dropped = removed.filter(
+    (lock) =>
+      !heldByOpenOperation(
+        lock,
+        openPullRequests.filter((pr) => pr.number !== prNumber),
+        nowMs,
+        CATCHUP_MAX_AGE_MS,
+      ),
+  );
+  return {
+    kept: locks.filter((lock) => !dropped.includes(lock)),
+    removed: dropped,
+  };
+}
+
 // The history rows for locks dropped as expired, stamped with the run's time;
 // `keptWork` holds the locks whose unsubmitted work was kept.
 const expiryRows = (
@@ -263,13 +302,24 @@ const expiryRows = (
     detail: lock.kind,
   }));
 
+// The locks a decision judged at the pull request's opening time counts as
+// expired: those past their `expires` at that time (`removed`), and those
+// another run reaped at its own, later time.
+const expiredLocks = (
+  removed: LockRow[],
+  historyCsv: string | null,
+): LockRow[] => [...removed, ...reapedLocks(parseHistoryCsv(historyCsv ?? ""))];
+
 // Keep the unsubmitted work of expired encoding claims: the claimer's task
 // branch `encode-<task>` — in the repo their claim's pull request came from —
 // is copied to the campaign branch `wip-<task>` when it holds commits of
 // their own. The copy starts from `main` at `sha` and carries the task's
-// score and side files; a later expiry replaces it. Returns the locks whose
-// work was kept. A lock whose work cannot be read or copied counts as having
-// none.
+// score and side files; a later expiry moves `wip-<task>` to the new copy once
+// it exists. Returns the locks whose work was kept. A claim whose pull request,
+// repo or branch no longer exists has none. A write GitHub refused for good
+// (REFUSED_WRITE), or any failure on the decision's last attempt, is logged
+// and its claim is released without kept work; any other failure throws, so
+// the attempt is retried.
 async function keepExpiredWork(
   removed: LockRow[],
   historyCsv: string | null,
@@ -315,46 +365,88 @@ async function keepExpiredWork(
         contents[i] == null ? [] : [{ path, content: contents[i]! }],
       );
       if (files.length === 0) continue;
-      const wip = keptWorkBranch(lock.task_id);
-      await deleteBranch(token, owner, repo, wip);
       await commitFiles(
         token,
         owner,
         repo,
         files,
         `Keep the unsubmitted work on ${lock.task_id} from an expired claim`,
-        { baseSha: sha, newBranch: wip },
+        {
+          baseSha: sha,
+          newBranch: keptWorkBranch(lock.task_id),
+          replaceBranch: true,
+        },
       );
       kept.add(lock);
     } catch (e) {
+      const message = (e as Error).message;
+      if (!lastAttempt && !REFUSED_WRITE.test(message)) throw e;
       console.warn(
-        `Could not keep the work on ${lock.task_id}: ${(e as Error).message}`,
+        `The unsubmitted work on ${lock.task_id} was not kept; its expired claim is released without it: ${message}`,
       );
     }
   }
   return kept;
 }
 
+// Schema checks by content: a retried decision that assembles the same score
+// again reuses the check, so a retry is not slowed by it.
+const meiChecks = new Map<string, Promise<MeiCheck>>();
+function checkMeiOnce(mei: string): Promise<MeiCheck> {
+  let check = meiChecks.get(mei);
+  if (!check) {
+    check = validateMei(mei);
+    meiChecks.set(mei, check);
+    check.catch(() => meiChecks.delete(mei));
+  }
+  return check;
+}
+
 // Random id for a comment row the automation authors.
 const newCommentId = (): string => crypto.randomUUID().slice(0, 8);
 
+// A write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
+const REFUSED_WRITE = /\((?:401|403|404) [A-Z]+ /;
+// A non-forced branch update GitHub refused because the branch moved on.
+const LOST_RACE = /\(422 PATCH \S*\/git\/refs\/heads\//;
+
+// Every attempt of a decision lost the commit to other runs' commits. The
+// pull request is closed with that reason rather than left open, so the
+// outcome its author is shown is the one that holds.
+class TablesBusy extends Error {}
+
+// The pull request's head moved while its encoding was being decided. The
+// run for that push, queued behind this one, decides it instead.
+class HeadMoved extends Error {}
+
+// Whether withRetry is running the last attempt of a decision.
+let lastAttempt = false;
+
 // Run one optimistic decide-and-apply pass, retrying when it throws — most
 // often the non-fast-forward commit failing because the branch head moved.
-// Every error is retried (up to MAX_ATTEMPTS): each attempt re-reads the
-// tables before writing, so retrying a transient read failure is equally safe.
-// Runs for different pull requests execute concurrently, so a random pause
-// before each retry spreads competing writers apart.
+// Every error is retried (up to MAX_ATTEMPTS) but a write GitHub refused for
+// good (401, 403 or 404): each attempt re-reads the tables before writing, so
+// retrying a transient read failure is equally safe.
+// Runs for different pull requests execute concurrently — several at once when
+// operations are submitted in quick succession — so a random pause that grows
+// with each retry (up to 8 s) spreads competing writers apart until each has
+// committed.
 async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
   for (let i = 0; ; i++) {
+    lastAttempt = i === MAX_ATTEMPTS - 1;
     try {
       return await attempt();
     } catch (e) {
-      if (i === MAX_ATTEMPTS - 1) throw e;
+      if (e instanceof HeadMoved) throw e;
+      if (i === MAX_ATTEMPTS - 1 && LOST_RACE.test((e as Error).message))
+        throw new TablesBusy((e as Error).message);
+      if (i === MAX_ATTEMPTS - 1 || REFUSED_WRITE.test((e as Error).message))
+        throw e;
       console.warn(
         `Apply raced (attempt ${i + 1}), retrying: ${(e as Error).message}`,
       );
       await new Promise((resolve) =>
-        setTimeout(resolve, 200 + Math.random() * 800),
+        setTimeout(resolve, Math.random() * Math.min(8_000, 500 * 2 ** i)),
       );
     }
   }
@@ -430,10 +522,7 @@ async function attemptClaim(
     };
   }
   const now = new Date().toISOString();
-  const { kept: locks, removed } = reapLocks({
-    locks: parseLockCsv(lockCsv ?? ""),
-    now,
-  });
+  const { kept: locks, removed } = reapAt(parseLockCsv(lockCsv ?? ""), now);
 
   const claimState = parseStateCsv(stateCsv ?? "");
   const verdict: Verdict & { lock?: LockRow } = intent
@@ -525,14 +614,7 @@ async function runClaim(
     return;
   }
   const addedRow = lockFile && addedRowFromPatch(lockFile.patch);
-  const cells = addedRow ? addedRow.split(",") : null;
-  const intent = cells
-    ? {
-        task_id: cells[0]?.trim() ?? "",
-        subtask_id: cells[1]?.trim() ?? "",
-        kind: cells[4]?.trim() ?? "",
-      }
-    : null;
+  const intent = addedRow ? lockIntentFromRow(addedRow) : null;
 
   const verdict = await withRetry(() =>
     attemptClaim(changedPaths, intent, envelope),
@@ -548,7 +630,7 @@ async function runClaim(
   // The branch is deleted only after the close: deleting the head branch of an
   // open pull request closes it as well, and a close request racing that
   // deletion fails with a validation error.
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -572,16 +654,17 @@ async function attemptRelease(
   if (prior) return prior;
   const now = new Date().toISOString();
   // A claim is judged at the time its pull request was opened.
-  const { kept: locks, removed } = reapLocks({
-    locks: parseLockCsv(lockCsv ?? ""),
-    now: submittedAt,
-  });
+  const { kept: locks, removed } = reapAt(
+    parseLockCsv(lockCsv ?? ""),
+    submittedAt,
+  );
+  const opening = locksAtOpening(locks, author, submittedAt);
   const verdict = checkRelease({
-    locks,
+    locks: opening.decide,
     intent,
     author,
     changedPaths,
-    expired: removed,
+    expired: expiredLocks([...removed, ...opening.expired], historyCsv),
   });
   if (isAuditFree(verdict)) return verdict;
   const history: HistoryRow = {
@@ -635,21 +718,16 @@ async function runRelease(
   removedRow: string,
   envelope: CommandEnvelope | null,
 ): Promise<void> {
-  const cells = removedRow.split(",");
-  const intent = {
-    task_id: cells[0]?.trim() ?? "",
-    subtask_id: cells[1]?.trim() ?? "",
-    kind: cells[4]?.trim() ?? "",
-  };
+  const intent = lockIntentFromRow(removedRow);
   const verdict = await withRetry(() =>
     attemptRelease(changedPaths, intent, envelope),
   );
   const target = `\`${intent.task_id}${intent.subtask_id && "/" + intent.subtask_id}\``;
   const body = verdict.ok
     ? `✅ Release accepted — ${authorLabel} abandoned ${target}.`
-    : `❌ Release rejected: ${explainReason(verdict.reason)}. No changes were made.`;
+    : `❌ Release rejected: ${explainReason(verdict.reason)}. ${rejectionOutcome(verdict.reason, intent.subtask_id === "")}`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -682,12 +760,8 @@ async function attemptReviewEdit(
   const removedRow = removedRowFromPatch(
     prFiles.find((f) => f.filename === LOCK_PATH)?.patch,
   );
-  const cells = removedRow?.split(",") ?? [];
-  const intent = {
-    task_id: cells[0]?.trim() ?? "",
-    subtask_id: cells[1]?.trim() ?? "",
-  };
-  if (!removedRow || cells[4]?.trim() !== "validation" || !intent.subtask_id)
+  const { kind, ...intent } = lockIntentFromRow(removedRow ?? "");
+  if (!removedRow || kind !== "validation" || !intent.subtask_id)
     return { ok: false, reason: "malformed_review_edit" };
   const added = appendedCommentsFromPatch(
     prFiles.find((f) => f.filename === COMMENT_PATH)?.patch,
@@ -695,13 +769,14 @@ async function attemptReviewEdit(
 
   const now = new Date().toISOString();
   // A claim is judged at the time its pull request was opened.
-  const { kept: locks, removed } = reapLocks({
-    locks: parseLockCsv(lockCsv ?? ""),
-    now: submittedAt,
-  });
+  const { kept: locks, removed } = reapAt(
+    parseLockCsv(lockCsv ?? ""),
+    submittedAt,
+  );
+  const opening = locksAtOpening(locks, author, submittedAt);
   const verdict = checkReviewEdit({
     state: parseStateCsv(stateCsv ?? ""),
-    locks,
+    locks: opening.decide,
     intent,
     author,
     changedPaths,
@@ -712,7 +787,7 @@ async function attemptReviewEdit(
       "stale_after_minutes",
       DEFAULT_STALE_MINUTES,
     ),
-    expired: removed,
+    expired: expiredLocks([...removed, ...opening.expired], historyCsv),
   });
   if (isAuditFree(verdict)) return verdict;
 
@@ -745,7 +820,10 @@ async function attemptReviewEdit(
     // comment does.
     files.push(
       { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
-      { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+      {
+        path: LOCK_PATH,
+        content: serializeLockCsv([...verdict.locks, ...opening.expired]),
+      },
       {
         path: COMMENT_PATH,
         content: serializeCommentCsv([
@@ -787,9 +865,9 @@ async function runReviewEdit(
   const verdict = await withRetry(() => attemptReviewEdit(files, envelope));
   const body = verdict.ok
     ? `✅ Review edit accepted — \`${verdict.task}\` is back in editing, claimed by ${authorLabel}.`
-    : `❌ Review edit rejected: ${explainReason(verdict.reason)}. No changes were made.`;
+    : `❌ Review edit rejected: ${explainReason(verdict.reason)}. ${rejectionOutcome(verdict.reason, false)}`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -814,6 +892,7 @@ async function decideEncoding(
   now: string,
   expired: LockRow[],
   pastHistory: HistoryRow[],
+  held: LockRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -827,13 +906,15 @@ async function decideEncoding(
   // no grid, so its page span is taken from the fork wholesale. The first page
   // task of an 'omr-instruments' piece also brings the opening score
   // definition's clefs, keys, meter and transpositions. Whole-file tasks
-  // (empty locator) and pre-tasks take the fork verbatim.
+  // (empty locator) and pre-tasks take the fork's file with the campaign's
+  // header (assembleSubmission).
   //
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
   // in `detail`, since the reason code is what the tables record. A page
-  // whose file passes the schema on its own while the assembled score fails
-  // is `splice_invalid`: the join is at fault, not the encoding.
+  // whose file passes the schema on its own while the assembled score fails,
+  // or the splice fails on the campaign's score (BaseScoreError), is
+  // `splice_invalid`: the join is at fault, not the encoding.
   // Everything but the MEI check is decided before the fork's file is read:
   // a submitter who holds no claim cannot make the run parse their file.
   const precheck = checkEncoding({
@@ -864,105 +945,87 @@ async function decideEncoding(
     };
   }
 
-  const isPageTask = task.locator.startsWith("surface-");
+  const isPageTask = pageOfLocator(task.locator) !== null;
   const readStart = Date.now();
-  const [forkMei, baseMei, configText, commitMessage] = await Promise.all([
+  const [forkMei, baseMei, configText, commitMessages] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
-    isPageTask ? getRepoFile(token, owner, repo, task.fragment, sha) : null,
+    getRepoFile(token, owner, repo, task.fragment, sha),
     isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null,
-    getCommitMessage(token, headOwner, headRepo, headSha),
+    getPullRequestCommitMessages(token, owner, repo, prNumber),
   ]);
   logPhase("read_pr_files", readStart);
   const checkStart = Date.now();
-  let mei = forkMei;
+  let mei: string | null = null;
+  let baseFailed = false;
   let detail =
     forkMei == null ? `${task.fragment} is missing from the fork.` : "";
-  if (forkMei != null && isPageTask) {
-    if (baseMei == null) {
-      mei = null;
-      detail = `${task.fragment} is missing from the campaign.`;
-    } else {
-      try {
-        const physical =
-          pieceKindForPath(configText, task.fragment) === "physical-only";
-        mei = physical
-          ? splicePageSpan(baseMei, forkMei, task.locator)
-          : splicePage(baseMei, forkMei, task.locator);
-        // The first page task of an 'omr-instruments' piece checks the
-        // opening score definition, which lies outside every page's span.
-        const preparation = pieceFieldForPath(
-          configText,
-          task.fragment,
-          "preparation",
-        );
-        if (checksOpening(task, tasks, preparation))
-          mei = spliceOpeningScoreDef(mei, forkMei);
-        // The splice keeps the base header. The recognition models an OMR
-        // page draft names in the fork's header are carried over; no other
-        // entry is taken from a fork.
-        mei = recordApplications(
-          mei,
-          applicationNamesIn(forkMei).filter((name) =>
-            /^Musibot [\w.-]+ [\w.-]+$/.test(name),
-          ),
-        );
-      } catch (err) {
-        const message = (err as Error).message;
-        console.warn(
-          `Page splice failed for ${task.task_id} (${task.locator}): ${message}`,
-        );
-        mei = null;
-        detail = `Could not splice page ${task.locator} into ${task.fragment}: ${message}`;
-      }
-    }
-  }
-  // Record the contribution in the assembled score's header — the revision,
-  // the contributor, and the editing application — before the machine check,
-  // so the updated header is validated with the rest of the file. Encodings
-  // are edited in mei-friend; a zones, layout or score-setup submission comes
-  // from the console itself, whose <application> entry every generated score
-  // already carries.
-  const consoleCommands = [
-    "campaign.submitZones",
-    "campaign.submitOmrLayout",
-    "campaign.submitScoreSetup",
-  ];
-  if (mei != null) {
-    const application = consoleCommands.includes(envelope?.command ?? "")
-      ? undefined
-      : "mei-friend";
-    // The expired claims whose unsubmitted work this submission continues
-    // are recorded first, each dated at its expiry.
+  if (forkMei != null && baseMei == null) {
+    detail = `${task.fragment} is missing from the campaign.`;
+  } else if (forkMei != null) {
+    // The contribution is recorded in the assembled score's header — the
+    // revision, the contributor, and the editing application — before the
+    // machine check, so the updated header is validated with the rest of the
+    // file. Encodings are edited in mei-friend; a pre-task is edited in the app
+    // itself, whose <application> entry every generated score already carries.
+    // The expired claims whose unsubmitted work this submission continues are
+    // recorded first, each dated at its expiry. Contributors are named by
+    // login with their account id; a failed login lookup fails the run, which
+    // is retried, rather than naming someone by number. A deleted account is
+    // named "ghost", as GitHub shows it.
+    const application = isPreTask(task.locator) ? undefined : "mei-friend";
+    const contributions: Contribution[] = [];
     for (const row of keptWorkSince(pastHistory, task.task_id)) {
-      const login = await getUserLogin(token, Number(row.user_id)).catch(
-        () => null,
-      );
-      mei = recordContribution(mei, {
-        name: login ?? row.user_id,
+      const login = await getUserLogin(token, Number(row.user_id));
+      contributions.push({
+        name: login ?? "ghost",
+        id: row.user_id,
         message: `Unsubmitted work on ${task.task_id}, kept when the claim expired.`,
         isodate: row.timestamp.slice(0, 10),
         application,
       });
     }
-    const message = commitMessage ?? `Encoding of ${task.task_id} accepted.`;
-    mei = recordContribution(mei, {
-      name: authorLabel,
+    // The newest message the claimer wrote, not one of the app's commits.
+    const message =
+      commitMessages.filter((m) => !isAutomaticCommit(m)).at(-1) ??
+      `Encoding of ${task.task_id} accepted.`;
+    if (!authorLogin)
+      throw new Error(`Pull request #${prNumber} names no author login.`);
+    contributions.push({
+      name: authorLogin,
+      id: author,
       message: isReviewEdit(pastHistory, task.task_id, author)
         ? `Corrected during review: ${message}`
         : message,
       isodate: now.slice(0, 10),
       application,
     });
+    try {
+      mei = assembleSubmission({
+        task,
+        tasks,
+        configYaml: configText,
+        baseMei,
+        forkMei,
+        contributions,
+      });
+    } catch (err) {
+      const message = (err as Error).message;
+      console.warn(
+        `Page splice failed for ${task.task_id} (${task.locator}): ${message}`,
+      );
+      detail = `Could not splice page ${task.locator} into ${task.fragment}: ${message}`;
+      baseFailed = err instanceof BaseScoreError;
+    }
   }
 
   let meiValid = false;
-  let joinFailed = false;
+  let joinFailed = baseFailed && (await checkMeiOnce(forkMei!)).ok;
   if (mei != null) {
-    const check = await validateMei(mei);
+    const check = await checkMeiOnce(mei);
     meiValid = check.ok;
     if (!check.ok) {
       detail = `${task.fragment}:${check.error}`;
-      joinFailed = isPageTask && (await validateMei(forkMei!)).ok;
+      joinFailed = isPageTask && (await checkMeiOnce(forkMei!)).ok;
     }
   }
   logPhase("mei_check", checkStart);
@@ -1018,6 +1081,8 @@ async function decideEncoding(
     return content == null ? [] : [{ path, content }];
   });
 
+  // The author's locks the decision left out stay in lock.csv.
+  const nextLocks = [...verdict.locks, ...held];
   // An accepted measure or layout correction fixes which pages carry
   // measures: the piece's page tasks are rebuilt for those pages, so a page
   // without music gets no task.
@@ -1026,7 +1091,8 @@ async function decideEncoding(
       ? replanPageTasks(
           tasks,
           verdict.state,
-          verdict.locks,
+          nextLocks,
+          pastHistory,
           task.fragment,
           measuredSurfaceIds(mei!),
         )
@@ -1045,7 +1111,7 @@ async function decideEncoding(
         ? [{ path: TASK_PATH, content: serializeTaskCsv(replan.tasks) }]
         : []),
       { path: STATE_PATH, content: serializeStateCsv(newState) },
-      { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+      { path: LOCK_PATH, content: serializeLockCsv(nextLocks) },
     ],
     message: `Accept encoding of ${task.task_id} by ${authorLabel}`,
   };
@@ -1059,6 +1125,7 @@ async function decideValidation(
   changedPaths: string[],
   now: string,
   expired: LockRow[],
+  held: LockRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -1072,7 +1139,20 @@ async function decideValidation(
   if (!diff || !state.validationColumns.includes(diff.column))
     return { ok: false, reason: "malformed_validation" };
   const status = validationVerdict(diff.value);
-  if (!status) return { ok: false, reason: "invalid_verdict" };
+  if (!status)
+    return {
+      ok: false,
+      reason: "invalid_verdict",
+      history: {
+        timestamp: now,
+        task_id: diff.task_id,
+        subtask_id: diff.subtask_id,
+        user_id: author,
+        action: "submit_validation",
+        outcome: "rejected",
+        detail: "invalid_verdict",
+      },
+    };
 
   // The comment table when the PR touches it (a fail's mandatory comment) or
   // for a pass (it resolves the task's change requests), the config always
@@ -1128,7 +1208,8 @@ async function decideValidation(
 
   const files: FileChange[] = [
     { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
-    { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+    // The author's locks the decision left out stay in lock.csv.
+    { path: LOCK_PATH, content: serializeLockCsv([...verdict.locks, ...held]) },
   ];
   if (status === "fail") {
     // The fail's comment is part of the verdict: it carries the verdict's own
@@ -1181,10 +1262,12 @@ async function attemptSubmit(
   const state = parseStateCsv(stateCsv ?? "");
   const now = new Date().toISOString();
   // A claim is judged at the time its pull request was opened.
-  const { kept: locks, removed } = reapLocks({
-    locks: parseLockCsv(lockCsv ?? ""),
-    now: submittedAt,
-  });
+  const { kept: locks, removed } = reapAt(
+    parseLockCsv(lockCsv ?? ""),
+    submittedAt,
+  );
+  const opening = locksAtOpening(locks, author, submittedAt);
+  const expired = expiredLocks([...removed, ...opening.expired], historyCsv);
 
   const decideStart = Date.now();
   const outcome =
@@ -1192,36 +1275,32 @@ async function attemptSubmit(
       ? await decideValidation(
           sha,
           state,
-          locks,
+          opening.decide,
           prFiles,
           changedPaths,
           now,
-          removed,
+          expired,
+          opening.expired,
         )
       : await decideEncoding(
           sha,
           tasks,
           state,
-          locks,
+          opening.decide,
           changedPaths,
           envelope,
           now,
-          removed,
+          expired,
           parseHistoryCsv(historyCsv ?? ""),
+          opening.expired,
         );
   logPhase("decide", decideStart);
   if (isAuditFree(outcome)) return outcome;
 
+  // Every decision other than an audit-free rejection carries its history
+  // row, naming the task.
   const history: HistoryRow = {
-    ...(outcome.history ?? {
-      timestamp: now,
-      task_id: "",
-      subtask_id: "",
-      user_id: author,
-      action: `submit_${kind}`,
-      outcome: "rejected",
-      detail: outcome.reason ?? "rejected",
-    }),
+    ...outcome.history!,
     ...historyColumns(envelope),
     pr: String(prNumber),
   };
@@ -1245,6 +1324,14 @@ async function attemptSubmit(
   const message = outcome.ok
     ? coAuthored(outcome.message!)
     : `Reject ${kind} submission by ${authorLabel} (${outcome.reason})`;
+  // A push during the decision would otherwise close the pull request on
+  // content its author has since replaced.
+  if (
+    kind === "encoding" &&
+    (await getPullRequestDetails(token, owner, repo, prNumber)).headSha !==
+      headSha
+  )
+    throw new HeadMoved();
   const commitStart = Date.now();
   await commitFiles(token, owner, repo, files, message, {
     baseSha: sha,
@@ -1275,10 +1362,10 @@ async function runSubmit(
 
   const body = verdict.ok
     ? `✅ Submission accepted (${kind === "validation" ? "review" : kind}).`
-    : `❌ Submission rejected: ${explainReason(verdict.reason)}. No changes were made.` +
+    : `❌ Submission rejected: ${explainReason(verdict.reason)}. ${rejectionOutcome(verdict.reason, kind === "encoding")}` +
       (verdict.detail ? ` ${rejectionDetail(verdict.detail)}` : "");
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   if (shouldCleanupSubmission(kind, verdict.ok)) await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -1395,7 +1482,7 @@ async function runComment(
       : "✅ Comment recorded."
     : `❌ Comment rejected: ${explainReason(verdict.reason)}. No changes were made.`;
   const closeStart = Date.now();
-  await commentAndClosePr(token, owner, repo, prNumber, body);
+  await commentAndClose(body);
   await cleanupHeadBranch();
   logPhase("comment_and_close", closeStart);
 }
@@ -1406,44 +1493,79 @@ async function runComment(
 async function attemptReap(): Promise<void> {
   const readStart = Date.now();
   const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [lockCsv, historyCsv] = await Promise.all([
+  const [lockCsv, historyCsv, stateCsv, configText] = await Promise.all([
     getRepoFile(token, owner, repo, LOCK_PATH, sha),
     getRepoFile(token, owner, repo, HISTORY_PATH, sha),
+    getRepoFile(token, owner, repo, STATE_PATH, sha),
+    getRepoFile(token, owner, repo, CONFIG_PATH, sha),
   ]);
   logPhase("read_tables", readStart);
   const now = new Date().toISOString();
 
-  const { kept, removed } = reapLocks({
-    locks: parseLockCsv(lockCsv ?? ""),
-    now,
-  });
-  if (removed.length === 0) {
+  const { kept, removed } = reapAt(parseLockCsv(lockCsv ?? ""), now);
+  // Reviews whose passes reach a pass threshold lowered since they were
+  // recorded are completed here; nothing else can complete them.
+  const state = stateCsv == null ? null : parseStateCsv(stateCsv);
+  const reached =
+    state &&
+    completeReachedReviews(
+      state,
+      kept,
+      passThresholdOf(configText, state.validationColumns.length),
+    );
+  if (removed.length === 0 && !reached) {
     console.log("No stale locks.");
     return;
   }
 
-  const history = expiryRows(
-    removed,
-    now,
-    await keepExpiredWork(removed, historyCsv, branch, sha),
-  );
+  const history = [
+    ...expiryRows(
+      removed,
+      now,
+      await keepExpiredWork(removed, historyCsv, branch, sha),
+    ),
+    ...(reached?.completed ?? []).map(
+      (row): HistoryRow => ({
+        timestamp: now,
+        task_id: row.task_id,
+        subtask_id: row.subtask_id,
+        user_id: "",
+        action: "complete_review",
+        outcome: "accepted",
+        detail: "pass_threshold",
+      }),
+    ),
+  ];
+  const files: FileChange[] = [
+    { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", history) },
+  ];
+  if (removed.length)
+    files.push({ path: LOCK_PATH, content: serializeLockCsv(kept) });
+  if (reached)
+    files.push({ path: STATE_PATH, content: serializeStateCsv(reached.state) });
+  const message = [
+    removed.length
+      ? `Release ${removed.length} stale lock(s): ${removed.map((l) => l.task_id).join(", ")}`
+      : "",
+    reached
+      ? `Complete ${reached.completed.length} review(s) at the pass threshold: ${reached.completed.map((r) => `${r.task_id}/${r.subtask_id}`).join(", ")}`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
   const commitStart = Date.now();
-  await commitFiles(
-    token,
-    owner,
-    repo,
-    [
-      { path: LOCK_PATH, content: serializeLockCsv(kept) },
-      { path: HISTORY_PATH, content: appendHistory(historyCsv ?? "", history) },
-    ],
-    `Release ${removed.length} stale lock(s): ${removed.map((l) => l.task_id).join(", ")}`,
-    { baseSha: sha, baseTreeSha: treeSha, branch },
-  );
+  await commitFiles(token, owner, repo, files, message, {
+    baseSha: sha,
+    baseTreeSha: treeSha,
+    branch,
+  });
   logPhase("commit", commitStart);
-  console.log(`Released ${removed.length} stale lock(s).`);
+  console.log(message);
 }
 
 async function runReap(): Promise<void> {
+  prNumber = 0;
+  openPullRequests = await listOpenPullRequests(token, owner, repo);
   await withRetry(attemptReap);
 }
 
@@ -1457,8 +1579,13 @@ async function runReap(): Promise<void> {
 // Process the bound pull request. `open` is the campaign's open pull request
 // list when the caller already holds it. Returns false when the pull request
 // was left alone: it is closed, its head moved past the bound sha (the run for
-// the newer push decides it), or it is not a campaign operation.
-async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
+// the newer push decides it), it is not a campaign operation, or — with
+// `capped` — its author has more than MAX_OPEN_PRS_PER_AUTHOR open, which
+// leaves it to the scheduled pass.
+async function processPullRequest(
+  open?: OpenPullRequest[],
+  { capped = true } = {},
+): Promise<boolean> {
   const readStart = Date.now();
   const [{ body, files, createdAt, state, headSha: currentHeadSha }, openPrs] =
     await Promise.all([
@@ -1466,6 +1593,7 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
       open ?? listOpenPullRequests(token, owner, repo),
     ]);
   logPhase("read_pr", readStart);
+  openPullRequests = openPrs;
   if (state !== "open") {
     console.log(`PR #${prNumber} is ${state}; left as is.`);
     return false;
@@ -1482,49 +1610,68 @@ async function processPullRequest(open?: OpenPullRequest[]): Promise<boolean> {
   // it names the task and feeds the command columns of the history row this
   // run authors.
   const envelope = envelopeFromPrBody(body);
-  // A campaign operation changes a tracking or source file, or — an encoding
-  // completed without changes — carries a command envelope or comes from a
-  // task branch. Any other pull request is left alone, by the catch-up pass
-  // as well.
-  if (
-    !touchesCampaignPaths(changedPaths) &&
-    !envelope &&
-    !headRef.startsWith("encode-")
-  ) {
+  // Any pull request other than a campaign operation is left alone, by the
+  // catch-up pass as well.
+  if (!isCampaignOperation(changedPaths, body, headRef)) {
     console.log(`PR #${prNumber} is no campaign operation; left as is.`);
     return false;
   }
   const openByAuthor = openPrs.filter(
     (pr) => !pr.draft && String(pr.user.id) === author,
   ).length;
-  if (openByAuthor > MAX_OPEN_PRS_PER_AUTHOR) {
-    await commentAndClosePr(
-      token,
-      owner,
-      repo,
-      prNumber,
-      `❌ Submission rejected: ${explainReason("too_many_open_prs")}. No changes were made.`,
+  if (capped && openByAuthor > MAX_OPEN_PRS_PER_AUTHOR) {
+    console.log(
+      `PR #${prNumber}: ${authorLabel} has ${openByAuthor} open pull requests; left open for the scheduled pass.`,
     );
-    return true;
+    return false;
   }
   const kind = classifyPullRequest(changedPaths);
-  if (kind === "claim") await runClaim(files, envelope);
-  else if (kind === "review_edit") await runReviewEdit(files, envelope);
-  else if (kind === "comment") await runComment(files, envelope);
-  else await runSubmit(kind, files, envelope);
+  try {
+    if (kind === "claim") await runClaim(files, envelope);
+    else if (kind === "review_edit") await runReviewEdit(files, envelope);
+    else if (kind === "comment") await runComment(files, envelope);
+    else await runSubmit(kind, files, envelope);
+  } catch (e) {
+    if (e instanceof HeadMoved) {
+      console.log(
+        `PR #${prNumber} head moved during the decision; left to the run for the newer push.`,
+      );
+      return false;
+    }
+    if (!(e instanceof TablesBusy)) throw e;
+    console.warn(
+      `PR #${prNumber}: every attempt lost the commit: ${e.message}`,
+    );
+    await commentAndClose(`❌ Not recorded: ${explainReason("tables_busy")}.`);
+    // An encoding's head branch holds the work, kept for the next attempt.
+    if (kind !== "encoding") await cleanupHeadBranch();
+  }
   return true;
 }
 
 // Only a completed run closes a pull request, so one whose run was lost —
 // cancelled, failed, refused by the caller's guard, or never delivered —
-// stays open. The scheduled pass processes those, oldest first, one after
-// another; a failure on one is logged and the next is still processed.
+// stays open, as does one its own run left to this pass (over the per-author
+// limit). The scheduled pass processes those, oldest first, one after
+// another, without the per-author limit; a failure on one is logged and the
+// next is still processed. A pull request whose own run is still queued or
+// running is left to that run, so no pull request is decided by two runs at
+// once.
 // Drafts and pull requests from non-user accounts are left alone, as the
 // caller's guard leaves them; a pull request that is no campaign operation
 // is left alone too and does not count against the pass's budget.
 async function runCatchUp(): Promise<void> {
   const open = await listOpenPullRequests(token, owner, repo);
   const now = Date.now();
+  await closeUndecided(
+    open.filter(
+      (pr) =>
+        !pr.draft &&
+        pr.user.type === "User" &&
+        now - Date.parse(pr.created_at) > CATCHUP_MAX_AGE_MS,
+    ),
+    open,
+  );
   const due = open
     .filter((pr) => {
       const age = now - Date.parse(pr.created_at);
@@ -1540,35 +1687,119 @@ async function runCatchUp(): Promise<void> {
     console.log("No open pull requests to catch up on.");
     return;
   }
-  // The open list shrinks as pull requests are closed, so the per-author cap
-  // sees the count as it stands when each one is processed.
+  // The open list shrinks as pull requests are closed.
   let remaining = open;
   let processed = 0;
   for (const pr of due) {
     if (processed >= CATCHUP_MAX_PRS) break;
-    const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split(
-      "/",
-    );
-    bindPullRequest({
-      number: pr.number,
-      author: String(pr.user.id),
-      authorLogin: pr.user.login,
-      headOwner: prHeadOwner ?? "",
-      headRepo: prHeadRepo ?? "",
-      headSha: pr.head.sha,
-      headRef: pr.head.ref,
-    });
-    console.log(
-      `Catch-up: processing open PR #${pr.number} by ${authorLabel}.`,
-    );
+    bindOpenPullRequest(pr);
     try {
-      if (await processPullRequest(remaining)) {
+      if (await runUnderWay(pr)) {
+        console.log(
+          `Catch-up: PR #${pr.number} has a run of its own under way; left to it.`,
+        );
+        continue;
+      }
+      console.log(
+        `Catch-up: processing open PR #${pr.number} by ${authorLabel}.`,
+      );
+      if (await processPullRequest(remaining, { capped: false })) {
         processed++;
         remaining = remaining.filter((p) => p.number !== pr.number);
       }
     } catch (e) {
       console.error(
         `Catch-up: PR #${pr.number} failed: ${(e as Error).message}`,
+      );
+      process.exitCode = 1;
+    }
+  }
+}
+
+// Bind an open pull request as the one this run processes.
+function bindOpenPullRequest(pr: OpenPullRequest): void {
+  const [prHeadOwner, prHeadRepo] = (pr.head.repo?.full_name ?? "").split("/");
+  bindPullRequest({
+    number: pr.number,
+    author: String(pr.user.id),
+    authorLogin: pr.user.login,
+    headOwner: prHeadOwner ?? "",
+    headRepo: prHeadRepo ?? "",
+    headSha: pr.head.sha,
+    headRef: pr.head.ref,
+  });
+}
+
+// Whether a run of the pull request's own (on its current head) is under way;
+// that run decides it.
+async function runUnderWay(pr: OpenPullRequest): Promise<boolean> {
+  const runs = await listWorkflowRuns(token, owner, repo, "caller.yml", {
+    event: "pull_request_target",
+    headSha: pr.head.sha,
+  });
+  return runs.some((run) => run.status !== "completed");
+}
+
+// Campaign operations older than CATCHUP_MAX_AGE_MS are no longer decided:
+// they are closed with a comment saying so, which the app shows as the
+// rejection. One decided before, whose comment or close was lost, gets its
+// decision posted again instead; one with a run of its own under way is left
+// to it. A failure is logged, fails the run, and the next pass tries again.
+async function closeUndecided(
+  stale: OpenPullRequest[],
+  open: OpenPullRequest[],
+): Promise<void> {
+  if (stale.length === 0) return;
+  const readHistory = async (): Promise<HistoryRow[]> =>
+    parseHistoryCsv(
+      (await getRepoFile(token, owner, repo, HISTORY_PATH)) ?? "",
+    );
+  let history: HistoryRow[];
+  try {
+    history = await readHistory();
+  } catch (e) {
+    // The pass for the younger pull requests goes on without this one.
+    console.error(
+      `Could not read the history to close undecided PRs: ${(e as Error).message}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  for (const pr of stale) {
+    try {
+      if (await runUnderWay(pr)) continue;
+      if (priorDecision(history, pr.number)) {
+        bindOpenPullRequest(pr);
+        await processPullRequest(open, { capped: false });
+        continue;
+      }
+      const { body, files } = await getPullRequest(
+        token,
+        owner,
+        repo,
+        pr.number,
+      );
+      if (
+        !isCampaignOperation(
+          files.map((f) => f.filename),
+          body,
+          pr.head.ref,
+        )
+      )
+        continue;
+      // A run may have decided it since the history was read.
+      if (priorDecision(await readHistory(), pr.number)) {
+        console.log(`PR #${pr.number} was decided meanwhile; not closed.`);
+        continue;
+      }
+      await commentAndClose(
+        "❌ Not processed: this pull request was not decided within seven days of being opened. No changes were made. Submit it again.",
+        pr.number,
+      );
+      console.log(`Closed PR #${pr.number}: not decided within seven days.`);
+    } catch (e) {
+      console.error(
+        `Could not close the undecided PR #${pr.number}: ${(e as Error).message}`,
       );
       process.exitCode = 1;
     }
@@ -1600,10 +1831,21 @@ async function sweepOperationBranches(): Promise<void> {
 }
 
 async function run(): Promise<void> {
+  // The catch-up pass runs before the reaper: it judges each pull request
+  // at its opening time, and the reaper would first remove the locks that
+  // expired since.
+  // Each phase runs whatever became of the one before; a failed phase fails
+  // the run.
   if (eventName === "schedule" || eventName === "workflow_dispatch") {
-    await runReap();
-    await runCatchUp();
-    return sweepOperationBranches();
+    for (const phase of [runCatchUp, runReap, sweepOperationBranches]) {
+      try {
+        await phase();
+      } catch (e) {
+        console.error(`${phase.name} failed: ${(e as Error).message}`);
+        process.exitCode = 1;
+      }
+    }
+    return;
   }
   if (eventName !== "pull_request_target") {
     throw new Error(`Unsupported event: ${eventName}`);

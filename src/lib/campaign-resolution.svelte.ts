@@ -1,6 +1,6 @@
 // Resolves a task page's campaign name (the URL's /<campaign>) to its repo.
 // Constructed during a component's initialisation: the effects run for the
-// component's lifetime and start over when the name changes.
+// component's lifetime.
 
 import { auth } from "./auth.svelte.ts";
 import { readForge } from "./command-runner.svelte.ts";
@@ -24,13 +24,6 @@ export class CampaignResolution {
   repoId = $derived(this.resolved?.repoId ?? 0);
 
   constructor(name: () => string) {
-    // A same-route navigation to another campaign starts over.
-    $effect(() => {
-      void name();
-      this.resolved = null;
-      this.notFound = false;
-      this.error = null;
-    });
     $effect(() => {
       if (
         auth.status === "loading" ||
@@ -41,16 +34,13 @@ export class CampaignResolution {
       )
         return;
       this.#resolving = true;
-      // A result for a name the page has since navigated away from is dropped.
-      const current = name();
-      resolveCampaign(readForge(), current)
+      resolveCampaign(readForge(), name())
         .then((r) => {
-          if (current !== name()) return;
           if (r) this.resolved = r;
           else this.notFound = true;
         })
         .catch((e) => {
-          if (current === name()) this.error = campaignLoadFailure(e);
+          this.error = campaignLoadFailure(e);
         })
         .finally(() => (this.#resolving = false));
     });

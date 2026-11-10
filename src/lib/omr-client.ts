@@ -6,6 +6,12 @@
 //
 // Browser and Node: fetch only, no DOM.
 
+import {
+  brokerFetch,
+  fromUpstream,
+  RELAY_RETRY_WAITS_MS,
+} from "./forge/github-rest.ts";
+
 /** A pipeline or model of the service, identified by name and version. */
 export interface OmrPipeline {
   name: string;
@@ -26,7 +32,7 @@ export interface OmrExecution {
   pipeline_name: string;
   pipeline_version: string;
   input: string[];
-  /** 'running' while under way, then 'completed' or 'failed'. */
+  /** 'completed' or 'failed' once settled; any other state is still under way. */
   state: string;
   /** Why it failed; null otherwise. */
   error: string | null;
@@ -43,6 +49,8 @@ export interface OmrClientOptions {
   executionTimeoutMs?: number;
   /** Waits `ms`; injectable so tests need not wait. */
   sleep?: (ms: number) => Promise<void>;
+  /** Stops every call and execution poll of the client once aborted. */
+  signal?: AbortSignal;
 }
 
 const DEFAULTS = {
@@ -50,9 +58,6 @@ const DEFAULTS = {
   pollMs: 1000,
   executionTimeoutMs: 5 * 60_000,
 };
-
-/** Waits before each retry of a call the broker's own rate limit refused. */
-const BROKER_RETRY_MS = [1000, 2000, 4000];
 
 /** The relay's error for a failed call, with the HTTP status. */
 export class OmrError extends Error {
@@ -101,7 +106,7 @@ export function createOmrClient(
   options: OmrClientOptions = {},
 ): OmrClient {
   const base = `${brokerUrl.replace(/\/$/, "")}/omr`;
-  const doFetch = options.fetch ?? fetch;
+  const doFetch = options.fetch ?? brokerFetch;
   const sleep =
     options.sleep ??
     ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
@@ -126,9 +131,14 @@ export function createOmrClient(
         res = await doFetch(url, {
           ...init,
           method,
-          signal: AbortSignal.timeout(requestTimeoutMs),
+          signal: AbortSignal.any([
+            AbortSignal.timeout(requestTimeoutMs),
+            ...(options.signal ? [options.signal] : []),
+          ]),
         });
       } catch (err) {
+        if (options.signal?.aborted)
+          throw new OmrError("The recognition was stopped.", 0);
         const timedOut =
           err instanceof DOMException && err.name === "TimeoutError";
         throw new OmrError(
@@ -140,10 +150,10 @@ export function createOmrClient(
       }
       const brokerLimited =
         res.status === 429 &&
-        res.headers.get("X-Lets-Encode-Upstream") === "broker" &&
+        !fromUpstream(res, "musibot") &&
         res.headers.get("X-Lets-Encode-Limit") !== "daily";
-      if (!brokerLimited || attempt >= BROKER_RETRY_MS.length) break;
-      await sleep(BROKER_RETRY_MS[attempt]);
+      if (!brokerLimited || attempt >= RELAY_RETRY_WAITS_MS.length) break;
+      await sleep(RELAY_RETRY_WAITS_MS[attempt]);
     }
     if (res.ok) return res;
     let detail = "";
@@ -154,10 +164,9 @@ export function createOmrClient(
     } catch {
       // Not JSON: the status alone names the failure.
     }
-    const refusedBy =
-      res.headers.get("X-Lets-Encode-Upstream") === "broker"
-        ? "The OMR relay refused"
-        : `The OMR service returned ${res.status} for`;
+    const refusedBy = fromUpstream(res, "musibot")
+      ? `The OMR service returned ${res.status} for`
+      : `The OMR relay answered ${res.status} for`;
     throw new OmrError(
       `${refusedBy} ${method} ${url}${detail ? `: ${detail}` : "."}`,
       res.status,
@@ -282,7 +291,7 @@ export function createOmrClient(
       );
       let execution = started;
       const deadline = Date.now() + executionTimeoutMs;
-      while (execution.state === "running") {
+      while (execution.state !== "completed" && execution.state !== "failed") {
         if (Date.now() >= deadline) {
           throw new OmrError(
             `${pipeline.name} ${pipeline.version} did not finish within ${executionTimeoutMs / 1000}s.`,

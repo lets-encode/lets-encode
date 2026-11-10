@@ -9,12 +9,10 @@ import os
 
 bind = "127.0.0.1:" + os.environ.get("PORT", "7779")
 
-# Sessions and the slug DB live on the shared filesystem (instance/), so
-# workers need no coordination beyond the host. flask-limiter's counters do
-# NOT: with the default memory:// storage each worker counts separately, so
-# the effective rate limits are the stated limits times this worker count
-# (set RATELIMIT_STORAGE_URI to share counters — see broker/README.md).
-workers = 2
+# One worker process: flask-limiter's counters (default memory:// storage)
+# and the relay slots in app.py are kept per process, so with one process
+# they hold as stated. Its threads serve requests concurrently.
+workers = 1
 
 # The IIIF and OMR relays wait on third-party servers. Threads keep a slow
 # upstream from occupying a whole worker; app.py holds relay requests to

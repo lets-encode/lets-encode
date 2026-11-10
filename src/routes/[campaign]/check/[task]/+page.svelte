@@ -10,6 +10,8 @@
   read-only and opens mei-friend on it.
 -->
 <script lang="ts">
+  import { reviewViewHref } from "$lib/campaign-graph.ts";
+  import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { auth } from "$lib/auth.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
@@ -26,31 +28,23 @@
   import {
     CLEF_OPTIONS,
     COMMON_CLEFS,
-    KEY_SIGNATURES,
     clefGlyph,
     clefOption,
     clefText,
-    followedKey,
     setClef,
     setTransposition,
     settleKey,
-    transOf,
     transposes,
     unpitched,
   } from "$lib/staff-edit.ts";
-  import {
-    COMMON_TRANSPOSITIONS,
-    PITCHES,
-    fromCustom,
-    keysigText,
-    soundsText,
-    toCustom,
-    transpositionFromLabel,
-  } from "$lib/transposition.ts";
-  import { SvelteSet } from "svelte/reactivity";
+  import { keysigText, transpositionFromLabel } from "$lib/transposition.ts";
   import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
+  import KeyTimeFields from "$lib/components/KeyTimeFields.svelte";
+  import StaffPitchSelects from "$lib/components/StaffPitchSelects.svelte";
+  import StaffCustomPitch from "$lib/components/StaffCustomPitch.svelte";
+  import { StaffPitchEditor } from "$lib/staff-pitch.svelte.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
@@ -98,15 +92,16 @@
               setTransposition(keysig, staff, t);
           }
       },
-      reset() {
-        staves = [];
-        loadedDef = null;
-      },
     },
   );
   const runner = session.runner;
   const data = $derived(session.data);
   const tables = $derived(session.tables);
+  // A task in review is reviewed in the review view.
+  $effect(() => {
+    if (data?.status === "validation_required")
+      goto(reviewViewHref(campaign, taskId), { replaceState: true });
+  });
   $effect(() => {
     if (tables) recordCampaignTitle(campaign, tables.title);
   });
@@ -198,43 +193,8 @@
   }
   const CROP_HEIGHT = 64;
 
-  // Staves showing the pitch fields although a listed transposition matches.
-  const transCustom = new SvelteSet<StaffModel>();
-  /** The transposition select's value: 'none', a list index, or 'other'. */
-  function transValue(staff: StaffModel): string {
-    if (transCustom.has(staff)) return "other";
-    if (!transposes(staff)) return "none";
-    const i = COMMON_TRANSPOSITIONS.findIndex(
-      (t) => t.diat === staff.transDiat && t.semi === staff.transSemi,
-    );
-    return i < 0 ? "other" : String(i);
-  }
-
-  function pickTransposition(staff: StaffModel, value: string) {
-    if (value === "other") {
-      transCustom.add(staff);
-      return;
-    }
-    transCustom.delete(staff);
-    setTransposition(
-      keysig,
-      staff,
-      value === "none" ? null : COMMON_TRANSPOSITIONS[Number(value)],
-    );
-  }
-  /** The pitch fields of a staff with a transposition outside the list. */
-  const customOf = (staff: StaffModel) =>
-    toCustom(transOf(staff)) ?? { pitch: "C", higher: false, octaves: 0 };
-  function setCustom(
-    staff: StaffModel,
-    change: Partial<ReturnType<typeof customOf>>,
-  ) {
-    setTransposition(
-      keysig,
-      staff,
-      fromCustom({ ...customOf(staff), ...change }),
-    );
-  }
+  // The staves' transposition fields (StaffPitchSelects, StaffCustomPitch).
+  const pitch = new StaffPitchEditor(() => keysig);
 
   function openDraft() {
     const def = scoreDef;
@@ -267,6 +227,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -290,56 +252,20 @@
   {:else if data}
     <div class="main">
       <h1 class="vh">Score check · {session.pieceName || campaign}</h1>
-      <div class="runrow"><TaskRunState task={taskId} pill /></div>
+      <div class="runrow">
+        <TaskRunState task={taskId} repoId={session.campaign.repoId} pill />
+      </div>
       <div class="deskwrap">
         <fieldset class="check" disabled={!canEdit}>
           <div class="scorerow">
-            <label class="field">
-              <span class="flabel">Key</span>
-              <select
-                class="ctl"
-                bind:value={keysig}
-                onchange={() => staves.forEach((s) => settleKey(keysig, s))}
-                title="The key signature of the score: that of the staves that do not transpose."
-              >
-                {#each KEY_SIGNATURES as k (k.value)}
-                  <option value={k.value}>{k.label}</option>
-                {/each}
-              </select>
-            </label>
-            <label class="field">
-              <span class="flabel">Meter</span>
-              <select
-                class="ctl"
-                bind:value={meterType}
-                title="The time signature the piece opens with: numbers, or the symbol for common or cut time."
-              >
-                <option value="numeric">Numbers</option>
-                <option value="common">Common time</option>
-                <option value="cut">Cut time</option>
-              </select>
-            </label>
-            {#if meterType === "numeric"}
-              <input
-                class="ctl count"
-                class:bad={!meterValid}
-                bind:value={meterCount}
-                inputmode="numeric"
-                aria-label="Beats per measure"
-                title="The upper number of the time signature."
-              />
-              <span class="over">/</span>
-              <select
-                class="ctl"
-                bind:value={meterUnit}
-                aria-label="Beat unit"
-                title="The lower number of the time signature."
-              >
-                {#each [1, 2, 4, 8, 16] as u (u)}
-                  <option value={String(u)}>{u}</option>
-                {/each}
-              </select>
-            {/if}
+            <KeyTimeFields
+              bind:keysig
+              bind:meterType
+              bind:meterCount
+              bind:meterUnit
+              {meterValid}
+              onkeychange={() => staves.forEach((s) => settleKey(keysig, s))}
+            />
           </div>
           <ol class="rows">
             {#each rows as row, i (row.staff.id ?? i)}
@@ -368,103 +294,18 @@
                     title="The clef this staff opens with."
                   />
                   {#if !unpitched(staff)}
-                    <select
-                      class="ctl trans"
-                      value={transValue(staff)}
-                      onchange={(e) =>
-                        pickTransposition(
-                          staff,
-                          (e.target as HTMLSelectElement).value,
-                        )}
-                      aria-label={`${row.name}: transposition`}
-                      title={transposes(staff)
-                        ? `Sounds ${soundsText(transOf(staff))} than written.`
-                        : "Whether the instrument transposes: its music is written at another pitch than it sounds."}
-                    >
-                      <option value="none">Not transposing</option>
-                      {#each COMMON_TRANSPOSITIONS as t, n (n)}
-                        <option value={String(n)}>{t.label}</option>
-                      {/each}
-                      <option value="other">Other…</option>
-                    </select>
-                    <select
-                      class="ctl key"
-                      value={staff.keysig ?? ""}
-                      onchange={(e) => {
-                        const v = (e.target as HTMLSelectElement).value;
-                        if (v === "") delete staff.keysig;
-                        else staff.keysig = v;
-                        settleKey(keysig, staff);
-                      }}
-                      aria-label={`${row.name}: key signature`}
-                      title={staff.keysig === undefined
-                        ? transposes(staff)
-                          ? "The key signature of this staff: the score's, moved by the transposition."
-                          : "The key signature of this staff: the score's."
-                        : "The key signature of this staff, chosen for it alone."}
-                    >
-                      <optgroup
-                        label={transposes(staff)
-                          ? "Score key, transposed"
-                          : "Score key"}
-                      >
-                        <option value=""
-                          >{keysigText(followedKey(keysig, staff))}</option
-                        >
-                      </optgroup>
-                      <optgroup label="This staff only">
-                        {#each KEY_SIGNATURES as k (k.value)}
-                          <option value={k.value}>{k.label}</option>
-                        {/each}
-                      </optgroup>
-                    </select>
-                    {#if transValue(staff) === "other"}
-                      {@const c = customOf(staff)}
-                      <select
-                        class="ctl"
-                        value={c.pitch}
-                        onchange={(e) =>
-                          setCustom(staff, {
-                            pitch: (e.target as HTMLSelectElement).value,
-                          })}
-                        aria-label={`${row.name}: instrument pitch`}
-                        title="The pitch the instrument is in: the note that sounds when a C is written."
-                      >
-                        {#each PITCHES as p (p.name)}
-                          <option value={p.name}>in {p.name}</option>
-                        {/each}
-                      </select>
-                      <select
-                        class="ctl"
-                        value={c.higher ? "higher" : "lower"}
-                        onchange={(e) =>
-                          setCustom(staff, {
-                            higher:
-                              (e.target as HTMLSelectElement).value ===
-                              "higher",
-                          })}
-                        aria-label={`${row.name}: sounds higher or lower`}
-                        title="Whether the instrument sounds higher or lower than written."
-                      >
-                        <option value="lower">sounds lower</option>
-                        <option value="higher">sounds higher</option>
-                      </select>
-                      <select
-                        class="ctl"
-                        value={String(c.octaves)}
-                        onchange={(e) =>
-                          setCustom(staff, {
-                            octaves: Number(
-                              (e.target as HTMLSelectElement).value,
-                            ),
-                          })}
-                        aria-label={`${row.name}: added octaves`}
-                        title="Whole octaves added to the interval, as for a bass clarinet."
-                      >
-                        <option value="0">no octave</option>
-                        <option value="1">+1 octave</option>
-                        <option value="2">+2 octaves</option>
-                      </select>
+                    <StaffPitchSelects
+                      editor={pitch}
+                      {staff}
+                      scoreKey={keysig}
+                      name={row.name}
+                    />
+                    {#if pitch.value(staff) === "other"}
+                      <StaffCustomPitch
+                        editor={pitch}
+                        {staff}
+                        name={row.name}
+                      />
                     {/if}
                   {/if}
                 </div>
@@ -514,7 +355,7 @@
               ? "common time"
               : "cut time"}
         </span>
-        <span class="wstatus"><PreTaskStatus {session} /></span>
+        <span class="wstatus"><PreTaskStatus {session} stage="enc" /></span>
         {#if session.holds}
           <button
             type="button"
@@ -532,7 +373,7 @@
     {/snippet}
 
     {#snippet resultNote()}
-      <RunnerBanner {runner} bar collapsible />
+      <RunnerBanner {runner} surface="inline" />
     {/snippet}
 
     {#snippet taskBox(headAction: import("svelte").Snippet | undefined)}
@@ -549,6 +390,7 @@
 
     {#if tables}
       <TaskPageSidePanel
+        repoId={session.campaign.repoId}
         {tables}
         {taskId}
         done={data.status === "completed"}
@@ -558,7 +400,6 @@
         {taskBox}
         footer={data.status === "encoding_required" ? footer : undefined}
         bind:open={sheetOpen}
-        onanchor={() => {}}
         oncomment={(...args) => session.postComment(...args)}
         onresolve={(id) => session.resolveComment(id)}
       />
@@ -604,27 +445,10 @@
     padding: 0;
     min-width: 0;
   }
+  /* The key and time signature fields (KeyTimeFields) above the staves. */
   .scorerow {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 12px;
+    max-width: 28em;
     margin-bottom: 12px;
-  }
-  .field {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-  .flabel {
-    font-size: 12.5px;
-    color: var(--ink-soft);
-  }
-  .count {
-    width: 3.5em;
-  }
-  .over {
-    color: var(--ink-faint);
   }
   .rows {
     list-style: none;
@@ -653,7 +477,7 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .controls .trans {
+  .controls :global(.trans) {
     max-width: 14em;
   }
   .controls {

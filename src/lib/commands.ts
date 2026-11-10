@@ -13,7 +13,12 @@
 // Handlers are self-contained: they read the tracking tables themselves rather
 // than relying on caller state. See DESIGN.md §5 (history.csv) & §6.
 
-import type { FileChange, ForgeClient } from "./forge/types.ts";
+import { readLocal, writeLocal } from "./local-store.ts";
+import type {
+  FileChange,
+  ForgeClient,
+  OpenedChangeRequest,
+} from "./forge/types.ts";
 import { RateLimitError } from "./forge/github-rest.ts";
 import {
   parseTaskCsv,
@@ -45,7 +50,12 @@ import {
 } from "./campaign-tables.ts";
 import { checkPlan } from "./campaign-plan.ts";
 import { usesOmr } from "./campaign-init.ts";
-import { claimLimitReached } from "./campaign-claim.ts";
+import {
+  claimLimitReached,
+  claimRefusal,
+  encodingClaimOf,
+  waitsFor,
+} from "./campaign-claim.ts";
 import { claimRanOut, liveLocks, reapLocks } from "./campaign-reaper.ts";
 import { resolveCommentThread, sideFilesOf } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -72,16 +82,19 @@ import type {
   ScoreDefModel,
 } from "./mei-facsimile.ts";
 import {
+  assembleSubmission,
   checksOpening,
+  AUTOMATION_CONTRACT,
+  claimPullRequest,
   keptWorkBranch,
+  keptWorkSince,
   pieceFieldForPath,
   pieceKindForPath,
+  priorDecision,
+  REASON_TEXT,
+  splitContract,
 } from "./coordinator-policy.ts";
-import {
-  firstElementOfPage,
-  splicePage,
-  splicePageSpan,
-} from "./mei-page-splice.ts";
+import { firstElementOfPage } from "./mei-page-splice.ts";
 import {
   resolveFacsimileImageUrls,
   resolveRepoRelativeTarget,
@@ -99,6 +112,8 @@ import {
 } from "./omr-layout.ts";
 import type { LayoutInstruments, LayoutRecord } from "./omr-layout.ts";
 import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
+import { alignmentPath, differentReason, type Pin } from "./encoding-align.ts";
+import { alignEncoding, alignmentMessage } from "./encoding-merge.ts";
 import {
   instrumentScoreDef,
   openingTranscriptions,
@@ -136,7 +151,10 @@ export type Result = {
   /** The command finished in the background: the runner holds no overlay and
    * the PR + verdict are followed through the verdict sink on the task. */
   background?: boolean;
-  warn?: boolean;
+  /** An ok result that is not plainly done: the submission is still being
+   * processed ("pending"), there was nothing to do ("noop"), or part of the
+   * work failed ("partial"). The banner shows it as a warning. */
+  outcome?: "pending" | "noop" | "partial";
   error?: string;
   message?: string;
   prUrl?: string;
@@ -144,6 +162,9 @@ export type Result = {
   /** The mei-friend hand-off waits until the overlay's Continue, so the
    * steps it shows (a draft's warnings) are read before the page is left. */
   holdHandOff?: boolean;
+  /** Runs the failed work again; the banner offers it as Try again next to
+   * the error. */
+  retry?: () => void;
 };
 
 interface CommandDef<I, O> {
@@ -184,19 +205,30 @@ export async function invoke<I extends Record<string, unknown>, O>(
   console.log("[command]", def.id, input);
   ctx.progress({ command: def.id, background: def.background });
   const output = await def.run(input, ctx, envelope);
-  if (def.log === "direct" && envelope)
-    await logDirect(ctx, envelope, output as Result);
+  if (def.log === "direct" && envelope) {
+    const result = output as Result;
+    // A command that went through without its history row is partly done.
+    if (!(await logDirect(ctx, envelope, result)) && !result?.error) {
+      const note = "The command was not recorded in the campaign history.";
+      return {
+        ...result,
+        outcome: result.outcome ?? "partial",
+        message: result.message ? `${result.message} ${note}` : note,
+      } as O;
+    }
+  }
   return output;
 }
 
 // Commit the command's history row directly (only 'direct' commands, which
-// require push access anyway). A lost log row is reported, not fatal — the
-// command itself already succeeded or failed on its own terms.
+// require push access anyway). Returns whether it was committed: a lost log
+// row is reported, not fatal — the command itself already succeeded or failed
+// on its own terms.
 async function logDirect(
   ctx: CommandContext,
   envelope: CommandEnvelope,
   result: Result,
-): Promise<void> {
+): Promise<boolean> {
   const { forge: f, owner, repo } = ctx;
   const row: HistoryRow = {
     timestamp: envelope.timestamp,
@@ -219,7 +251,7 @@ async function logDirect(
         `Log command ${envelope.command}`,
         { baseSha: sha },
       );
-      return;
+      return true;
     } catch (e) {
       if (i === MAX_LOG_ATTEMPTS - 1) {
         console.warn(
@@ -228,6 +260,7 @@ async function logDirect(
       }
     }
   }
+  return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -247,13 +280,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function muteOnce(ctx: CommandContext): Promise<void> {
   const { forge: f, repoId, owner, repo, viewer } = ctx;
   const key = `lets-encode:muted:${viewer}:${repoId}`;
-  const storage = typeof localStorage === "undefined" ? null : localStorage;
-  if (storage?.getItem(key)) return;
+  if (readLocal(key)) return;
   try {
     if (!(await f.getRepoSubscription(owner, repo))?.ignored) {
       await f.ignoreRepoNotifications(owner, repo);
     }
-    storage?.setItem(key, "1");
+    writeLocal(key, "1");
   } catch (e) {
     // The repo-subscription API requires the OAuth 'notifications' scope; a
     // 403/404 here usually means the token was granted without it.
@@ -266,20 +298,45 @@ async function muteOnce(ctx: CommandContext): Promise<void> {
 }
 
 type PrProcessingResult =
-  | { state: "closed"; verdict: string | null }
+  | {
+      state: "decided";
+      accepted: boolean;
+      /** The rejection's reason code from history.csv, '' when accepted. */
+      detail: string;
+      /** When the decision was made (its history.csv row); '' without one. */
+      at: string;
+      /** The coordinator's comment on the closed PR, null before it closed. */
+      verdict: string | null;
+    }
   | { state: "run_failed"; runUrl: string }
   | { state: "run_skipped" }
+  /** The coordinator that decided the PR runs on another contract
+      (AUTOMATION_CONTRACT); `automation` is its number, null for one older
+      than the contract marker. */
+  | { state: "contract_mismatch"; automation: number | null }
   | { state: "timeout" };
 
 // What the campaign workflow requires of a pull request before it runs at all
 // (the job-level guard in campaign.yml); a pull request outside these gets a
 // skipped run instead of a verdict.
 export const RUN_REQUIREMENTS =
-  "a submission must change at most four files, must not be a draft, and must come from a user account";
+  "a submission must change at most 50 files, must not be a draft, and must come from a user account";
 
-// Wait until the campaign automation has processed a PR (it closes the PR
-// when done) and return its verdict comment. A timeout means the run is still
-// in flight, not failed. Once the PR is closed, a `head` branch
+// Polls of the PR, and ticks of its run watch, that may fail in a row before
+// the wait, or the watching, ends.
+const POLL_FAILURES = 3;
+const WATCH_FAILURES = 3;
+// Reads of history.csv, 2 s apart, for a closed PR the bot accepted.
+const HISTORY_READS = 15;
+// How the campaign automation's comment on an accepted PR begins.
+const ACCEPTED_MARK = "✅";
+
+// Wait until the campaign automation has processed a PR and return its
+// decision. The decision is the history.csv row naming the PR, which the
+// coordinator commits before it comments on and closes the PR; it is read once
+// the PR is closed, its run has ended or the wait runs out. A PR closed
+// without one was rejected without a record (a malformed operation). A
+// timeout means the run is still in flight, not failed. Once the PR is closed, a `head` branch
 // the console created in the user's fork is deleted: the automation deletes
 // the head branches of PRs opened within the campaign repo itself, but it has
 // no rights on a fork, so that half of the cleanup happens here with the
@@ -291,7 +348,9 @@ async function waitForPrProcessed(
     headSha?: string;
     head?: { owner: string; repo: string; branch: string };
     cleanup?: "always" | "accepted";
+    createdAt?: string;
   },
+  { waitMs = 90_000, maxDelayMs = 3_000 } = {},
 ): Promise<PrProcessingResult> {
   const { forge: f, owner, repo } = ctx;
   ctx.progress({
@@ -299,63 +358,185 @@ async function waitForPrProcessed(
   });
   console.log("[pr] waiting for automation to process PR", pr.number);
   // Best-effort narration of the Actions run the PR triggered, identified by
-  // the PR's head commit. A watch failure never fails the command — the PR
-  // itself stays the source of truth.
-  let watch = pr.headSha
-    ? new WorkflowRunWatch(
-        f,
-        owner,
-        repo,
-        {
-          workflow: "caller.yml",
-          event: "pull_request_target",
-          headSha: pr.headSha,
-        },
-        ctx.progress,
-      )
-    : null;
-  const deadline = Date.now() + 90_000;
+  // the PR's head commit and, since an earlier pull request from an unchanged
+  // branch has runs for the same commit, created after the PR (by GitHub's
+  // clock). A watch failure never fails the command — the PR itself stays the
+  // source of truth — and ends the watching only after WATCH_FAILURES in a row.
+  const since = pr.createdAt ? Date.parse(pr.createdAt) : Date.now();
+  const runWatch = (headSha: string, from: number) =>
+    new WorkflowRunWatch(
+      f,
+      owner,
+      repo,
+      {
+        workflow: "caller.yml",
+        event: "pull_request_target",
+        headSha,
+        since: from,
+      },
+      ctx.progress,
+    );
+  let watch = pr.headSha ? runWatch(pr.headSha, since) : null;
+  let watchedSha = pr.headSha ?? "";
+  let watchFailures = 0;
+  // The history is read at the current head: a read of the default branch
+  // can lag behind the commit that recorded the decision.
+  const decision = async () => {
+    const { sha } = await f.getRepoHead(owner, repo);
+    return priorDecision(
+      parseHistoryCsv(
+        (await f.getRepoFile(owner, repo, HISTORY_PATH, sha)) ?? "",
+      ),
+      pr.number,
+    );
+  };
+  // The bot's comment on the closed PR, without its contract line; null when
+  // there is none or it cannot be read, since the decision stands without the
+  // comment that explains it. `contract` is the number the comment carries.
+  let contract: number | null = null;
+  const comment = async (): Promise<string | null> => {
+    try {
+      const raw = await f.getLastIssueComment(owner, repo, pr.number);
+      if (raw === null) return null;
+      const split = splitContract(raw);
+      contract = split.contract;
+      return split.text;
+    } catch (e) {
+      console.warn(
+        "[pr] could not read the verdict comment:",
+        (e as Error).message,
+      );
+      return null;
+    }
+  };
+  // Whether `verdict` is a coordinator comment from another contract. Every
+  // verdict comment starts with ✅ or ❌.
+  const otherContract = (verdict: string | null): boolean =>
+    verdict !== null &&
+    /^[✅❌]/u.test(verdict) &&
+    contract !== AUTOMATION_CONTRACT;
+  const decided = (
+    row: { outcome: string; detail: string; timestamp: string } | null,
+    verdict: string | null,
+  ): PrProcessingResult => ({
+    state: "decided",
+    accepted: row?.outcome === "accepted",
+    detail: row?.outcome === "accepted" ? "" : (row?.detail ?? ""),
+    at: row?.timestamp ?? "",
+    verdict,
+  });
+  const deadline = Date.now() + waitMs;
   // Fast cadence, low cap: the PR-state and run reads are ETag-cached, so an
   // unchanged poll answers 304 and does not count against the API rate limit —
   // the cap trades a few extra free polls for catching the close sooner.
   let delayMs = 1_000;
+  // Consecutive polls that failed; POLL_FAILURES in a row end the wait.
+  let pollFailures = 0;
+  const pollFailed = (e: unknown) => {
+    if (++pollFailures >= POLL_FAILURES) throw e;
+    console.warn("[pr] poll failed, retrying:", (e as Error).message);
+  };
   while (Date.now() < deadline) {
     await sleep(delayMs);
+    delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * 1.5));
     // The PR-state read and the run-watch tick are independent reads — one
-    // round trip per iteration instead of two.
-    const [state] = await Promise.all([
+    // round trip per iteration instead of two. Both are waited for, so a tick
+    // never overlaps the next one.
+    const [read] = await Promise.allSettled([
       f.getPullRequestState(owner, repo, pr.number),
-      watch?.tick().catch((e) => {
-        console.warn(
-          "[pr] stopped watching the Actions run:",
-          (e as Error).message,
-        );
-        watch = null;
-      }),
+      watch?.tick().then(
+        () => (watchFailures = 0),
+        (e) => {
+          if (++watchFailures < WATCH_FAILURES) return;
+          console.warn(
+            "[pr] stopped watching the Actions run:",
+            (e as Error).message,
+          );
+          watch = null;
+        },
+      ),
     ]);
+    if (read.status === "rejected") {
+      pollFailed(read.reason);
+      continue;
+    }
+    const state = read.value;
     if (state === "closed") {
-      const verdict = await f.getLastIssueComment(owner, repo, pr.number);
-      console.log("[pr] PR", pr.number, "processed; verdict:", verdict);
-      if (pr.cleanup !== "accepted" || verdict?.startsWith("✅")) {
+      // The row is committed before the PR closes, but a read can still miss
+      // it. Without it, a read is repeated once, and for up to HISTORY_READS
+      // reads while the bot's comment says the PR was accepted: the row is
+      // then still to come, so the PR counts as being processed, never as
+      // rejected. A PR closed without a row and without an accepting comment
+      // was rejected without a record (a malformed operation).
+      let row: Awaited<ReturnType<typeof decision>> = null;
+      let verdict: string | null = null;
+      let commented = false;
+      try {
+        for (let read = 0; read < HISTORY_READS; read++) {
+          if (read > 0) await sleep(2_000);
+          row = await decision();
+          if (row) break;
+          verdict = await comment();
+          commented = true;
+          if (otherContract(verdict)) break;
+          if (read > 0 && !verdict?.startsWith(ACCEPTED_MARK)) break;
+        }
+      } catch (e) {
+        pollFailed(e);
+        continue;
+      }
+      if (!commented) verdict = await comment();
+      // A coordinator on another contract may record its decision
+      // differently, so neither its row nor its absence can be relied on.
+      if (otherContract(verdict))
+        return { state: "contract_mismatch", automation: contract };
+      if (!row && verdict?.startsWith(ACCEPTED_MARK)) {
+        console.log(
+          "[pr] PR",
+          pr.number,
+          "accepted; its record is not read yet",
+        );
+        return { state: "timeout" };
+      }
+      console.log(
+        "[pr] PR",
+        pr.number,
+        "processed:",
+        row?.outcome ?? "no record",
+      );
+      const result = decided(row, verdict);
+      if (
+        pr.cleanup !== "accepted" ||
+        (result.state === "decided" && result.accepted)
+      ) {
         await cleanupForkHeadBranch(ctx, pr.head);
       }
-      return { state: "closed", verdict };
+      return result;
     }
+    pollFailures = 0;
     // A failed run never closes the PR — report the failure rather than
     // letting the wait time out as if the run were merely slow. A skipped
     // run means the workflow's guard refused the PR before a runner started;
     // the PR is closed here so its branch can be corrected and resubmitted
     // at once, instead of waiting for the scheduled catch-up to close it. A
     // cancelled run was replaced by one for a newer push to the same PR,
-    // which the PR-state poll goes on waiting for. The guard sits in a called
+    // which is followed from the PR's new head. The guard sits in a called
     // workflow, so a refused PR can also show as a successful run whose jobs
-    // were all skipped.
+    // were all skipped; until its jobs are read, the run is not judged.
     if (watch?.state.phase === "completed") {
-      const { conclusion, html_url, id } = watch.state.run;
-      const jobs =
-        conclusion === "success"
-          ? await f.getWorkflowRunJobs(owner, repo, id).catch(() => [])
-          : [];
+      const { conclusion, html_url, id, created_at } = watch.state.run;
+      let jobs: { conclusion: string | null }[] = [];
+      if (conclusion === "success") {
+        try {
+          jobs = await f.getWorkflowRunJobs(owner, repo, id);
+        } catch (e) {
+          console.warn(
+            "[pr] could not read the run's jobs:",
+            (e as Error).message,
+          );
+          continue;
+        }
+      }
       const skipped =
         conclusion === "skipped" ||
         (jobs.length > 0 && jobs.every((j) => j.conclusion === "skipped"));
@@ -363,20 +544,44 @@ async function waitForPrProcessed(
       if (conclusion === "success" && !skipped) {
         watch = null;
       } else if (conclusion === "cancelled") {
-        watch = null;
+        let head: string;
+        try {
+          head = await f.getPullRequestHead(owner, repo, pr.number);
+        } catch (e) {
+          console.warn(
+            "[pr] could not read the PR's head:",
+            (e as Error).message,
+          );
+          continue;
+        }
+        watch =
+          head !== watchedSha ? runWatch(head, Date.parse(created_at)) : null;
+        watchedSha = head;
       } else if (skipped) {
-        await f.closePullRequest(owner, repo, pr.number);
+        // The comment carries no ✅ or ❌: it is the app's, not a verdict of
+        // the campaign automation.
+        await f.closePullRequest(
+          owner,
+          repo,
+          pr.number,
+          `Not processed: the campaign automation did not run for this pull request, since ${RUN_REQUIREMENTS}. Closed by the app.`,
+        );
         return { state: "run_skipped" };
       } else {
-        return { state: "run_failed", runUrl: html_url };
+        // A decision recorded before the run failed stands.
+        const row = await decision();
+        return row
+          ? decided(row, null)
+          : { state: "run_failed", runUrl: html_url };
       }
     }
-    delayMs = Math.min(3_000, Math.ceil(delayMs * 1.5));
   }
+  const row = await decision();
+  if (row) return decided(row, null);
   console.log(
     "[pr] PR",
     pr.number,
-    "not processed within 90s (still in flight)",
+    `not processed within ${waitMs / 1000}s (still in flight)`,
   );
   return { state: "timeout" };
 }
@@ -409,7 +614,7 @@ async function deleteTaskBranch(
   task_id: string,
 ): Promise<void> {
   try {
-    const workRepo = await workRepoOf(ctx);
+    const workRepo = await workRepoOf(ctx, task_id);
     await ctx.forge.deleteBranch(
       workRepo.owner,
       workRepo.repo,
@@ -420,14 +625,60 @@ async function deleteTaskBranch(
   }
 }
 
-// The repo the viewer's task branches live in: the campaign repo with push
-// access, their fork otherwise (a repo cannot be forked by its owner).
+// The head repo of a claim's pull request, per campaign repo id and number.
+const claimHeadRepos = new Map<
+  string,
+  Promise<{ owner: string; repo: string } | null>
+>();
+
+// The repo the viewer's task branch `encode-<task_id>` lives in: the repo
+// their accepted claim's pull request came from, where the campaign
+// automation also looks for it. Without one (or when that repo is gone), the
+// campaign repo with push access, their fork otherwise (a repo cannot be
+// forked by its owner).
 async function workRepoOf(
   ctx: CommandContext,
+  task_id: string,
 ): Promise<{ owner: string; repo: string }> {
   const { forge: f, owner, repo } = ctx;
-  const { canPush } = await f.getRepoHead(owner, repo);
+  const { sha, canPush } = await f.getRepoHead(owner, repo);
+  const pr = claimPullRequest(
+    parseHistoryCsv(
+      (await f.getRepoFile(owner, repo, HISTORY_PATH, sha)) ?? "",
+    ),
+    task_id,
+    ctx.viewer,
+  );
+  if (pr !== null) {
+    const key = `${ctx.repoId}#${pr}`;
+    let head = claimHeadRepos.get(key);
+    if (!head) {
+      head = f.getPullRequestHeadRepo(owner, repo, pr);
+      claimHeadRepos.set(key, head);
+      head.catch(() => claimHeadRepos.delete(key));
+    }
+    const found = await head;
+    if (found) return found;
+  }
   return canPush ? { owner, repo } : f.ensureFork(owner, repo);
+}
+
+// The default branch head and the files at `paths` as they stand at it. An
+// operation's pull request starts at that head (openChangePr's `baseSha`), so
+// its diff holds only the operation's own change, also when the branch moves
+// on while the pull request is being opened.
+async function readAtHead(
+  ctx: CommandContext,
+  paths: string[],
+): Promise<{ sha: string; files: (string | null)[] }> {
+  const { forge: f, owner, repo } = ctx;
+  const { sha } = await f.getRepoHead(owner, repo);
+  return {
+    sha,
+    files: await Promise.all(
+      paths.map((path) => f.getRepoFile(owner, repo, path, sha)),
+    ),
+  };
 }
 
 /** Where a task's files are read from: a repo and the ref within it. */
@@ -435,30 +686,50 @@ export interface FileSource {
   owner: string;
   repo: string;
   ref: string;
+  /** For the viewer's own task branch, the commit it was read at. */
+  sha?: string;
+}
+
+// The campaign branch `wip-<task_id>` when history.csv records work kept
+// from expired claims of the task since its last accepted submission; null
+// otherwise, whether or not the branch exists.
+async function keptWorkRef(
+  ctx: CommandContext,
+  task_id: string,
+): Promise<string | null> {
+  const { forge: f, owner, repo } = ctx;
+  const history = parseHistoryCsv(
+    (await f.getRepoFile(owner, repo, HISTORY_PATH)) ?? "",
+  );
+  return keptWorkSince(history, task_id).length > 0
+    ? keptWorkBranch(task_id)
+    : null;
 }
 
 // Where the viewer's work on a task stands: their task branch
 // `encode-<task_id>` when it carries the task's score, else the work kept
-// from expired claims (campaign branch `wip-<task_id>`) when there is any;
-// null when the work starts from `main`.
+// from expired claims (keptWorkRef) when there is any; null when the work
+// starts from `main`.
 async function workSource(
   ctx: CommandContext,
   task: TaskRow,
 ): Promise<FileSource | null> {
   const { forge: f, owner, repo } = ctx;
-  const workRepo = await workRepoOf(ctx);
+  const workRepo = await workRepoOf(ctx, task.task_id);
   const own = { ...workRepo, ref: `encode-${task.task_id}` };
+  const sha = await f.getBranchHead(own.owner, own.repo, own.ref);
   if (
-    (await f.getRepoFile(own.owner, own.repo, task.fragment, own.ref)) != null
+    sha &&
+    (await f.getRepoFile(own.owner, own.repo, task.fragment, sha)) != null
   )
-    return own;
-  const kept = { owner, repo, ref: keptWorkBranch(task.task_id) };
-  if ((await f.getRepoFile(owner, repo, task.fragment, kept.ref)) != null)
-    return kept;
+    return { ...own, sha };
+  const ref = await keptWorkRef(ctx, task.task_id);
+  if (ref && (await f.getRepoFile(owner, repo, task.fragment, ref)) != null)
+    return { owner, repo, ref };
   return null;
 }
 
-// Commit the work kept from the task's expired claims (`wip-<task_id>`) onto
+// Commit the work kept from the task's expired claims (keptWorkRef) onto
 // the viewer's fresh task branch: the score and the side files it carries.
 // Returns whether there was any.
 async function seedFromKeptWork(
@@ -468,11 +739,11 @@ async function seedFromKeptWork(
   ref: string,
 ): Promise<boolean> {
   const { forge: f, owner, repo } = ctx;
+  const kept = await keptWorkRef(ctx, task.task_id);
+  if (!kept) return false;
   const paths = [task.fragment, ...sideFilesOf(task)];
   const contents = await Promise.all(
-    paths.map((path) =>
-      f.getRepoFile(owner, repo, path, keptWorkBranch(task.task_id)),
-    ),
+    paths.map((path) => f.getRepoFile(owner, repo, path, kept)),
   );
   const files = paths.flatMap((path, i) =>
     contents[i] == null ? [] : [{ path, content: contents[i]! }],
@@ -489,7 +760,7 @@ async function seedFromKeptWork(
 }
 
 // Map the automation's verdict on a PR to a result banner: a rejection is an
-// error (never shown as success), no verdict yet (timeout) is a warning.
+// error (never shown as success), no verdict yet (timeout) is pending.
 function verdictResult(
   result: PrProcessingResult,
   prNumber: number,
@@ -499,14 +770,20 @@ function verdictResult(
   if (result.state === "timeout") {
     return {
       ok: true,
-      warn: true,
+      outcome: "pending",
       prUrl,
       message: `${fallback} Submission #${prNumber} is still being processed — refresh the tables in a moment.`,
     };
   }
   if (result.state === "run_failed") {
     return {
-      error: `The campaign automation run for submission #${prNumber} failed — see ${result.runUrl}.`,
+      error: `The campaign automation run for submission #${prNumber} failed — see ${result.runUrl}. The submission stays open; the next scheduled run processes it.`,
+      prUrl,
+    };
+  }
+  if (result.state === "contract_mismatch") {
+    return {
+      error: `Submission #${prNumber} was processed by a campaign automation of another version (${result.automation === null ? "an older one" : `contract ${result.automation}`}; this app expects contract ${AUTOMATION_CONTRACT}), so its result cannot be read. Reload the page; if this stays, the campaign's automation needs updating.`,
       prUrl,
     };
   }
@@ -516,20 +793,68 @@ function verdictResult(
       prUrl,
     };
   }
-  if (!result.verdict) {
+  // Someone resolved the comment first: what the viewer asked for holds.
+  if (!result.accepted && result.detail === "already_resolved") {
     return {
-      error: `Submission #${prNumber} closed without a coordinator verdict.`,
+      ok: true,
+      outcome: "noop",
+      prUrl,
+      message: "The comment was already resolved.",
+    };
+  }
+  if (!result.accepted) {
+    return {
+      error:
+        result.verdict ??
+        `Submission #${prNumber} was rejected${result.detail ? `: ${REASON_TEXT[result.detail] ?? result.detail}` : ""}.`,
       prUrl,
     };
   }
-  if (result.verdict.startsWith("❌")) return { error: result.verdict, prUrl };
-  if (!result.verdict.startsWith("✅")) {
-    return {
-      error: `Submission #${prNumber} closed with an unrecognised coordinator verdict.`,
-      prUrl,
-    };
-  }
-  return { ok: true, prUrl, message: result.verdict };
+  return {
+    ok: true,
+    prUrl,
+    message: result.verdict ?? `Submission #${prNumber} was accepted.`,
+  };
+}
+
+/** What a background PR acts on; the UI holds its controls while it is processed. */
+export interface PendingKey {
+  kind:
+    | "claim"
+    | "release"
+    | "review-edit"
+    | "encode"
+    | "validate"
+    | "comment"
+    | "resolve";
+  /** The task; '' for a campaign comment. */
+  task: string;
+  /** The subtask of a review claim, give-back or verdict; '' otherwise. */
+  sub?: string;
+  /** The comment a resolution acts on. */
+  comment?: string;
+}
+
+/** Whether two keys name the same action on the same target. */
+export const sameKey = (a: PendingKey, b: PendingKey): boolean =>
+  a.kind === b.kind &&
+  a.task === b.task &&
+  (a.sub ?? "") === (b.sub ?? "") &&
+  (a.comment ?? "") === (b.comment ?? "");
+
+/** An opened PR whose verdict is followed. */
+export interface FollowedPr {
+  number: number;
+  html_url: string;
+  headSha?: string;
+  head?: { owner: string; repo: string; branch: string };
+  cleanup?: "always" | "accepted";
+  /** The task whose branch `encode-<task>` is deleted once the PR is accepted. */
+  taskBranch?: string;
+  /** When GitHub created the PR (ISO); the run watch looks for runs after it. */
+  createdAt?: string;
+  /** When the follow began, epoch milliseconds; set on a follow resumed after a reload. */
+  openedAt?: number;
 }
 
 /**
@@ -539,18 +864,16 @@ function verdictResult(
  * directly — it uses Svelte runes, which only exist under the Svelte compiler.
  */
 export interface PendingVerdictSink {
+  /** A new entry: 'processing' with `pr`, else 'opening' until attachPr. */
   begin(entry: {
     label: string;
-    /** 0 while the PR is still being opened (state 'opening'). */
-    prNumber: number;
-    prUrl: string;
-    key?: string;
-    /** The campaign repo the submission acts on. */
-    repoId?: number;
-    state?: "opening" | "processing";
+    key: PendingKey;
+    /** The campaign repo the submission acts on, and the acting account. */
+    target: { repoId: number; owner: string; repo: string; viewer: string };
+    pr?: FollowedPr;
   }): string;
   /** The background-opened PR exists now; the entry moves to 'processing'. */
-  attachPr(id: string, prNumber: number, prUrl: string): void;
+  attachPr(id: string, pr: FollowedPr): void;
   /** `runFailed`: the automation run failed before reaching a verdict. */
   settle(
     id: string,
@@ -558,6 +881,8 @@ export interface PendingVerdictSink {
     message: string,
     runFailed?: boolean,
   ): void;
+  /** The campaign's history.csv, as just read, records these PRs' decisions. */
+  recorded(repoId: number, prs: Set<number>): void;
 }
 
 // The fallback sink cannot render anything, but a rejection must never
@@ -569,6 +894,7 @@ let verdictSink: PendingVerdictSink = {
     if (state !== "accepted")
       console.error("[pending-verdict] unrendered verdict:", state, message);
   },
+  recorded: () => {},
 };
 
 export function setVerdictSink(sink: PendingVerdictSink): void {
@@ -585,26 +911,10 @@ export function setVerdictSink(sink: PendingVerdictSink): void {
 function openAndFinishInBackground(
   ctx: CommandContext,
   label: string,
-  /** Structured id of the acted-on target, so UIs can hold its controls while the verdict is pending. */
-  key: string | undefined,
-  open: (bg: CommandContext) => Promise<{
-    number: number;
-    html_url: string;
-    headSha?: string;
-    head?: { owner: string; repo: string; branch: string };
-    cleanup?: "always" | "accepted";
-    /** The task whose branch `encode-<task>` is deleted once the submission is accepted. */
-    taskBranch?: string;
-  }>,
+  key: PendingKey,
+  open: (bg: CommandContext) => Promise<FollowedPr>,
 ): Result {
-  const id = verdictSink.begin({
-    label,
-    prNumber: 0,
-    prUrl: "",
-    key,
-    repoId: ctx.repoId,
-    state: "opening",
-  });
+  const id = verdictSink.begin({ label, key, target: ctx });
   const background: CommandContext = { ...ctx, progress: () => {} };
   void (async () => {
     let pr;
@@ -624,8 +934,8 @@ function openAndFinishInBackground(
       );
       return;
     }
-    verdictSink.attachPr(id, pr.number, pr.html_url);
-    await settleWhenProcessed(background, label, id, pr);
+    verdictSink.attachPr(id, pr);
+    await settleWhenProcessed(background, label, key, id, pr);
   })();
   // No banner: the task's run state (TaskRunState.svelte) is the visible
   // signal from here on.
@@ -635,24 +945,40 @@ function openAndFinishInBackground(
 // Wait for the automation's verdict on an opened PR and settle the verdict
 // sink entry `id` with it. `ctx` reports no progress: this runs in the
 // background.
+// A background submission is followed until it is decided, so its task's
+// controls hold meanwhile: for SETTLE_WAIT_MS polling every 15 s at most, then
+// once a minute, since a pull request whose own run was lost waits for a
+// scheduled run, which can come hours later.
+const SETTLE_WAIT_MS = 70 * 60_000;
+
 async function settleWhenProcessed(
   ctx: CommandContext,
   label: string,
+  key: PendingKey,
   id: string,
-  pr: {
-    number: number;
-    html_url: string;
-    headSha?: string;
-    head?: { owner: string; repo: string; branch: string };
-    cleanup?: "always" | "accepted";
-    taskBranch?: string;
-  },
+  pr: FollowedPr,
+  waitMs = SETTLE_WAIT_MS,
 ): Promise<void> {
+  const until = Date.now() + waitMs;
   let res: Result;
   let runFailed = false;
+  let decidedAt = "";
   try {
-    const outcome = await waitForPrProcessed(ctx, pr);
+    let outcome = await waitForPrProcessed(ctx, pr, {
+      waitMs,
+      maxDelayMs: 15_000,
+    });
+    // Past the wait, the PR is followed without a limit, until it is decided
+    // or its polls keep failing.
+    if (outcome.state === "timeout")
+      outcome = await waitForPrProcessed(ctx, pr, {
+        waitMs: Infinity,
+        maxDelayMs: 60_000,
+      });
+    // No verdict was read: the run failed. A contract mismatch settles as a
+    // rejection carrying its own text.
     runFailed = outcome.state === "run_failed";
+    if (outcome.state === "decided") decidedAt = outcome.at;
     res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
   } catch (e) {
     // The poll failed, not necessarily the submission — an indeterminate
@@ -670,17 +996,120 @@ async function settleWhenProcessed(
       `${label} processed.`,
     );
   }
-  const state = res.error ? "rejected" : res.warn ? "timeout" : "accepted";
+  const state = res.error
+    ? "rejected"
+    : res.outcome === "pending"
+      ? "timeout"
+      : "accepted";
   console.log("[pending-verdict]", label, "PR", pr.number, state);
-  // A pre-task's work is saved on its task branch while the claim lasts; the
-  // accepted submission ends the claim, and no later claim deletes it.
-  if (state === "accepted" && pr.taskBranch)
+  // The task branch holds work of a claim the accepted PR ended or work from
+  // before the claim it started, unless the viewer has claimed the task again
+  // since the decision (from another tab, while this one was hidden): then it
+  // holds the new claim's work.
+  if (
+    state === "accepted" &&
+    pr.taskBranch &&
+    !(await claimedSince(ctx, pr.taskBranch, decidedAt))
+  )
     await deleteTaskBranch(ctx, pr.taskBranch);
   verdictSink.settle(
     id,
     state,
     res.error ?? res.message ?? `${label} processed.`,
     runFailed,
+  );
+  // A failed run leaves the PR open for the scheduled run: the failure is
+  // shown, and the PR is followed on without its run until it is decided.
+  if (runFailed) followAfterFailedRun(ctx, label, key, pr, until);
+}
+
+// Follow a PR whose run failed until it is decided, up to `until` (epoch
+// milliseconds), also after a reload.
+function followAfterFailedRun(
+  ctx: CommandContext,
+  label: string,
+  key: PendingKey,
+  pr: FollowedPr,
+  until = Date.now() + SETTLE_WAIT_MS,
+): void {
+  const followed = {
+    ...pr,
+    headSha: undefined,
+    openedAt: until - SETTLE_WAIT_MS,
+  };
+  const id = verdictSink.begin({ label, key, target: ctx, pr: followed });
+  void settleWhenProcessed(
+    { ...ctx, progress: () => {} },
+    label,
+    key,
+    id,
+    followed,
+    Math.max(0, until - Date.now()),
+  );
+}
+
+// Whether the viewer holds an encoding claim on `task_id` granted after `at`
+// (ISO); true also when the lock table cannot be read, so nothing is deleted
+// on a guess.
+async function claimedSince(
+  ctx: CommandContext,
+  task_id: string,
+  at: string,
+): Promise<boolean> {
+  const { forge: f, owner, repo, viewer } = ctx;
+  try {
+    const locks = parseLockCsv(
+      (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
+    );
+    const lock = encodingClaimOf(locks, task_id, viewer);
+    return (
+      lock !== undefined && !(Date.parse(lock.timestamp) <= Date.parse(at))
+    );
+  } catch {
+    return true;
+  }
+}
+
+// Follow a PR whose verdict did not land within the wait in the background:
+// the task's controls hold under `key` until the verdict lands, and an
+// accepted one deletes the viewer's task branch `encode-<taskBranch>`.
+function followInBackground(
+  ctx: CommandContext,
+  label: string,
+  key: PendingKey,
+  pr: FollowedPr,
+  taskBranch?: string,
+): void {
+  const followed = { ...pr, taskBranch };
+  const id = verdictSink.begin({ label, key, target: ctx, pr: followed });
+  void settleWhenProcessed(
+    { ...ctx, progress: () => {} },
+    label,
+    key,
+    id,
+    followed,
+  );
+}
+
+/**
+ * Go on following entry `id`'s PR after a reload, until SETTLE_WAIT_MS after
+ * `openedAt` (epoch milliseconds).
+ */
+export function resumeFollowing(
+  ctx: CommandContext,
+  label: string,
+  key: PendingKey,
+  id: string,
+  pr: FollowedPr,
+  openedAt: number,
+): void {
+  void settleWhenProcessed(
+    { ...ctx, progress: () => {} },
+    label,
+    key,
+    id,
+    { ...pr, openedAt },
+    Math.max(0, openedAt + SETTLE_WAIT_MS - Date.now()),
   );
 }
 
@@ -704,6 +1133,41 @@ function claimLimitError(
     : null;
 }
 
+// Whether the viewer holds the claim on the row and kind. A claim of theirs
+// refused as `already_locked` was then granted to them from another tab or
+// device.
+async function holdsClaim(
+  ctx: CommandContext,
+  task_id: string,
+  subtask_id: string,
+  kind: string,
+): Promise<boolean> {
+  const { forge: f, owner, repo, viewer } = ctx;
+  return liveLocks(
+    parseLockCsv((await f.getRepoFile(owner, repo, LOCK_PATH)) ?? ""),
+  ).some(
+    (l) =>
+      l.task_id === task_id &&
+      l.subtask_id === subtask_id &&
+      l.kind === kind &&
+      l.user_id === viewer,
+  );
+}
+
+// Whether a decided claim was refused as `already_locked` while the viewer
+// holds that claim.
+const claimedElsewhere = async (
+  ctx: CommandContext,
+  verdict: PrProcessingResult,
+  task_id: string,
+  subtask_id: string,
+  kind: string,
+): Promise<boolean> =>
+  verdict.state === "decided" &&
+  !verdict.accepted &&
+  verdict.detail === "already_locked" &&
+  (await holdsClaim(ctx, task_id, subtask_id, kind));
+
 // Open a PR that adds a lock row (the Action re-authors who/when), carrying
 // the invoking command's envelope in its body. Shared by the claim command
 // and "open in mei-friend" (where opening == claiming).
@@ -716,10 +1180,10 @@ async function openClaimPr(
 ) {
   const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
   await muteOnce(ctx);
-  const [lockCsv, configYaml] = await Promise.all([
-    f.getRepoFile(owner, repo, LOCK_PATH),
-    f.getRepoFile(owner, repo, CONFIG_PATH),
-  ]);
+  const {
+    sha,
+    files: [lockCsv, configYaml],
+  } = await readAtHead(ctx, [LOCK_PATH, CONFIG_PATH]);
   const lockRows = parseLockCsv(lockCsv ?? "");
   const limited = claimLimitError(liveLocks(lockRows), viewer, configYaml);
   if (limited) throw new Error(limited);
@@ -745,6 +1209,7 @@ async function openClaimPr(
     message: `Claim ${target} (${kind})`,
     title: `Claim ${target} (${kind})`,
     body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+    baseSha: sha,
   });
 }
 
@@ -770,6 +1235,21 @@ async function claimAndWait(
       verdict = { state: "timeout" };
     }
     const target = subtask_id ? `${task_id}/${subtask_id}` : task_id;
+    if (await claimedElsewhere(ctx, verdict, task_id, subtask_id, kind))
+      return {
+        ok: true,
+        outcome: "noop",
+        prUrl: pr.html_url,
+        message: `You already hold the claim on ${target}.`,
+      };
+    if (verdict.state === "timeout" || verdict.state === "run_failed")
+      followInBackground(
+        ctx,
+        `${kind === "validation" ? "Review" : "Encoding"} claim of ${target}`,
+        { kind: "claim", task: task_id, sub: subtask_id },
+        verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
+        kind === "encoding" ? task_id : undefined,
+      );
     return verdictResult(
       verdict,
       pr.number,
@@ -871,8 +1351,9 @@ async function fetchTableFiles({
     // The per-file reads pass through the broker too.
     if (err instanceof RateLimitError && err.source === "broker") throw err;
   }
-  // The head is read before the files: a commit that lands during the read
-  // moves the branch past `headSha`, and the next read sees it.
+  // The files are read at the head commit, so they match `headSha` even where
+  // the Contents API lags a branch update; without a head they are read at the
+  // default branch.
   let headSha: string | null;
   try {
     headSha = (await f.getRepoHead(owner, repo)).sha;
@@ -881,7 +1362,9 @@ async function fetchTableFiles({
   }
   const [access, ...contents] = await Promise.all([
     f.getRepoAccess(owner, repo),
-    ...TABLE_PATHS.map((path) => f.getRepoFile(owner, repo, path)),
+    ...TABLE_PATHS.map((path) =>
+      f.getRepoFile(owner, repo, path, headSha ?? undefined),
+    ),
   ]);
   return {
     headSha,
@@ -924,6 +1407,10 @@ const readTables: CommandDef<Record<string, never>, CampaignTables> = {
     // A lock past its `expires` no longer holds the task.
     const locks = liveLocks(parseLockCsv(lockCsv));
     const history = historyCsv ? parseHistoryCsv(historyCsv) : [];
+    verdictSink.recorded(
+      ctx.repoId,
+      new Set(history.flatMap((row) => (row.pr ? [Number(row.pr)] : []))),
+    );
     const comments = commentCsv ? parseCommentCsv(commentCsv) : [];
     return {
       notInitialised: false,
@@ -982,9 +1469,11 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
     try {
       ctx.progress({ step: "Giving the task back…" });
       await muteOnce(ctx);
-      const locks = parseLockCsv(
-        (await f.getRepoFile(owner, repo, LOCK_PATH)) ?? "",
-      );
+      const {
+        sha,
+        files: [lockCsv],
+      } = await readAtHead(ctx, [LOCK_PATH]);
+      const locks = parseLockCsv(lockCsv ?? "");
       const { removed } = reapLocks({ locks, now: new Date().toISOString() });
       if (claimRanOut(removed, { task_id, subtask_id, kind }, viewer))
         return { error: `Your claim on ${target} has run out.` };
@@ -1006,6 +1495,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         message: `Abandon ${target} (${kind})`,
         title: `Abandon ${target} (${kind})`,
         body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+        baseSha: sha,
       });
       console.log("[abandon] release PR opened", pr.number, pr.html_url);
       let verdict: PrProcessingResult;
@@ -1021,7 +1511,15 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         pr.html_url,
         `Release #${pr.number} opened for ${target}.`,
       );
-      if (!res.ok || res.warn) return res;
+      if (verdict.state === "timeout" || verdict.state === "run_failed")
+        followInBackground(
+          ctx,
+          `Release of ${target}`,
+          { kind: "release", task: task_id, sub: subtask_id },
+          verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
+          kind === "encoding" ? task_id : undefined,
+        );
+      if (!res.ok || res.outcome === "pending") return res;
       if (kind === "encoding") await deleteTaskBranch(ctx, task_id);
       return { ...res, message: `You abandoned ${target}.` };
     } catch (e) {
@@ -1068,18 +1566,13 @@ const openEditor: CommandDef<
       const taskDefs = parseTaskCsv(taskCsv ?? "");
       const taskDef = findRow(taskDefs, task_id, "");
       const fragment = taskDef?.fragment;
-      const task = findRow(parseStateCsv(stateCsv ?? "").rows, task_id, "");
+      const state = parseStateCsv(stateCsv ?? "");
+      const task = findRow(state.rows, task_id, "");
       if (!taskDef || !fragment || !task)
         return { error: `Unknown task ${task_id}.` };
 
       const locks = liveLocks(parseLockCsv(lockCsv ?? ""));
-      const mine = locks.some(
-        (l) =>
-          l.task_id === task_id &&
-          l.subtask_id === "" &&
-          l.kind === "encoding" &&
-          l.user_id === viewer,
-      );
+      const mine = encodingClaimOf(locks, task_id, viewer) !== undefined;
       const claiming = task.status === "encoding_required" && !mine;
       if (
         claiming &&
@@ -1093,22 +1586,28 @@ const openEditor: CommandDef<
           error: `${task_id} starts with a check of the score definition: open the task and claim it there.`,
         };
       if (claiming) {
-        // Someone else's active claim would reject this one; stop before the
-        // task branch, which may hold their work, is touched.
-        if (
-          locks.some(
-            (l) =>
-              l.task_id === task_id &&
-              l.subtask_id === "" &&
-              l.kind === "encoding",
-          )
-        )
+        // A claim the campaign automation would refuse stops here, before
+        // the task branch, which may hold someone else's work, is touched.
+        const refusal = claimRefusal({
+          tasks: taskDefs,
+          state,
+          locks,
+          intent: { task_id, subtask_id: "", kind: "encoding" },
+          author: viewer,
+        });
+        if (refusal === "already_locked")
           return { error: `Someone else holds the claim on ${task_id}.` };
+        if (refusal)
+          return {
+            error: `${task_id} cannot be claimed: ${REASON_TEXT[refusal] ?? refusal}.`,
+          };
         const limited = claimLimitError(locks, viewer, configYaml);
         if (limited) return { error: limited };
       }
 
-      const { sha, canPush } = await f.getRepoHead(owner, repo);
+      const head = await f.getRepoHead(owner, repo);
+      const { canPush } = head;
+      let { sha } = head;
       console.log(
         "[editor] task",
         task_id,
@@ -1119,17 +1618,11 @@ const openEditor: CommandDef<
         "canPush",
         canPush,
       );
-      // Both roles commit to a per-task branch `encode-<task_id>`: owners and
-      // collaborators in the campaign repo itself (a repo cannot be forked by
-      // its owner), volunteers in their fork, which they can push to. The
-      // submission PR later names the same branch.
       const ref = `encode-${task_id}`;
-      const workRepo = canPush
-        ? { owner, repo }
-        : await f.ensureFork(owner, repo);
-
       let prUrl: string | undefined;
       let claimMessage = "";
+      // A newly accepted claim starts its task branch afresh.
+      let startsFresh = false;
       if (claiming) {
         ctx.progress({ step: "Opening the encoding claim…" });
         const pr = await openClaimPr(ctx, task_id, "", "encoding", envelope);
@@ -1140,27 +1633,25 @@ const openEditor: CommandDef<
         );
         prUrl = pr.html_url;
         const verdict = await waitForPrProcessed(ctx, pr);
+        if (verdict.state === "run_failed")
+          followInBackground(
+            ctx,
+            `Encoding claim of ${task_id}`,
+            { kind: "claim", task: task_id },
+            { ...pr, headSha: undefined },
+            task_id,
+          );
         if (verdict.state === "timeout") {
-          // The claim is followed in the background; its controls hold on
-          // the task until the verdict lands.
-          const label = `Encoding claim of ${task_id}`;
-          const id = verdictSink.begin({
-            label,
-            prNumber: pr.number,
-            prUrl: pr.html_url,
-            key: `claim:${task_id}`,
-            repoId: ctx.repoId,
-            state: "processing",
-          });
-          void settleWhenProcessed(
-            { ...ctx, progress: () => {} },
-            label,
-            id,
+          followInBackground(
+            ctx,
+            `Encoding claim of ${task_id}`,
+            { kind: "claim", task: task_id },
             pr,
+            task_id,
           );
           return {
             ok: true,
-            warn: true,
+            outcome: "pending",
             prUrl,
             message: `Encoding claim #${pr.number} is still being processed. Open it in mei-friend once it is accepted.`,
           };
@@ -1171,19 +1662,33 @@ const openEditor: CommandDef<
           pr.html_url,
           `Encoding claim #${pr.number} opened.`,
         );
-        if (res.error) {
+        if (!res.error) {
+          startsFresh = true;
+          claimMessage = `${res.message} `;
+        } else if (
+          // Claimed from another tab or device: its branch is kept.
+          !(await claimedElsewhere(ctx, verdict, task_id, "", "encoding"))
+        ) {
           return {
             error: `The encoding claim was rejected — ${res.error}`,
             prUrl,
           };
         }
-        // A new claim starts from the current score or the work kept from
-        // expired claims. The branch is deleted only once the claim is
-        // accepted: until then, an expired claim's work on it may still be
-        // being kept.
-        await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
-        claimMessage = `${res.message} `;
+        // Pages accepted while the claim was processed are on the branch
+        // the editor opens.
+        ({ sha } = await f.getRepoHead(owner, repo));
       }
+
+      // The task branch `encode-<task_id>` lives where the claim's pull
+      // request came from (workRepoOf): the campaign repo for owners and
+      // collaborators, the volunteer's fork otherwise. The submission PR
+      // later names the same branch.
+      const workRepo = await workRepoOf(ctx, task_id);
+      // A new claim starts from the current score or the work kept from
+      // expired claims. The branch is deleted only once the claim is
+      // accepted: until then, an expired claim's work on it may still be
+      // being kept.
+      if (startsFresh) await f.deleteBranch(workRepo.owner, workRepo.repo, ref);
 
       ctx.progress({ step: "Preparing the score for mei-friend…" });
       // Whether the branch now sits at the head with nothing of its own on it.
@@ -1339,37 +1844,31 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
   log: "pr",
   background: true,
   async run({ task_id }, ctx, envelope) {
-    const { forge: f, owner, repo, viewerLogin } = ctx;
+    const { forge: f, owner, repo, viewer, viewerLogin } = ctx;
     return openAndFinishInBackground(
       ctx,
       `Encoding of ${task_id}`,
-      `encode:${task_id}`,
+      { kind: "encode", task: task_id },
       async () => {
         await muteOnce(ctx);
-        const [{ branch: base, canPush }, taskCsv] = await Promise.all([
+        const [{ branch: base }, taskCsv] = await Promise.all([
           f.getRepoHead(owner, repo),
           f.getRepoFile(owner, repo, TASK_PATH),
         ]);
-        const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+        const tasks = parseTaskCsv(taskCsv ?? "");
+        const task = findRow(tasks, task_id, "");
         if (!task) throw new Error(`Unknown task ${task_id}.`);
-        // The claim/editor flow put the encoding on `encode-<task_id>` — in the
-        // campaign repo for owners/collaborators, in the volunteer's fork
-        // otherwise — so the head is fully determined; nothing to guess.
+        // The claim/editor flow put the encoding on `encode-<task_id>` in the
+        // repo the claim's pull request came from (workRepoOf).
         const branch = `encode-${task_id}`;
-        let head = branch;
-        let workRepo = { owner, repo };
-        let forkHead:
-          | { owner: string; repo: string; branch: string }
-          | undefined;
-        if (!canPush) {
-          const fork = await f.ensureFork(owner, repo);
-          head = `${fork.owner}:${branch}`;
-          workRepo = fork;
-          forkHead = { ...fork, branch };
-        }
+        const workRepo = await workRepoOf(ctx, task_id);
+        const inCampaign = workRepo.owner === owner && workRepo.repo === repo;
+        const head = inCampaign ? branch : `${workRepo.owner}:${branch}`;
+        const forkHead = inCampaign ? undefined : { ...workRepo, branch };
         // The branch holds mei-friend's commits. The score is assembled the way
-        // the automation assembles it — a page task contributes only its page,
-        // spliced into the campaign's score — and checked against the schema,
+        // the automation assembles it (assembleSubmission) — a page task
+        // contributes only its page, spliced into the campaign's score — and
+        // checked against the schema,
         // so a failing submission is refused before a pull request is opened.
         // GitHub's Contents API can briefly lag a push, so the read is retried.
         let forkMei: string | null = null;
@@ -1386,24 +1885,36 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
           throw new Error(
             `${task.fragment} is missing from the submitted encoding.`,
           );
-        let mei = forkMei;
-        if (task.locator.startsWith("surface-")) {
-          const [baseMei, configYaml] = await Promise.all([
-            f.getRepoFile(owner, repo, task.fragment),
-            f.getRepoFile(owner, repo, CONFIG_PATH),
-          ]);
-          if (baseMei == null)
-            throw new Error(`${task.fragment} is missing from the campaign.`);
-          try {
-            mei =
-              pieceKindForPath(configYaml, task.fragment) === "physical-only"
-                ? splicePageSpan(baseMei, forkMei, task.locator)
-                : splicePage(baseMei, forkMei, task.locator);
-          } catch (e) {
-            throw new Error(
-              `page ${task.locator} cannot be joined into ${task.fragment}: ${(e as Error).message}`,
-            );
-          }
+        const isPageTask = pageOfLocator(task.locator) !== null;
+        const [baseMei, configYaml] = await Promise.all([
+          f.getRepoFile(owner, repo, task.fragment),
+          isPageTask ? f.getRepoFile(owner, repo, CONFIG_PATH) : null,
+        ]);
+        // The automation records the contribution in the header before its
+        // check; this one stands in for it, so the header checked has the
+        // same shape.
+        let mei: string;
+        try {
+          mei = assembleSubmission({
+            task,
+            tasks,
+            configYaml,
+            baseMei,
+            forkMei,
+            contributions: [
+              {
+                name: viewerLogin,
+                id: viewer,
+                message: `Encoding of ${task_id}`,
+                isodate: new Date().toISOString().slice(0, 10),
+                application: "mei-friend",
+              },
+            ],
+          });
+        } catch (e) {
+          throw new Error(
+            `${isPageTask ? `page ${task.locator}` : "the encoding"} cannot be joined into ${task.fragment}: ${(e as Error).message}`,
+          );
         }
         const meiError = await checkMei(mei);
         if (meiError) {
@@ -1488,12 +1999,14 @@ const submitValidation: CommandDef<
     return openAndFinishInBackground(
       ctx,
       label,
-      `validate:${task_id}/${subtask_id}`,
+      { kind: "validate", task: task_id, sub: subtask_id },
       async () => {
         await muteOnce(ctx);
-        const state = parseStateCsv(
-          (await f.getRepoFile(owner, repo, STATE_PATH)) ?? "",
-        );
+        const {
+          sha,
+          files: [stateCsv, commentCsv],
+        } = await readAtHead(ctx, [STATE_PATH, COMMENT_PATH]);
+        const state = parseStateCsv(stateCsv ?? "");
         const row = findRow(state.rows, task_id, subtask_id);
         if (!row) throw new Error(`unknown subtask ${task_id}/${subtask_id}.`);
         const slot = state.validationColumns.find((c) => (row[c] ?? "") === "");
@@ -1504,11 +2017,9 @@ const submitValidation: CommandDef<
         const files = [{ path: STATE_PATH, content: serializeStateCsv(state) }];
         if (verdict === "fail") {
           // The id, author and timestamp are the Action's to write.
-          const commentCsv =
-            (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? "";
           files.push({
             path: COMMENT_PATH,
-            content: appendComments(commentCsv, [
+            content: appendComments(commentCsv ?? "", [
               {
                 comment_id: "",
                 task_id,
@@ -1540,6 +2051,7 @@ const submitValidation: CommandDef<
           message: `Validate ${task_id}/${subtask_id} (${verdict})`,
           title: `Validate ${task_id}/${subtask_id} (${verdict})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+          baseSha: sha,
         });
         console.log("[validate] validation PR opened", pr.number, pr.html_url);
         return pr;
@@ -1572,10 +2084,10 @@ const reviewEdit: CommandDef<
     try {
       ctx.progress({ step: "Switching to editing…" });
       await muteOnce(ctx);
-      const [lockCsv, commentCsv] = await Promise.all([
-        f.getRepoFile(owner, repo, LOCK_PATH),
-        f.getRepoFile(owner, repo, COMMENT_PATH),
-      ]);
+      const {
+        sha,
+        files: [lockCsv, commentCsv],
+      } = await readAtHead(ctx, [LOCK_PATH, COMMENT_PATH]);
       const locks = parseLockCsv(lockCsv ?? "");
       const mine = (l: LockRow) =>
         l.task_id === task_id &&
@@ -1620,6 +2132,7 @@ const reviewEdit: CommandDef<
         message: `Edit ${task_id} from review`,
         title: `Edit ${task_id} from review`,
         body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+        baseSha: sha,
       });
       console.log("[review-edit] PR opened", pr.number, pr.html_url);
       let verdict: PrProcessingResult;
@@ -1638,7 +2151,15 @@ const reviewEdit: CommandDef<
         pr.html_url,
         `Review edit #${pr.number} opened for ${target}.`,
       );
-      if (!res.ok || res.warn) return res;
+      if (verdict.state === "timeout" || verdict.state === "run_failed")
+        followInBackground(
+          ctx,
+          `Review edit of ${target}`,
+          { kind: "review-edit", task: task_id, sub: subtask_id },
+          verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
+          task_id,
+        );
+      if (!res.ok || res.outcome === "pending") return res;
       // The edit starts from the reviewed submission, not from an earlier
       // branch of the viewer's.
       await deleteTaskBranch(ctx, task_id);
@@ -1711,12 +2232,14 @@ const submitComment: CommandDef<
     return openAndFinishInBackground(
       ctx,
       `Comment on ${target}`,
-      `comment:${input.task_id}`,
+      { kind: "comment", task: input.task_id },
       async () => {
         await muteOnce(ctx);
-        const commentCsv =
-          (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? "";
-        const content = appendComments(commentCsv, [
+        const {
+          sha,
+          files: [commentCsv],
+        } = await readAtHead(ctx, [COMMENT_PATH]);
+        const content = appendComments(commentCsv ?? "", [
           {
             comment_id: "",
             task_id: input.task_id,
@@ -1740,6 +2263,7 @@ const submitComment: CommandDef<
           message: `Comment on ${target} (${input.kind})`,
           title: `Comment on ${target} (${input.kind})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+          baseSha: sha,
         });
         console.log("[comment] comment PR opened", pr.number, pr.html_url);
         return pr;
@@ -1758,17 +2282,18 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
   async run({ comment_id }, ctx, envelope) {
     const { forge: f, owner, repo } = ctx;
     let comments;
+    let sha: string;
     try {
-      comments = parseCommentCsv(
-        (await f.getRepoFile(owner, repo, COMMENT_PATH)) ?? "",
-      );
+      const read = await readAtHead(ctx, [COMMENT_PATH]);
+      sha = read.sha;
+      comments = parseCommentCsv(read.files[0] ?? "");
     } catch (e) {
       return { error: `Resolve failed: ${(e as Error).message}` };
     }
     const row = comments.find((c) => c.comment_id === comment_id);
     if (!row) return { error: `Unknown comment ${comment_id}.` };
     if (row.resolved === "true")
-      return { ok: true, warn: true, message: "Already resolved." };
+      return { ok: true, outcome: "noop", message: "Already resolved." };
     // A resolved comment takes its replies with it (the automation enforces
     // the same on its side).
     const resolved = resolveCommentThread(comments, comment_id);
@@ -1777,7 +2302,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
     return openAndFinishInBackground(
       ctx,
       `Resolution of comment ${comment_id}`,
-      `resolve:${comment_id}`,
+      { kind: "resolve", task: row.task_id, comment: comment_id },
       async () => {
         await muteOnce(ctx);
         const body = `Resolves comment ${comment_id} on ${row.task_id || "the campaign"}. Opened from the campaign console.`;
@@ -1789,6 +2314,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
           message: `Resolve comment ${comment_id}`,
           title: `Resolve comment ${comment_id}`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+          baseSha: sha,
         });
         console.log("[comment] resolve PR opened", pr.number, pr.html_url);
         return pr;
@@ -1801,6 +2327,9 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
 // console's plan editor. Owner-only: the rewrite is committed directly, so it
 // requires push access; checkPlan re-validates against fresh tables so a claim
 // that landed while editing rejects the save rather than being overwritten.
+// `base` is the task table the editor opened with: a task.csv changed since
+// (a replan of page tasks, a save from another tab) refuses the save, since
+// the edited table would undo those changes for every task not yet started.
 const PLAN_REJECTIONS: Record<string, string> = {
   empty_plan: "The plan has no tasks — a campaign needs at least one.",
   duplicate_row: "The plan lists the same task twice.",
@@ -1812,34 +2341,40 @@ const PLAN_REJECTIONS: Record<string, string> = {
     "The dependencies run in a circle — no task could ever be claimed.",
   task_in_progress:
     "A task someone has already worked on or claimed was changed or removed — refresh and edit again.",
+  plan_changed:
+    "The plan was changed while you were editing it. Cancel, open the plan editor again and repeat your edits.",
 };
 
-const savePlan: CommandDef<{ tasks: TaskRow[] }, Result> = {
+const savePlan: CommandDef<{ tasks: TaskRow[]; base: TaskRow[] }, Result> = {
   id: "campaign.savePlan",
   version: 1,
   log: "direct",
   envelopeInput: ({ tasks }) => ({
     tasks: tasks.filter((t) => t.subtask_id === "").map((t) => t.task_id),
   }),
-  async run({ tasks }, ctx) {
+  async run({ tasks, base }, ctx) {
     const { forge: f, owner, repo } = ctx;
     try {
       ctx.progress({ step: "Checking the plan against the current tables…" });
       const { sha, canPush } = await f.getRepoHead(owner, repo);
       if (!canPush)
         return { error: "Only the campaign owner can edit the plan." };
-      const [taskCsv, stateCsv, lockCsv] = await Promise.all([
+      const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
         f.getRepoFile(owner, repo, TASK_PATH, sha),
         f.getRepoFile(owner, repo, STATE_PATH, sha),
         f.getRepoFile(owner, repo, LOCK_PATH, sha),
+        f.getRepoFile(owner, repo, HISTORY_PATH, sha),
       ]);
       if (taskCsv == null || stateCsv == null)
         return { error: "Could not read the tracking tables." };
+      if (serializeTaskCsv(parseTaskCsv(taskCsv)) !== serializeTaskCsv(base))
+        return { error: PLAN_REJECTIONS.plan_changed };
       const state = parseStateCsv(stateCsv);
       const verdict = checkPlan(
         parseTaskCsv(taskCsv),
         state,
         parseLockCsv(lockCsv ?? ""),
+        parseHistoryCsv(historyCsv ?? ""),
         tasks,
       );
       if (!verdict.ok) {
@@ -1909,6 +2444,16 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
         if (watch.state.phase === "completed") {
           const { conclusion, html_url } = watch.state.run;
           console.log("[reaper] run finished with conclusion:", conclusion);
+          // Scheduled and dispatched runs share one queue, in which a newer
+          // run replaces a waiting one: the scheduled run does the same work.
+          if (conclusion === "cancelled") {
+            return {
+              ok: true,
+              outcome: "pending",
+              message:
+                "The run was replaced by a scheduled run that does the same; refresh the tables once it has finished.",
+            };
+          }
           if (conclusion !== "success") {
             return {
               error: `The reaper run finished with "${conclusion}" — see ${html_url}.`,
@@ -1919,7 +2464,7 @@ const runReaper: CommandDef<Record<string, never>, Result> = {
       }
       return {
         ok: true,
-        warn: true,
+        outcome: "pending",
         message:
           "Reaper dispatched; the run hasn’t finished yet — refresh the tables in a moment.",
       };
@@ -1960,10 +2505,25 @@ export interface FacsimileTaskData {
   /** Where the score was read from when not from `main`: the holder's saved
       work or the work kept from expired claims. */
   workSource: FileSource | null;
+  /** The commit of the viewer's task branch the editor opens on; null when
+      the branch does not exist. A draft is saved on top of it only. */
+  draftBase: string | null;
   /** The incomplete task this one waits for (task.csv depends_on); '' when none. */
   blockedBy: string;
   /** The instruments a layout task named (layout-corrected.json); null when none. */
   instruments: LayoutInstruments | null;
+  /** For an encoding alignment, the uploaded encoding; null otherwise. */
+  upload: string | null;
+  /**
+   * For an encoding alignment, the alignment record (alignment.json) where
+   * the score was read from; null when there is none.
+   */
+  alignment: string | null;
+  /**
+   * For an encoding alignment, the piece's score in the campaign and its
+   * corrected layout, which the alignment is made on; null otherwise.
+   */
+  campaignScore: { mei: string; corrected: string | null } | null;
 }
 
 const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
@@ -2015,6 +2575,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     if (usesOmr(preparation))
       model.pages = withCorrectedLayout(model.pages, corrected);
     const instruments = corrected ? layoutInstruments(corrected) : null;
+    const aligning = task.locator === "encoding-align";
+    const [upload, alignment, campaignScore] = aligning
+      ? await alignmentInputs(ctx, task, configYaml, from)
+      : [null, null, null];
     const imageUrls = await resolveFacsimileImageUrls(
       f,
       owner,
@@ -2022,11 +2586,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       task.fragment,
       model.pages.map((page) => page.image),
     );
-    const blockedBy =
-      task.depends_on &&
-      findRow(state.rows, task.depends_on, "")?.status !== "completed"
-        ? task.depends_on
-        : "";
+    const blockedBy = waitsFor(
+      task.depends_on,
+      (t) => findRow(state.rows, t, "")?.status,
+    );
     return {
       model,
       imageUrls,
@@ -2046,11 +2609,45 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
       encodingLockUser: encodingLock?.user_id ?? "",
       encodingLockExpires: encodingLock?.expires ?? "",
       workSource: source,
+      draftBase: source?.sha ?? null,
       blockedBy,
       instruments,
+      upload,
+      alignment,
+      campaignScore,
     };
   },
 };
+
+/** An encoding alignment's files: the upload, the alignment record where
+    the score is read from, and the campaign's score and corrected layout. */
+async function alignmentInputs(
+  ctx: CommandContext,
+  task: TaskRow,
+  configYaml: string | null,
+  from: { owner: string; repo: string; ref: string | undefined },
+): Promise<[string, string | null, { mei: string; corrected: string | null }]> {
+  const { forge: f, owner, repo } = ctx;
+  const path = pieceFieldForPath(configYaml, task.fragment, "encoding");
+  if (!path) throw new Error(`${task.fragment} has no uploaded encoding.`);
+  const omr = usesOmr(
+    pieceFieldForPath(configYaml, task.fragment, "preparation"),
+  );
+  const [upload, alignment, mei, corrected] = await Promise.all([
+    f.getRepoFile(owner, repo, path),
+    f.getRepoFile(
+      from.owner,
+      from.repo,
+      alignmentPath(task.fragment),
+      from.ref,
+    ),
+    f.getRepoFile(owner, repo, task.fragment),
+    omr ? f.getRepoFile(owner, repo, correctedLayoutPath(task.fragment)) : null,
+  ]);
+  if (upload == null) throw new Error(`Could not read ${path}.`);
+  if (mei == null) throw new Error(`Could not read ${task.fragment}.`);
+  return [upload, alignment, { mei, corrected }];
+}
 
 // Claim a task for encoding-kind work without a mei-friend hand-off — the
 // zone editor's claim path for the facsimile pre-tasks.
@@ -2064,7 +2661,8 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
     // expired claims, never from a branch of an earlier claim. The branch is
     // deleted only once the claim is accepted: until then, an expired claim's
     // work on it may still be being kept.
-    if (result.ok && !result.warn) await deleteTaskBranch(ctx, task_id);
+    if (result.ok && result.outcome !== "pending" && result.outcome !== "noop")
+      await deleteTaskBranch(ctx, task_id);
     return result;
   },
 };
@@ -2196,8 +2794,7 @@ async function submitFacsimile(
     const body = `${title}. Opened from the zone editor.`;
     const label = `${layout ? "Layout" : "Measure"} correction of ${task_id}`;
     // The corrected boxes, the layout model's raw output and the recognition
-    // record go next to the score, one file each per piece: the campaign
-    // workflow runs a pull request of at most four files. The score is
+    // record go next to the score, one file each per piece. The score is
     // committed when unchanged too, which gives the pull request a commit
     // when nothing differs from the campaign's (boxes confirmed as they
     // are).
@@ -2212,16 +2809,23 @@ async function submitFacsimile(
     return openAndFinishInBackground(
       ctx,
       label,
-      `encode:${task_id}`,
+      { kind: "encode", task: task_id },
       async () => {
         console.log("[zones] opening PR", { task_id });
-        const pr = await f.openChangePr(owner, repo, {
-          branch: `${layout ? "layout" : "zones"}-${task_id}-${rand()}`,
+        const pr = await openPreTaskSubmission(
+          ctx,
+          layout ? "layout" : "zones",
+          task_id,
           files,
-          message: title,
-          title,
-          body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-        });
+          (branch) =>
+            f.openChangePr(owner, repo, {
+              branch,
+              files,
+              message: title,
+              title,
+              body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+            }),
+        );
         console.log("[zones] PR opened", pr.number, pr.html_url);
         return { ...pr, cleanup: "accepted", taskBranch: task_id };
       },
@@ -2229,6 +2833,40 @@ async function submitFacsimile(
   } catch (e) {
     return { error: `Submission failed: ${(e as Error).message}` };
   }
+}
+
+// The viewer's pre-task submission on `task_id` still open, from another tab
+// or device (head branch `<prefix>-<task_id>-…`), which a repeat submission
+// follows instead of opening a second pull request that would be rejected,
+// when its head holds `files` as they are; else the one `open` opens on a new
+// branch. Throws when the open submission holds other content.
+async function openPreTaskSubmission(
+  ctx: CommandContext,
+  prefix: string,
+  task_id: string,
+  files: FileChange[],
+  open: (branch: string) => Promise<OpenedChangeRequest>,
+): Promise<OpenedChangeRequest> {
+  const { forge: f, owner, repo, viewer } = ctx;
+  const branchPrefix = `${prefix}-${task_id}-`;
+  const pending = await f.findOpenChangeRequest(
+    owner,
+    repo,
+    viewer,
+    branchPrefix,
+  );
+  if (!pending) return open(`${branchPrefix}${rand()}`);
+  const { head } = pending;
+  const held = await Promise.all(
+    files.map((file) =>
+      f.getRepoFile(head.owner, head.repo, file.path, head.branch),
+    ),
+  );
+  if (files.some((file, i) => held[i] !== file.content))
+    throw new Error(
+      `submission #${pending.number} of ${task_id} is still open with other content and must be decided first.`,
+    );
+  return pending;
 }
 
 // Measure correction: submit stage C — the corrected zones with one generated
@@ -2315,35 +2953,36 @@ async function setupScore(
   if (current == null) throw new Error(`Could not read ${fragment}.`);
   const parsed = parseFacsimileMei(current);
   const omr = usesOmr(pieceFieldForPath(configYaml, fragment, "preparation"));
-  const content =
-    omr && hasNotation(current)
-      ? replaceScoreDef(current, scoreDef)
-      : omr
-        ? buildFacsimileMei(
-            {
-              headXml: parsed.headXml,
-              scoreDef,
-              pages: withCorrectedLayout(
-                parsed.pages,
-                await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)),
-              ),
-            },
-            {
-              withBreaks: parsed.hasBreaks,
-              emptyMeasures: true,
-              padZones: true,
-            },
+  // A score holding notation (transcriptions, or an aligned encoding) keeps
+  // its measures: only its definition is replaced.
+  const content = hasNotation(current)
+    ? replaceScoreDef(current, scoreDef)
+    : omr
+      ? buildFacsimileMei(
+          {
+            headXml: parsed.headXml,
+            scoreDef,
+            pages: withCorrectedLayout(
+              parsed.pages,
+              await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)),
+            ),
+          },
+          {
+            withBreaks: parsed.hasBreaks,
+            emptyMeasures: true,
+            padZones: true,
+          },
+        )
+      : pieceKindForPath(configYaml, fragment) === "physical-only"
+        ? buildBlankScoreMei(
+            parsed.headXml,
+            (current.match(/<pb\b/g) ?? []).length,
+            scoreDef,
           )
-        : pieceKindForPath(configYaml, fragment) === "physical-only"
-          ? buildBlankScoreMei(
-              parsed.headXml,
-              (current.match(/<pb\b/g) ?? []).length,
-              scoreDef,
-            )
-          : buildFacsimileMei(
-              { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
-              { withBreaks: parsed.hasBreaks },
-            );
+        : buildFacsimileMei(
+            { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
+            { withBreaks: parsed.hasBreaks },
+          );
   return { content };
 }
 
@@ -2396,28 +3035,126 @@ const submitScoreSetup: CommandDef<
         };
       const title = `Set up the score (${task_id})`;
       const body = `${title}. Opened from the score setup editor.`;
+      // The score is committed when unchanged too, which gives the pull
+      // request a commit when the definition is confirmed as it is.
+      const files: FileChange[] = [
+        { path: fragment, content },
+        ...(recordChanged ? [{ path: recordPath, content: record! }] : []),
+      ];
       return openAndFinishInBackground(
         ctx,
         `Score setup of ${task_id}`,
-        `encode:${task_id}`,
+        { kind: "encode", task: task_id },
         async () => {
           console.log("[setup] opening PR", { task_id });
-          const pr = await f.openChangePr(owner, repo, {
-            branch: `setup-${task_id}-${rand()}`,
-            // The score is committed when unchanged too, which gives the
-            // pull request a commit when the definition is confirmed as it
-            // is.
-            files: [
-              { path: fragment, content },
-              ...(recordChanged
-                ? [{ path: recordPath, content: record! }]
-                : []),
-            ],
-            message: title,
-            title,
-            body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
-          });
+          const pr = await openPreTaskSubmission(
+            ctx,
+            "setup",
+            task_id,
+            files,
+            (branch) =>
+              f.openChangePr(owner, repo, {
+                branch,
+                files,
+                message: title,
+                title,
+                body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+              }),
+          );
           console.log("[setup] PR opened", pr.number, pr.html_url);
+          return { ...pr, cleanup: "accepted", taskBranch: task_id };
+        },
+      );
+    } catch (e) {
+      return { error: `Submission failed: ${(e as Error).message}` };
+    }
+  },
+};
+
+// The score and alignment record an encoding alignment with `pins` amounts
+// to, made on the campaign's score as described at alignEncoding.
+async function alignmentScore(ctx: CommandContext, task: TaskRow, pins: Pin[]) {
+  const { forge: f, owner, repo } = ctx;
+  const configYaml = await f.getRepoFile(owner, repo, CONFIG_PATH);
+  const [upload, , campaign] = await alignmentInputs(ctx, task, configYaml, {
+    owner,
+    repo,
+    ref: undefined,
+  });
+  const aligned = alignEncoding({
+    current: campaign.mei,
+    corrected: campaign.corrected,
+    upload,
+    preparation:
+      pieceFieldForPath(configYaml, task.fragment, "preparation") ??
+      "measure-detection",
+    pins,
+  });
+  return aligned;
+}
+
+// Encoding alignment: submit the uploaded encoding merged into the piece's
+// measures along the alignment the pins give, with the alignment record. A
+// file that does not fit the piece (kind "different") is not submitted.
+const submitEncodingAlignment: CommandDef<
+  { task_id: string; pins: Pin[] },
+  Result
+> = {
+  id: "campaign.submitEncodingAlignment",
+  version: 1,
+  log: "pr",
+  background: true,
+  envelopeInput: ({ task_id, pins }) => ({ task_id, pins: pins.length }),
+  async run({ task_id, pins }, ctx, envelope) {
+    const { forge: f, owner, repo } = ctx;
+    try {
+      await muteOnce(ctx);
+      const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
+      const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
+      if (!task) return { error: `Unknown task ${task_id}.` };
+      const aligned = await alignmentScore(ctx, task, pins);
+      if (aligned.summary.kind === "different")
+        return { error: differentReason(aligned.summary) };
+      const content = aligned.merged.mei;
+      const recordPath = alignmentPath(task.fragment);
+      const recordChanged =
+        aligned.record !== (await f.getRepoFile(owner, repo, recordPath));
+      const meiError = await checkMei(content);
+      if (meiError)
+        return {
+          error: `The score fails the MEI schema check (${meiError}). Nothing was submitted.`,
+        };
+      const title = alignmentMessage(task_id, aligned.layout, aligned.merged);
+      const body = `${title}. Opened from the encoding alignment editor.`;
+      // The score is committed when unchanged too, which gives the pull
+      // request a commit when the alignment is confirmed as it is.
+      const files: FileChange[] = [
+        { path: task.fragment, content },
+        ...(recordChanged
+          ? [{ path: recordPath, content: aligned.record }]
+          : []),
+      ];
+      return openAndFinishInBackground(
+        ctx,
+        `Encoding alignment of ${task_id}`,
+        { kind: "encode", task: task_id },
+        async () => {
+          console.log("[align] opening PR", { task_id });
+          const pr = await openPreTaskSubmission(
+            ctx,
+            "align",
+            task_id,
+            files,
+            (branch) =>
+              f.openChangePr(owner, repo, {
+                branch,
+                files,
+                message: title,
+                title,
+                body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
+              }),
+          );
+          console.log("[align] PR opened", pr.number, pr.html_url);
           return { ...pr, cleanup: "accepted", taskBranch: task_id };
         },
       );
@@ -2442,26 +3179,54 @@ export type DraftInput = {
   scoreDef?: ScoreDefModel;
   /** A score setup's or a naming layout correction's recognition record, when recognition ran in this session. */
   omr?: string;
+  /** An encoding alignment's fixed links. */
+  pins?: Pin[];
+  /**
+   * The commit of the task branch the editor's state was loaded from or last
+   * saved as; null when there was no branch. The save is refused when the
+   * branch has moved since, from another tab or device.
+   */
+  base?: string | null;
 };
+
+const DRAFT_CHANGED_ELSEWHERE =
+  "The draft was not saved: it was changed in another tab or on another device. Reload the page to continue from that version.";
 
 // Save a pre-task editor's state to the viewer's task branch
 // `encode-<task_id>` as the files its submission would carry, so the work
 // survives leaving the editor and is kept when the claim expires. A missing
 // branch is created from the campaign's head and first given the work kept
-// from expired claims, whose side files the state may not repeat.
-const saveDraft: CommandDef<DraftInput, Result> = {
+// from expired claims, whose side files the state may not repeat. A draft is
+// saved only while the viewer holds the task's encoding claim: the end of a
+// claim deletes the branch, and a later save would bring it back.
+const saveDraft: CommandDef<DraftInput, Result & { sha?: string }> = {
   id: "campaign.saveDraft",
   version: 1,
   log: "none",
   async run(input, ctx) {
-    const { forge: f, owner, repo } = ctx;
+    const { forge: f, owner, repo, viewer } = ctx;
     try {
-      const task = findRow(
-        parseTaskCsv((await f.getRepoFile(owner, repo, TASK_PATH)) ?? ""),
-        input.task_id,
-        "",
-      );
+      const [taskCsv, lockCsv] = await Promise.all([
+        f.getRepoFile(owner, repo, TASK_PATH),
+        f.getRepoFile(owner, repo, LOCK_PATH),
+      ]);
+      const task = findRow(parseTaskCsv(taskCsv ?? ""), input.task_id, "");
       if (!task) return { error: `Unknown task ${input.task_id}.` };
+      const holdsLock =
+        encodingClaimOf(
+          liveLocks(parseLockCsv(lockCsv ?? "")),
+          task.task_id,
+          viewer,
+        ) !== undefined;
+      if (!holdsLock)
+        return {
+          error: `The draft was not saved: you hold no claim on ${task.task_id}.`,
+        };
+      const workRepo = await workRepoOf(ctx, task.task_id);
+      const ref = `encode-${task.task_id}`;
+      const current = await f.getBranchHead(workRepo.owner, workRepo.repo, ref);
+      if (current !== (input.base ?? null))
+        return { error: DRAFT_CHANGED_ELSEWHERE };
       const files: FileChange[] = [];
       if (input.scoreDef) {
         const { content } = await setupScore(ctx, task, input.scoreDef);
@@ -2471,6 +3236,12 @@ const saveDraft: CommandDef<DraftInput, Result> = {
             path: omrRecordPath(task.fragment),
             content: input.omr,
           });
+      } else if (input.pins) {
+        const aligned = await alignmentScore(ctx, task, input.pins);
+        files.push(
+          { path: task.fragment, content: aligned.merged.mei },
+          { path: alignmentPath(task.fragment), content: aligned.record },
+        );
       } else if (input.pages) {
         const { content, corrected } = await facsimileScore(
           ctx,
@@ -2497,24 +3268,30 @@ const saveDraft: CommandDef<DraftInput, Result> = {
             content: input.omr,
           });
       } else return { error: "Nothing to save." };
-      const workRepo = await workRepoOf(ctx);
-      const ref = `encode-${task.task_id}`;
-      const { sha } = await f.getRepoHead(owner, repo);
-      try {
-        await f.createBranch(workRepo.owner, workRepo.repo, ref, sha);
+      if (current === null) {
+        const { sha } = await f.getRepoHead(owner, repo);
+        try {
+          await f.createBranch(workRepo.owner, workRepo.repo, ref, sha);
+        } catch (e) {
+          if (/already exists/i.test((e as Error).message))
+            return { error: DRAFT_CHANGED_ELSEWHERE };
+          throw e;
+        }
         await seedFromKeptWork(ctx, task, workRepo, ref);
-      } catch (e) {
-        if (!/already exists/i.test((e as Error).message)) throw e;
       }
-      await f.commitFiles(
+      // On the branch as it was read: a save from elsewhere in between
+      // refuses the update rather than being overwritten.
+      const sha = await f.commitFiles(
         workRepo.owner,
         workRepo.repo,
         files,
         `Draft of ${task.task_id}`,
-        { branch: ref },
+        current === null ? { branch: ref } : { branch: ref, baseSha: current },
       );
-      return { ok: true, message: "Draft saved." };
+      return { ok: true, message: "Draft saved.", sha };
     } catch (e) {
+      if (/\(422 PATCH /.test((e as Error).message))
+        return { error: DRAFT_CHANGED_ELSEWHERE };
       return { error: `The draft was not saved: ${(e as Error).message}` };
     }
   },
@@ -2538,5 +3315,6 @@ export const commands = {
   submitZones,
   submitOmrLayout,
   submitScoreSetup,
+  submitEncodingAlignment,
   saveDraft,
 };

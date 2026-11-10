@@ -17,9 +17,12 @@
     MAX_COMMENT_LENGTH,
   } from "$lib/campaign-submit.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { keepUnsent, takeUnsent } from "$lib/unsent-text.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import AbandonButton from "./AbandonButton.svelte";
 
   let {
+    repoId,
     task,
     sub,
     runner,
@@ -34,6 +37,8 @@
     onreviewedit,
     onabandon,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     task: string;
     /** The review slot the viewer holds. */
     sub: string;
@@ -69,7 +74,7 @@
 
   // A submission on this task still being processed (a claim or verdict):
   // the controls hold until it lands — a repeat would only be rejected.
-  const processing = $derived(pendingVerdicts.taskProcessing(task));
+  const processing = $derived(pendingVerdicts.taskProcessing(task, repoId));
 
   // The inline form a fail verdict or an edit from review fills in (its
   // mandatory comment).
@@ -83,6 +88,17 @@
 
   $effect(() => {
     asking = failForm !== null;
+  });
+  // An open form is kept across a reload the app makes (unsent-text.ts) and
+  // opens again with what was entered.
+  $effect(() => {
+    const key = `fail:${repoId}/${task}/${sub}`;
+    const kept = takeUnsent<NonNullable<typeof failForm>>(
+      key,
+      auth.user?.login ?? null,
+    );
+    if (kept) untrack(() => (failForm = kept));
+    return keepUnsent(key, () => failForm);
   });
   // A click on a staff or group while the form is open fills the field.
   $effect(() => {
@@ -110,6 +126,13 @@
     failForm ? withStaff(failForm.staff, "").length : 0,
   );
   const noteTooLong = $derived(noteLength > MAX_COMMENT_LENGTH);
+  // A change request being written holds Approve, which would drop it.
+  const approveHeld = $derived(
+    approveBlock ??
+      (failForm?.body.trim()
+        ? "Send or discard the change request first."
+        : null),
+  );
 
   async function submitFail(edit: boolean) {
     if (!failForm || !failForm.body.trim() || noteTooLong) return;
@@ -123,8 +146,35 @@
     const result = edit
       ? await onreviewedit?.(sub, comment)
       : await onvalidate(sub, "fail", comment);
-    if (result?.ok) failForm = null;
+    if (result?.ok) {
+      if (result.background || result.outcome === "pending")
+        sentForm = { form, kind: edit ? "review-edit" : "validate" };
+      failForm = null;
+    }
   }
+
+  // A change request still being processed: its form opens again with what
+  // was entered when the submission is rejected, so it can be sent again. A
+  // failed run is not a verdict: the submission is followed on until decided.
+  let sentForm: {
+    form: NonNullable<typeof failForm>;
+    kind: "validate" | "review-edit";
+  } | null = null;
+  $effect(() =>
+    pendingVerdicts.onSettled((entry) => {
+      if (
+        !sentForm ||
+        entry.runFailed ||
+        entry.repoId !== repoId ||
+        entry.key.kind !== sentForm.kind ||
+        entry.key.task !== task ||
+        (entry.key.sub ?? "") !== sub
+      )
+        return;
+      if (entry.state === "rejected" && !failForm) failForm = sentForm.form;
+      if (entry.state !== "timeout") sentForm = null;
+    }),
+  );
 </script>
 
 <div class="ractions" class:infoot={!!onabandon}>
@@ -143,8 +193,8 @@
         type="button"
         class="btn btn-primary btn-finish approve"
         onclick={() => onvalidate(sub, "pass")}
-        disabled={runner.busy || processing || approveBlock !== null}
-        title={approveBlock ?? "Approve the submitted work."}>Approve</button
+        disabled={runner.busy || processing || approveHeld !== null}
+        title={approveHeld ?? "Approve the submitted work."}>Approve</button
       >
     {/if}
     <button

@@ -6,7 +6,9 @@
 import {
   buildGraph,
   blockedBy,
+  canClaim,
   handle,
+  preTaskInstruction,
   taskDescription,
   taskName,
   taskScope,
@@ -17,7 +19,7 @@ import type {
   NodeSlot,
   StatusKey,
 } from "./campaign-graph.ts";
-import { findRow, isFinalValidation, pieceIdLabel } from "./campaign-tables.ts";
+import { findRow, isPassVerdict, pieceIdLabel } from "./campaign-tables.ts";
 import {
   checksOpening,
   keptWorkSince,
@@ -44,6 +46,13 @@ export function elapsed(iso: string, now = Date.now()): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours} h`;
   return `${Math.floor(hours / 24)} d`;
+}
+
+/** How long ago `iso` was: "just now", "5 min ago", "2 d ago"; '' when it
+    cannot be read. */
+export function timeAgo(iso: string, now = Date.now()): string {
+  const e = elapsed(iso, now);
+  return e === "" ? "" : e === "now" ? "just now" : `${e} ago`;
 }
 
 /** When a claim's lock runs out, from its `expires` time: "expires in
@@ -135,14 +144,14 @@ function taskCounts(comments: CommentRow[], task: string): TaskCounts {
 
 const countsTotal = (c: TaskCounts): number => c.fails + c.comments;
 
-/** When a task was finished: its last final verdict, else its encoding time. */
+/** When a task was finished: its last pass verdict, else its encoding time. */
 function finishedAt(d: GraphData, task: string): string {
   let last = "";
   for (const row of d.rows) {
     if (row.task_id !== task || row.subtask_id === "") continue;
     for (const column of d.validationColumns) {
       const cell = row[column] ?? "";
-      if (isFinalValidation(cell)) {
+      if (isPassVerdict(cell)) {
         const ts = cell.split("|")[2];
         if (ts > last) last = ts;
       }
@@ -261,9 +270,8 @@ export function doneLabel(
   card: Pick<BoardCard, "doneLine" | "finishedAt">,
   now = Date.now(),
 ): string {
-  const e = card.finishedAt ? elapsed(card.finishedAt, now) : "";
-  const when = e === "" ? "" : e === "now" ? " · just now" : ` · ${e} ago`;
-  return `${card.doneLine || "done"}${when}`;
+  const ago = card.finishedAt ? timeAgo(card.finishedAt, now) : "";
+  return `${card.doneLine || "done"}${ago ? ` · ${ago}` : ""}`;
 }
 
 /** A card's one-sentence description of what the task asks for; '' for a
@@ -276,12 +284,7 @@ export function cardSummary(
     return card.pre
       ? "Check the submitted work and approve it or request changes."
       : "Compare the encoding with the scan and approve it or request changes.";
-  if (card.locator === "score-setup")
-    return "Copy the staves, clefs, key and time signature from the source's first measure.";
-  if (card.locator === "omr-layout")
-    return "Check the staff, grand staff and measure boxes on each page and correct the wrong ones.";
-  if (card.locator === "measure-zones")
-    return "Check the measure boxes on each page and correct the wrong ones.";
+  if (card.pre) return preTaskInstruction(card.locator);
   if (card.omr) return "Correct the notes read automatically from this page.";
   return card.scope
     ? "Encode the music of this page."
@@ -409,7 +412,7 @@ export function buildBoard(
       locator: def.locator,
       statusKey: n.statusKey,
       waitsFor: depDef ? taskName(depDef.locator) : dep,
-      claimable: viewer !== "" && column === "ready" && !lock,
+      claimable: canClaim(d, viewer, n.task),
       submittedByViewer:
         viewer !== "" && findRow(d.rows, n.task, "")?.encoder === viewer,
       keptFrom:

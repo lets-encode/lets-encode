@@ -108,6 +108,7 @@ test("readyCount: locked and blocked tasks are not claimable", () => {
 test("validationReadyCount: tasks with an undecided, unlocked validation slot", () => {
   // T0003 and T0004 each have one verdict and one open slot.
   const d = {
+    taskDefs,
     rows: state.rows,
     validationColumns: state.validationColumns,
     locks,
@@ -279,7 +280,7 @@ const fakeForge = (
   getRepoFilesBatch: ForgeClient["getRepoFilesBatch"] = async () => null,
 ): ForgeClient =>
   ({
-    searchReposByTopic: async () => repos,
+    searchReposByTopic: async () => ({ repos, incomplete: false }),
     getRepoFile,
     getRepoFilesBatch,
     getUserLogin: async () => null,
@@ -313,6 +314,24 @@ test("loadAllCampaignStats: one unreadable repository is skipped but reported", 
   );
   assert.equal(listing.failed, 1);
   assert.equal(listing.failure?.message, "boom");
+});
+
+test("loadAllCampaignStats: a repository the registry does not hold under its name is left out", async () => {
+  const f = fakeForge(
+    [summary(9601, "real"), summary(9602, "copy")],
+    async () => null,
+  );
+  const shown: string[] = [];
+  const listing = await loadAllCampaignStats(f, "topic", {
+    onEach: (s) => shown.push(s.name),
+    registered: async (s) => s.repoId === 9601,
+  });
+  assert.deepEqual(
+    listing.stats.map((s) => s.name),
+    ["real"],
+  );
+  assert.deepEqual(shown, ["real"]);
+  assert.equal(listing.failed, 0);
 });
 
 test("loadAllCampaignStats: every repository failing throws instead of listing nothing", async () => {
@@ -407,6 +426,7 @@ test("loadAllCampaignStats: an empty search result is not an error", async () =>
     stats: [],
     failed: 0,
     failure: null,
+    incomplete: false,
   });
 });
 

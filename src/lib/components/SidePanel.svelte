@@ -52,12 +52,14 @@
     type SidePanelState,
   } from "$lib/side-panels.ts";
   import { markHidden } from "$lib/scroll-edges.ts";
+  import { keepUnsent, takeUnsent } from "$lib/unsent-text.ts";
   import Icon from "./Icon.svelte";
   import CommentCard from "./CommentCard.svelte";
   import CommentComposer from "./CommentComposer.svelte";
   import PanelResizeHandle from "./PanelResizeHandle.svelte";
 
   let {
+    repoId,
     task,
     zone = 0,
     comments,
@@ -90,6 +92,8 @@
     oncomment,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     /** The task the panel shows, or '' for the campaign. */
     task: string;
     /** The piece's colour slot, 1-based (--zone-N); 0 for none. */
@@ -148,8 +152,8 @@
     open?: boolean;
     /** Return to the campaign; absent where the view is the task's own. */
     ondeselect?: () => void;
-    /** Show a comment's measure range. */
-    onanchor: (comment: CommentRow) => void;
+    /** Show a comment's measure range; absent where there is no score to show it in. */
+    onanchor?: (comment: CommentRow) => void;
     oncomment: (
       kind: string,
       body: string,
@@ -210,7 +214,9 @@
   $effect(() => {
     if (footHeight) footShownHeight = footHeight;
   });
-  const posting = $derived(pendingVerdicts.isProcessing(`comment:${task}`));
+  const posting = $derived(
+    pendingVerdicts.isProcessing({ kind: "comment", task }, repoId),
+  );
   // Until the viewer sets a width, the panel beside the content keeps its
   // default share of the window as the window changes.
   $effect(() => {
@@ -248,13 +254,43 @@
   });
 
   // The comment a reply targets, shared by the thread list and the composer;
-  // cleared when the panel changes task.
+  // cleared with the unsent comment when the panel changes task.
   let replyTo = $state<CommentRow | null>(null);
   $effect.pre(() => {
     void task;
     replyTo = null;
+    draft = "";
     open = false;
     fieldOpen = false;
+  });
+
+  // An unsent comment is kept across a reload the app makes (unsent-text.ts);
+  // the field opens with it again, on the comment it replied to.
+  $effect(() =>
+    keepUnsent(`comment:${repoId}/${task}`, () =>
+      draft.trim() ? { text: draft, parent: replyTo?.comment_id ?? "" } : null,
+    ),
+  );
+  let keptParent = $state("");
+  $effect(() => {
+    if (!repoId) return;
+    const kept = takeUnsent<{ text: string; parent: string }>(
+      `comment:${repoId}/${task}`,
+      auth.user?.login ?? null,
+    );
+    if (!kept) return;
+    untrack(() => {
+      draft = kept.text;
+      keptParent = kept.parent;
+      openField();
+    });
+  });
+  $effect(() => {
+    if (!keptParent) return;
+    const parent = comments.find((c) => c.comment_id === keptParent);
+    if (!parent) return;
+    replyTo = parent;
+    keptParent = "";
   });
 
   // What opening the docked panel adds below the header and the task box; a
@@ -469,15 +505,20 @@
 
 {#snippet composer()}
   {#if writeShown}
-    <div class="composerwrap">
+    <div class="composerwrap on-tint">
       <button type="button" class="btn writebtn" onclick={openField}
         ><Icon name="plus" /> {writeLabel}</button
       >
     </div>
   {/if}
-  <div class="composerwrap" class:hidden={!fieldShown} onfocusout={fieldBlur}>
+  <div
+    class="composerwrap on-tint"
+    class:hidden={!fieldShown}
+    onfocusout={fieldBlur}
+  >
     <CommentComposer
       {task}
+      {repoId}
       {logins}
       {runner}
       bind:replyTo
@@ -540,7 +581,7 @@
         {@render bar()}
       </div>{/if}
     {@render banner?.()}
-    <div class="sphead" class:hidden={peek} class:bare={toggleInHead}>
+    <div class="sphead on-tint" class:hidden={peek} class:bare={toggleInHead}>
       {#if ondeselect}
         <button
           type="button"
@@ -566,17 +607,17 @@
         {@render taskBox(selection || toggleInHead ? headActions : undefined)}
       </div>
     {:else if emptyLine && listShown}
-      <p class="empty">{emptyLine}</p>
+      <p class="empty on-tint">{emptyLine}</p>
     {/if}
     {#if tools}
       <div class="sptools" bind:this={toolsEl}>{@render tools()}</div>
     {/if}
     {#if peek && !lowest && selection && selectionActive}
-      <div class="spsel">{@render selection()}</div>
+      <div class="spsel on-tint">{@render selection()}</div>
     {/if}
     {#if selection && listShown && tab === "selection"}
       <div
-        class="spsel"
+        class="spsel on-tint"
         role="region"
         aria-label={selectionLabel}
         bind:this={selEl}
@@ -587,7 +628,7 @@
     <!-- A task's empty list in a docked or short panel is left out, so it
          adds no gap above the composer. -->
     {#if listShown && commentsShown && !(task && cramped && count === 0)}
-      <div class="clist">
+      <div class="clist on-tint">
         {#if !task}{@render info?.()}{/if}
         <!-- In a docked or short panel, no comments means no list: the
              composer sits right under the task box. -->
@@ -618,6 +659,7 @@
           {#each threads as t (t.root.comment_id)}
             <CommentCard
               comment={t.root}
+              {repoId}
               {logins}
               {viewer}
               {canPush}
@@ -632,6 +674,7 @@
             {#each t.replies as reply (reply.comment_id)}
               <CommentCard
                 comment={reply}
+                {repoId}
                 {logins}
                 {viewer}
                 {canPush}
@@ -659,7 +702,11 @@
       <div class="spedge bottom" aria-hidden="true"></div>
     {/if}
     {#if footer}
-      <div class="spfoot" class:hidden={lowest} bind:offsetHeight={footHeight}>
+      <div
+        class="spfoot on-tint"
+        class:hidden={lowest}
+        bind:offsetHeight={footHeight}
+      >
         {@render footer()}
       </div>
     {/if}
@@ -732,19 +779,6 @@
   }
   .sp > :global(*) {
     flex: none;
-  }
-  .sp :global(.banner) {
-    margin: 0;
-  }
-  .sphead,
-  .spsel,
-  .clist,
-  .composerwrap,
-  .empty,
-  .spfoot {
-    --btn-bg: var(--card);
-    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   .sphead {
     display: flex;

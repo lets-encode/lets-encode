@@ -5,6 +5,8 @@
   confirming button is the danger outline; a review claim (`review`) has none.
 -->
 <script lang="ts">
+  import ConfirmInline from "./ConfirmInline.svelte";
+
   let {
     disabled = false,
     review = false,
@@ -19,26 +21,19 @@
 </script>
 
 {#if asking}
-  <span class="ask">
-    <span class="q"
-      >{review
-        ? "Give back this review?"
-        : "Give back this task? All your changes will be deleted."}</span
-    >
-    <button
-      type="button"
-      class="btn {review ? 'btn-soft' : 'btn-danger'}"
-      {disabled}
-      onclick={() => {
-        asking = false;
-        onabandon();
-      }}
-      >{review ? "Give back task" : "Give back task and delete changes"}</button
-    >
-    <button type="button" class="btn" onclick={() => (asking = false)}
-      >Cancel</button
-    >
-  </span>
+  <ConfirmInline
+    question={review
+      ? "Give back this review?"
+      : "Give back this task? All your changes will be deleted."}
+    confirm={review ? "Give back task" : "Give back task and delete changes"}
+    soft={review}
+    {disabled}
+    onconfirm={() => {
+      asking = false;
+      onabandon();
+    }}
+    oncancel={() => (asking = false)}
+  />
 {:else}
   <button
     type="button"
@@ -51,16 +46,3 @@
     >Give back task</button
   >
 {/if}
-
-<style>
-  .ask {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  .q {
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
-</style>

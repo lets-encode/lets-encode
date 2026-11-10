@@ -11,6 +11,7 @@
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { MediaQuery } from "svelte/reactivity";
@@ -25,13 +26,13 @@
   import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { elapsed, expiresIn, reviewWaitLabel } from "$lib/campaign-board.ts";
+  import { expiresIn, reviewWaitLabel, timeAgo } from "$lib/campaign-board.ts";
   import {
     handle,
-    isPreTask,
-    preTaskHref,
     reviewHref,
-    workPlace,
+    taskAction,
+    taskActionHref,
+    taskHref,
   } from "$lib/campaign-graph.ts";
   import {
     changeRequestTasks,
@@ -41,8 +42,10 @@
     loadCampaignStats,
     myTasksIn,
     nextTask,
+    nextTaskMode,
   } from "$lib/campaign-stats.ts";
   import type {
+    CampaignListing,
     CampaignStats,
     FeedComment,
     MyTask,
@@ -53,6 +56,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
+  import { registeredAs } from "$lib/campaign-resolve.ts";
   import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
 
@@ -67,6 +71,8 @@
   // Repositories the search found but whose tables could not be read.
   let listFailed = $state(0);
   let listFailure = $state<Error | null>(null);
+  // GitHub's search stopped before it was done: campaigns may be missing.
+  let listIncomplete = $state(false);
 
   $effect(() => {
     if (auth.status === "loading" || listLoaded || listLoading) return;
@@ -79,18 +85,27 @@
 
   // Stats arrive one campaign at a time; each resolves into the grid as it
   // lands rather than waiting for the slowest repository.
+  // A listed repository is shown only under the name the registry holds for
+  // it, so its links and commands reach that repository.
+  const registered = (s: CampaignStats) => registeredAs(s.repoId, s.name);
   const placeRow = (s: CampaignStats) =>
     (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]);
 
+  // What a listing reports beyond its rows.
+  function noteListing(listing: CampaignListing) {
+    listFailed = listing.failed;
+    listFailure = listing.failure;
+    listIncomplete = listing.incomplete;
+  }
+
   async function loadAll() {
     try {
-      const listing = await loadAllCampaignStats(
-        readForge(),
-        provider.repoTopic,
-        { onEach: placeRow },
+      noteListing(
+        await loadAllCampaignStats(readForge(), provider.repoTopic, {
+          onEach: placeRow,
+          registered,
+        }),
       );
-      listFailed = listing.failed;
-      listFailure = listing.failure;
       listError = null;
     } catch (err) {
       listError = err as Error;
@@ -102,6 +117,7 @@
     listError = null;
     listFailed = 0;
     listFailure = null;
+    listIncomplete = false;
     listLoaded = false;
   }
 
@@ -113,8 +129,19 @@
   );
 
   // ----------------------------------------------------- the viewer's work
+  // The clock claim expiries count against, a minute at a time.
+  let now = $state(Date.now());
+  $effect(() => {
+    const timer = setInterval(() => (now = Date.now()), 60_000);
+    return () => clearInterval(timer);
+  });
+  // A claim past its expiry is no longer the viewer's work.
   const tasks = $derived(
-    viewer ? stats.flatMap((s) => myTasksIn(s, viewer)) : ([] as MyTask[]),
+    viewer
+      ? stats
+          .flatMap((s) => myTasksIn(s, viewer))
+          .filter((t) => !t.expiresAt || Date.parse(t.expiresAt) > now)
+      : ([] as MyTask[]),
   );
   const encoding = $derived(tasks.filter((t) => t.group === "encoding"));
   const validating = $derived(tasks.filter((t) => t.group === "validating"));
@@ -181,8 +208,13 @@
 
   // Re-read one campaign's stats and swap its grid row in place, leaving the
   // rest of the listing as it is.
-  async function refreshStats(s: CampaignStats) {
+  // Of a campaign's reads that overlap, only the latest one started is shown.
+  const refreshSeq = new Map<number, number>();
+  // `rethrow`: a failed read is the caller's to report (the poll's notice).
+  async function refreshStats(s: CampaignStats, rethrow = false) {
     invalidateStats(s.repoId);
+    const seq = (refreshSeq.get(s.repoId) ?? 0) + 1;
+    refreshSeq.set(s.repoId, seq);
     try {
       const fresh = await loadCampaignStats(readForge(), {
         id: s.repoId,
@@ -195,9 +227,11 @@
         updated_at: "",
         created_at: s.createdAt,
       });
+      if (refreshSeq.get(s.repoId) !== seq) return;
       stats = stats.map((x) => (x.repoId === fresh.repoId ? fresh : x));
-    } catch {
+    } catch (e) {
       // The stale row stays; the next full listing load replaces it.
+      if (rethrow) throw e;
     }
   }
 
@@ -216,9 +250,12 @@
       poll: async (resumed) => {
         const f = readForge();
         if (resumed)
-          await loadAllCampaignStats(f, provider.repoTopic, {
-            onEach: placeRow,
-          });
+          noteListing(
+            await loadAllCampaignStats(f, provider.repoTopic, {
+              onEach: placeRow,
+              registered,
+            }),
+          );
         // All heads in one batch read where the client can; else one each.
         const polled = stats;
         const heads = await f
@@ -235,7 +272,8 @@
             const sha = heads
               ? heads[i]?.headSha
               : (await f.getRepoHead(s.owner, s.repo)).sha;
-            if (sha !== undefined && sha !== s.headSha) await refreshStats(s);
+            if (sha !== undefined && sha !== s.headSha)
+              await refreshStats(s, true);
           }),
         );
       },
@@ -258,15 +296,13 @@
     );
   }
 
-  // Background verdicts settle against a campaign the viewer has work in;
-  // refresh those campaigns' rows so the settled task moves group.
+  // A background verdict refreshes its campaign's row, so the settled task
+  // moves group.
   $effect(() =>
-    pendingVerdicts.onSettled(() => {
+    pendingVerdicts.onSettled((entry) => {
       if (runner.busy) return;
-      const mine = new Set(
-        tasks.filter((t) => t.group !== "done").map((t) => t.campaignSlug),
-      );
-      for (const s of stats) if (mine.has(s.name)) refreshStats(s);
+      const s = stats.find((x) => x.repoId === entry.repoId);
+      if (s) refreshStats(s);
     }),
   );
 
@@ -278,28 +314,32 @@
   });
   const openEditor = async (t: MyTask) => {
     const s = stats.find((x) => x.name === t.campaignSlug);
-    if (s && pendingVerdicts.isProcessing(`claim:${t.task}`, s.repoId)) return;
+    if (
+      s &&
+      pendingVerdicts.isProcessing({ kind: "claim", task: t.task }, s.repoId)
+    )
+      return;
     const result = await run(t, (c) =>
       invoke(commands.openEditor, editorInput(t.campaignSlug, t.task), c),
     );
     openMeiFriend(result);
   };
   // A submission on the task still being processed holds its row's actions.
-  const processing = (t: MyTask) =>
-    pendingVerdicts.taskProcessing(
-      t.task,
-      stats.find((x) => x.name === t.campaignSlug)?.repoId,
-    );
-  // Claim a campaign row's suggested next task. Encoding claims open
-  // mei-friend (a pre-task claims in its own editor instead); a clean review
-  // claim lands on the place the review happens.
+  const processing = (t: MyTask) => {
+    const s = stats.find((x) => x.name === t.campaignSlug);
+    return s ? pendingVerdicts.taskProcessing(t.task, s.repoId) : false;
+  };
+  // Claim a campaign row's suggested next task, or continue the one held:
+  // a task worked on in the app opens its page there (taskAction), an
+  // encoding opens mei-friend; a clean review claim lands on the place the
+  // review happens.
   async function claimNext(s: CampaignStats, next: NextTask) {
-    if (next.action === "encode" && next.pre) {
-      await goto(preTaskHref(s.name, next.locator, next.task));
-      return;
-    }
-    if (next.checksOpening && next.action !== "review") {
-      await goto(`/${s.name}/check/${next.task}`);
+    const href =
+      next.action === "review"
+        ? null
+        : taskActionHref(s.name, next, taskAction(next, nextTaskMode(next)));
+    if (href) {
+      await goto(href);
       return;
     }
     const c = ctxOf(s);
@@ -326,26 +366,22 @@
           ),
         refresh,
       );
-      if (result?.ok && !result.warn) {
+      if (result?.ok && result.outcome !== "pending") {
         await goto(reviewHref(s.name, next.locator, next.task));
       }
     }
   }
 
-  const taskHref = (slug: string, task: string) =>
-    `/${slug}?task=${encodeURIComponent(task)}`;
-  const ago = (iso: string) => {
-    const e = elapsed(iso);
-    return e === "now" ? "just now" : `${e} ago`;
-  };
   const claimExpiry = (t: MyTask): string => {
-    const e = expiresIn(t.expiresAt);
+    const e = expiresIn(t.expiresAt, now);
     return e && `claim ${e}`;
   };
   const claimMeta = (t: MyTask) =>
-    `claimed ${ago(t.claimedAt)}${claimExpiry(t) ? ` · ${claimExpiry(t)}` : ""}`;
+    [`claimed ${timeAgo(t.claimedAt, now)}`.trim(), claimExpiry(t)]
+      .filter(Boolean)
+      .join(" · ");
   const reviewMeta = (t: MyTask) =>
-    `${t.submittedAt ? `submitted ${ago(t.submittedAt)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
+    `${timeAgo(t.submittedAt, now) ? `submitted ${timeAgo(t.submittedAt, now)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
 
   // Wide screens show the viewer's work in a side column; narrower ones fold
   // it behind a one-line summary bar.
@@ -357,7 +393,7 @@
   const workSummary = $derived(
     [
       // First, so a cut-off summary still shows it.
-      listFailed > 0 ? "Incomplete" : "",
+      listFailed > 0 || listIncomplete ? "Incomplete" : "",
       encoding.length ? `${encoding.length} encoding` : "",
       validating.length ? `${validating.length} reviewing` : "",
       awaiting.length ? `${awaiting.length} awaiting review` : "",
@@ -520,6 +556,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -573,12 +611,14 @@
               {#if attention.length > attentionMax}
                 <button
                   type="button"
-                  class="linkish moretoggle"
+                  class="btn moretoggle"
                   aria-expanded={allAttention}
                   onclick={() => (allAttention = !allAttention)}
                   >{allAttention
                     ? "Show fewer"
-                    : `Show all ${attention.length}`}</button
+                    : `Show all ${attention.length}`}<Icon
+                    name={allAttention ? "chevron-up" : "chevron-down"}
+                  /></button
                 >
               {/if}
             </div>
@@ -659,29 +699,26 @@
                         <span class="chip">review · reviewing</span>
                       {/if}
                       {#if t.group === "encoding"}
+                        {@const act = taskAction(t, "continue")}
                         <div class="iacts">
-                          {#if isPreTask(t.locator)}
-                            <a
-                              class="btn"
-                              href={processing(t)
-                                ? undefined
-                                : preTaskHref(
-                                    t.campaignSlug,
-                                    t.locator,
-                                    t.task,
-                                  )}
-                              aria-disabled={processing(t)}
-                              >Continue in {workPlace(t.locator)}</a
-                            >
-                          {:else}
+                          {#if act.target === "mei-friend"}
                             <button
                               type="button"
                               class="btn"
                               disabled={runner.busy || processing(t)}
                               onclick={() => openEditor(t)}
-                              >Open in mei-friend <Icon
-                                name="external"
-                              /></button
+                              title={act.title}
+                              >{act.label} <Icon name="external" /></button
+                            >
+                          {:else}
+                            <a
+                              class="btn"
+                              href={processing(t)
+                                ? undefined
+                                : (taskActionHref(t.campaignSlug, t, act) ??
+                                  undefined)}
+                              aria-disabled={processing(t)}
+                              title={act.title}>{act.label}</a
                             >
                           {/if}
                         </div>
@@ -692,12 +729,14 @@
                 {#if openWork.length > SIDE_MAX}
                   <button
                     type="button"
-                    class="linkish moretoggle"
+                    class="btn moretoggle"
                     aria-expanded={allWork}
                     onclick={() => (allWork = !allWork)}
                     >{allWork
                       ? "Show fewer"
-                      : `Show all ${openWork.length}`}</button
+                      : `Show all ${openWork.length}`}<Icon
+                      name={allWork ? "chevron-up" : "chevron-down"}
+                    /></button
                   >
                 {/if}
                 {#if done.length > 0}
@@ -805,51 +844,39 @@
           {/if}
         </div>
       </div>
+      {#if !listError && listIncomplete}
+        <Notice
+          tone="warn"
+          title="Some campaigns may be missing"
+          detail="GitHub's search stopped before it was done."
+          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+        />
+      {/if}
       {#if !listError && listFailed > 0}
-        <div class="banner err" role="alert">
-          <span>
-            {#if partialRateLimit && auth.expired}Your GitHub login has expired.{/if}
-            <span title={partialRateLimit ? undefined : listFailure?.message}
-              >{listFailed} campaign{listFailed === 1 ? "" : "s"} couldn't be loaded{partialRateLimit
-                ? `: ${partialRateLimit.message}`
-                : "."}</span
-            >
-            <button
-              type="button"
-              class="linkish"
-              disabled={listLoading}
-              onclick={retryList}>Try again</button
-            >
-          </span>
-        </div>
+        <Notice
+          tone="err"
+          title={`${listFailed} campaign${listFailed === 1 ? "" : "s"} couldn't be loaded`}
+          detail={`${partialRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${listFailure?.message ?? ""}`}
+          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+        />
       {/if}
       {#if listError}
-        <div class="banner err" role="alert">
-          <span>
-            {#if listRateLimit && auth.expired}Your GitHub login has expired.{/if}
-            <span title={listRateLimit ? undefined : listError.message}
-              >Couldn't load the campaigns{listRateLimit
-                ? `: ${listRateLimit.message}`
-                : "."}</span
-            >
-            <button
-              type="button"
-              class="linkish"
-              disabled={listLoading}
-              onclick={retryList}>Try again</button
-            >
-          </span>
-        </div>
+        <Notice
+          tone="err"
+          title="Couldn't load the campaigns"
+          detail={`${listRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${listError.message}`}
+          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+        />
       {:else if listLoaded && stats.length === 0}
         <p class="note">No campaigns yet. Create one with New campaign.</p>
       {:else if (listLoading || auth.status === "loading") && stats.length === 0}
         <p class="note">Loading campaigns…</p>
       {:else if shown.length === 0}
-        <p class="note">
-          No campaign matches this search or filter.
+        <p class="note noteline">
+          <span>No campaign matches this search or filter.</span>
           <button
             type="button"
-            class="linkish"
+            class="btn"
             onclick={() => {
               search = "";
               filter = "all";
@@ -885,12 +912,14 @@
         {/if}
       {/if}
       {#if !auth.user && auth.status === "anonymous" && !listRateLimit && !partialRateLimit}
-        <p class="note login-hint">
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Browsing works logged out:
-          <button type="button" class="linkish" onclick={() => login()}
-            >log in with GitHub</button
-          > to claim a task or see your work here.
+        <p class="note login-hint noteline">
+          <span
+            >{#if auth.expired}Your GitHub login has expired.{/if}
+            Browsing works logged out. Log in to claim a task or see your work here.</span
+          >
+          <button type="button" class="btn" onclick={() => login()}
+            >Log in with GitHub</button
+          >
         </p>
       {/if}
     </section>
@@ -1287,9 +1316,15 @@
     align-self: center;
   }
   .login-hint {
-    text-align: center;
     font-size: 12.5px;
     color: var(--ink-faint);
   }
-  /* Banner styles are shared app-wide in ui.css. */
+  /* A note whose action follows it at the line's right end. */
+  .noteline {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 </style>

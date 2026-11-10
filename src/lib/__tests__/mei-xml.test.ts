@@ -7,6 +7,7 @@ import {
   indent,
   startTags,
   stripTags,
+  tagAttribute,
   tagsIn,
   textOf,
   xmlEscape,
@@ -110,4 +111,15 @@ test("the scanners take linear time on start tags that never close", () => {
   textOf(`${"<b ".repeat(200_000)}</b>`);
   const elapsed = performance.now() - started;
   assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("tagAttribute reads one attribute of the first tag, by its exact name", () => {
+  const tag = `<staffDef n="2" label.n='x' clef.shape = "G" label="A &amp; B">`;
+  assert.equal(tagAttribute(tag, "n"), "2");
+  assert.equal(tagAttribute(tag, "label.n"), "x");
+  assert.equal(tagAttribute(tag, "clef.shape"), "G");
+  assert.equal(tagAttribute(tag, "label"), "A & B");
+  assert.equal(tagAttribute(tag, "lines"), null);
+  // Only the first tag of an element counts, not its children's.
+  assert.equal(tagAttribute(`<measure><staff n="1"/></measure>`, "n"), null);
 });

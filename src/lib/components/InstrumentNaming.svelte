@@ -17,7 +17,9 @@
   with the same fields beside its staves.
 -->
 <script lang="ts">
+  import GroupFields from "$lib/components/GroupFields.svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import MusicGlyph from "$lib/components/MusicGlyph.svelte";
   import type { PageModel } from "$lib/mei-facsimile.ts";
   import type {
     LayoutGroup,
@@ -352,6 +354,8 @@
   // the strip's height.
   type Mark = {
     kind: "brace" | "bracket" | "group";
+    /** A group printed with a brace. */
+    brace?: boolean;
     top: number;
     bottom: number;
     depth: number;
@@ -428,6 +432,7 @@
         ).length;
         marks.push({
           kind: "group",
+          brace: r.g.symbol === "brace",
           ...span(r.inside),
           depth,
           title: `${r.g.label || "Group"}: ${nameOf(r.g.first)} to ${nameOf(r.g.last)}`,
@@ -517,24 +522,28 @@
     </p>
   {/if}
   {#if doubles.length}
-    <p class="doubles" title={PARTS_HINT}>
+    <div class="doubles" title={PARTS_HINT}>
       <Icon name="warning" size={14} />
-      <span>
-        Possibly named twice:
-        {#each doubles as d, i (d.instrument)}
+      <div class="dlist">
+        <span>Possibly named twice:</span>
+        {#each doubles as d (d.instrument)}
           {@const result = canEdit ? mergeResult(d) : null}
-          {i ? ", " : ""}<span title={doubleTitle(d.instrument)}
-            ><b>{nameOf(d.instrument)}</b> ({nameOf(d.like)})</span
-          >{#if result}
-            <button
-              type="button"
-              class="linkish"
-              title={`Name its staves ${result} instead. One step, undo restores it.`}
-              onclick={() => onmerge(d)}>make it {result}</button
-            >{/if}
+          <div class="drow">
+            <span title={doubleTitle(d.instrument)}
+              ><b>{nameOf(d.instrument)}</b> ({nameOf(d.like)})</span
+            >
+            {#if result}
+              <button
+                type="button"
+                class="btn"
+                title={`Name its staves ${result} instead. One step, undo restores it.`}
+                onclick={() => onmerge(d)}>Make it {result}</button
+              >
+            {/if}
+          </div>
         {/each}
-      </span>
-    </p>
+      </div>
+    </div>
   {/if}
 
   {#if named.fixed && canEdit}
@@ -576,7 +585,7 @@
                     {#if result}
                       <button
                         type="button"
-                        class="linkish merge"
+                        class="btn merge"
                         title={`Name its staves ${result} instead. One step, undo restores it.`}
                         onclick={() => onmerge(d)}>Make it {result}</button
                       >
@@ -883,6 +892,7 @@
                 {#each marksOf(strip.units, v) as m, i (i)}
                   <span
                     class="mark {m.kind}"
+                    class:gbrace={m.brace}
                     style:top={`${m.top * 100}%`}
                     style:height={`${(m.bottom - m.top) * 100}%`}
                     style:left={m.kind === "group"
@@ -890,13 +900,8 @@
                       : undefined}
                     title={m.title}
                   >
-                    {#if m.kind === "brace"}
-                      <svg viewBox="0 0 10 100" preserveAspectRatio="none">
-                        <path
-                          d="M9 0 Q3 0 3 8 L3 44 Q3 50 0 50 Q3 50 3 56 L3 92 Q3 100 9 100"
-                          vector-effect="non-scaling-stroke"
-                        />
-                      </svg>
+                    {#if m.kind === "brace" || m.brace}
+                      <MusicGlyph name="brace" stretch />
                     {/if}
                   </span>
                 {/each}
@@ -946,76 +951,28 @@
       <section class="groups" aria-label="Groups">
         <h2 class="list-h">Groups</h2>
         {#each named.groups as group, k (group.id)}
+          {@const options = named.instruments.map((i) => ({
+            value: i.id,
+            label: i.name,
+          }))}
           <div class="group-row">
-            <select
-              class="ctl"
-              value={group.first}
-              disabled={!canEdit || named.fixed}
-              aria-label="First instrument of the group"
-              title="The top instrument of the group"
-              onchange={(e) =>
-                setGroup(k, { first: (e.target as HTMLSelectElement).value })}
-            >
-              {#each named.instruments as instrument (instrument.id)}
-                <option value={instrument.id}>{instrument.name}</option>
-              {/each}
-            </select>
-            <span class="to">to</span>
-            <select
-              class="ctl"
-              value={group.last}
-              disabled={!canEdit || named.fixed}
-              aria-label="Last instrument of the group"
-              title="The bottom instrument of the group"
-              onchange={(e) =>
-                setGroup(k, { last: (e.target as HTMLSelectElement).value })}
-            >
-              {#each named.instruments as instrument (instrument.id)}
-                <option value={instrument.id}>{instrument.name}</option>
-              {/each}
-            </select>
-            <input
-              class="ctl"
-              type="text"
-              value={group.label}
-              placeholder="Label"
-              disabled={!canEdit || named.fixed}
-              aria-label="Group label"
-              title="A name printed for the group, if any."
-              onchange={(e) =>
-                setGroup(k, { label: (e.target as HTMLInputElement).value })}
+            <GroupFields
+              unit="instrument"
+              from={group.first}
+              to={group.last}
+              fromOptions={options}
+              toOptions={options}
+              onfrom={(v) => setGroup(k, { first: v })}
+              onto={(v) => setGroup(k, { last: v })}
+              symbol={group.symbol}
+              onsymbol={(v) => setGroup(k, { symbol: v })}
+              label={group.label}
+              onlabel={(v) => setGroup(k, { label: v })}
+              barThru={group.barThru}
+              onbarthru={(v) => setGroup(k, { barThru: v })}
+              disabled={!canEdit}
+              onremove={() => ongroups(named.groups.filter((_, i) => i !== k))}
             />
-            <div
-              class="seg"
-              role="group"
-              aria-label="Barlines"
-              title="Whether the barlines run through the group's staves or stop at each staff, as on the page."
-            >
-              <button
-                type="button"
-                class:on={group.barThru}
-                aria-pressed={group.barThru}
-                disabled={!canEdit || named.fixed}
-                onclick={() => setGroup(k, { barThru: true })}>Through</button
-              >
-              <button
-                type="button"
-                class:on={!group.barThru}
-                aria-pressed={!group.barThru}
-                disabled={!canEdit || named.fixed}
-                onclick={() => setGroup(k, { barThru: false })}
-                >Per staff</button
-              >
-            </div>
-            {#if canEdit && !named.fixed}
-              <button
-                type="button"
-                class="btn btn-icon btn-danger"
-                onclick={() => ongroups(named.groups.filter((_, i) => i !== k))}
-                aria-label="Remove this group"
-                title="Remove this group"><Icon name="trash" /></button
-              >
-            {/if}
           </div>
         {:else}
           <p class="muted">No groups.</p>
@@ -1094,18 +1051,13 @@
   }
   .mark.brace {
     right: 4px;
-    width: 10px;
+    width: 8px;
+    color: var(--ink-grand);
   }
-  .mark.brace svg {
-    display: block;
-    width: 100%;
-    height: 100%;
-    overflow: visible;
-  }
-  .mark.brace path {
-    fill: none;
-    stroke: var(--ink-grand);
-    stroke-width: 2;
+  .mark.group.gbrace {
+    width: 6px;
+    background: none;
+    color: var(--ink-faint);
   }
   .named-text {
     font-size: 13px;
@@ -1143,10 +1095,23 @@
   .doubles b {
     font-weight: 600;
   }
+  .dlist {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  /* Each double on its own line, its fix at the line's right end. */
+  .drow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
   .merge {
     margin-left: 6px;
-    font-size: 12px;
-    font-weight: 600;
   }
   .dup {
     display: inline-flex;
@@ -1319,14 +1284,9 @@
     width: 64px;
   }
   .group-row {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 6px;
-  }
-  .to {
-    font-size: 13px;
-    color: var(--ink-faint);
+    padding: 8px 10px 10px;
+    border-radius: 8px;
+    background: var(--bg-tint);
   }
   @media (max-width: 640px) {
     .strip {

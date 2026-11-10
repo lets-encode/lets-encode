@@ -11,6 +11,25 @@
   export const ZOOM_MIN = 20;
   export const ZOOM_MAX = 400;
 
+  // The slider runs on a log scale: equal drags multiply the zoom equally,
+  // so the low end moves in fine steps and the high end in coarse ones.
+  const STOPS = 100;
+  // One press of zoom out or in: a tenth of the slider, about a third larger
+  // or smaller.
+  const STEP = 10;
+  const posOf = (value: number) =>
+    Math.round(
+      (Math.log(value / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * STOPS,
+    );
+  const valueAt = (pos: number) =>
+    Math.round(ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (pos / STOPS));
+
+  /** The zoom, in percent, one press of zoom out (-1) or in (1) leads to
+      from `value`: on the slider's stops, a tenth of the range further. */
+  export function stepZoom(value: number, dir: 1 | -1): number {
+    return valueAt(Math.min(STOPS, Math.max(0, posOf(value) + dir * STEP)));
+  }
+
   /**
    * The fit a zoom is close to — within 8% of the width fit (100%) or of the
    * page fit — or null. Lets a pinch that ends near a fit settle on it.
@@ -56,6 +75,8 @@
     value = $bindable(),
     fitPage,
     fit = $bindable(null),
+    layout = "slider",
+    onfitpage,
   }: {
     /** Percent, between LEAST and MOST. */
     value: number;
@@ -63,6 +84,13 @@
     fitPage?: number;
     /** The fit in force, if any. */
     fit?: "width" | "page" | null;
+    /** How much of the control a narrower toolbar keeps: the slider (zoom
+        out and in on a touch screen), zoom out and in either side of the
+        readout, or only the fits where a pinch zooms. */
+    layout?: "slider" | "steps" | "pinch";
+    /** Called for the page fit in place of setting `fit`, for a viewer that
+        also keeps its current page in view. */
+    onfitpage?: () => void;
   } = $props();
 
   $effect(() => {
@@ -71,27 +99,21 @@
       value = Math.max(LEAST, fitPage);
   });
 
-  // The slider runs on a log scale: equal drags multiply the zoom equally,
-  // so the low end moves in fine steps and the high end in coarse ones.
   const LEAST = ZOOM_MIN;
   const MOST = ZOOM_MAX;
-  const STOPS = 100;
-  // One press of zoom out or in: a tenth of the slider, about a third larger
-  // or smaller.
-  const STEP = 10;
-  const pos = $derived(
-    Math.round((Math.log(value / LEAST) / Math.log(MOST / LEAST)) * STOPS),
-  );
-  const setPos = (p: number) =>
-    (value = Math.round(LEAST * (MOST / LEAST) ** (p / STOPS)));
+  const pos = $derived(posOf(value));
   // The buttons that stand in for the slider on touch and in narrow panes.
   function step(dir: 1 | -1) {
-    setPos(Math.min(STOPS, Math.max(0, pos + dir * STEP)));
+    value = stepZoom(value, dir);
     fit = null;
   }
 </script>
 
-<span class="zoomctl">
+<span
+  class="zoomctl"
+  class:zsteps={layout === "steps"}
+  class:zpinch={layout === "pinch"}
+>
   <button
     type="button"
     class="tbtn tbtn-icon zstep"
@@ -110,7 +132,7 @@
     step={1}
     value={pos}
     oninput={(e) => {
-      setPos(Number((e.target as HTMLInputElement).value));
+      value = valueAt(Number((e.target as HTMLInputElement).value));
       fit = null;
     }}
   />
@@ -138,7 +160,7 @@
       class="tbtn tbtn-icon fit-page"
       class:on={fit === "page"}
       aria-pressed={fit === "page"}
-      onclick={() => (fit = "page")}
+      onclick={() => (onfitpage ? onfitpage() : (fit = "page"))}
       aria-label="Fit the whole page"
       title="Fit the whole page, top to bottom"><FitIcon kind="page" /></button
     >
@@ -165,6 +187,15 @@
     .zstep {
       display: inline-flex;
     }
+  }
+  .zoomctl.zsteps .zoomslider,
+  .zoomctl.zpinch .zoomslider,
+  .zoomctl.zpinch .zval,
+  .zoomctl.zpinch .zstep {
+    display: none;
+  }
+  .zoomctl.zsteps .zstep {
+    display: inline-flex;
   }
   @container material (max-width: 639px) {
     .zoomctl .zoomslider {

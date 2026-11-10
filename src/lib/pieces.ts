@@ -39,7 +39,11 @@ export interface Piece {
    */
   noRegions?: boolean;
   meta: SourceMetadata;
-  /** For an encoded piece, the uploaded file it came from. */
+  /**
+   * The uploaded file the piece's notation comes from: an encoded piece's
+   * whole score, or for a facsimile piece the encoding aligned with its
+   * corrected measures.
+   */
   encodingName?: string;
   /**
    * For a physical piece, how many pages of the source it spans; 0 = unknown.
@@ -267,6 +271,14 @@ export interface PiecePages {
  * A piece keeps every page it covers, even one where nothing was detected, so
  * its surface numbering stays continuous and stable.
  */
+/**
+ * The pieces a campaign is created with: every piece but a facsimile piece
+ * marked as covering no regions on purpose.
+ */
+export function campaignPieces(pieces: Piece[]): Piece[] {
+  return pieces.filter((piece) => !(piece.noRegions && !piece.zones.length));
+}
+
 export function partitionPages(
   pieces: Piece[],
   detected: DetectedPage[],
@@ -295,20 +307,64 @@ export function partitionPages(
 }
 
 /**
+ * The pieces with their regions moved to where their pages now are. `before`
+ * and `after` name the page at each page index, by the id of the candidate it
+ * was prepared from; a region on a page no longer chosen is removed.
+ */
+export function followPages(
+  pieces: Piece[],
+  before: string[],
+  after: string[],
+): Piece[] {
+  return pieces.map((piece) => ({
+    ...piece,
+    zones: piece.zones.flatMap((zone) => {
+      const surface = after.indexOf(before[zone.surface] ?? "");
+      return surface < 0 ? [] : [{ ...zone, surface }];
+    }),
+  }));
+}
+
+/**
  * The pieces a fresh campaign starts with: one per uploaded encoding, plus a
- * single facsimile piece covering the pages when there are any — or, with
- * nothing uploaded at all, a single physical piece to be encoded straight from
- * the source. An organiser with one work per source then has nothing to add.
+ * single facsimile piece covering the pages when there are any. One encoding
+ * uploaded with page images is taken to be the pages' piece: the facsimile
+ * piece starts from it instead. An organiser with one work per source then has
+ * nothing to add.
  */
 export function initialPieces(
   encodingNames: string[],
   hasImages: boolean,
 ): Piece[] {
+  if (hasImages && encodingNames.length === 1) {
+    const piece = createPiece([], "facsimile");
+    piece.encodingName = encodingNames[0];
+    return [piece];
+  }
   const pieces: Piece[] = [];
   for (const name of encodingNames) {
     pieces.push(createEncodedPiece(pieces, name));
   }
   if (hasImages) pieces.push(createPiece(pieces, "facsimile"));
-  else if (!pieces.length) pieces.push(createPiece(pieces, "physical-only"));
   return pieces;
+}
+
+/**
+ * Let the facsimile piece at `index` start from the uploaded encoding `name`,
+ * or from none. An encoded piece made from that file is removed: a file is
+ * one piece's notation. Returns the pieces.
+ */
+export function startFromEncoding(
+  pieces: Piece[],
+  index: number,
+  name: string | undefined,
+): Piece[] {
+  const piece = pieces[index];
+  if (!piece || piece.kind !== "facsimile") return pieces;
+  piece.encodingName = name;
+  return name === undefined
+    ? pieces
+    : pieces.filter(
+        (other) => other.kind !== "encoded" || other.encodingName !== name,
+      );
 }

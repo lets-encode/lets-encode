@@ -1,6 +1,13 @@
 // The side panel of the campaign views (SidePanel.svelte): its width when it
 // sits beside the content, kept per browser.
 
+import {
+  readLocal,
+  readLocalJson,
+  removeLocal,
+  writeLocal,
+} from "./local-store.ts";
+
 export interface SidePanelState {
   width: number;
 }
@@ -44,18 +51,6 @@ export function clampPanelHeight(h: number, viewport: number): number {
   );
 }
 
-// Storage is read through this so the module can be used where there is none.
-const store = () => (typeof localStorage === "undefined" ? null : localStorage);
-
-function readStored(key: string): unknown {
-  try {
-    const raw = store()?.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-
 const finite = (v: unknown): v is number =>
   typeof v === "number" && Number.isFinite(v);
 
@@ -77,7 +72,7 @@ export const defaultPanelWidth = (width: number, height: number): number =>
 
 /** The stored panel state, or its defaults where nothing valid is stored. */
 export function readSidePanel(): SidePanelState {
-  const w = readStored(WIDTH_KEY);
+  const w = readLocalJson(WIDTH_KEY);
   const viewport = typeof window === "undefined" ? 800 : window.innerHeight;
   const viewportWidth =
     typeof window === "undefined" ? 1280 : window.innerWidth;
@@ -91,18 +86,14 @@ export function readSidePanel(): SidePanelState {
 
 /** Whether the viewer has set a width (by dragging) in this browser. */
 export const hasStoredPanelWidth = (): boolean => {
-  const w = readStored(WIDTH_KEY);
+  const w = readLocalJson(WIDTH_KEY);
   return finite(w) && w >= PANEL_MIN;
 };
 
 /** Store the width the viewer set beside the content. A browser refusing
     the write leaves it unstored. */
 export function writeSidePanel(state: SidePanelState): void {
-  try {
-    store()?.setItem(WIDTH_KEY, JSON.stringify(state.width));
-  } catch {
-    /* full or blocked storage only costs the preference */
-  }
+  writeLocal(WIDTH_KEY, JSON.stringify(state.width));
 }
 
 // The task the panel showed last, kept per campaign so the board reopens it.
@@ -110,21 +101,13 @@ const lastTaskKey = (campaign: string) => `lets-encode:last-task:${campaign}`;
 
 /** The task the panel showed last in this campaign, or null. */
 export function readLastTask(campaign: string): string | null {
-  try {
-    return store()?.getItem(lastTaskKey(campaign)) ?? null;
-  } catch {
-    return null;
-  }
+  return readLocal(lastTaskKey(campaign));
 }
 
 /** Store the task the panel shows; null clears it. */
 export function writeLastTask(campaign: string, task: string | null): void {
-  try {
-    if (task === null) store()?.removeItem(lastTaskKey(campaign));
-    else store()?.setItem(lastTaskKey(campaign), task);
-  } catch {
-    /* full or blocked storage only costs the preference */
-  }
+  if (task === null) removeLocal(lastTaskKey(campaign));
+  else writeLocal(lastTaskKey(campaign), task);
 }
 
 /** A panel width, kept between the minimum (PANEL_MIN unless a view sets

@@ -34,6 +34,52 @@ export function onSessionRejected(callback: () => void): void {
   sessionRejected = callback;
 }
 
+/**
+ * Waits before re-attempting a request the broker's relays refused with a 429
+ * other than a daily allowance, in ms, each longer than the last. The relays
+ * also refuse while their requests in flight are taken, which a slow upstream
+ * holds for up to the relay's deadline plus its read timeout (see
+ * broker/app.py), so the waits add up to more than a minute.
+ */
+export const RELAY_RETRY_WAITS_MS = [
+  500, 1000, 2000, 4000, 8000, 15000, 15000, 15000,
+];
+
+/** A clock time to the minute ("14:05"), rounded up (never early) or down. */
+export const minuteClock = (ms: number, up: boolean): string =>
+  new Date(
+    (up ? Math.ceil : Math.floor)(ms / 60_000) * 60_000,
+  ).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+/**
+ * Whether an answer through the broker came from the service it reached
+ * (`github`, `iiif`, `musibot`), which the broker marks in
+ * `X-Lets-Encode-Upstream` on every answer it passes on. Any other answer —
+ * the broker's own, marked or not, or one from a proxy in front of it — is
+ * the broker's side.
+ */
+export const fromUpstream = (
+  res: { headers: Headers },
+  upstream: "github" | "iiif" | "musibot",
+): boolean => res.headers.get("x-lets-encode-upstream") === upstream;
+
+/**
+ * fetch() for the broker's own endpoints (the registry and the relays): the
+ * broker's own 401 means its session has ended, as for a proxied SESSION call.
+ * A 401 the relays pass on from a source or service they reach (marked
+ * `X-Lets-Encode-Upstream` other than `broker`) does not.
+ */
+export async function brokerFetch(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const res = await fetch(input, init);
+  const upstream = res.headers.get("X-Lets-Encode-Upstream");
+  if (res.status === 401 && (!upstream || upstream === "broker"))
+    sessionRejected?.();
+  return res;
+}
+
 function apiRoot(token?: string): string {
   if (token === SESSION) {
     if (!sessionApiBase)
@@ -105,10 +151,7 @@ export class RateLimitError extends Error {
     const when = retryAfterSeconds
       ? `in about ${retryAfterSeconds} seconds`
       : resetAt
-        ? `at ${new Date(Math.ceil(resetAt / 60) * 60_000).toLocaleTimeString(
-            [],
-            { hour: "2-digit", minute: "2-digit" },
-          )}`
+        ? `at ${minuteClock(resetAt * 1000, true)}`
         : "later";
     super(
       source === "broker"
@@ -213,8 +256,14 @@ function recordRequest(
   const headers = res?.headers ?? new Headers();
   const method = (init?.method ?? "GET").toUpperCase();
   const conditional = new Headers(init?.headers).has("If-None-Match");
+  // A request sent to GitHub directly is answered by GitHub.
+  const viaBroker =
+    sessionApiBase !== null &&
+    (input instanceof Request ? input.url : String(input)).startsWith(
+      sessionApiBase,
+    );
   const source: "github" | "broker" =
-    headers.get("X-Lets-Encode-Upstream") === "broker" ? "broker" : "github";
+    viaBroker && !fromUpstream({ headers }, "github") ? "broker" : "github";
   const resource = headers.get("X-RateLimit-Resource");
   const entry = {
     request: ++requestTelemetry.total,
@@ -341,6 +390,13 @@ async function ghGet<T>(
   } catch {
     data = null;
   }
+  // The broker's own refusals carry `error` where GitHub's carry `message`;
+  // callers read `message`.
+  if (!ok && data && typeof data === "object") {
+    const body = data as { message?: unknown; error?: unknown };
+    if (body.message === undefined && typeof body.error === "string")
+      data = { ...body, message: body.error };
+  }
   return { status, ok, data: data as T, link };
 }
 
@@ -381,7 +437,9 @@ async function rawGet(
     ...authHeaders(token),
   };
   if (cached) headers["If-None-Match"] = cached.etag;
-  const res = await githubFetch(url, { headers, cache: "no-store" });
+  const res = await retryingGet(() =>
+    githubFetch(url, { headers, cache: "no-store" }),
+  );
   if (res.status === 304 && cached)
     return { status: 200, ok: true, text: cached.body, link: cached.link };
   const text = await res.text();
@@ -394,6 +452,17 @@ async function rawGet(
 
 /** Waits before each repeat of a GET that failed with a 5xx. */
 const GET_RETRY_DELAYS_MS = [500, 1500];
+
+// A GET is safe to repeat, so a 5xx is retried after each delay in turn.
+async function retryingGet(send: () => Promise<Response>): Promise<Response> {
+  let res = await send();
+  for (const delayMs of GET_RETRY_DELAYS_MS) {
+    if (res.status < 500) break;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+    res = await send();
+  }
+  return res;
+}
 
 /**
  * A GitHub JSON request without ETag caching — the write path, plus reads that
@@ -415,15 +484,7 @@ async function ghSend<T>(
       cache: "no-store",
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  let res = await send();
-  // A GET is safe to repeat, so a 5xx is retried after each delay in turn.
-  if (method === "GET") {
-    for (const delayMs of GET_RETRY_DELAYS_MS) {
-      if (res.status < 500) break;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-      res = await send();
-    }
-  }
+  const res = await (method === "GET" ? retryingGet(send) : send());
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data as { message?: string; error?: string };
@@ -474,6 +535,8 @@ export interface RepoData {
   default_branch: string;
   permissions?: { push?: boolean };
   private: boolean;
+  /** The template the repository was generated from; null when none. */
+  template_repository?: { full_name: string } | null;
   message?: string;
   errors?: Array<{ message?: string; code?: string }>;
 }
@@ -515,7 +578,8 @@ export async function getAuthenticatedUser(
     headers: { ...baseHeaders, ...authHeaders(token) },
     cache: "no-store",
   });
-  if (!res.ok) return null;
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`the server answered ${res.status}`);
   const user: GitHubUser = await res.json();
   const scopes = res.headers.get("X-OAuth-Scopes") ?? "";
   return { user, scopes };
@@ -634,9 +698,12 @@ export async function createRepoFromTemplate(
       }),
     },
   );
-  const data: RepoData = await res.json();
+  // An error page from a proxy in front of the broker is not JSON.
+  const data: RepoData & { error?: string } = res.ok
+    ? await res.json()
+    : await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message = data.message || "Failed to create repository";
+    const message = `${data.message || data.error || "Failed to create repository"} (${res.status})`;
     const detail = Array.isArray(data.errors)
       ? `: ${data.errors.map((e) => e.message || e.code).join(", ")}`
       : "";
@@ -647,7 +714,7 @@ export async function createRepoFromTemplate(
 
 // A repo-relative path as a URL path: each segment percent-encoded, the
 // separators kept, so a %, ? or # in a file name stays part of the path.
-function encodeRepoPath(path: string): string {
+export function encodeRepoPath(path: string): string {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 
@@ -768,7 +835,11 @@ async function repoFilesQuery(
         defaultBranchRef: { target: CommitNode | null } | null;
       } | null
     > | null;
-    errors?: Array<{ type?: string; message?: string }>;
+    errors?: Array<{
+      type?: string;
+      message?: string;
+      path?: Array<string | number>;
+    }>;
   }>("POST", "/graphql", token, { query, variables });
   if (res.errors?.some((e) => e.type === "RATE_LIMITED"))
     throw new RateLimitError({
@@ -784,6 +855,13 @@ async function repoFilesQuery(
   const data = res.data;
   if (!data)
     throw new Error(res.errors?.[0]?.message || "GraphQL query failed");
+  // A repository GitHub does not show, or will not show to this account,
+  // comes back as null with an error on its own field: that repository reads
+  // as unreadable. An error deeper in a repository, or with no path, leaves a
+  // field null that is not absent, so the whole read fails rather than report
+  // a missing file.
+  const failure = res.errors?.find((e) => e.path?.length !== 1);
+  if (failure) throw new Error(failure.message || "GraphQL query failed");
   return Promise.all(
     repos.map(async ({ owner, repo }, i) => {
       const found = data[`r${i}`];
@@ -976,19 +1054,29 @@ export async function getRepoHead(
   };
 }
 
-/** A commit's message, or null when the commit cannot be read. */
-export async function getCommitMessage(
+/**
+ * The messages of a pull request's commits, oldest first. GitHub lists at
+ * most 250 commits of a pull request.
+ */
+export async function getPullRequestCommitMessages(
   token: string,
   owner: string,
   repo: string,
-  sha: string,
-): Promise<string | null> {
-  const res = await ghGet<{ message?: string }>(
-    `${apiRoot(token)}/repos/${owner}/${repo}/git/commits/${sha}`,
-    token,
-  );
-  if (!res.ok) return null;
-  return res.data.message ?? null;
+  number: number,
+): Promise<string[]> {
+  const messages: string[] = [];
+  for (let page = 1; ; page++) {
+    const data = await ghSend<unknown>(
+      "GET",
+      `/repos/${owner}/${repo}/pulls/${number}/commits?per_page=100&page=${page}`,
+      token,
+    );
+    if (!Array.isArray(data))
+      throw new Error("GitHub returned an invalid pull-request commit list.");
+    for (const c of data as { commit?: { message?: string } }[])
+      messages.push(c.commit?.message ?? "");
+    if (data.length < 100) return messages;
+  }
 }
 
 // Fork identities already ensured this session, keyed by upstream owner/repo.
@@ -999,6 +1087,17 @@ const knownForks = new Map<
   string,
   { owner: string; repo: string; branch: string }
 >();
+
+/**
+ * Forget what was read with the session's account: response bodies kept for
+ * conditional requests, push permissions and forks. Run when the account
+ * logs out, so the reads that follow are made afresh.
+ */
+export function clearRequestCaches(): void {
+  etagCache.clear();
+  repoHeadInfoCache.clear();
+  knownForks.clear();
+}
 
 /**
  * Ensure the authenticated user has a fork of `owner/repo`, waiting until it's
@@ -1017,13 +1116,18 @@ export async function ensureFork(
   const headers = { ...baseHeaders, ...authHeaders(token) };
   const known = knownForks.get(`${owner}/${repo}`);
   if (known) {
-    await ghSend(
-      "POST",
-      `/repos/${known.owner}/${known.repo}/merge-upstream`,
-      token,
-      { branch: known.branch },
-    );
-    return { owner: known.owner, repo: known.repo };
+    // A fork deleted or renamed since is looked up again below.
+    try {
+      await ghSend(
+        "POST",
+        `/repos/${known.owner}/${known.repo}/merge-upstream`,
+        token,
+        { branch: known.branch },
+      );
+      return { owner: known.owner, repo: known.repo };
+    } catch {
+      knownForks.delete(`${owner}/${repo}`);
+    }
   }
   // Only the default branch — the fork doesn't need copies of upstream's
   // in-flight claim branches.
@@ -1044,6 +1148,12 @@ export async function ensureFork(
       `${apiRoot(token)}/repos/${forkOwner}/${forkRepo}/git/ref/heads/${data.default_branch}`,
       { headers, cache: "no-store" },
     );
+    // A 404 means the fork is still being populated; any other failure is
+    // reported.
+    if (!r.ok && r.status !== 404)
+      throw new Error(
+        `Fork ${forkOwner}/${forkRepo} could not be read (${r.status}).`,
+      );
     if (r.ok) {
       await ghSend(
         "POST",
@@ -1360,26 +1470,33 @@ export interface OpenPullRequest {
   /** GitHub account type: 'User', 'Bot' or 'Organization'. */
   user: { id: number; login: string; type: string };
   head: { sha: string; ref: string; repo: { full_name: string } | null };
+  body: string | null;
 }
 
-/** The repository's newest open pull requests, newest first; 100 at most. */
+/** The repository's open pull requests, newest first; 1,000 at most. */
 export async function listOpenPullRequests(
   token: string,
   owner: string,
   repo: string,
 ): Promise<OpenPullRequest[]> {
-  const { ok, data } = await ghGet<
-    Array<OpenPullRequest> | { message?: string }
-  >(
-    `${apiRoot(token)}/repos/${owner}/${repo}/pulls?state=open&per_page=100&sort=created&direction=desc`,
-    token,
-  );
-  if (!ok || !Array.isArray(data)) {
-    throw new Error(
-      (data as { message?: string })?.message || "Failed to list pull requests",
+  const prs: OpenPullRequest[] = [];
+  for (let page = 1; page <= 10; page++) {
+    const { ok, data } = await ghGet<
+      Array<OpenPullRequest> | { message?: string }
+    >(
+      `${apiRoot(token)}/repos/${owner}/${repo}/pulls?state=open&per_page=100&sort=created&direction=desc&page=${page}`,
+      token,
     );
+    if (!ok || !Array.isArray(data)) {
+      throw new Error(
+        (data as { message?: string })?.message ||
+          "Failed to list pull requests",
+      );
+    }
+    prs.push(...data);
+    if (data.length < 100) break;
   }
-  return data.map((pr) => ({
+  return prs.map((pr) => ({
     number: pr.number,
     created_at: pr.created_at,
     draft: Boolean(pr.draft),
@@ -1389,6 +1506,7 @@ export async function listOpenPullRequests(
       ref: pr.head.ref,
       repo: pr.head.repo ? { full_name: pr.head.repo.full_name } : null,
     },
+    body: pr.body ?? null,
   }));
 }
 
@@ -1638,6 +1756,7 @@ export async function commitFiles(
     baseTreeSha,
     branch,
     newBranch,
+    replaceBranch = false,
     deletePaths = [],
     onUpload,
   }: {
@@ -1646,6 +1765,12 @@ export async function commitFiles(
     baseTreeSha?: string;
     branch?: string;
     newBranch?: string;
+    /**
+     * With `newBranch`: a branch of that name that exists already is moved to
+     * the commit (forced) instead of refusing it. The branch keeps its old
+     * commit until the new one exists.
+     */
+    replaceBranch?: boolean;
     deletePaths?: string[];
     onUpload?: (uploaded: number, total: number) => void;
   } = {},
@@ -1749,7 +1874,22 @@ export async function commitFiles(
     },
   );
 
-  if (newBranch) {
+  if (newBranch && replaceBranch) {
+    try {
+      await ghSend(
+        "PATCH",
+        `${api}/git/refs/heads/${encodeRepoPath(newBranch)}`,
+        token,
+        { sha: commit.sha, force: true },
+      );
+    } catch (e) {
+      if (!/^Reference does not exist /.test((e as Error).message)) throw e;
+      await ghSend("POST", `${api}/git/refs`, token, {
+        ref: `refs/heads/${newBranch}`,
+        sha: commit.sha,
+      });
+    }
+  } else if (newBranch) {
     await ghSend("POST", `${api}/git/refs`, token, {
       ref: `refs/heads/${newBranch}`,
       sha: commit.sha,
@@ -1766,6 +1906,28 @@ export async function commitFiles(
   }
 
   return commit.sha;
+}
+
+/** The commit `branch` points at, or null when there is no such branch. */
+export async function getBranchHead(
+  token: string,
+  owner: string,
+  repo: string,
+  branch: string,
+): Promise<string | null> {
+  const { status, ok, data } = await ghGet<{
+    object?: { sha?: string };
+    message?: string;
+  }>(
+    `${apiRoot(token)}/repos/${owner}/${repo}/git/ref/heads/${encodeRepoPath(branch)}`,
+    token,
+  );
+  if (status === 404) return null;
+  if (!ok || !data?.object?.sha)
+    throw new Error(
+      `${data?.message || "Failed to read branch"} (${status} GET ref heads/${branch})`,
+    );
+  return data.object.sha;
 }
 
 /** Create a new branch `branch` pointing at `fromSha`. */
@@ -1871,7 +2033,8 @@ export async function deleteBranch(
 
 /**
  * Open a pull request. Returns { number, html_url, headSha } — the head commit
- * SHA is what identifies the workflow run the PR triggers.
+ * SHA is what identifies the workflow run the PR triggers. When a pull request
+ * from `head` is open already, that one is returned.
  */
 export async function createPullRequest(
   token: string,
@@ -1883,7 +2046,12 @@ export async function createPullRequest(
     base,
     body,
   }: { title: string; head: string; base: string; body: string },
-): Promise<{ number: number; html_url: string; headSha: string }> {
+): Promise<{
+  number: number;
+  html_url: string;
+  headSha: string;
+  createdAt: string;
+}> {
   const res = await githubFetch(
     `${apiRoot(token)}/repos/${owner}/${repo}/pulls`,
     {
@@ -1896,6 +2064,7 @@ export async function createPullRequest(
     number: number;
     html_url: string;
     head?: { sha?: string };
+    created_at?: string;
     message?: string;
     errors?: Array<{ message?: string }>;
   } = await res.json().catch(() => ({}));
@@ -1906,6 +2075,20 @@ export async function createPullRequest(
       ?.map((e) => e.message)
       .filter(Boolean)
       .join("; ");
+    // The same head opened from another tab or device: that pull request is
+    // the one to follow.
+    if (
+      res.status === 422 &&
+      /pull request already exists/i.test(detail ?? "")
+    ) {
+      const open = await findOpenPullRequest(
+        token,
+        owner,
+        repo,
+        head.includes(":") ? head : `${owner}:${head}`,
+      );
+      if (open) return open;
+    }
     throw new Error(
       `${data.message || "Failed to open pull request"}${detail ? `: ${detail}` : ""} (${res.status} POST pulls)`,
     );
@@ -1914,6 +2097,7 @@ export async function createPullRequest(
     number: data.number,
     html_url: data.html_url,
     headSha: data.head?.sha ?? "",
+    createdAt: data.created_at ?? "",
   };
 }
 
@@ -1927,7 +2111,8 @@ export async function createPullRequest(
  * If the user can push to the repo (owner/collaborator) the branch is made in
  * the repo itself. Otherwise the user's fork is used and a cross-repo PR is
  * opened upstream — the real volunteer model. Either way the branch is based on
- * the upstream head, so the PR diff is only the change in `files`.
+ * the upstream head, or on `baseSha` when given, so the PR diff is only the
+ * change in `files` as long as they were read at that commit.
  */
 export async function openChangePr(
   token: string,
@@ -1939,12 +2124,14 @@ export async function openChangePr(
     message,
     title,
     body,
+    baseSha,
   }: {
     branch: string;
     files: FileChange[];
     message: string;
     title: string;
     body: string;
+    baseSha?: string;
   },
 ): Promise<{
   number: number;
@@ -1952,7 +2139,9 @@ export async function openChangePr(
   headSha: string;
   head: { owner: string; repo: string; branch: string };
 }> {
-  const { branch: base, sha, canPush } = await getRepoHead(token, owner, repo);
+  const head = await getRepoHead(token, owner, repo);
+  const { branch: base, canPush } = head;
+  const sha = baseSha ?? head.sha;
   const target = canPush
     ? { owner, repo }
     : await ensureFork(token, owner, repo);
@@ -1977,16 +2166,67 @@ export async function openChangePr(
     return { ...pr, head: { owner: target.owner, repo: target.repo, branch } };
   } catch (error) {
     if (branchCreated) {
-      try {
-        await deleteBranch(token, target.owner, target.repo, branch);
-      } catch (cleanupError) {
-        console.warn(
-          `Could not clean up branch ${target.owner}/${target.repo}:${branch}: ${(cleanupError as Error).message}`,
-        );
+      // A pull request whose creation response was lost exists all the
+      // same: it is returned, and its branch kept. The branch is deleted
+      // only once GitHub shows no pull request from it.
+      const opened = await findOpenPullRequest(
+        token,
+        owner,
+        repo,
+        `${target.owner}:${branch}`,
+      ).catch(() => undefined);
+      if (opened)
+        return {
+          ...opened,
+          head: { owner: target.owner, repo: target.repo, branch },
+        };
+      if (opened === null) {
+        try {
+          await deleteBranch(token, target.owner, target.repo, branch);
+        } catch (cleanupError) {
+          console.warn(
+            `Could not clean up branch ${target.owner}/${target.repo}:${branch}: ${(cleanupError as Error).message}`,
+          );
+        }
       }
     }
     throw error;
   }
+}
+
+// The open pull request whose head is `head` ("owner:branch"), or null.
+async function findOpenPullRequest(
+  token: string,
+  owner: string,
+  repo: string,
+  head: string,
+): Promise<{
+  number: number;
+  html_url: string;
+  headSha: string;
+  createdAt: string;
+} | null> {
+  const prs = await ghSend<
+    Array<{
+      number: number;
+      html_url: string;
+      head?: { sha?: string };
+      created_at?: string;
+    }>
+  >(
+    "GET",
+    `/repos/${owner}/${repo}/pulls?state=open&head=${encodeURIComponent(head)}`,
+    token,
+  );
+  const pr = prs[0];
+  return pr
+    ? {
+        number: pr.number,
+        html_url: pr.html_url,
+        headSha: pr.head?.sha ?? "",
+        createdAt: pr.created_at ?? "",
+      }
+    : null;
 }
 
 /** Manually trigger a workflow_dispatch run of `workflow` (a filename) on `ref`. */
@@ -2068,7 +2308,7 @@ export async function ignoreRepoNotifications(
 export async function searchReposByTopic(
   topic: string,
   token?: string,
-): Promise<RepoSummary[]> {
+): Promise<{ repos: RepoSummary[]; incomplete: boolean }> {
   const q = encodeURIComponent(`topic:${topic}`);
   type SearchItem = {
     id: number;
@@ -2082,21 +2322,25 @@ export async function searchReposByTopic(
     created_at: string;
   };
   const items: SearchItem[] = [];
+  // A search GitHub stopped before it was done reports incomplete_results.
+  let incomplete = false;
   // The search API pages at 100 results and serves at most 1,000 (10 pages).
   for (let page = 1; page <= 10; page++) {
     const { ok, data } = await ghGet<{
       items?: SearchItem[];
+      incomplete_results?: boolean;
       message?: string;
     }>(
       `${apiRoot(token)}/search/repositories?q=${q}&sort=updated&order=desc&per_page=100&page=${page}`,
       token,
     );
     if (!ok) throw new Error(data?.message || "Repo search failed");
+    if (data?.incomplete_results) incomplete = true;
     const batch = data?.items ?? [];
     items.push(...batch);
     if (batch.length < 100) break;
   }
-  return items.map((r) => ({
+  const repos = items.map((r) => ({
     id: r.id,
     full_name: r.full_name,
     name: r.name,
@@ -2107,4 +2351,5 @@ export async function searchReposByTopic(
     updated_at: r.updated_at,
     created_at: r.created_at,
   }));
+  return { repos, incomplete };
 }

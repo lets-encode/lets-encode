@@ -1,6 +1,6 @@
 // Storage for a campaign setup in progress: the entries the onboarding wizard
-// has collected are mirrored into localStorage under one record per campaign
-// name, so a setup interrupted by a reload, a closed tab or a failed step can be
+// has collected are mirrored into localStorage under one record per account
+// and campaign name, so a setup interrupted by a reload, a closed tab or a failed step can be
 // continued from the campaign list.
 //
 // A record holds less than the wizard's state. `File` objects and image bytes
@@ -20,7 +20,13 @@ import type { EncodingSource } from "./prepare-images.ts";
 import type { SourceMetadata } from "./source-metadata.ts";
 import type { Piece } from "./pieces.ts";
 import type { WizardClaim, WizardRepo, WizardStepId } from "./wizard.svelte.ts";
-import { discardDraftImages } from "./draft-images.ts";
+import { discardDraftImages, moveUnkeyedDraftImages } from "./draft-images.ts";
+import {
+  localKeys,
+  readLocal,
+  removeLocal,
+  writeLocal,
+} from "./local-store.ts";
 
 /** Records written under any other version are ignored when read back. */
 export const DRAFT_VERSION = 1;
@@ -38,11 +44,19 @@ export interface DraftEntries {
   copyrightAccepted: boolean;
   /** Paths of the prepared page images, in page order; the bytes are in IndexedDB. */
   imagePaths: string[];
+  /** The byte size of each of those images; absent in drafts stored before. */
+  imageSizes?: number[];
+  /** The candidate each image was prepared from; absent in drafts stored before. */
+  imageCandidates?: string[];
+  /** The upload the pieces were set up for; absent in drafts stored before. */
+  piecesUpload?: string;
   encodings: EncodingSource[];
   source: SourceMetadata;
   pieces: Piece[];
   /** How facsimile pieces are prepared. */
   preparation: Preparation;
+  /** The preparation was chosen by hand; absent in drafts stored before. */
+  preparationPicked?: boolean;
 }
 
 export interface WizardDraft {
@@ -64,7 +78,8 @@ export interface WizardDraft {
   entries: DraftEntries;
 }
 
-const draftKey = (handle: string) => `${KEY_PREFIX}${handle}`;
+const draftKey = (owner: string, handle: string) =>
+  `${KEY_PREFIX}${owner}/${handle}`;
 
 // The wizard's step ids, mirroring WIZARD_STEPS in wizard.svelte.ts (that
 // module imports this one, so the list cannot be read from there).
@@ -77,9 +92,6 @@ const STEP_IDS: readonly WizardStepId[] = [
   "pieces",
   "preparation",
 ];
-
-// Storage is read through this so the module can be used where there is none.
-const store = () => (typeof localStorage === "undefined" ? null : localStorage);
 
 /**
  * A record from its stored JSON, or null if it is absent, unreadable, of another
@@ -111,8 +123,9 @@ export function parseDraft(text: string | null): WizardDraft | null {
   return draft;
 }
 
-export function readDraft(handle: string): WizardDraft | null {
-  return parseDraft(store()?.getItem(draftKey(handle)) ?? null);
+/** The record `owner` stored for the setup named `handle`. */
+export function readDraft(owner: string, handle: string): WizardDraft | null {
+  return parseDraft(readLocal(draftKey(owner, handle)));
 }
 
 /**
@@ -121,35 +134,39 @@ export function readDraft(handle: string): WizardDraft | null {
  * and null when the record was stored.
  */
 export function writeDraft(draft: WizardDraft): string | null {
-  const storage = store();
-  if (!storage) return null;
-  try {
-    storage.setItem(draftKey(draft.handle), JSON.stringify(draft));
-    return null;
-  } catch (err) {
-    return (err as Error).message;
-  }
+  return writeLocal(draftKey(draft.owner, draft.handle), JSON.stringify(draft));
 }
 
-export function discardDraft(handle: string): void {
-  store()?.removeItem(draftKey(handle));
-  discardDraftImages(handle);
+export function discardDraft(owner: string, handle: string): void {
+  removeLocal(draftKey(owner, handle));
+  discardDraftImages(owner, handle);
 }
 
 /**
  * The setups `owner` can continue, most recently changed first. Records of other
  * accounts are left out: continuing a setup creates the repository on the
- * account that is signed in.
+ * account that is signed in. `owner`'s records stored under the name alone
+ * (before drafts were kept per account) are moved to the account's key, with
+ * their page images.
  */
 export function resumableDrafts(owner: string): WizardDraft[] {
-  const storage = store();
-  if (!storage) return [];
   const drafts: WizardDraft[] = [];
-  for (let i = 0; i < storage.length; i++) {
-    const key = storage.key(i);
-    if (!key?.startsWith(KEY_PREFIX)) continue;
-    const draft = parseDraft(storage.getItem(key));
-    if (draft && draft.owner === owner) drafts.push(draft);
+  for (const key of localKeys(KEY_PREFIX)) {
+    const draft = parseDraft(readLocal(key));
+    if (!draft || draft.owner !== owner) continue;
+    const ownKey = draftKey(owner, draft.handle);
+    if (key === `${KEY_PREFIX}${draft.handle}`) {
+      // A record already under the account's key is the newer one and is
+      // listed on its own; a record that cannot be moved stays where it is.
+      if (readLocal(ownKey) !== null) removeLocal(key);
+      else if (writeDraft(draft) === null) {
+        removeLocal(key);
+        moveUnkeyedDraftImages(owner, draft.handle);
+        drafts.push(draft);
+      }
+      continue;
+    }
+    if (key === ownKey) drafts.push(draft);
   }
   return drafts.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }

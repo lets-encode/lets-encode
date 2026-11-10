@@ -123,6 +123,16 @@
     }
     drag = null;
   }
+  // A cancelled press (the browser took the pointer over) neither toggles
+  // nor resizes: the panel goes back to where it was.
+  function cancel() {
+    if (!resizing) return;
+    resizing = false;
+    cancelAnimationFrame(frame);
+    frame = 0;
+    if (!dragDocked) panel.width = startSize;
+    drag = null;
+  }
   // The keyboard path: towards the content grows the panel.
   const STEP = 24;
   function key(e: KeyboardEvent) {
@@ -166,7 +176,7 @@
   onpointerdown={begin}
   onpointermove={move}
   onpointerup={end}
-  onpointercancel={end}
+  onpointercancel={cancel}
 ></div>
 
 <style>

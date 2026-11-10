@@ -1,7 +1,10 @@
 import {
   COMMENT_COLUMNS,
+  configPieceEntries,
+  configString,
   parseCsv,
   COMMENT_PATH,
+  LOCK_COLUMNS,
   LOCK_PATH,
   STATE_PATH,
 } from "./campaign-tables.ts";
@@ -12,7 +15,24 @@ import type {
   TaskRow,
 } from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
+import { envelopeFromPrBody } from "./command-envelope.ts";
+import {
+  spliceOpeningScoreDef,
+  splicePage,
+  splicePageSpan,
+} from "./mei-page-splice.ts";
+import {
+  applicationNamesIn,
+  recordApplications,
+  recordContribution,
+  type Contribution,
+} from "./mei-provenance.ts";
 import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
+import { pageOfLocator } from "./campaign-graph.ts";
+import { reapLocks } from "./campaign-reaper.ts";
+import { replaceMeiHead } from "./mei-facsimile.ts";
+import { firstElementNamed } from "./mei-xml.ts";
+import { UPLOAD_APPLICATION } from "./encoding-merge.ts";
 
 export type PullRequestKind =
   | "claim"
@@ -22,34 +42,27 @@ export type PullRequestKind =
   | "encoding";
 
 /**
- * One quoted scalar field (`kind`, `preparation`, …) of the config.yaml piece
- * whose path is `path`, or null when no piece carries the path or the piece
- * has no such field. Reads the canonical shape configToYaml emits — each
- * piece entry opens with `- id:` and lists its fields as quoted scalars — so
- * the coordinator and the console need no YAML parser.
+ * One scalar field (`kind`, `preparation`, …) of the config.yaml piece whose
+ * path is `path`, quoted or not, read as configPieces reads the pieces; null
+ * when no piece carries the path or the piece has no such field.
  */
 export function pieceFieldForPath(
   configText: string | null,
   path: string,
   key: string,
 ): string | null {
-  for (const entry of (configText ?? "").split(/^\s*- id:/m).slice(1)) {
-    const entryPath = /^\s*path:\s*"((?:[^"\\]|\\.)*)"/m.exec(entry);
-    if (!entryPath || JSON.parse(`"${entryPath[1]}"`) !== path) continue;
-    const value = new RegExp(
-      `^\\s*${key}:\\s*"((?:[^"\\\\]|\\\\.)*)"`,
-      "m",
-    ).exec(entry);
-    return value ? JSON.parse(`"${value[1]}"`) : null;
-  }
-  return null;
+  const entry = configPieceEntries(configText).find(
+    (e) => configString(e, "path") === path,
+  );
+  return (entry && configString(entry, key)) || null;
 }
 
 /**
  * Whether a task of a piece prepared as `preparation` checks the piece's
  * opening score definition before its draft, and may change it (mei-page-splice spliceOpeningScoreDef): the
  * first page task of an 'omr-instruments' piece, the page task that depends
- * on the piece's layout task (planTasks).
+ * on the piece's layout task, or on the encoding alignment that follows it
+ * (planTasks).
  */
 export function checksOpening(
   task: TaskRow,
@@ -57,15 +70,75 @@ export function checksOpening(
   preparation: string | null | undefined,
 ): boolean {
   return (
-    task.locator.startsWith("surface-") &&
+    pageOfLocator(task.locator) !== null &&
     preparation === "omr-instruments" &&
     tasks.some(
       (t) =>
         t.task_id === task.depends_on &&
         t.subtask_id === "" &&
-        t.locator === "omr-layout",
+        (t.locator === "omr-layout" || t.locator === "encoding-align"),
     )
   );
+}
+
+/**
+ * The campaign score a submitted encoding of `task` makes, as the campaign
+ * automation assembles it for its schema check and its commit: for a page
+ * task, the page of `forkMei` spliced into `baseMei`, with the opening score
+ * definition where the task checks it (checksOpening); otherwise `forkMei`
+ * with the header of `baseMei`. Of the fork's header only the applications
+ * the app itself records are carried over: the Musibot recognition models
+ * and the uploaded encoding. Then `contributions` are recorded in the header,
+ * in order. Throws when the campaign has no score at the task's fragment or
+ * the page cannot be spliced.
+ */
+export function assembleSubmission({
+  task,
+  tasks,
+  configYaml,
+  baseMei,
+  forkMei,
+  contributions,
+}: {
+  task: TaskRow;
+  tasks: TaskRow[];
+  configYaml: string | null;
+  /** The campaign's score. */
+  baseMei: string | null;
+  forkMei: string;
+  contributions: Contribution[];
+}): string {
+  if (baseMei == null)
+    throw new Error(`${task.fragment} is missing from the campaign.`);
+  let mei = forkMei;
+  if (pageOfLocator(task.locator) !== null) {
+    mei =
+      pieceKindForPath(configYaml, task.fragment) === "physical-only"
+        ? splicePageSpan(baseMei, forkMei, task.locator)
+        : splicePage(baseMei, forkMei, task.locator);
+    if (
+      checksOpening(
+        task,
+        tasks,
+        pieceFieldForPath(configYaml, task.fragment, "preparation"),
+      )
+    )
+      mei = spliceOpeningScoreDef(mei, forkMei);
+  } else {
+    const head = firstElementNamed(baseMei, "meiHead");
+    if (head)
+      mei = replaceMeiHead(forkMei, baseMei.slice(head.start, head.end));
+  }
+  mei = recordApplications(
+    mei,
+    applicationNamesIn(forkMei).filter(
+      (name) =>
+        /^Musibot [\w.-]+ [\w.-]+$/.test(name) || name === UPLOAD_APPLICATION,
+    ),
+  );
+  for (const contribution of contributions)
+    mei = recordContribution(mei, contribution);
+  return mei;
 }
 
 /**
@@ -113,6 +186,22 @@ export function removedRowFromPatch(patch: string | undefined): string | null {
     else if (line.startsWith("+")) added++;
   }
   return added === 0 && removed.length === 1 ? removed[0] : null;
+}
+
+/** The task, subtask and kind a lock.csv row names, parsed as CSV. */
+export function lockIntentFromRow(row: string): {
+  task_id: string;
+  subtask_id: string;
+  kind: string;
+} {
+  const cells = parseCsv(row)[0] ?? [];
+  const cell = (column: string) =>
+    cells[LOCK_COLUMNS.indexOf(column)]?.trim() ?? "";
+  return {
+    task_id: cell("task_id"),
+    subtask_id: cell("subtask_id"),
+    kind: cell("kind"),
+  };
 }
 
 // The CSV records a unified-diff patch removes and adds, parsed with full CSV
@@ -277,6 +366,23 @@ export function touchesCampaignPaths(changedPaths: string[]): boolean {
   );
 }
 
+/**
+ * Whether a pull request is a campaign operation: it changes a tracking or
+ * source file, or — an encoding completed without changes — carries a command
+ * envelope or comes from a task branch.
+ */
+export function isCampaignOperation(
+  changedPaths: string[],
+  body: string | null,
+  headRef: string,
+): boolean {
+  return (
+    touchesCampaignPaths(changedPaths) ||
+    envelopeFromPrBody(body) !== null ||
+    headRef.startsWith("encode-")
+  );
+}
+
 export function classifyPullRequest(changedPaths: string[]): PullRequestKind {
   // A switch from review to editing gives up the review lock and carries the
   // fail comment.
@@ -316,7 +422,7 @@ export const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
 // The branches the app opens operation pull requests from, each ending in a
 // random suffix of eight hex digits.
 const OPERATION_BRANCH =
-  /^(claim|release|validate|review-edit|comment|setup|layout|zones)-.+-[0-9a-f]{8}$/;
+  /^(claim|release|validate|review-edit|comment|resolve|setup|layout|zones|align)-.+-[0-9a-f]{8}$/;
 
 /**
  * Whether a campaign branch is an operation branch left without a pull
@@ -334,6 +440,49 @@ export function isLeftoverOperationBranch(
     !openHeads.has(branch.name) &&
     now - Date.parse(branch.committedAt) > OPERATION_BRANCH_GRACE_MS
   );
+}
+
+/**
+ * The version of what the coordinator and the app exchange through pull
+ * requests and the tracking tables: raised with every change to it that the
+ * other side must know of. The coordinator's verdict comments carry it
+ * (contractMarker).
+ */
+export const AUTOMATION_CONTRACT = 1;
+
+const CONTRACT_MARKER = /\n*<!-- lets-encode-contract: (\d+) -->\s*$/;
+
+/** The hidden line that ends every verdict comment of the coordinator. */
+export const contractMarker = (): string =>
+  `<!-- lets-encode-contract: ${AUTOMATION_CONTRACT} -->`;
+
+/**
+ * A verdict comment's text without its contract line, and the contract
+ * number it carries; null for a comment without one.
+ */
+export function splitContract(comment: string): {
+  text: string;
+  contract: number | null;
+} {
+  const match = CONTRACT_MARKER.exec(comment);
+  return match
+    ? { text: comment.slice(0, match.index), contract: Number(match[1]) }
+    : { text: comment, contract: null };
+}
+
+/**
+ * What a rejected operation left changed, for the coordinator's comment: a
+ * claim that had run out is released in the same run, with any unsubmitted
+ * work on an encoding claim's task branch kept; otherwise nothing changed.
+ */
+export function rejectionOutcome(
+  reason: string | undefined,
+  encodingClaim: boolean,
+): string {
+  if (reason !== "claim_expired") return "No changes were made.";
+  return encodingClaim
+    ? "The claim had run out and has been released; any unsubmitted work on its task branch was kept."
+    : "The claim had run out and has been released.";
 }
 
 /** The campaign branch holding the unsubmitted work of a task's expired claims. */
@@ -394,6 +543,74 @@ export function keptWorkSince(
   return rows;
 }
 
+/** An open pull request as heldByOpenOperation reads it. */
+export interface PendingOperation {
+  number: number;
+  created_at: string;
+  draft: boolean;
+  user: { id: number };
+  head: { ref: string };
+  body?: string | null;
+}
+
+// Commands whose pull requests need no claim.
+const CLAIMLESS_COMMANDS = new Set([
+  "campaign.submitComment",
+  "campaign.resolveComment",
+]);
+
+/**
+ * Whether an open pull request in `open` still needs `lock`: one by the lock's
+ * holder on the lock's task (named by its command envelope or its head branch
+ * `encode-<task>`), opened before the lock ran out and at most `maxAgeMs` old
+ * at `nowMs`. Its own run judges it at its opening time and must still find
+ * the lock, so the lock is not dropped as expired before then. A discussion
+ * comment needs no claim and does not count.
+ */
+export function heldByOpenOperation(
+  lock: LockRow,
+  open: PendingOperation[],
+  nowMs: number,
+  maxAgeMs: number,
+): boolean {
+  const expires = Date.parse(lock.expires);
+  if (!Number.isFinite(expires)) return false;
+  return open.some((pr) => {
+    const opened = Date.parse(pr.created_at);
+    if (pr.draft || String(pr.user.id) !== lock.user_id) return false;
+    if (!(opened <= expires) || nowMs - opened > maxAgeMs) return false;
+    const envelope = envelopeFromPrBody(pr.body ?? null);
+    if (envelope && CLAIMLESS_COMMANDS.has(envelope.command)) return false;
+    const task =
+      String(envelope?.input?.task_id ?? "") ||
+      (pr.head.ref.startsWith("encode-")
+        ? pr.head.ref.slice("encode-".length)
+        : "");
+    return task === lock.task_id;
+  });
+}
+
+/**
+ * The locks a pull request by `author`, opened at `openedAt`, is decided
+ * against, out of `kept`, the locks lock.csv keeps for the decision; and the
+ * author's locks among `kept` past their `expires` at `openedAt` (`expired`).
+ * lock.csv keeps such a lock while another of the author's open pull requests
+ * needs it (heldByOpenOperation); for this pull request it counts as expired.
+ */
+export function locksAtOpening(
+  kept: LockRow[],
+  author: string,
+  openedAt: string,
+): { decide: LockRow[]; expired: LockRow[] } {
+  const expired = reapLocks({ locks: kept, now: openedAt }).removed.filter(
+    (lock) => lock.user_id === author,
+  );
+  return {
+    decide: kept.filter((lock) => !expired.includes(lock)),
+    expired,
+  };
+}
+
 export function shouldCleanupSubmission(
   kind: "encoding" | "validation",
   accepted: boolean,
@@ -446,8 +663,8 @@ export function rejectedSubmission(
 }
 
 // Open non-draft pull requests one author may have on a campaign, counting
-// the one being processed; beyond it a pull request is closed unprocessed and
-// without a history row.
+// the one being processed; beyond it a pull request's own run leaves it open,
+// and the scheduled pass processes it.
 export const MAX_OPEN_PRS_PER_AUTHOR = 10;
 
 // Explanations of the rejection codes, for the pull request comment and the
@@ -479,7 +696,7 @@ export const REASON_TEXT: Record<string, string> = {
   no_open_validation_slot: "no review slot is open",
   not_lock_holder: "the author does not hold the required claim",
   claim_expired:
-    "the author's claim had run out when the submission was opened",
+    "the author's claim had run out before the submission was decided",
   mei_invalid: "the submitted MEI failed the machine check",
   splice_invalid:
     "the page passes the machine check on its own but not joined into the score; this is an error of the platform, not of the encoding",
@@ -498,7 +715,8 @@ export const REASON_TEXT: Record<string, string> = {
     "a parent comment must be a top-level comment, and only replies carry one",
   unknown_comment: "no such comment",
   already_resolved: "the comment is already resolved",
-  too_many_open_prs: `the author already has ${MAX_OPEN_PRS_PER_AUTHOR} open submissions on this campaign`,
+  tables_busy:
+    "other operations changed the campaign's tables on every attempt to record this one; nothing was changed, try again",
 };
 
 /** The longest detail a rejection comment carries, in characters. */

@@ -6,6 +6,7 @@ test("accepts handles matching the registry slug rules", () => {
   assert.equal(isValidHandle("sym"), true);
   assert.equal(isValidHandle("symphony-9-choral"), true);
   assert.equal(isValidHandle("a1"), false); // under 3 characters
+  assert.equal(isValidHandle("a"), false); // one character
   assert.equal(isValidHandle("Symphony"), false); // uppercase
   assert.equal(isValidHandle("-leading"), false);
   assert.equal(isValidHandle("trailing-"), false);

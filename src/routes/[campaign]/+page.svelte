@@ -20,7 +20,6 @@
     campaignLoadFailure,
   } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
-  import { isValidHandle } from "$lib/campaign-handle.ts";
   import {
     findRow,
     pieceNamesOf,
@@ -48,14 +47,17 @@
   import {
     handle,
     pageOfLocator,
-    preTaskHref,
     reviewHref,
+    taskAction,
+    taskActionHref,
+    taskHref,
   } from "$lib/campaign-graph.ts";
+  import { encodingClaimOf } from "$lib/campaign-claim.ts";
   import {
     buildBoard,
     cardSummary,
     doneLabel,
-    elapsed,
+    timeAgo,
     expiresIn,
     initialOf,
     reviewWaitLabel,
@@ -73,10 +75,11 @@
     writeLastTask,
   } from "$lib/side-panels.ts";
   import { MediaQuery } from "svelte/reactivity";
-  import { piecePreview } from "$lib/piece-previews.ts";
+  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
@@ -189,6 +192,7 @@
   // view (?score=) over it, and the side panel showing the ?task= task or the
   // campaign. Everything else derives from the tracking tables.
   let manage = $state(false);
+  let planEditor = $state<ReturnType<typeof PlanEditor>>();
   // The side panel's size (side-panels.ts).
   let sidePanel = $state(readSidePanel());
   // The board row's rail takes its wide form only while four lanes fit
@@ -382,14 +386,19 @@
   });
   // The scoped piece's preview, for the context strip over the columns.
   let stripPreview = $state<PiecePreview | null>(null);
+  const stripVersion = $derived(
+    railPiece ? scoreVersion(history, taskDefs, railPiece.piece.path) : "",
+  );
   $effect(() => {
     const piece = railPiece?.piece;
     stripPreview = null;
     if (!piece || !owner) return;
     const path = piece.path;
-    piecePreview(readForge(), owner, repo, path).then((preview) => {
-      if (railPiece?.piece.path === path) stripPreview = preview;
-    });
+    piecePreview(readForge(), owner, repo, path, true, stripVersion).then(
+      (preview) => {
+        if (railPiece?.piece.path === path) stripPreview = preview;
+      },
+    );
   });
   // Tasks the viewer's accepted submissions just moved on this campaign's
   // board, highlighted in their new column for a short while.
@@ -447,7 +456,9 @@
   // Why each page of the selected task's piece is to be checked against the
   // scan (omr-page-checks.ts), read once per piece whose layout task names
   // its instruments; keyed by campaign repo and piece.
-  let pageChecksBy = $state<Record<string, string[][] | null>>({});
+  // Per score: its page checks, null while they load, "failed" when they could
+  // not be read (tried again on the next load of the page).
+  let pageChecksBy = $state<Record<string, string[][] | null | "failed">>({});
   const checksKey = (fragment: string) => `${owner}/${repo}/${fragment}`;
   $effect(() => {
     const fragment = detailCard
@@ -465,12 +476,14 @@
     import("$lib/omr-page-checks.ts")
       .then((m) => m.loadPageChecks(readForge(), at.owner, at.repo, fragment))
       .then((checks) => (pageChecksBy[key] = checks))
-      .catch(() => {});
+      .catch(() => (pageChecksBy[key] = "failed"));
   });
+  const checksFor = (card: BoardCard) =>
+    pageChecksBy[checksKey(findRow(taskDefs, card.task, "")?.fragment ?? "")];
   const checksOf = (card: BoardCard): string[] => {
-    const fragment = findRow(taskDefs, card.task, "")?.fragment ?? "";
+    const checks = checksFor(card);
     const n = pageOfLocator(card.locator);
-    return (n && pageChecksBy[checksKey(fragment)]?.[n - 1]) || [];
+    return (n && checks !== "failed" && checks?.[n - 1]) || [];
   };
   // The selected task's card is scrolled into the board's visible part, in
   // its lane and above a docked panel.
@@ -502,7 +515,7 @@
     // The lane tabs follow the opened task again.
     pickedLane = null;
     writeLastTask(campaign, task);
-    goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+    goto(taskHref(campaign, task), {
       replaceState: true,
       noScroll: true,
       keepFocus: true,
@@ -589,10 +602,7 @@
     });
   });
   function closeScoreView() {
-    goto(
-      `/${campaign}${detailTask ? `?task=${encodeURIComponent(detailTask)}` : ""}`,
-      { noScroll: true, keepFocus: true },
-    );
+    goto(taskHref(campaign, detailTask), { noScroll: true, keepFocus: true });
   }
   function viewScorePiece(index: number, startPage?: number) {
     const path = previewPieces[index]?.path;
@@ -662,17 +672,20 @@
 
   // Read the tracking tables (and privacy/config) for the console. Only the
   // first read shows the loading state; refreshes update the tables in place.
-  // A background poll's failed read keeps the shown tables and throws.
+  // A background poll's failed read keeps the shown tables and throws. Of
+  // reads that overlap, only the latest one started is shown.
+  let loadSeq = 0;
   async function load(background = false) {
     const f = readForge();
-    // Tables for a name the page has since navigated away from are dropped.
+    // The title is recorded under the name it was read for.
     const name = campaign;
+    const seq = ++loadSeq;
     readAs = auth.user?.login ?? null;
     if (!loaded) loading = true;
     if (!background) loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
-      if (name !== campaign) return;
+      if (seq !== loadSeq) return;
       headSha = tables.headSha;
       notInitialised = tables.notInitialised;
       isPrivate = tables.isPrivate;
@@ -706,10 +719,11 @@
       }
       loaded = true;
     } catch (e) {
+      if (seq !== loadSeq) return;
       if (background) throw e;
-      if (name === campaign) loadError = campaignLoadFailure(e);
+      loadError = campaignLoadFailure(e);
     } finally {
-      if (name === campaign) loading = false;
+      if (seq === loadSeq) loading = false;
     }
   }
 
@@ -722,27 +736,14 @@
     if (!owner || !repo) return;
     return startAutoRefresh({
       interval: () => (auth.user ? 10_000 : 300_000),
-      held: () => !loaded || loading || runner.busy || manage,
+      // The plan editor holds polling while it is open, not under the score view.
+      held: () => !loaded || loading || runner.busy || (manage && !scoreView),
       poll: async () => {
         const { sha } = await readForge().getRepoHead(owner, repo);
         if (sha !== headSha) await load(true);
       },
       onStatus: (status) => (refreshStatus = status),
     });
-  });
-
-  // A same-route navigation to another campaign starts over: the resolved
-  // repo and the loaded tables belong to the previous name.
-  $effect(() => {
-    void campaign;
-    resolved = null;
-    notFound = false;
-    resolveError = null;
-    slugState = null;
-    loaded = false;
-    loadError = null;
-    scoreHead = null;
-    scoreHeadState = "idle";
   });
 
   // Resolve the campaign name to its repo before anything reads the tables. The
@@ -766,15 +767,15 @@
   });
 
   async function resolve() {
-    // Results for a name the page has since navigated away from are dropped.
     const name = campaign;
     let info: SlugInfo | null;
     try {
       info = await lookupSlug(name);
     } catch (e) {
-      if (name === campaign) resolveError = campaignLoadFailure(e);
+      resolveError = campaignLoadFailure(e);
       return;
     }
+    // A free name opens the setup for it, unless the page was left meanwhile.
     if (name !== campaign) return;
     if (info?.status === "free") {
       await goto(`/new?slug=${encodeURIComponent(name)}`, {
@@ -798,10 +799,9 @@
     try {
       r = await resolveCampaign(readForge(), name, info);
     } catch (e) {
-      if (name === campaign) resolveError = campaignLoadFailure(e);
+      resolveError = campaignLoadFailure(e);
       return;
     }
-    if (name !== campaign) return;
     if (r) resolved = r;
     else notFound = true;
   }
@@ -821,12 +821,22 @@
     }
   });
 
-  // Background verdicts refresh the tables when they land — unless a command
-  // overlay is up, whose own after-refresh will catch the change, or the
-  // campaign isn't resolved (nothing to refresh).
+  // Background verdicts on this campaign refresh the tables when they land —
+  // unless a command overlay is up, whose own after-refresh will catch the
+  // change, or the campaign isn't resolved (nothing to refresh).
   $effect(() =>
-    pendingVerdicts.onSettled(() => {
-      if (!runner.busy && owner && repo) load();
+    pendingVerdicts.onSettled((entry) => {
+      // A rejected submission ends the task's "Just completed" highlight; a
+      // failed run is followed on until the submission is decided.
+      if (
+        entry.repoId === repoId &&
+        entry.state === "rejected" &&
+        !entry.runFailed &&
+        entry.key.kind === "encode" &&
+        entry.key.task === completed?.task
+      )
+        completed = null;
+      if (entry.repoId === repoId && !runner.busy && owner && repo) load();
     }),
   );
 
@@ -859,7 +869,7 @@
     const result = await run((c) =>
       invoke(commands.claimValidation, { task_id, subtask_id }, c),
     );
-    if (!result?.ok || result.warn) return;
+    if (!result?.ok || result.outcome === "pending") return;
     const locator = taskDefs.find(
       (t) => t.task_id === task_id && t.subtask_id === "",
     )?.locator;
@@ -871,7 +881,8 @@
   // still-pending claim — so it waits until the busy overlay is gone.
   const editor = async (task_id: string) => {
     // A claim still being processed holds the editor until its verdict lands.
-    if (pendingVerdicts.isProcessing(`claim:${task_id}`, repoId)) return;
+    if (pendingVerdicts.isProcessing({ kind: "claim", task: task_id }, repoId))
+      return;
     actedOn(task_id);
     const result = await run((c) =>
       invoke(
@@ -904,6 +915,8 @@
     text: string;
     confirm?: { label: string; run: () => void };
   } | null>(null);
+  // A task mei-friend returned from that the plan no longer has.
+  let returnedGone = $state<string | null>(null);
   // The longest message from mei-friend the panel shows.
   const MAX_EDITOR_MESSAGE = 500;
   /** The task mei-friend just reported complete, highlighted until `until`. */
@@ -925,23 +938,26 @@
     if (editorError && editorError.task !== task) editorError = null;
   }
   const holdsEncoding = (task: string) =>
-    viewer !== "" &&
-    locks.some(
-      (l) =>
-        l.task_id === task &&
-        l.subtask_id === "" &&
-        l.kind === "encoding" &&
-        l.user_id === viewer,
-    );
+    encodingClaimOf(locks, task, viewer) !== undefined;
   function handleEditorReturn(task: string, status: string, msg: string) {
     console.log("[editor-return]", task, status, {
       holds: holdsEncoding(task),
       msg,
     });
+    // A status other than mei-friend's three is shown and keeps this
+    // browser's record of the hand-off; any of the three uses it up.
+    if (!["complete", "failed", "abandoned"].includes(status)) {
+      editorError = {
+        task,
+        label: "",
+        text: `mei-friend returned an unknown status (${status.slice(0, 40)}); nothing was recorded.`,
+      };
+      return;
+    }
+    const handedOff = takeHandOff(campaign, task);
     if (status === "failed") {
       // mei-friend's own message only for a hand-off this browser made: the
       // return URL is a link anyone can build.
-      const handedOff = takeHandOff(campaign, task);
       editorError =
         msg && handedOff
           ? {
@@ -956,7 +972,6 @@
             };
       return;
     }
-    if (status !== "complete" && status !== "abandoned") return;
     if (!holdsEncoding(task)) {
       editorError = {
         task,
@@ -970,7 +985,7 @@
     }
     // A return this browser did not hand off may come from a link someone
     // else built, so it waits for the volunteer.
-    if (!takeHandOff(campaign, task)) {
+    if (!handedOff) {
       editorError =
         status === "complete"
           ? {
@@ -992,10 +1007,12 @@
     if (status === "complete") submitCompleted(task);
     else abandon(task, "");
   }
-  function submitCompleted(task: string) {
+  async function submitCompleted(task: string) {
     editorError = null;
     completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
-    submitpr(task);
+    // A submission that could not be opened is not completed.
+    const result = await submitpr(task);
+    if (!result?.ok && completed?.task === task) completed = null;
   }
 
   const postComment = (
@@ -1020,8 +1037,10 @@
 
   // Save the edited plan; a clean save leaves the manage takeover (run() has
   // already refreshed the tables, so the board reflects the new plan).
-  async function savePlan(tasks: TaskRow[]) {
-    const result = await run((c) => invoke(commands.savePlan, { tasks }, c));
+  async function savePlan(tasks: TaskRow[], base: TaskRow[]) {
+    const result = await run((c) =>
+      invoke(commands.savePlan, { tasks, base }, c),
+    );
     if (result?.ok) manage = false;
   }
 
@@ -1049,13 +1068,21 @@
         }
         const msg = page.url.searchParams.get("mf_msg") ?? "";
         // The outcome is handled once; a reload must not repeat it.
-        goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+        goto(taskHref(campaign, task), {
           replaceState: true,
           noScroll: true,
           keepFocus: true,
         });
         handleEditorReturn(task, status, msg);
       }
+      return;
+    }
+    // A return from mei-friend for a task the plan no longer has records
+    // nothing; it is said so, and the outcome is cleared from the URL.
+    if (task && page.url.searchParams.has("mf_status")) {
+      // The id comes from a link anyone can build; it is shown cut short.
+      returnedGone = task.slice(0, 40);
+      goto(`/${campaign}`, { replaceState: true, noScroll: true });
       return;
     }
     // The owner's board reopens the task chosen last time only while it is
@@ -1066,10 +1093,27 @@
       detailTask = last;
   });
 
+  // After the first load, a change of ?task= (a link, back or forward) opens
+  // that task, or the campaign when it is gone.
+  let urlTask = page.url.searchParams.get("task");
+  $effect(() => {
+    const task = page.url.searchParams.get("task");
+    if (task === urlTask) return;
+    urlTask = task;
+    if (!deepLinked) return;
+    const found = task && findRow(taskDefs, task, "") ? task : null;
+    if (found === detailTask) return;
+    detailTask = found;
+    pickedLane = null;
+    writeLastTask(campaign, found);
+  });
+
+  // Claim an open task where taskAction sends it: a page in the app, else
+  // mei-friend through the editor command.
   function claimCard(card: BoardCard) {
     actedOn(card.task);
-    if (card.pre) goto(preTaskHref(campaign, card.locator, card.task));
-    else if (card.checksOpening) goto(`/${campaign}/check/${card.task}`);
+    const href = taskActionHref(campaign, card, taskAction(card, "claim"));
+    if (href) goto(href);
     else editor(card.task);
   }
   // Act on a card the viewer can work on: claim it when it is open, claim its
@@ -1152,10 +1196,6 @@
   const lastReap = $derived(
     history.findLast((h) => h.action === "reap") ?? null,
   );
-  const elapsedLabel = (iso: string) => {
-    const e = elapsed(iso);
-    return e === "now" ? "just now" : `${e} ago`;
-  };
 </script>
 
 <svelte:head>
@@ -1180,6 +1220,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -1187,14 +1229,18 @@
 <!-- The last command's result: in the task box of a selected task, else at
      the top of the side panel; above the plan editor, which has no panel. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar {isPrivate} />
+  <RunnerBanner {runner} {isPrivate} />
 {/snippet}
 {#snippet resultNote()}
-  <RunnerBanner {runner} bar {isPrivate} collapsible />
+  <RunnerBanner {runner} surface="inline" {isPrivate} />
+{/snippet}
+{#snippet panelResult()}
+  <RunnerBanner {runner} surface="strip" {isPrivate} />
 {/snippet}
 
 {#snippet boardTaskBox(card: BoardCard)}
   <TaskBox
+    {repoId}
     {card}
     pieceName={pieceNameOf(card.task)}
     zone={zoneOf(card.task)}
@@ -1207,6 +1253,7 @@
     {runner}
     tools={resultNote}
     checks={checksOf(card)}
+    checksFailed={checksFor(card) === "failed"}
     onclaim={claimValidate}
     editorError={editorError?.task === card.task ? editorError : null}
     changeRequestUrl={(n) => readForge().changeRequestWebUrl(owner, repo, n)}
@@ -1220,6 +1267,7 @@
 {#snippet sidePanelFor(card: BoardCard | null, emptyLine: string)}
   {#if card}
     <SidePanel
+      {repoId}
       task={card.task}
       zone={zoneOf(card.task)}
       review={card.column === "validation"}
@@ -1240,6 +1288,7 @@
     </SidePanel>
   {:else}
     <SidePanel
+      {repoId}
       task=""
       {emptyLine}
       info={canPush ? campaignInfo : undefined}
@@ -1249,7 +1298,7 @@
       {canPush}
       {runner}
       bind:panel={sidePanel}
-      banner={resultNote}
+      banner={panelResult}
       onanchor={showCommentInScore}
       oncomment={(kind, body, parent_id) =>
         postComment("", kind, body, parent_id)}
@@ -1359,24 +1408,35 @@
     <PageState loading="the campaign" />
   {:else}
     {#if !auth.user}
-      <div class="banner bar warn">
-        <span>
-          {#if auth.expired}Your GitHub login has expired.{/if}
-          Viewing this public campaign read-only.
-          <button type="button" class="linkish" onclick={() => login()}
-            >Log in with GitHub</button
-          >
-          to contribute.
-        </span>
-      </div>
+      <Notice
+        tone="warn"
+        surface="strip"
+        icon="eye"
+        title={auth.expired ? "Your GitHub login has expired" : "Read-only"}
+        detail="Log in to contribute to this campaign."
+        action={{ label: "Log in with GitHub", run: () => login() }}
+      />
     {/if}
     {#if manage && canPush && !scoreView}
       {@render resultBanner()}
     {/if}
+    {#if returnedGone}
+      <Notice
+        tone="err"
+        surface="strip"
+        title={`${returnedGone} no longer exists in this campaign`}
+        detail="The outcome from mei-friend was not recorded."
+        ondismiss={() => (returnedGone = null)}
+      />
+    {/if}
     {#if branchHint}
-      <div class="banner bar warn">
+      <Notice
+        tone="warn"
+        surface="strip"
+        title="This campaign runs a different branch"
+      >
         <span>
-          Dev server: this campaign runs the coordinator from <code
+          Dev server: the campaign runs the coordinator from <code
             >{branchHint.ref}</code
           >
           but <code>campaign.yml</code> from <code>{branchHint.called}</code>,
@@ -1385,7 +1445,7 @@
           on <code>{branchHint.ref}</code>, run
           <code>{branchCommand}</code>, then reload.
         </span>
-      </div>
+      </Notice>
       <dialog
         bind:this={branchDialog}
         class="branch-dialog"
@@ -1426,38 +1486,15 @@
 
     {#if resolveError}
       <PageState error={resolveError} onretry={() => (resolveError = null)} />
-    {:else if notFound && !isValidHandle(campaign)}
-      <div class="banner bar err">
-        <span>
-          <code>{campaign}</code> cannot be a campaign name. Names are 3–40
-          characters: lowercase letters, digits, and single internal hyphens.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
     {:else if notFound}
       <PageState missingCampaign={campaign} />
-    {:else if slugState === "pending"}
-      <div class="banner bar warn">
-        <span>
-          Someone is setting up a campaign called <code>{campaign}</code>. If
-          they don't finish it, the name becomes free again.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
-    {:else if slugState === "reserved"}
-      <div class="banner bar err">
-        <span>
-          <code>{campaign}</code> is reserved and can't be used for a campaign.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
-    {:else if slugState === "tombstoned"}
-      <div class="banner bar err">
-        <span>
-          The name <code>{campaign}</code> has been blocked and can't be used.
-          <a href="/campaigns">Back to all campaigns</a>.
-        </span>
-      </div>
+    {:else if slugState}
+      <PageState
+        nameState={{
+          name: campaign,
+          state: slugState === "tombstoned" ? "blocked" : slugState,
+        }}
+      />
     {:else}
       <div class="viewcol">
         <RefreshNotice status={refreshStatus} />
@@ -1470,6 +1507,7 @@
         {:else if scoreView}
           {#key scoreView.piece.path}
             <ScoreView
+              {repoId}
               bind:this={scoreViewRef}
               piece={scoreView.piece}
               campaignTitle={title || repo}
@@ -1482,7 +1520,7 @@
                 (pieceIndexByTask.get(detailCard.task) ?? 0) ===
                   scoreView.index}
               cardZone={detailCard ? zoneOf(detailCard.task) : 0}
-              banner={detailCard ? undefined : resultNote}
+              banner={detailCard ? undefined : panelResult}
               {comments}
               {logins}
               {viewer}
@@ -1506,7 +1544,8 @@
               type="button"
               class="btn backlink"
               title="Back to the board"
-              onclick={() => (manage = false)}
+              onclick={() =>
+                planEditor ? planEditor.close() : (manage = false)}
               ><Icon name="arrow-left" /> Board</button
             >
             <span class="bcsep">/</span>
@@ -1516,9 +1555,7 @@
             <span class="cspacer"></span>
             <span class="reapline">
               {#if lastReap}
-                Expired claims were last released {elapsedLabel(
-                  lastReap.timestamp,
-                )}
+                Expired claims were last released {timeAgo(lastReap.timestamp)}
               {:else}
                 No expired claims have been released yet
               {/if}
@@ -1533,10 +1570,12 @@
             >
           </div>
           <PlanEditor
+            bind:this={planEditor}
             {taskDefs}
             {rows}
             {validationColumns}
             {locks}
+            {history}
             {logins}
             {pieceNames}
             busy={runner.busy}
@@ -1561,7 +1600,7 @@
                   {#if canViewScore}
                     <button
                       type="button"
-                      class="btn scorebtn"
+                      class="btn scorebtn on-tint"
                       bind:this={viewScoreButton}
                       onclick={viewContextScore}
                       title={scoreHint}>View score</button
@@ -1570,12 +1609,14 @@
                 </div>
                 <div class="volrow sidehost">
                   <VolunteerView
+                    {repoId}
                     {owner}
                     {repo}
                     cards={allCards}
                     {nextCard}
                     {completedTask}
                     {taskDefs}
+                    {history}
                     {locks}
                     {viewer}
                     pieces={previewPieces}
@@ -1637,7 +1678,7 @@
                     {#if canViewScore}
                       <button
                         type="button"
-                        class="btn scorebtn"
+                        class="btn scorebtn on-tint"
                         bind:this={viewScoreButton}
                         onclick={viewContextScore}
                         title={scoreHint}>View score</button
@@ -1801,7 +1842,10 @@
                     {/each}
                   </div>
                   {#if boardScope === "open" && scopedColumns.every((c) => c.cards.length === 0)}
-                    <p class="boardnote">No task can be claimed right now.</p>
+                    <p class="boardnote">
+                      No tasks are open right now: every task is claimed, in
+                      review, waiting for an earlier task, or done.
+                    </p>
                   {/if}
                   <div class="board">
                     {#each scopedColumns as col (col.key)}
@@ -1847,14 +1891,16 @@
                               data-stage={stageOf(card)}
                             >
                               {#if card.nextUp && !completedTask}
-                                <span class="nextup-badge">your next task</span>
+                                <span class="taskbadge edge"
+                                  >your next task</span
+                                >
                               {/if}
                               {#if card.task === completedTask}
-                                <span class="justmoved-badge"
+                                <span class="taskbadge done edge right"
                                   >just completed</span
                                 >
                               {:else if recentlyFinished.has(card.task)}
-                                <span class="justmoved-badge"
+                                <span class="taskbadge done edge right"
                                   >just submitted</span
                                 >
                               {/if}
@@ -1882,7 +1928,7 @@
                               {/if}
                               <!-- A submission's run state takes the review
                                    count's place while it shows. -->
-                              {#if card.column === "validation" && !pendingVerdicts.forTask(card.task)}
+                              {#if card.column === "validation" && !pendingVerdicts.forTask(card.task, repoId)}
                                 <div class="card-type">
                                   {reviewWaitLabel(
                                     card.passes,
@@ -1907,7 +1953,12 @@
                                   </span>
                                 </div>
                               {/if}
-                              <TaskRunState task={card.task} pill short />
+                              <TaskRunState
+                                task={card.task}
+                                {repoId}
+                                pill
+                                short
+                              />
                               {#if card.column === "blocked"}
                                 <div class="card-foot">
                                   waits for <strong>{card.waitsFor}</strong>
@@ -2002,6 +2053,10 @@
 </div>
 
 <style>
+  /* The result card above the plan editor, inset like the editor. */
+  .console > :global(.live) > :global(.notice) {
+    margin: 12px 32px 0;
+  }
   .console {
     flex: 1;
     min-height: 0;
@@ -2309,12 +2364,6 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-  /* On the page's tinted background the score button sits on paper. */
-  .scorebtn {
-    --btn-bg: var(--card);
-    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   .slug {
     font-size: 13px;
@@ -2737,37 +2786,17 @@
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
-  /* The next task is marked by its badge only. */
-  .nextup-badge {
+  /* The next task is marked by its badge (.taskbadge, ui.css) only, on
+     the card's top edge: the next task on the left, a finished one on the
+     right. */
+  .edge {
     position: absolute;
     top: -9px;
     left: 12px;
-    background: var(--accent);
-    color: var(--invert-ink);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1;
-    padding: 3px 9px;
-    border-radius: 999px;
-    white-space: nowrap;
   }
-  .justmoved-badge {
-    position: absolute;
-    top: -9px;
+  .edge.right {
+    left: auto;
     right: 12px;
-    background: var(--ok);
-    color: var(--invert-ink);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1;
-    padding: 3px 9px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-  :global([data-theme="dark"]) .justmoved-badge {
-    color: #fff;
   }
   .card-title {
     font-size: 14px;
@@ -2899,14 +2928,6 @@
     border-top: 1px solid var(--hairline);
     padding-top: 5px;
     flex-wrap: wrap;
-  }
-  .chip {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 8px;
-    white-space: nowrap;
   }
   .card-done {
     font-size: 11.5px;

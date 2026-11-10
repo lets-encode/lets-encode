@@ -6,6 +6,7 @@ import {
   cardSummary,
   cardTitle,
   doneLabel,
+  timeAgo,
   buildThreads,
   expiresIn,
   reviewWaitLabel,
@@ -320,4 +321,12 @@ test("expiresIn names the time left on a claim, or that it has run out", () => {
   assert.equal(expiresIn("2026-10-06T12:20:00Z", now), "expires in 20 min");
   assert.equal(expiresIn("2026-10-06T11:00:00Z", now), "expired");
   assert.equal(expiresIn("not a date", now), "");
+});
+
+test("timeAgo says how long ago, and nothing for an unreadable time", () => {
+  const now = Date.parse("2026-10-06T12:00:00Z");
+  assert.equal(timeAgo("2026-10-06T11:59:40Z", now), "just now");
+  assert.equal(timeAgo("2026-10-06T11:55:00Z", now), "5 min ago");
+  assert.equal(timeAgo("2026-10-04T12:00:00Z", now), "2 d ago");
+  assert.equal(timeAgo("", now), "");
 });

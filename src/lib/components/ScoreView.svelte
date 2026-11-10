@@ -34,6 +34,7 @@
   import SidePanel from "./SidePanel.svelte";
 
   let {
+    repoId,
     piece,
     campaignTitle,
     owner,
@@ -56,6 +57,8 @@
     oncomment,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     piece: PieceRef;
     campaignTitle: string;
     owner: string;
@@ -178,7 +181,7 @@
     <span class="scamp">{campaignTitle}</span>
     <button
       type="button"
-      class="btn panelbtn"
+      class="btn panelbtn on-tint"
       aria-expanded={!panelHidden}
       onclick={() => (panelHidden = !panelHidden)}
       title={panelHidden
@@ -206,6 +209,7 @@
     <div class="panelslot" class:hidden={panelHidden}>
       <SidePanel
         {task}
+        {repoId}
         zone={card ? cardZone : 0}
         review={card?.column === "validation"}
         {comments}
@@ -264,13 +268,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  /* On the page's tinted background the button sits on paper. */
   .panelbtn {
     flex: none;
     margin-left: auto;
-    --btn-bg: var(--card);
-    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   /* The slot leaves the panel to lay itself out in the row. */
   .panelslot {

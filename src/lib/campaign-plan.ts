@@ -2,32 +2,46 @@
 // plan editor. Given the current tables and the proposed plan (the complete
 // new task table, task rows with their subtask rows, in order), decide whether
 // the rewrite is allowed and, if so, produce the matching state rows. Only
-// untouched tasks — unclaimed, unencoded, no validation activity — may be
+// untouched tasks — unclaimed, never encoded, no validation activity — may be
 // added, removed, reordered or rewired; every started task must be carried
 // over verbatim. No GitHub.
 
-import { findRow, isFinalValidation } from "./campaign-tables.ts";
+import { findRow, isPassVerdict } from "./campaign-tables.ts";
+import { pageOfLocator } from "./campaign-graph.ts";
 import type {
+  HistoryRow,
   LockRow,
   ParsedState,
   StateRow,
   TaskRow,
 } from "./campaign-tables.ts";
 
-/** Whether any work has touched the task: a claim, an encoding, or a verdict. */
+/** Whether any work has touched the task: a claim, an encoding, or a verdict.
+ * An encoding accepted earlier counts even after a failed review reset the
+ * task's state rows: the score still holds it. */
 export function taskStarted(
   state: ParsedState,
   locks: LockRow[],
+  history: HistoryRow[],
   task: string,
 ): boolean {
   if (locks.some((l) => l.task_id === task)) return true;
+  if (
+    history.some(
+      (h) =>
+        h.task_id === task &&
+        h.action === "submit_encoding" &&
+        h.outcome === "accepted",
+    )
+  )
+    return true;
   const row = findRow(state.rows, task, "");
   if (row && (row.status !== "encoding_required" || row.encoder !== ""))
     return true;
   return state.rows
     .filter((r) => r.task_id === task && r.subtask_id !== "")
     .some((r) =>
-      state.validationColumns.some((c) => isFinalValidation(r[c] ?? "")),
+      state.validationColumns.some((c) => isPassVerdict(r[c] ?? "")),
     );
 }
 
@@ -69,6 +83,7 @@ export function checkPlan(
   current: TaskRow[],
   state: ParsedState,
   locks: LockRow[],
+  history: HistoryRow[],
   plan: TaskRow[],
 ): PlanResult {
   const planTasks = groupIds(plan);
@@ -112,7 +127,7 @@ export function checkPlan(
   // Started tasks are untouchable: they must be carried over verbatim, in
   // particular they cannot be removed.
   for (const task of currentTasks) {
-    if (!taskStarted(state, locks, task)) continue;
+    if (!taskStarted(state, locks, history, task)) continue;
     if (!planTasks.includes(task)) return reject("task_in_progress");
     if (!sameRows(rowsOf(plan, task), rowsOf(current, task)))
       return reject("task_in_progress");
@@ -140,10 +155,17 @@ export function checkPlan(
   return { ok: true, stateRows };
 }
 
-/** The next free `T####` id after every id the plan already uses. */
-export function nextTaskId(rows: TaskRow[]): string {
-  const max = rows.reduce((n, r) => {
-    const m = /^T(\d+)$/.exec(r.task_id);
+/**
+ * The next free `T####` id after every id the plan uses and every id in
+ * `used` (the task ids history.csv names): the id of a dropped task, which
+ * comments may still name, is not given out again.
+ */
+export function nextTaskId(
+  rows: TaskRow[],
+  used: Iterable<string> = [],
+): string {
+  const max = [...rows.map((r) => r.task_id), ...used].reduce((n, id) => {
+    const m = /^T(\d+)$/.exec(id);
     return m ? Math.max(n, Number(m[1])) : n;
   }, 0);
   return `T${String(max + 1).padStart(4, "0")}`;
@@ -151,25 +173,28 @@ export function nextTaskId(rows: TaskRow[]): string {
 
 /**
  * Rebuild one piece's page tasks (locator `surface-N`) for the pages that
- * carry measures, in page order: the existing task ids are reused in order,
- * extra pages get the next free ids, and ids left over are dropped. A page
- * without measures gets no task. Each rebuilt task keeps the first existing
+ * carry measures, in page order: a page that already has a task keeps its
+ * task id, so its comments and history stay with it; a page without one gets
+ * the next free id (nextTaskId, past the ids `history` names); the tasks of pages
+ * without measures are dropped. Each rebuilt task keeps the first existing
  * page task's dependency and subtask rows, except where the later page tasks
  * depend on the first one: then every rebuilt task after the first depends on
- * the first rebuilt task. Returns null — the tables stay as
- * they are — when the piece has no page tasks, when they already match, or
- * when the rewrite is not allowed (a page task has started, or another task
+ * the first rebuilt task. A task outside the pages that depends on a dropped
+ * page task depends on the first rebuilt task. Returns null — the tables stay
+ * as they are — when the piece has no page tasks, when they already match, or
+ * when the rewrite is not allowed (a page task has started, or a started task
  * depends on a dropped one).
  */
 export function replanPageTasks(
   current: TaskRow[],
   state: ParsedState,
   locks: LockRow[],
+  history: HistoryRow[],
   fragment: string,
   measuredSurfaces: string[],
 ): { tasks: TaskRow[]; stateRows: StateRow[] } | null {
   const isPageRow = (r: TaskRow) =>
-    r.fragment === fragment && /^surface-\d+$/.test(r.locator);
+    r.fragment === fragment && pageOfLocator(r.locator) !== null;
   const pageTasks = current.filter((r) => isPageRow(r) && r.subtask_id === "");
   if (pageTasks.length === 0 || measuredSurfaces.length === 0) return null;
   if (
@@ -181,22 +206,34 @@ export function replanPageTasks(
   const template = rowsOf(current, pageTasks[0].task_id);
   const ids = pageTasks.map((t) => t.task_id);
   const chained = pageTasks.slice(1).some((t) => t.depends_on === ids[0]);
+  const idOf = new Map(pageTasks.map((t) => [t.locator, t.task_id]));
   const rebuilt: TaskRow[] = [];
+  const used = history.map((h) => h.task_id);
+  let firstId = "";
   measuredSurfaces.forEach((locator, i) => {
-    const id = ids[i] ?? nextTaskId([...current, ...rebuilt]);
+    const id = idOf.get(locator) ?? nextTaskId([...current, ...rebuilt], used);
+    if (i === 0) firstId = id;
     for (const row of template) {
       const dependsOn =
-        chained && i > 0 && row.subtask_id === "" ? ids[0] : row.depends_on;
+        chained && i > 0 && row.subtask_id === "" ? firstId : row.depends_on;
       rebuilt.push({ ...row, task_id: id, locator, depends_on: dependsOn });
     }
   });
 
   const first = current.findIndex((r) => r.task_id === ids[0]);
-  const kept = current.filter((r) => !ids.includes(r.task_id));
+  // A task outside the pages that depends on a dropped page task depends on
+  // the first rebuilt task instead.
+  const rebuiltIds = new Set(rebuilt.map((r) => r.task_id));
+  const dropped = new Set(ids.filter((id) => !rebuiltIds.has(id)));
+  const kept = current
+    .filter((r) => !ids.includes(r.task_id))
+    .map((r) =>
+      dropped.has(r.depends_on) ? { ...r, depends_on: firstId } : r,
+    );
   const at = current
     .slice(0, first)
     .filter((r) => !ids.includes(r.task_id)).length;
   const tasks = [...kept.slice(0, at), ...rebuilt, ...kept.slice(at)];
-  const result = checkPlan(current, state, locks, tasks);
+  const result = checkPlan(current, state, locks, history, tasks);
   return result.ok ? { tasks, stateRows: result.stateRows } : null;
 }

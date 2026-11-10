@@ -253,33 +253,6 @@ a.btn[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
-/* A small pill control for inline actions. `.pill-sm` is the tighter size
-   used inside dense cards. */
-button.pill {
-  cursor: pointer;
-  font: 12px var(--font);
-  padding: 6px 16px;
-  min-height: 24px;
-  color: var(--ink-soft);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-@media (hover: hover) {
-  button.pill:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-}
-button.pill.pill-sm {
-  font-size: 11.5px;
-  padding: 4px 11px;
-}
-button.pill:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* A toolbar button: the soft pill of .btn at toolbar weight; `.on` marks a
    pressed one in the stage tint. */
 .tbtn {
@@ -306,6 +279,23 @@ button.pill:disabled {
 .tbtn.on:hover:not(:disabled) {
   color: var(--st);
   background: var(--st-tint);
+}
+/* The Draw toggle after a tap on a box while draw mode is off: its fill
+   blinks twice in the accent tint. */
+.tbtn.drawhint {
+  color: var(--accent);
+  background: var(--accent-tint-strong);
+  animation: drawhint 0.4s ease-out 4 alternate;
+}
+@keyframes drawhint {
+  from {
+    background: var(--card);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tbtn.drawhint {
+    animation: none;
+  }
 }
 /* A .tbtn holding only a glyph. */
 .tbtn-icon {
@@ -376,6 +366,31 @@ button.chip {
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-variant-numeric: tabular-nums;
 }
+/* Buttons on a tinted background sit on paper: a soft button inside (or
+   the element itself) takes the card's colour and a light shadow. */
+.on-tint {
+  --btn-bg: var(--card);
+  --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+  --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
+}
+/* A task's standing among the viewer's tasks: your next task, just
+   completed, just submitted. Filled in the task's stage colour (data-stage),
+   green once done. A page places it, e.g. on a card's top edge. */
+.taskbadge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  color: #fff;
+  background: var(--st-solid);
+}
+.taskbadge.done {
+  background: var(--ok-solid);
+}
 .chip .chip-dot {
   flex: none;
   width: 6px;
@@ -417,24 +432,6 @@ button.chip {
   box-shadow: none;
 }
 .chip-switch:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* A button that reads as a link, for actions inside a sentence. */
-.linkish {
-  font: inherit;
-  display: inline-flex;
-  align-items: center;
-  min-height: 24px;
-  padding: 0;
-  color: var(--link);
-  background: none;
-  border: none;
-  cursor: pointer;
-  text-decoration: underline;
-}
-.linkish:disabled {
   opacity: 0.5;
   cursor: default;
 }
@@ -540,11 +537,11 @@ button.chip {
    preview of review and View score) has one toolbar, .vtoolbar, in one
    order at every
    width: undo and redo · the view options · the zoom, then at the right end
-   the paging (.pgnav: .btn-icon .pgbtn arrows around a .pglabel), the help
-   and the ⋯ menu. Groups are divided by a .vline; where the toolbar
-   narrows, groups give way or move into the ⋯ menu, none changes place. It
-   sits above the pages, below them only on a narrow touch screen.
-   Its buttons are 32px soft circles (.btn-icon, .tbtn-icon). */
+   the paging (.pgnav: PageNav's .pgbtn arrows around a .pglabel), the help
+   and the ⋯ menu (ViewerToolbar). Groups are divided by a .vline; where the
+   toolbar narrows, groups give way or move into the ⋯ menu, none changes
+   place. It sits above the pages, below them only on a narrow touch screen.
+   Its icon buttons are 32px soft circles, .tbtn-icon. */
 .vtoolbar {
   flex: none;
   min-height: 46px;
@@ -558,6 +555,9 @@ button.chip {
   border-radius: 24px;
   box-shadow: var(--shadow-sm);
   overflow-x: auto;
+}
+.vtoolbar .tbtn {
+  white-space: nowrap;
 }
 .vtoolbar .tbtn-icon {
   box-sizing: border-box;
@@ -576,10 +576,6 @@ button.chip {
   white-space: nowrap;
   text-align: center;
   flex: none;
-}
-.btn-icon.pgbtn {
-  width: 32px;
-  min-height: 32px;
 }
 /* The paging cluster. It is not sticky: Safari leaves text that changes
    inside a sticky element in a sideways-scrolling toolbar unpainted. */
@@ -673,8 +669,7 @@ button.chip {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
-.btn:focus-visible,
-.linkish:focus-visible {
+.btn:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
@@ -789,21 +784,17 @@ select.ctl {
   box-shadow: var(--shadow);
   overflow: hidden;
 }
-.material-toolbar {
-  flex: none;
+/* In the material card the viewer toolbar (ViewerToolbar) is the card's top
+   band. A .toolbar-name, the file or view it shows, leads it. */
+.material-card > .vtoolbar {
   min-height: 48px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 10px;
   padding: 4px 16px;
-  flex-wrap: nowrap;
-  /* The last resort when a narrow pane cannot fit the compacted controls. */
-  overflow-x: auto;
+  border: 0;
   border-bottom: 1px solid var(--line);
-  background: var(--card);
+  border-radius: 0;
+  box-shadow: none;
 }
-.material-toolbar .toolbar-name {
+.vtoolbar .toolbar-name {
   font:
     11.5px ui-monospace,
     Menlo,
@@ -813,19 +804,6 @@ select.ctl {
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 300px;
-}
-.material-toolbar .toolbar-gap {
-  flex: 1;
-}
-.material-toolbar .tbtn {
-  white-space: nowrap;
-}
-/* Every toolbar control is one square size, so joined groups line up. */
-.material-toolbar .tbtn-icon {
-  box-sizing: border-box;
-  min-width: 32px;
-  min-height: 32px;
-  justify-content: center;
 }
 /* Toolbar buttons joined into one control, e.g. the two fits. A .tval between
    them is a read-out segment, e.g. a stepper's value. */
@@ -866,47 +844,21 @@ select.ctl {
 }
 /* Below 640px of pane the file name gives way. */
 @container material (max-width: 639px) {
-  .material-toolbar .toolbar-name {
+  .vtoolbar .toolbar-name {
     display: none;
   }
-  .material-toolbar {
+  .material-card > .vtoolbar {
     padding: 4px 10px;
   }
 }
-/* Phone-width panes: the groups sit closer and the rule between them goes. */
+/* Phone-width panes: the narrow toolbar's padding, and the dividers go. */
 @container material (max-width: 479px) {
-  .material-toolbar {
-    gap: 8px;
+  .material-card > .vtoolbar {
+    padding: 4px 6px;
   }
-  .material-toolbar .toolbar-rule {
+  .material-card > .vtoolbar .vline {
     display: none;
   }
-}
-/* Touch: toolbar buttons stay 32px to the eye but take a 44px press. */
-@media (pointer: coarse) {
-  .material-toolbar .tbtn,
-  .material-toolbar .btn-icon {
-    position: relative;
-    min-width: 32px;
-    min-height: 32px;
-    justify-content: center;
-  }
-  .material-toolbar .tbtn::after,
-  .material-toolbar .btn-icon::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
-  }
-  /* Joined buttons share their edge, so their press areas only grow up and
-     down. */
-  .material-toolbar .tbtn-pair > .tbtn::after {
-    inset: -6px 0;
-  }
-}
-.material-toolbar .toolbar-rule {
-  width: 1px;
-  height: 22px;
-  background: var(--line);
 }
 .material-body {
   flex: 1;
@@ -949,76 +901,118 @@ select.ctl {
   color: var(--ink-soft);
 }
 
-/* ---- Result banners ------------------------------------------------------
-   One family for every command-result / GitHub-interaction message. The
-   default is a rounded card; add .bar for a full-width strip flush against
-   its container (console header, editor toolbars, the review rail). The
-   outcome (ok / warn / err) shows as a wash and a tinted border; the message
-   itself stays ink, like the fail boxes. */
-.banner {
-  display: flex;
-  overflow-wrap: anywhere;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--ink);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  box-shadow: var(--shadow-sm);
+/* ---- Notices ------------------------------------------------------------
+   One line for every command result, error and page-wide state
+   (Notice.svelte): an icon and a headline in the state's colour, the detail
+   in --ink-soft below, an optional button on paper and a quiet Dismiss. The
+   line is its own width container: narrow, the button sits under the text;
+   from 480px, at the right end. Surfaces: .inline inside a box, on the box's
+   stage wash under a hairline; .card a tinted card on the page; .strip full
+   width with a bottom line, for page-wide notices. */
+.notice {
+  container: notice / inline-size;
   box-sizing: border-box;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+  --btn-bg: var(--card);
+  --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
 }
-.banner.bar {
+.notice.err {
+  --nt: var(--danger);
+  --nt-wash: var(--danger-wash);
+  --nt-line: var(--danger-line);
+}
+.notice.warn {
+  --nt: var(--warn);
+  --nt-wash: var(--warn-wash);
+  --nt-line: var(--warn-line);
+}
+.notice.ok {
+  --nt: var(--ok);
+  --nt-wash: var(--ok-wash);
+  --nt-line: var(--ok-line);
+}
+.notice.inline {
+  padding: 10px 16px 12px;
+  background: var(--st-wash);
+  border-top: 1px solid color-mix(in srgb, var(--st) 22%, transparent);
+}
+.notice.card {
+  padding: 10px 14px;
+  background: var(--nt-wash);
+  border-radius: 10px;
+}
+.notice.strip {
   flex: none;
-  border-radius: 0;
-  border-width: 0 0 1px;
   padding: 10px 20px;
-  box-shadow: none;
+  background: var(--nt-wash);
+  border-bottom: 1px solid var(--nt-line);
 }
-.banner.ok {
-  background: var(--ok-wash);
-  border-color: var(--ok-line);
+.notice-in {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon text x"
+    ". action .";
+  align-items: start;
 }
-.banner.err {
-  background: var(--danger-wash);
-  border-color: var(--danger-line);
+.notice-icon {
+  grid-area: icon;
+  display: flex;
+  margin: 1px 8px 0 0;
+  color: var(--nt);
 }
-.banner.warn {
-  background: var(--warn-wash);
-  border-color: var(--warn-line);
-}
-.banner a {
-  color: var(--link);
-}
-/* Stacked banner content: the message plus links/inputs below it. */
-.banner-body {
+.notice-text {
+  grid-area: text;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
 }
-/* A banner's dismiss or fold button (.btn-icon), at the row's end; the
-   negative margin keeps the banner's height. */
-.banner .dismiss {
-  flex: none;
-  margin: -6px -8px -6px auto;
+.notice-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--nt);
+}
+.notice a:not(.btn) {
+  color: var(--link);
+}
+.notice-action {
+  grid-area: action;
+  justify-self: start;
+  margin-top: 6px;
+  border-color: var(--line-strong);
+}
+/* The negative margin keeps the line's height. */
+.notice-x {
+  grid-area: x;
+  margin: -7px -8px -7px 4px;
+  color: var(--ink-soft);
+  background: transparent;
+}
+@container notice (min-width: 480px) {
+  .notice-in {
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    grid-template-areas: "icon text action x";
+  }
+  .notice-action {
+    align-self: center;
+    margin: 0 0 0 12px;
+  }
 }
 
 /* ---- Wizard footer note --------------------------------------------
-   Why Continue is disabled, faint on the footer's row left of the buttons:
-   one line, cut short with its whole text in the tooltip, so it never
-   changes the footer's height. */
+   Why Continue is disabled, faint on the footer's row left of the buttons,
+   wrapping onto further lines where the row is narrow. */
 .footnote {
   min-width: 0;
   min-height: 1.4em;
   margin-right: auto;
   align-self: center;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  text-wrap: pretty;
+  line-height: 1.35;
   font-size: 12.5px;
   color: var(--ink-faint);
 }
@@ -1096,6 +1090,25 @@ select.ctl {
   border-radius: 14px;
   box-shadow: 0 12px 44px var(--shade);
   text-align: center;
+}
+/* The overlay card's headline, red for a failure and amber for a warning,
+   and its error line. */
+.overlay-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+.overlay-title.failed {
+  color: var(--danger);
+}
+.overlay-title.warned {
+  color: var(--warn);
+}
+.overlay-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 /* Sits where the spinner was: a ring of the same size around a cross. */
 .fail-mark {
@@ -1318,7 +1331,8 @@ select.ctl {
    numbered list joined by a line, each step with the glyph of what it marks
    (StepGlyph) and its count; the active step's number takes the stage's
    solid colour. Docked as a sheet the list becomes one row of equal cells
-   with the short name and count. Markup: <div class="steps" role="group">
+   with the short name and count; on a phone the cells show the number and
+   count, and the active cell, as wide as it needs, also the long name. Markup: <div class="steps" role="group">
    <button class="step" class:on><span class="stepno">1</span> glyph <span
    class="steplong"/><span class="stepshort"/><span class="stepcount"/><span
    class="stepn"/></button>…</div>. */
@@ -1406,6 +1420,7 @@ select.ctl {
 }
 @media (orientation: portrait) and (max-width: 1100px) {
   .steps {
+    min-width: 0;
     flex-direction: row;
     padding: 3px;
     background: var(--bg-tint);
@@ -1477,6 +1492,19 @@ select.ctl {
     height: 18px;
     font-size: 10.5px;
   }
+  .step {
+    gap: 5px;
+  }
+  .step.on {
+    flex: none;
+  }
+  .stepshort {
+    display: none;
+  }
+  .step.on .steplong {
+    display: inline;
+    flex: 0 1 auto;
+  }
 }
 
 /* Verovio's own rules for the SVG it renders, which reach the page without
@@ -1493,4 +1521,7 @@ svg:has(> svg.definition-scale) g.label {
 }
 svg:has(> svg.definition-scale) :is(ellipse, path, polygon, polyline, rect) {
   stroke: currentColor;
+}
+svg:has(> svg.definition-scale) g.placeholder {
+  visibility: hidden;
 }

@@ -6,13 +6,20 @@
   new task table to the console, which runs the savePlan command.
 -->
 <script lang="ts">
-  import { tick } from "svelte";
+  import { untrack } from "svelte";
+  import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
+  import ConfirmInline from "./ConfirmInline.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
-  import { taskDescription, handle } from "$lib/campaign-graph.ts";
+  import {
+    taskDescription,
+    handle,
+    pageOfLocator,
+  } from "$lib/campaign-graph.ts";
   import type { Logins } from "$lib/campaign-graph.ts";
   import { nextTaskId, taskStarted } from "$lib/campaign-plan.ts";
   import type {
+    HistoryRow,
     LockRow,
     StateRow,
     TaskRow,
@@ -25,6 +32,7 @@
     rows,
     validationColumns,
     locks,
+    history,
     logins,
     pieceNames,
     busy,
@@ -35,10 +43,13 @@
     rows: StateRow[];
     validationColumns: string[];
     locks: LockRow[];
+    /** history.csv: a new task takes no id it names. */
+    history: HistoryRow[];
     logins: Logins;
     pieceNames: PieceNames;
     busy: boolean;
-    onsave: (tasks: TaskRow[]) => void;
+    /** The edited task table and the one the editor opened with. */
+    onsave: (tasks: TaskRow[], base: TaskRow[]) => void;
     oncancel: () => void;
   } = $props();
 
@@ -57,6 +68,19 @@
 
   // The draft: a deep copy of the task table, grouped, taken once on entry.
   let groups = $state<Group[]>(buildDraft());
+  // The task table the draft was taken from; the save is refused when the
+  // campaign's has changed since.
+  const base = untrack(() => taskDefs);
+  const flatRows = (gs: Group[]) => gs.flatMap((g) => [g.task, ...g.subs]);
+  const entered = JSON.stringify(flatRows(untrack(() => groups)));
+  const edited = $derived(JSON.stringify(flatRows(groups)) !== entered);
+  // Leaving with edits not saved asks first.
+  let askingDiscard = $state(false);
+  /** Leave the editor: at once without edits, else after the question. */
+  export function close() {
+    if (edited) askingDiscard = true;
+    else oncancel();
+  }
   function buildDraft(): Group[] {
     return taskDefs
       .filter((t) => t.subtask_id === "")
@@ -65,7 +89,7 @@
         subs: taskDefs
           .filter((s) => s.task_id === t.task_id && s.subtask_id !== "")
           .map((s) => ({ ...s })),
-        editable: !taskStarted(parsedState, locks, t.task_id),
+        editable: !taskStarted(parsedState, locks, history, t.task_id),
       }));
   }
 
@@ -98,8 +122,12 @@
       ? cardTitle(g.task.fragment, g.task.locator, pieceNames)
       : g.task.task_id;
   const sizeOf = (g: Group): string => {
-    if (/^surface-\d+$/.test(g.task.locator)) return "1 page";
-    if (g.task.locator === "measure-zones" || g.task.locator === "omr-layout")
+    if (pageOfLocator(g.task.locator) !== null) return "1 page";
+    if (
+      g.task.locator === "measure-zones" ||
+      g.task.locator === "omr-layout" ||
+      g.task.locator === "encoding-align"
+    )
       return "all pages";
     if (g.task.locator === "score-setup") return "score definition";
     return "whole file";
@@ -116,7 +144,10 @@
 
   function addTask() {
     const flat = groups.flatMap((g) => [g.task, ...g.subs]);
-    const id = nextTaskId(flat);
+    const id = nextTaskId(flat, [
+      ...taskDefs.map((t) => t.task_id),
+      ...history.map((h) => h.task_id),
+    ]);
     const fragment = fragments[0] ?? "sources/score.mei";
     groups = [
       ...groups,
@@ -164,78 +195,25 @@
     groups = next;
   }
 
-  // Reordering by a task's handle: dragged, the task takes the place of each
-  // row the pointer crosses. A click picks the task and a click on another
-  // task's handle moves it there; the arrow keys move it by one.
+  // Reordering by a task's handle (HandleReorder). A picked task is found
+  // again by its id, so removing or moving a task keeps the pick.
   let rowList = $state<HTMLDivElement | null>(null);
-  let dragging = $state<number | null>(null);
-  // The picked task's id, so removing or moving a task keeps the pick.
-  let picked = $state<string | null>(null);
-  const pickedIndex = $derived(
-    picked === null ? -1 : groups.findIndex((g) => g.task.task_id === picked),
-  );
-  let gesture: { x: number; y: number; moved: boolean } | null = null;
-  let swallowClick = false;
-  function handleDown(i: number, e: PointerEvent) {
-    if (e.button !== 0) return;
-    gesture = { x: e.clientX, y: e.clientY, moved: false };
-    dragging = i;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function handleMove(e: PointerEvent) {
-    if (!gesture || dragging === null || !rowList) return;
-    if (!gesture.moved) {
-      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
-      gesture.moved = true;
-      picked = null;
-    }
-    const rows = [...rowList.querySelectorAll<HTMLElement>(".prow")];
-    const over = rows.findIndex((row) => {
-      const box = row.getBoundingClientRect();
-      return e.clientY >= box.top && e.clientY < box.bottom;
-    });
-    if (over >= 0 && over !== dragging) {
-      moveTask(dragging, over);
-      dragging = over;
-    }
-    const box = rowList.getBoundingClientRect();
-    if (e.clientY < box.top + 40) rowList.scrollTop -= 10;
-    else if (e.clientY > box.bottom - 40) rowList.scrollTop += 10;
-  }
-  function handleUp() {
-    swallowClick = !!gesture?.moved;
-    gesture = null;
-    dragging = null;
-  }
-  function handleClick(i: number) {
-    if (swallowClick) {
-      swallowClick = false;
-      return;
-    }
-    if (pickedIndex < 0) picked = groups[i].task.task_id;
-    else {
-      moveTask(pickedIndex, i);
-      picked = null;
-    }
-  }
-  async function handleKey(i: number, e: KeyboardEvent) {
-    const to =
-      e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : null;
-    if (e.key === "Escape") picked = null;
-    if (to === null || to < 0 || to >= groups.length) return;
-    e.preventDefault();
-    moveTask(i, to);
-    await tick();
-    rowList?.querySelectorAll<HTMLElement>(".grip")[to]?.focus();
-  }
+  const reorder = new HandleReorder({
+    rows: () => [...(rowList?.querySelectorAll<HTMLElement>(".prow") ?? [])],
+    scroller: () => rowList,
+    handle: (i) => rowList?.querySelectorAll<HTMLElement>(".grip")[i],
+    count: () => groups.length,
+    keyOf: (i) => groups[i].task.task_id,
+    move: moveTask,
+  });
   const handleTitle = (i: number) =>
-    pickedIndex < 0
+    reorder.picked < 0
       ? "Drag to move this task. Or click it, then click the task whose place it takes. The arrow keys move it up and down."
-      : pickedIndex === i
+      : reorder.picked === i
         ? "Click again to leave this task where it is."
-        : `Click to move task ${picked} here.`;
+        : `Click to move task ${groups[reorder.picked].task.task_id} here.`;
 
-  const save = () => onsave(groups.flatMap((g) => [g.task, ...g.subs]));
+  const save = () => onsave(flatRows(groups), base);
 </script>
 
 <div class="plan">
@@ -250,9 +228,18 @@
     <button type="button" class="btn" onclick={addTask} disabled={busy}
       ><Icon name="plus" />Add task</button
     >
-    <button type="button" class="btn" onclick={oncancel} disabled={busy}
-      >Cancel</button
-    >
+    {#if askingDiscard}
+      <ConfirmInline
+        question="Discard the changes to the plan?"
+        confirm="Discard changes"
+        onconfirm={oncancel}
+        oncancel={() => (askingDiscard = false)}
+      />
+    {:else}
+      <button type="button" class="btn" onclick={close} disabled={busy}
+        >Cancel</button
+      >
+    {/if}
     <button type="button" class="btn btn-primary" onclick={save} disabled={busy}
       >Save the plan</button
     >
@@ -268,24 +255,24 @@
       <div
         class="prow"
         class:locked={!g.editable}
-        class:dragged={dragging === i && pickedIndex < 0}
-        class:picked={pickedIndex === i}
+        class:dragged={reorder.dragging === i && reorder.picked < 0}
+        class:picked={reorder.picked === i}
         role="row"
         tabindex="-1"
       >
         <button
           type="button"
           class="grip"
-          class:target={pickedIndex >= 0 && pickedIndex !== i}
+          class:target={reorder.picked >= 0 && reorder.picked !== i}
           aria-label={`Task ${g.task.task_id}: move`}
-          aria-pressed={pickedIndex === i}
+          aria-pressed={reorder.picked === i}
           title={handleTitle(i)}
-          onpointerdown={(e) => handleDown(i, e)}
-          onpointermove={handleMove}
-          onpointerup={handleUp}
-          onpointercancel={handleUp}
-          onclick={() => handleClick(i)}
-          onkeydown={(e) => handleKey(i, e)}><Icon name="grip" /></button
+          onpointerdown={(e) => reorder.down(i, e)}
+          onpointermove={(e) => reorder.pointerMove(e)}
+          onpointerup={() => reorder.up()}
+          onpointercancel={() => reorder.up()}
+          onclick={() => reorder.click(i)}
+          onkeydown={(e) => reorder.key(i, e)}><Icon name="grip" /></button
         >
         <div class="pcell-task">
           {#if g.editable}

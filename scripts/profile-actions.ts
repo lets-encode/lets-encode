@@ -17,6 +17,7 @@
 // Usage: GH_TOKEN=... node scripts/profile-actions.ts <owner>/<repo> > steps.csv
 
 import { classifyPullRequest } from "../src/lib/coordinator-policy.ts";
+import { csvRow } from "../src/lib/campaign-tables.ts";
 
 const API = "https://api.github.com";
 const WORKFLOW = "caller.yml";
@@ -162,13 +163,8 @@ async function jobLog(jobId: number): Promise<string> {
 // ---------------------------------------------------------------------------
 // CSV output
 
-const csv = (value: string | number | null): string => {
-  const s = value == null ? "" : String(value);
-  return /[",\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
-};
-
 const emit = (cells: Array<string | number | null>): void =>
-  console.log(cells.map(csv).join(","));
+  console.log(csvRow(cells.map((cell) => cell ?? "")));
 
 const seconds = (
   from: string | null | undefined,

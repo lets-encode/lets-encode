@@ -28,6 +28,7 @@ import {
   firstElementNamed,
   startTags,
   xmlEscape,
+  tagAttribute,
   xmlUnescape,
 } from "./mei-xml.ts";
 import { pageSystems } from "./omr-layout.ts";
@@ -868,46 +869,71 @@ export function replaceOpeningScoreDef(
   return out + mei.slice(last);
 }
 
-// One attribute's value from an XML tag string, unescaped; null if absent.
-function attr(tag: string, name: string): string | null {
-  const m = new RegExp(`\\b${name}="([^"]*)"`).exec(tag);
-  return m ? xmlUnescape(m[1]) : null;
+// The start tag of the first `name` element in `xml`; '' if there is none.
+function firstTag(xml: string, name: string): string {
+  return firstElementNamed(xml, name, true)?.tag ?? "";
+}
+
+// A staffDef's content without its <layerDef> elements.
+function withoutLayerDefs(inner: string): string {
+  return [...elementsNamed(inner, "layerDef", true)].reduceRight(
+    (text, el) => text.slice(0, el.start) + text.slice(el.end),
+    inner,
+  );
 }
 
 /**
- * Parse the first `<scoreDef>` of an MEI document back into the model. The key
- * signature is read from the scoreDef; the meter (symbol, or count and unit)
- * from the scoreDef where it carries one, else from the first staffDef (where
- * buildScoreDefXml writes it). A document without a scoreDef, or one whose
- * scoreDef has no staffDef, yields the default.
+ * Parse the first `<scoreDef>` of an MEI document back into the model. Clef,
+ * key signature, meter and group symbol are read from attributes or, where
+ * those are absent, from `<clef>`, `<keySig>`, `<meterSig>` and `<grpSym>`
+ * children. The key signature is read from the scoreDef, else from a
+ * `<keySig>` of the first staffDef without a transposition; the meter (symbol,
+ * or count and unit) from the scoreDef where it carries one, else from the
+ * first staffDef (where buildScoreDefXml writes it). A document without a
+ * scoreDef, or one whose scoreDef has no staffDef, yields the default.
  */
 export function parseScoreDef(text: string): ScoreDefModel {
   const scoreDefAt = firstElementNamed(text, "scoreDef", true);
   if (!scoreDefAt) return defaultScoreDef();
   const block = text.slice(scoreDefAt.start, scoreDefAt.end);
   const open = scoreDefAt.tag;
+  // The scoreDef's own content: everything before its <staffGrp>.
+  const grpAt = block.search(/<staffGrp\b/);
+  const scoreOwn = grpAt < 0 ? block : block.slice(0, grpAt);
+  const staffDefs = [...elementsNamed(block, "staffDef", true)];
+  const untransposed =
+    staffDefs.find(
+      (el) =>
+        !Number(tagAttribute(el.tag, "trans.diat") ?? 0) &&
+        !Number(tagAttribute(el.tag, "trans.semi") ?? 0),
+    ) ?? staffDefs[0];
+  const scoreKeysig =
+    tagAttribute(open, "keysig") ??
+    tagAttribute(firstTag(scoreOwn, "keySig"), "sig") ??
+    tagAttribute(
+      firstTag(withoutLayerDefs(untransposed?.inner ?? ""), "keySig"),
+      "sig",
+    ) ??
+    "0";
   const staves: StaffModel[] = [];
-  for (const staffDefAt of elementsNamed(block, "staffDef", true)) {
+  for (const staffDefAt of staffDefs) {
     const tag = staffDefAt.tag;
     // The staff's own label and short label; its layers' labels sit inside
     // their <layerDef> elements.
     const layerDefs = [...elementsNamed(staffDefAt.inner, "layerDef", true)];
-    const own = layerDefs.reduceRight(
-      (text, el) => text.slice(0, el.start) + text.slice(el.end),
-      staffDefAt.inner,
-    );
+    const own = withoutLayerDefs(staffDefAt.inner);
     const label = firstElementNamed(own, "label")?.inner;
     const labelAbbr = firstElementNamed(own, "labelAbbr")?.inner;
     const layers = layerDefs.map((el, i): LayerModel => {
       const child = firstElementNamed(el.inner, "label")?.inner;
-      const diat = Number(attr(el.tag, "trans\\.diat") ?? 0);
-      const semi = Number(attr(el.tag, "trans\\.semi") ?? 0);
+      const diat = Number(tagAttribute(el.tag, "trans.diat") ?? 0);
+      const semi = Number(tagAttribute(el.tag, "trans.semi") ?? 0);
       return {
-        n: Number(attr(el.tag, "n") ?? i + 1),
+        n: Number(tagAttribute(el.tag, "n") ?? i + 1),
         label:
           child !== undefined
             ? xmlUnescape(child.trim())
-            : (attr(el.tag, "label") ?? ""),
+            : (tagAttribute(el.tag, "label") ?? ""),
         printed: child !== undefined,
         ...(/<instrDef\b/.test(el.inner) ? { instrument: true } : {}),
         ...(diat || semi ? { transDiat: diat, transSemi: semi } : {}),
@@ -916,33 +942,46 @@ export function parseScoreDef(text: string): ScoreDefModel {
     const instrument = /<instrDef\b/.test(own);
     // A tablature staffDef may carry no clef attributes; its shape is the
     // TAB convention, so the model stays complete.
-    const notationType = attr(tag, "notationtype") ?? "";
+    const notationType = tagAttribute(tag, "notationtype") ?? "";
     const tab = notationType.startsWith("tab");
-    const id = attr(tag, "xml:id");
+    const id = tagAttribute(tag, "xml:id");
+    const clef = firstTag(own, "clef");
     const staff: StaffModel = {
       ...(id ? { id } : {}),
-      clefShape: attr(tag, "clef\\.shape") ?? (tab ? "TAB" : "G"),
-      clefLine: Number(attr(tag, "clef\\.line") ?? (tab ? 3 : 2)),
-      clefDis: attr(tag, "clef\\.dis") ?? "",
-      clefDisPlace: attr(tag, "clef\\.dis\\.place") ?? "",
-      lines: Number(attr(tag, "lines") ?? 5),
+      clefShape:
+        tagAttribute(tag, "clef.shape") ??
+        tagAttribute(clef, "shape") ??
+        (tab ? "TAB" : "G"),
+      clefLine: Number(
+        tagAttribute(tag, "clef.line") ??
+          tagAttribute(clef, "line") ??
+          (tab ? 3 : 2),
+      ),
+      clefDis: tagAttribute(tag, "clef.dis") ?? tagAttribute(clef, "dis") ?? "",
+      clefDisPlace:
+        tagAttribute(tag, "clef.dis.place") ??
+        tagAttribute(clef, "dis.place") ??
+        "",
+      lines: Number(tagAttribute(tag, "lines") ?? 5),
       notationType,
       label: label ? xmlUnescape(label.trim()) : "",
       ...(labelAbbr ? { labelAbbr: xmlUnescape(labelAbbr.trim()) } : {}),
       ...(layers.length ? { layers } : {}),
-      ...(attr(tag, "visible") === "false" ? { visible: false } : {}),
+      ...(tagAttribute(tag, "visible") === "false" ? { visible: false } : {}),
       ...(instrument ? { instrument } : {}),
     };
-    const diat = Number(attr(tag, "trans\\.diat") ?? 0);
-    const semi = Number(attr(tag, "trans\\.semi") ?? 0);
+    const diat = Number(tagAttribute(tag, "trans.diat") ?? 0);
+    const semi = Number(tagAttribute(tag, "trans.semi") ?? 0);
     if (diat || semi) {
       staff.transDiat = diat;
       staff.transSemi = semi;
     }
     // A staffDef without a key signature has the scoreDef's; the model keeps
     // a key only where it differs from the one the transposition gives.
-    const scoreKeysig = attr(open, "keysig") ?? "0";
-    const ownKey = attr(tag, "keysig") ?? scoreKeysig;
+    const ownKey =
+      tagAttribute(tag, "keysig") ??
+      tagAttribute(firstTag(own, "keySig"), "sig") ??
+      scoreKeysig;
     if (ownKey !== staffKeysig(scoreKeysig, staff)) staff.keysig = ownKey;
     staves.push(staff);
   }
@@ -967,38 +1006,48 @@ export function parseScoreDef(text: string): ScoreDefModel {
     } else {
       depth++;
       if (depth >= 2) {
-        // A label directly after the open tag names the group (a staff's
-        // own label sits inside its staffDef instead), a <labelAbbr> after it
-        // gives its short name, and an <instrDef> after those makes the
-        // staves one instrument.
+        // A <grpSym> directly after the open tag gives the group's symbol, a
+        // label after it names the group (a staff's own label sits inside
+        // its staffDef instead), a <labelAbbr> after that gives its short
+        // name, and an <instrDef> after those makes the staves one
+        // instrument.
         const head =
-          /^\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(?:<labelAbbr\b[^>]*>([\s\S]*?)<\/labelAbbr>)?\s*(<instrDef\b)?/.exec(
+          /^\s*(<grpSym\b[^>]*?(?:\/>|>[\s\S]*?<\/grpSym>))?\s*(?:<label\b[^>]*>([\s\S]*?)<\/label>)?\s*(?:<labelAbbr\b[^>]*>([\s\S]*?)<\/labelAbbr>)?\s*(<instrDef\b)?/.exec(
             block.slice(tokenRe.lastIndex),
           )!;
-        const id = attr(token[0], "xml:id");
+        const id = tagAttribute(token[0], "xml:id");
         pending.push({
           ...(id ? { id } : {}),
           start: staffNo + 1,
-          symbol: attr(token[0], "symbol") ?? "bracket",
-          label: head[1] ? xmlUnescape(head[1].trim()) : "",
-          ...(head[2] ? { labelAbbr: xmlUnescape(head[2].trim()) } : {}),
-          barThru: attr(token[0], "bar\\.thru") === "true",
-          oneInstrument: !!head[3],
+          symbol:
+            tagAttribute(token[0], "symbol") ??
+            tagAttribute(head[1] ?? "", "symbol") ??
+            "bracket",
+          label: head[2] ? xmlUnescape(head[2].trim()) : "",
+          ...(head[3] ? { labelAbbr: xmlUnescape(head[3].trim()) } : {}),
+          barThru: tagAttribute(token[0], "bar.thru") === "true",
+          oneInstrument: !!head[4],
         });
       }
     }
   }
   groups.sort((a, b) => a.start - b.start || b.end - a.end);
-  const firstStaff = /<staffDef\b[^>]*>/.exec(block)?.[0] ?? "";
+  const firstStaff = staffDefs[0].tag;
+  const meterSig =
+    firstTag(scoreOwn, "meterSig") ||
+    firstTag(withoutLayerDefs(staffDefs[0].inner), "meterSig");
   // A symbol signature implies its numeric meter — common time is 4/4, cut
   // time 2/2 — so the model stays complete either way.
   const meterSym =
-    attr(open, "meter\\.sym") ?? attr(firstStaff, "meter\\.sym") ?? "";
+    tagAttribute(open, "meter.sym") ??
+    tagAttribute(firstStaff, "meter.sym") ??
+    tagAttribute(meterSig, "sym") ??
+    "";
   if (meterSym !== "") {
     return {
       staves,
       groups,
-      keysig: attr(open, "keysig") ?? "0",
+      keysig: scoreKeysig,
       meterCount: meterSym === "cut" ? "2" : "4",
       meterUnit: meterSym === "cut" ? "2" : "4",
       meterSym,
@@ -1007,11 +1056,17 @@ export function parseScoreDef(text: string): ScoreDefModel {
   return {
     staves,
     groups,
-    keysig: attr(open, "keysig") ?? "0",
+    keysig: scoreKeysig,
     meterCount:
-      attr(open, "meter\\.count") ?? attr(firstStaff, "meter\\.count") ?? "4",
+      tagAttribute(open, "meter.count") ??
+      tagAttribute(firstStaff, "meter.count") ??
+      tagAttribute(meterSig, "count") ??
+      "4",
     meterUnit:
-      attr(open, "meter\\.unit") ?? attr(firstStaff, "meter\\.unit") ?? "4",
+      tagAttribute(open, "meter.unit") ??
+      tagAttribute(firstStaff, "meter.unit") ??
+      tagAttribute(meterSig, "unit") ??
+      "4",
     meterSym: "",
   };
 }
@@ -1027,7 +1082,7 @@ export interface ParsedFacsimile extends FacsimileModel {
 /** The xml:ids of the score's surfaces that hold a measure zone, in document order. */
 export function measuredSurfaceIds(text: string): string[] {
   return [...elementsNamed(text, "surface")].flatMap((surface) => {
-    const id = attr(surface.tag, "xml:id");
+    const id = tagAttribute(surface.tag, "xml:id");
     return id &&
       [...startTags(surface.inner, "zone")].some(({ tag }) =>
         /\btype="measure"/.test(tag),
@@ -1100,7 +1155,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
   }
   for (const token of tokens) {
     if (token.startsWith("<ending")) {
-      ending = attr(token, "n") ?? null;
+      ending = tagAttribute(token, "n") ?? null;
     } else if (token === "</ending>") {
       ending = null;
     } else if (token.startsWith("<repeatMark") || token.startsWith("<dir")) {
@@ -1108,7 +1163,7 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
         ? token.replace(/<[^>]*>/g, "").trim() === SIGN_TEXT.toCoda
           ? "toCoda"
           : undefined
-        : MEASURE_SIGNS.find((s) => s === attr(token, "func"));
+        : MEASURE_SIGNS.find((s) => s === tagAttribute(token, "func"));
       if (sign && lastZone) {
         const list = signsOf.get(lastZone) ?? [];
         if (!list.includes(sign)) list.push(sign);
@@ -1124,16 +1179,19 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
       pendingSb = true;
     } else {
       hasMeasures = true;
-      const facs = attr(token, "facs");
+      const facs = tagAttribute(token, "facs");
       if (facs?.startsWith("#")) {
         if (pendingPb) pbZones.add(facs.slice(1));
         if (pendingSb) sbZones.add(facs.slice(1));
         if (pendingMdiv) mdivZones.add(facs.slice(1));
-        if (attr(token, "metcon") === "false") pickupZones.add(facs.slice(1));
-        if (attr(token, "left") === "rptstart")
+        if (tagAttribute(token, "metcon") === "false")
+          pickupZones.add(facs.slice(1));
+        if (tagAttribute(token, "left") === "rptstart")
           rptStartZones.add(facs.slice(1));
-        if (attr(token, "right") === "rptend") rptEndZones.add(facs.slice(1));
-        if (attr(token, "right") === "rptboth") rptBothZones.add(facs.slice(1));
+        if (tagAttribute(token, "right") === "rptend")
+          rptEndZones.add(facs.slice(1));
+        if (tagAttribute(token, "right") === "rptboth")
+          rptBothZones.add(facs.slice(1));
         if (ending !== null) endingOf.set(facs.slice(1), ending);
         lastZone = facs.slice(1);
       } else {
@@ -1157,15 +1215,15 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
     const zones: ZoneModel[] = [];
     const boxesOnly: MeasureBox[] = [];
     for (const { tag } of startTags(body, "zone")) {
-      if (attr(tag, "type") !== "measure") continue;
+      if (tagAttribute(tag, "type") !== "measure") continue;
       const box = {
-        ulx: Number(attr(tag, "ulx") ?? 0),
-        uly: Number(attr(tag, "uly") ?? 0),
-        lrx: Number(attr(tag, "lrx") ?? 0),
-        lry: Number(attr(tag, "lry") ?? 0),
+        ulx: Number(tagAttribute(tag, "ulx") ?? 0),
+        uly: Number(tagAttribute(tag, "uly") ?? 0),
+        lrx: Number(tagAttribute(tag, "lrx") ?? 0),
+        lry: Number(tagAttribute(tag, "lry") ?? 0),
       };
-      label = attr(tag, "n") ?? nextLabel(label);
-      const id = attr(tag, "xml:id") ?? "";
+      label = tagAttribute(tag, "n") ?? nextLabel(label);
+      const id = tagAttribute(tag, "xml:id") ?? "";
       zones.push({
         box,
         label,
@@ -1198,9 +1256,9 @@ export function parseFacsimileMei(text: string): ParsedFacsimile {
       }
     }
     pages.push({
-      image: attr(graphic, "target") ?? "",
-      width: Number(attr(graphic, "width") ?? 0),
-      height: Number(attr(graphic, "height") ?? 0),
+      image: tagAttribute(graphic, "target") ?? "",
+      width: Number(tagAttribute(graphic, "width") ?? 0),
+      height: Number(tagAttribute(graphic, "height") ?? 0),
       zones,
     });
   }
@@ -1244,8 +1302,8 @@ export function relinkFacsimileImages(
     const image = images[index++];
     const graphic = /<graphic\b[^>]*>/.exec(surface)?.[0];
     if (!image || !graphic) return surface;
-    const width = Number(attr(graphic, "width") ?? 0);
-    const height = Number(attr(graphic, "height") ?? 0);
+    const width = Number(tagAttribute(graphic, "width") ?? 0);
+    const height = Number(tagAttribute(graphic, "height") ?? 0);
     const sx = width > 0 ? image.width / width : 1;
     const sy = height > 0 ? image.height / height : 1;
     // The surface's own box and its zones are in the coordinate space the
@@ -1271,12 +1329,12 @@ export function relinkFacsimileImages(
 
 // Scale a tag's bounding box, when it has one; a tag without stays as it is.
 function scaleBox(tag: string, sx: number, sy: number): string {
-  if (attr(tag, "ulx") === null) return tag;
+  if (tagAttribute(tag, "ulx") === null) return tag;
   return setAttrs(tag, {
-    ulx: Math.round(Number(attr(tag, "ulx") ?? 0) * sx),
-    uly: Math.round(Number(attr(tag, "uly") ?? 0) * sy),
-    lrx: Math.round(Number(attr(tag, "lrx") ?? 0) * sx),
-    lry: Math.round(Number(attr(tag, "lry") ?? 0) * sy),
+    ulx: Math.round(Number(tagAttribute(tag, "ulx") ?? 0) * sx),
+    uly: Math.round(Number(tagAttribute(tag, "uly") ?? 0) * sy),
+    lrx: Math.round(Number(tagAttribute(tag, "lrx") ?? 0) * sx),
+    lry: Math.round(Number(tagAttribute(tag, "lry") ?? 0) * sy),
   });
 }
 

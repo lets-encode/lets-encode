@@ -70,6 +70,9 @@ export function zoomGestures(opts: ZoomGestureOptions) {
     };
     const pointerDown = (e: PointerEvent) => {
       if (e.pointerType !== "touch") return;
+      // A gesture's first finger starts the set afresh, so a finger whose
+      // lift never reached the window does not count.
+      if (e.isPrimary) touches.clear();
       if (touches.size > 0) {
         opts.onpinchstart?.();
         e.stopPropagation();

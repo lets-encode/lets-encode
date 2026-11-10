@@ -27,6 +27,7 @@ import {
   type WizardDraft,
 } from "./wizard-draft.ts";
 import { readDraftImages, storeDraftImages } from "./draft-images.ts";
+import { releaseClaim, releaseFailedNote } from "./campaign-resolve.ts";
 
 /** The wizard's steps, in order. Drives navigation and the progress header. */
 export const WIZARD_STEPS = [
@@ -53,6 +54,10 @@ export interface WizardClaim {
   name: string;
   /** The right to register this name, or to give it back. */
   token: string;
+  /** When the hold runs out (ISO time); absent in drafts stored before. */
+  expiresAt?: string;
+  /** The name is registered to the campaign's repository. */
+  registered?: boolean;
 }
 
 /** A page the upload offers, with whether the pages step keeps it. */
@@ -118,6 +123,8 @@ export const wizard = $state<{
    * PDF's rendered pages exist nowhere else once that step has run.
    */
   images: PageImage[];
+  /** The candidate each of `images` was prepared from, by id, in page order. */
+  imageCandidates: string[];
   /**
    * Uploaded encodings, converted to MEI. Held in the browser until the final
    * step, which writes them at their piece paths alongside config and tables.
@@ -127,12 +134,21 @@ export const wizard = $state<{
   source: SourceMetadata;
   /** The works within the source; one MEI and one task group each. */
   pieces: Piece[];
+  /** The `uploadKey` the pieces were set up for; '' for none. */
+  piecesUpload: string;
+  /** The pieces were set up again because the upload changed. */
+  piecesRedone: boolean;
   /**
    * How the facsimile pieces are prepared: measure boxes detected when the
    * campaign is finished, or staff and measure boxes recognised in each
    * piece's layout task with encoding starting from a transcription.
    */
   preparation: Preparation;
+  /**
+   * The preparation was chosen by hand in its step; until then the step
+   * chooses it from the uploaded encodings.
+   */
+  preparationPicked: boolean;
 }>({
   step: "name",
   handle: "",
@@ -147,10 +163,14 @@ export const wizard = $state<{
   uploadKey: "",
   repo: null,
   images: [],
+  imageCandidates: [],
   encodings: [],
   source: emptySourceMetadata(),
   pieces: [],
+  piecesUpload: "",
+  piecesRedone: false,
   preparation: "measure-detection",
+  preparationPicked: false,
 });
 
 export const stepIndex = (id: WizardStepId) =>
@@ -161,14 +181,15 @@ export const stepIndex = (id: WizardStepId) =>
  * step rail pass over it. The pages step exists to choose between page images;
  * an upload that offers none has nothing to choose. The preparation step
  * decides how facsimile pieces get their measures; without page images —
- * prepared, or still to be chosen from the upload — there are none, and the
- * pieces step finishes the setup.
+ * prepared, or still to be chosen on the pages step ahead — there are none,
+ * and the pieces step finishes the setup.
  */
 export const isSkipped = (id: WizardStepId): boolean =>
   (id === "pages" && wizard.candidates.length === 0) ||
   (id === "preparation" &&
     wizard.images.length === 0 &&
-    wizard.candidates.length === 0);
+    (wizard.candidates.length === 0 ||
+      stepIndex(wizard.step) > stepIndex("pages")));
 
 /**
  * "N pieces · M pages uncovered": the pieces and, with page images, how many
@@ -184,31 +205,43 @@ export function piecesSummary(): string {
   return `${count} · ${open ? `${open} page${open === 1 ? "" : "s"} uncovered` : "all pages covered"}`;
 }
 
+/** Open a step; every move between steps goes through here. */
+export function goToStep(id: WizardStepId): void {
+  wizard.step = id;
+  draftStatus.resumeNotice = null;
+}
+
 /** Advance to the next step (passing over steps with nothing to do), if there is one. */
 export function nextStep(): void {
   for (let i = stepIndex(wizard.step) + 1; i < WIZARD_STEPS.length; i++) {
     if (isSkipped(WIZARD_STEPS[i].id)) continue;
-    wizard.step = WIZARD_STEPS[i].id;
+    goToStep(WIZARD_STEPS[i].id);
     break;
   }
-  draftStatus.resumeNotice = null;
 }
 
 /** Return to the previous step (passing over steps with nothing to do), if there is one. */
 export function previousStep(): void {
   for (let i = stepIndex(wizard.step) - 1; i >= 0; i--) {
     if (isSkipped(WIZARD_STEPS[i].id)) continue;
-    wizard.step = WIZARD_STEPS[i].id;
+    goToStep(WIZARD_STEPS[i].id);
     break;
   }
-  draftStatus.resumeNotice = null;
 }
+
+// Counts the setups put into the wizard: emptying it or continuing another
+// setup starts a new one. A step's work that ends after that compares the
+// count it started with, and leaves the new setup alone.
+let setupCount = 0;
+export const currentSetup = (): number => setupCount;
 
 /** Discard everything collected and return to the first step. */
 export function resetWizard(): void {
+  setupCount++;
   savedHandle = null;
-  draftStatus.savedAt = null;
-  draftStatus.imagesError = null;
+  storedHandle = null;
+  storedAt = null;
+  resetDraftStatus();
   wizard.step = "name";
   wizard.handle = "";
   wizard.claim = null;
@@ -222,10 +255,14 @@ export function resetWizard(): void {
   wizard.uploadKey = "";
   wizard.repo = null;
   wizard.images = [];
+  wizard.imageCandidates = [];
   wizard.encodings = [];
   wizard.source = emptySourceMetadata();
   wizard.pieces = [];
+  wizard.piecesUpload = "";
+  wizard.piecesRedone = false;
   wizard.preparation = "measure-detection";
+  wizard.preparationPicked = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -248,10 +285,45 @@ export const draftStatus = $state<{
   resumeNotice: null,
 });
 
+/** A discarded setup whose name could not be given back: the note saying so,
+    shown with the drafts once the wizard has been left. */
+export const discardedRelease = $state<{ note: string | null }>({ note: null });
+
+/** Discard an unfinished setup: its draft goes, and its name is given back,
+    so it is free again straight away. A name not given back runs out on its
+    own; `discardedRelease` says so. */
+export async function discardSetup(
+  owner: string | undefined,
+  handle: string,
+  claim: WizardClaim | null,
+): Promise<void> {
+  if (owner && handle) discardDraft(owner, handle);
+  discardedRelease.note = null;
+  if (claim && !(await releaseClaim(claim.name, claim.token)))
+    discardedRelease.note = releaseFailedNote(claim.name);
+}
+
+/** Why a setup whose name is registered cannot be discarded: it is a
+    reachable campaign and can only be finished. */
+export const registeredNote = (name: string) =>
+  `The campaign already works at /${name}. Finish the setup to add it to the list of campaigns.`;
+
+// A setup put into the wizard starts with no draft status of its own.
+function resetDraftStatus(): void {
+  draftStatus.saveError = null;
+  draftStatus.imagesError = null;
+  draftStatus.savedAt = null;
+  draftStatus.resumeNotice = null;
+}
+
 // The name the draft was last stored under. A campaign renamed before its
 // repository exists would otherwise leave its earlier draft behind; its page
 // images move to the new name with it.
 let savedHandle: string | null = null;
+// The name of the record this tab last stored, or continued from, and that
+// record's updatedAt.
+let storedHandle: string | null = null;
+let storedAt: string | null = null;
 
 /** Everything a draft record carries, apart from the account it belongs to. */
 export interface DraftSnapshot {
@@ -279,37 +351,68 @@ export function draftSnapshot(): DraftSnapshot {
       iiifManifestUrl: wizard.iiifManifestUrl,
       copyrightAccepted: wizard.copyrightAccepted,
       imagePaths: wizard.images.map((image) => image.path),
+      imageSizes: wizard.images.map((image) => image.blob.size),
+      imageCandidates: [...wizard.imageCandidates],
+      piecesUpload: wizard.piecesUpload,
       encodings: wizard.encodings.map((encoding) => ({ ...encoding })),
       source: $state.snapshot(wizard.source),
       pieces: $state.snapshot(wizard.pieces),
       preparation: wizard.preparation,
+      preparationPicked: wizard.preparationPicked,
     },
   };
 }
 
 /**
- * Store what has been entered, under the campaign's name. Nothing is stored
- * while the name step is open, so a draft always has a name to be listed and
- * continued under.
+ * Store what has been entered, under the campaign's name. On the name step a
+ * draft is stored under a name once it is reserved, so a draft always has a
+ * name to be listed and continued under; without a reservation only the
+ * record already stored under the same name is updated (the release of its
+ * reservation), not one per name typed.
  */
 export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
   const name = snapshot.handle.trim();
-  if (!owner || !name || snapshot.entries.step === "name") return;
+  if (!owner || !name) return;
+  if (
+    snapshot.entries.step === "name" &&
+    !snapshot.claim &&
+    savedHandle !== name
+  )
+    return;
+  // A record stored for this setup and gone since was finished or discarded
+  // in another tab; one stored since by another tab holds that tab's edits.
+  // Neither is overwritten.
+  if (storedHandle === name) {
+    const stored = readDraft(owner, name);
+    if (stored === null) {
+      draftStatus.saveError = "it was finished or discarded in another tab";
+      return;
+    }
+    if (stored.updatedAt !== storedAt) {
+      draftStatus.saveError = "it was changed in another tab";
+      return;
+    }
+  }
   if (savedHandle && savedHandle !== name) {
-    discardDraft(savedHandle);
-    if (wizard.images.length) void keepDraftImages(name);
+    discardDraft(owner, savedHandle);
+    if (wizard.images.length) void keepDraftImages(owner, name);
   }
   savedHandle = name;
+  const updatedAt = new Date().toISOString();
   draftStatus.saveError = writeDraft({
     version: DRAFT_VERSION,
     owner,
     handle: name,
-    updatedAt: new Date().toISOString(),
+    updatedAt,
     claim: snapshot.claim,
     repo: snapshot.repo,
     entries: snapshot.entries,
   });
-  if (!draftStatus.saveError) draftStatus.savedAt = Date.now();
+  if (!draftStatus.saveError) {
+    storedHandle = name;
+    storedAt = updatedAt;
+    draftStatus.savedAt = Date.now();
+  }
 }
 
 /**
@@ -317,10 +420,13 @@ export function saveDraft(owner: string, snapshot: DraftSnapshot): void {
  * continued setup has them. A browser that refuses is reported through
  * draftStatus; the setup goes on without them.
  */
-export async function keepDraftImages(handle: string): Promise<void> {
+export async function keepDraftImages(
+  owner: string,
+  handle: string,
+): Promise<void> {
   const name = handle.trim();
   if (!name) return;
-  draftStatus.imagesError = await storeDraftImages(name, wizard.images);
+  draftStatus.imagesError = await storeDraftImages(owner, name, wizard.images);
 }
 
 /**
@@ -330,6 +436,7 @@ export async function keepDraftImages(handle: string): Promise<void> {
 export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   const entries = draft.entries;
   if (!entries) return;
+  setupCount++;
   wizard.handle = draft.handle;
   wizard.claim = draft.claim ?? null;
   wizard.title = entries.title;
@@ -346,6 +453,10 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   }));
   wizard.encodings = entries.encodings;
   wizard.preparation = entries.preparation;
+  wizard.preparationPicked = entries.preparationPicked ?? false;
+  wizard.imageCandidates = entries.imageCandidates ?? [];
+  wizard.piecesUpload = entries.piecesUpload ?? "";
+  wizard.piecesRedone = false;
   wizard.images = images;
   // Picked files are not part of a draft; the upload step collects them again.
   // The candidate pages read from them go the same way.
@@ -353,19 +464,22 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   wizard.candidates = [];
   wizard.uploadKey = "";
   savedHandle = draft.handle;
-  draftStatus.saveError = null;
+  storedHandle = draft.handle;
+  storedAt = draft.updatedAt;
+  resetDraftStatus();
   // Page images the draft records but that could not be read back: every step
   // after the upload works on them, so there is nothing to continue from until
   // they are uploaded again.
   const withoutImages = entries.imagePaths.length > 0 && images.length === 0;
-  draftStatus.resumeNotice = withoutImages
-    ? "The page images of this setup are no longer stored in this browser. Please upload the images again."
-    : null;
   // Choosing pages needs the files they come from, so a setup left on that step
   // is continued from the upload step, where they are picked again.
   const step =
     entries.step === "pages" || withoutImages ? "upload" : entries.step;
-  wizard.step = stepIndex(step) < 0 ? "name" : step;
+  goToStep(stepIndex(step) < 0 ? "name" : step);
+  // Opening a step clears the notice, so it is set once the step is open.
+  draftStatus.resumeNotice = withoutImages
+    ? "The page images of this setup are no longer stored in this browser. Please upload the images again."
+    : null;
 }
 
 /**
@@ -375,15 +489,24 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
  * finished or discarded in another tab since. Throws with a message that names
  * what went wrong.
  */
-export async function resumeDraft(handle: string): Promise<void> {
-  const stored = readDraft(handle);
+export async function resumeDraft(
+  owner: string,
+  handle: string,
+): Promise<void> {
+  const stored = readDraft(owner, handle);
   if (!stored)
     throw new Error("it has since been finished or discarded in this browser");
   const paths = stored.entries.imagePaths;
   // Images that are not stored any more can be uploaded again: applyDraft puts
-  // a setup without its images on the upload step.
+  // a setup without its images on the upload step. A store that cannot be read
+  // stops the continuation instead, so the draft keeps its images.
   const images = paths.length
-    ? ((await readDraftImages(stored.handle, paths)) ?? [])
+    ? ((await readDraftImages(
+        owner,
+        stored.handle,
+        paths,
+        stored.entries.imageSizes,
+      )) ?? [])
     : [];
   applyDraft(stored, images);
 }
@@ -394,7 +517,7 @@ export async function resumeDraft(handle: string): Promise<void> {
  * next one. Emptying it is also what stops a later save from storing the finished
  * setup again — saveDraft keeps nothing without a name.
  */
-export function clearFinishedSetup(): void {
-  discardDraft(wizard.handle.trim());
+export function clearFinishedSetup(owner: string): void {
+  discardDraft(owner, wizard.handle.trim());
   resetWizard();
 }

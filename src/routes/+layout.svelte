@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { taskHref } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import { onMount } from "svelte";
   import { page } from "$app/state";
   import { auth, initAuth, login, logout } from "$lib/auth.svelte.ts";
@@ -12,6 +14,9 @@
   import "./ui.css";
 
   let { children } = $props();
+
+  // A message as a detail line, starting with a capital.
+  const cap = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
   // The pre-paint script in app.html has already set data-theme before mount;
   // mirror it here so the bulb reflects the active theme, and flip + persist on
@@ -39,6 +44,7 @@
   const corrector = $derived(
     page.route.id === "/[campaign]/zones/[task]" ||
       page.route.id === "/[campaign]/setup/[task]" ||
+      page.route.id === "/[campaign]/align/[task]" ||
       page.route.id === "/[campaign]/check/[task]" ||
       page.route.id === "/[campaign]/review/[task]",
   );
@@ -54,7 +60,7 @@
   const inScore = $derived(inCampaign && page.url.searchParams.has("score"));
   const campaignHref = $derived.by(() => {
     const task = page.url.searchParams.get("task");
-    return `/${encodeURIComponent(page.params.campaign ?? "")}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
+    return taskHref(page.params.campaign ?? "", task);
   });
 
   // The back link to a campaign names it by its title once a page has read
@@ -200,17 +206,31 @@
 </header>
 
 {#snippet body()}
+  {#if auth.checkFailed}
+    <Notice
+      tone="err"
+      surface="strip"
+      title="Could not check the login"
+      detail={`${cap(auth.checkFailed)}. Retrying…`}
+    />
+  {/if}
+  {#if auth.logoutFailed}
+    <Notice
+      tone="err"
+      surface="strip"
+      title="Could not log out"
+      detail={`${cap(auth.logoutFailed)}. You are still logged in.`}
+      ondismiss={() => (auth.logoutFailed = null)}
+    />
+  {/if}
   {#if auth.error}
-    <div class="banner bar err" role="alert">
-      <span>Login failed: {auth.error}</span>
-      <button
-        type="button"
-        class="btn btn-icon dismiss"
-        aria-label="Dismiss"
-        title="Dismiss"
-        onclick={() => (auth.error = null)}><Icon name="close" /></button
-      >
-    </div>
+    <Notice
+      tone="err"
+      surface="strip"
+      title="Login failed"
+      detail={cap(auth.error)}
+      ondismiss={() => (auth.error = null)}
+    />
   {/if}
   {@render children()}
 {/snippet}

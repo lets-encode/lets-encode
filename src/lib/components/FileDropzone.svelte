@@ -71,11 +71,15 @@
     e.dataTransfer?.types.includes("Files") ?? false;
   function onWindowDragEnter(e: DragEvent) {
     if (wizardLayout.dropZone || !carriesFiles(e)) return;
+    // The count runs only while the overlay is up, the only time a leave is
+    // counted too.
+    if (overlay === null) {
+      const card = root?.closest("section")?.getBoundingClientRect();
+      if (!card) return;
+      overlay = `top: ${card.top + 10}px; left: ${card.left + 10}px; width: ${card.width - 20}px; height: ${card.height - 20}px`;
+      depth = 0;
+    }
     depth++;
-    if (overlay !== null) return;
-    const card = root?.closest("section")?.getBoundingClientRect();
-    if (!card) return;
-    overlay = `top: ${card.top + 10}px; left: ${card.left + 10}px; width: ${card.width - 20}px; height: ${card.height - 20}px`;
   }
   function onWindowDragLeave() {
     if (overlay === null) return;
@@ -139,7 +143,7 @@
       </div>
       <div class="drop-text">
         <div class="prompt">Drop page images, PDFs or MEI encodings here</div>
-        <div class="types">You can combine them — or continue without any.</div>
+        <div class="types">You can combine them.</div>
       </div>
       <label class="picker">
         <input type="file" accept={ACCEPT} multiple onchange={onPick} />

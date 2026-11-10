@@ -9,6 +9,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
+  import { replaceState } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
   import { searchReposByTopic, repoExists } from "$lib/forge/github-rest.ts";
@@ -16,12 +17,16 @@
     claimName,
     lookupSlug,
     releaseClaim,
+    releaseFailedNote,
   } from "$lib/campaign-resolve.ts";
   import { readDraft } from "$lib/wizard-draft.ts";
   import { isValidHandle } from "$lib/campaign-handle.ts";
   import {
     wizard,
+    currentSetup,
+    draftSnapshot,
     nextStep,
+    saveDraft,
     MAX_DESCRIPTION_LENGTH,
   } from "$lib/wizard.svelte.ts";
   import type { RepoSummary } from "$lib/forge/types.ts";
@@ -34,20 +39,21 @@
   $effect(() => {
     if (auth.status === "loading") return;
     searchReposByTopic(provider.repoTopic, auth.token ?? undefined)
-      .then((r) => (campaignRepos = r))
+      .then((r) => (campaignRepos = r.repos))
       .catch(() => (campaignRepos = []));
   });
 
   // Arriving with a chosen name (/new?slug=, from the landing's start card):
-  // prefill the name field once, so later edits to it are not overwritten.
-  // Names are lowercase, so the field lowercases what is entered.
-  let slugApplied = false;
+  // prefill the name field unless a name is held already, and drop the
+  // parameter, so a return to this step does not apply it again. Names are
+  // lowercase, so the field lowercases what is entered.
   $effect(() => {
     const chosen = page.url.searchParams.get("slug");
-    if (chosen && !slugApplied) {
-      slugApplied = true;
-      wizard.handle = chosen.toLowerCase();
-    }
+    if (!chosen) return;
+    if (!wizard.claim) wizard.handle = chosen.toLowerCase();
+    const url = new URL(page.url);
+    url.searchParams.delete("slug");
+    replaceState(url, page.state);
   });
 
   // Live availability check: against the campaign repos already fetched (public
@@ -57,6 +63,7 @@
   let handleCheck = $state<
     | { state: "idle" }
     | { state: "invalid" }
+    | { state: "reserved" }
     | { state: "checking" }
     | { state: "available" }
     | { state: "held" }
@@ -112,10 +119,15 @@
           repoExists(user.login, h, token),
         ]);
         if (seq !== handleCheckSeq) return;
-        if (slug && slug.status !== "free") {
+        if (slug?.status === "reserved") {
+          handleCheck = { state: "reserved" };
+        } else if (slug && slug.status !== "free") {
           // A pending hold may be this browser's own: an unfinished setup of
           // the same name keeps its claim token in its draft record.
-          const draft = slug.status === "pending" ? readDraft(h) : null;
+          const draft =
+            slug.status === "pending"
+              ? readDraft(auth.user?.login ?? "", h)
+              : null;
           if (draft?.owner === user.login && draft.claim?.name === h) {
             handleCheck = { state: "draft", resumable: draft.repo !== null };
           } else {
@@ -141,6 +153,7 @@
     wizard.title.trim() !== "" &&
       isValidHandle(wizard.handle.trim()) &&
       handleCheck.state !== "taken" &&
+      handleCheck.state !== "reserved" &&
       handleCheck.state !== "draft" &&
       handleCheck.state !== "checking",
   );
@@ -153,7 +166,11 @@
     if (!h) return "Enter a campaign name.";
     if (!isValidHandle(h)) return "The campaign name is not valid yet.";
     if (handleCheck.state === "checking") return "Checking the name…";
-    if (handleCheck.state === "taken" || handleCheck.state === "draft")
+    if (
+      handleCheck.state === "taken" ||
+      handleCheck.state === "reserved" ||
+      handleCheck.state === "draft"
+    )
       return "Choose a different campaign name.";
     if (!t) return "Enter a title.";
     return "";
@@ -179,10 +196,19 @@
     claiming = true;
     claimError = null;
     releaseNote = null;
+    const setup = currentSetup();
     const result = await claimName(name);
     claiming = false;
+    // A name reserved after another setup was opened belongs to none: it is
+    // given back.
+    if (setup !== currentSetup()) {
+      if ("token" in result) void releaseClaim(name, result.token);
+      return;
+    }
     if ("token" in result) {
-      wizard.claim = { name, token: result.token };
+      wizard.claim = { name, token: result.token, expiresAt: result.expiresAt };
+      // Stored at once, so the reservation is kept with the setup.
+      saveDraft(auth.user?.login ?? "", draftSnapshot());
       nextStep();
       return;
     }
@@ -193,7 +219,9 @@
           ? `“${name}” cannot be used as a campaign name.`
           : result.error === "limit"
             ? "You are holding the names of too many unfinished setups. Discard one under Drafts on the campaign list, or wait until a name is released 24 hours after it was reserved."
-            : "The name could not be reserved just now. Check your connection and try again.";
+            : "detail" in result && result.detail
+              ? `The name could not be reserved: ${result.detail}. Try again.`
+              : "The name could not be reserved just now. Check your connection and try again.";
   }
 
   // Take over the name held by this browser's unfinished setup of the same
@@ -202,7 +230,7 @@
   // belongs to it and the setup must be continued instead.
   function adoptClaim() {
     const h = wizard.handle.trim();
-    const draft = readDraft(h);
+    const draft = readDraft(auth.user?.login ?? "", h);
     if (
       draft?.owner !== auth.user?.login ||
       draft?.claim?.name !== h ||
@@ -219,10 +247,9 @@
     // trap the campaign under a name. An unreleased hold runs out on its own.
     wizard.claim = null;
     claimError = null;
+    saveDraft(auth.user?.login ?? "", draftSnapshot());
     const released = await releaseClaim(claim.name, claim.token);
-    releaseNote = released
-      ? null
-      : `“${claim.name}” could not be given back, so it stays reserved for up to 24 hours before it is free again.`;
+    releaseNote = released ? null : releaseFailedNote(claim.name);
   }
 </script>
 
@@ -241,7 +268,7 @@
           () => wizard.handle, (v) => (wizard.handle = v.toLowerCase())
         }
         placeholder="symphony-9-choral"
-        readonly={wizard.claim !== null}
+        readonly={wizard.claim !== null || claiming}
         required
       />
       <span class="hint">Used in the URL and as the Git repository name.</span>
@@ -273,6 +300,11 @@
             Use the name here — replaces that setup
           </button>
         {/if}
+      {:else if handleCheck.state === "reserved"}
+        <span class="hint hint-err"
+          ><Icon name="warning" size={12} /> This name is reserved and cannot be used
+          for a campaign</span
+        >
       {:else if handleCheck.state === "invalid"}
         <span class="hint hint-err">
           3–40 characters: lowercase letters, digits, and single internal

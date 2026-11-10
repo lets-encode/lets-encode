@@ -9,11 +9,13 @@ import { provider } from "./forge/config.ts";
 import { replaceState } from "$app/navigation";
 import { createForge } from "./forge/index.ts";
 import {
+  clearRequestCaches,
   onSessionRejected,
   routeSessionVia,
   SESSION,
 } from "./forge/github-rest.ts";
 import type { ForgeClient, GitHubUser } from "./forge/types.ts";
+import { reloadKeepingUnsent } from "./unsent-text.ts";
 
 routeSessionVia(`${provider.brokerUrl}/proxy/api.github.com`);
 
@@ -31,7 +33,9 @@ type Status = "loading" | "authenticated" | "anonymous";
  * Reactive auth state, shared across the app. `token` is not a credential: it
  * is the SESSION sentinel when logged in (API calls then ride the broker
  * session cookie) and null when anonymous. `expired` is set when a session
- * that was active is rejected by the broker.
+ * that was active is rejected by the broker. `checkFailed` is why the login
+ * check at app start failed while it is being retried. `logoutFailed` is why
+ * the last logout did not end the session.
  */
 export const auth = $state<{
   token: string | null;
@@ -39,6 +43,8 @@ export const auth = $state<{
   scope: string;
   error: string | null;
   expired: boolean;
+  checkFailed: string | null;
+  logoutFailed: string | null;
   status: Status;
 }>({
   token: null,
@@ -46,6 +52,8 @@ export const auth = $state<{
   scope: "",
   error: null,
   expired: false,
+  checkFailed: null,
+  logoutFailed: null,
   status: "loading",
 });
 
@@ -66,8 +74,10 @@ const AUTH_ERRORS: Record<string, string> = {
 
 /**
  * On app start: ask the API (via the broker proxy) who the session belongs to.
- * A 401 from the proxy means there is no session — anonymous. Also surfaces
- * any ?auth_error the broker redirected back with after a failed login.
+ * A 401 from the proxy means there is no session — anonymous. Any other
+ * failure leaves the app anonymous while the check is retried (retryCheck).
+ * Also surfaces any ?auth_error the broker redirected back with after a
+ * failed login.
  */
 export async function initAuth(): Promise<void> {
   const params = new URLSearchParams(location.search);
@@ -80,6 +90,16 @@ export async function initAuth(): Promise<void> {
     const query = params.toString();
     replaceState(location.pathname + (query ? `?${query}` : ""), {});
   }
+
+  // A login or logout in another tab of the app reloads this one, so it acts
+  // and shows as the account the session now belongs to.
+  authChannel?.addEventListener("message", (e: MessageEvent) => {
+    if (auth.status === "loading") return;
+    const login = (e.data as { login: string | null }).login;
+    if (login === (auth.user?.login ?? null)) return;
+    console.log("[auth] the login changed in another tab");
+    reloadKeepingUnsent(auth.user?.login ?? null);
+  });
 
   // Returning to a tab left open re-checks the session, so an expired one is
   // reported before the next action rather than by its failure.
@@ -100,10 +120,9 @@ export async function initAuth(): Promise<void> {
     // response was not JSON: the broker mount is not served on this origin
     // and a page (the SPA fallback) came back instead of session data.
     clear();
-    auth.error =
-      e instanceof SyntaxError
-        ? `the session service at ${provider.brokerUrl} is not answering on this server.`
-        : (e as Error).message;
+    if (e instanceof SyntaxError)
+      auth.error = `the session service at ${provider.brokerUrl} is not answering on this server.`;
+    else retryCheck(e as Error, 0);
     return;
   }
   if (!resolved) {
@@ -120,15 +139,57 @@ export async function initAuth(): Promise<void> {
     "scope:",
     resolved.scopes,
   );
+  authChannel?.postMessage({ login: resolved.user.login });
 }
+
+// The app's open tabs tell each other the account their session belongs to.
+const authChannel =
+  typeof BroadcastChannel === "undefined"
+    ? null
+    : new BroadcastChannel("lets-encode:auth");
 
 const SESSION_CHECK_INTERVAL_MS = 30 * 60_000;
 
-/** Ask the broker for the session's user; a rejection marks the session expired. */
+// The waits between retries of a failed login check at app start; the last
+// one repeats.
+const CHECK_RETRY_MS = [10_000, 30_000, 60_000, 5 * 60_000];
+
+/**
+ * Show why the login check failed and retry it after CHECK_RETRY_MS[attempt].
+ * A session found then reloads the tab as that account; a 401 ends the
+ * retries with the app anonymous.
+ */
+function retryCheck(error: Error, attempt: number): void {
+  console.warn("[auth] the login check failed:", error.message);
+  auth.checkFailed = error.message.replace(/\.$/, "");
+  const wait = CHECK_RETRY_MS[Math.min(attempt, CHECK_RETRY_MS.length - 1)];
+  setTimeout(() => {
+    if (auth.status !== "anonymous" || auth.checkFailed === null) return;
+    createForge(SESSION)
+      .getAuthenticatedUser()
+      .then((resolved) => {
+        auth.checkFailed = null;
+        if (resolved) reloadKeepingUnsent(null);
+      })
+      .catch((e: Error) => retryCheck(e, attempt + 1));
+  }, wait);
+}
+
+/**
+ * Ask the broker for the session's user; a rejection marks the session
+ * expired. A session that now belongs to another account (a login in another
+ * tab) reloads the page, so the app acts and shows as that account.
+ */
 function checkSession(): void {
   if (auth.status !== "authenticated") return;
   createForge(SESSION)
     .getAuthenticatedUser()
+    .then((resolved) => {
+      if (resolved && resolved.user.login !== auth.user?.login) {
+        console.log("[auth] session now belongs to", resolved.user.login);
+        reloadKeepingUnsent(auth.user?.login ?? null);
+      }
+    })
     .catch(() => {});
 }
 
@@ -145,12 +206,21 @@ export function login(
 /** Log out: clear local state and end the broker session (which revokes the token). */
 export async function logout(): Promise<void> {
   console.log("[auth] logging out");
-  clear();
+  auth.logoutFailed = null;
+  // The session ends at the broker; until it confirms, the tab stays logged in.
   try {
-    await fetch(`${provider.brokerUrl}/logout`, { method: "POST" });
+    const res = await fetch(`${provider.brokerUrl}/logout`, { method: "POST" });
+    if (!res.ok) auth.logoutFailed = `the server answered ${res.status}`;
   } catch {
-    // best-effort; the local session is already cleared
+    auth.logoutFailed = "the server could not be reached";
   }
+  if (auth.logoutFailed) return;
+  clear();
+  clearRequestCaches();
+  auth.expired = false;
+  auth.error = null;
+  auth.checkFailed = null;
+  authChannel?.postMessage({ login: null });
 }
 
 /** A ForgeClient bound to the current session, or null when anonymous. */

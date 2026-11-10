@@ -5,10 +5,11 @@ import * as gh from "./github-rest.ts";
 import type { ForgeClient } from "./types.ts";
 
 export function createGitHubForge(token: string): ForgeClient {
+  const pullUrl = (owner: string, repo: string, number: number) =>
+    `${gh.WEB}/${owner}/${repo}/pull/${number}`;
   return {
     repoWebUrl: (owner, repo) => `${gh.WEB}/${owner}/${repo}`,
-    changeRequestWebUrl: (owner, repo, number) =>
-      `${gh.WEB}/${owner}/${repo}/pull/${number}`,
+    changeRequestWebUrl: pullUrl,
     userWebUrl: (login) => `${gh.WEB}/${login}`,
     getAuthenticatedUser: () => gh.getAuthenticatedUser(token),
     getUserLogin: (id) => gh.getUserLogin(token, id),
@@ -36,6 +37,8 @@ export function createGitHubForge(token: string): ForgeClient {
     getRepoAccess: (owner, repo) => gh.getRepoAccess(token, owner, repo),
     getRepoInfo: (owner, repo) => gh.getRepoInfo(token, owner, repo),
     ensureFork: (owner, repo, opts) => gh.ensureFork(token, owner, repo, opts),
+    getBranchHead: (owner, repo, branch) =>
+      gh.getBranchHead(token, owner, repo, branch),
     createBranch: (owner, repo, branch, fromSha) =>
       gh.createBranch(token, owner, repo, branch, fromSha),
     fastForwardBranch: (owner, repo, branch, sha) =>
@@ -50,8 +53,41 @@ export function createGitHubForge(token: string): ForgeClient {
       gh.dispatchWorkflow(token, owner, repo, workflow, ref),
     getPullRequestState: (owner, repo, number) =>
       gh.getPullRequestState(token, owner, repo, number),
-    closePullRequest: (owner, repo, number) =>
-      gh.closePullRequest(token, owner, repo, number),
+    getPullRequestHead: async (owner, repo, number) =>
+      (await gh.getPullRequestDetails(token, owner, repo, number)).headSha,
+    findOpenChangeRequest: async (owner, repo, userId, branchPrefix) => {
+      const pr = (await gh.listOpenPullRequests(token, owner, repo)).find(
+        (p) =>
+          String(p.user.id) === userId &&
+          p.head.repo !== null &&
+          p.head.ref.startsWith(branchPrefix),
+      );
+      if (!pr) return null;
+      const [headOwner, headRepo] = pr.head.repo!.full_name.split("/");
+      return {
+        number: pr.number,
+        html_url: pullUrl(owner, repo, pr.number),
+        headSha: pr.head.sha,
+        createdAt: pr.created_at,
+        head: { owner: headOwner, repo: headRepo, branch: pr.head.ref },
+      };
+    },
+    getPullRequestHeadRepo: async (owner, repo, number) => {
+      const { headRepo } = await gh.getPullRequestDetails(
+        token,
+        owner,
+        repo,
+        number,
+      );
+      const [headOwner, headName] = headRepo.split("/");
+      return headOwner && headName
+        ? { owner: headOwner, repo: headName }
+        : null;
+    },
+    closePullRequest: (owner, repo, number, comment) =>
+      comment
+        ? gh.commentAndClosePr(token, owner, repo, number, comment)
+        : gh.closePullRequest(token, owner, repo, number),
     getLastIssueComment: (owner, repo, number) =>
       gh.getLastIssueComment(token, owner, repo, number),
     listWorkflowRuns: (owner, repo, workflow, filter) =>

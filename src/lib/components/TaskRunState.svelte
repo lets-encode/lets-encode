@@ -10,11 +10,14 @@
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
 
   let {
+    repoId,
     task,
     pill = false,
     short = false,
     large = false,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     /** The task id whose run state renders, e.g. "T0002". */
     task: string;
     /** Render as a pill (side panel status row, editor views) instead of a card badge. */
@@ -25,7 +28,7 @@
     large?: boolean;
   } = $props();
 
-  const entry = $derived(pendingVerdicts.forTask(task));
+  const entry = $derived(pendingVerdicts.forTask(task, repoId));
   const sub = $derived(short ? "" : "submission ");
 </script>
 

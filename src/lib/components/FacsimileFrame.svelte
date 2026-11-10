@@ -53,7 +53,14 @@
 
 <script lang="ts">
   import { zoomGestures } from "$lib/zoom-gestures.ts";
+  import FitIcon from "./FitIcon.svelte";
   import Icon from "./Icon.svelte";
+  import Notice from "./Notice.svelte";
+  import {
+    ZOOM_MAX as ZOOM_MAX_PERCENT,
+    ZOOM_MIN as ZOOM_MIN_PERCENT,
+    stepZoom,
+  } from "./ZoomLevel.svelte";
 
   let {
     url,
@@ -87,11 +94,9 @@
     align?: { uly: number; lry: number; top: number; bottom: number } | null;
   } = $props();
 
-  const ZOOM_MIN = 0.2;
-  const ZOOM_MAX = 4;
-  // One press of zoom out or in: a tenth of the range on a log scale, about
-  // a third larger or smaller.
-  const ZOOM_STEP = (ZOOM_MAX / ZOOM_MIN) ** 0.1;
+  // The zoom range and step are ZoomLevel's, relative to the fitted frame.
+  const ZOOM_MIN = ZOOM_MIN_PERCENT / 100;
+  const ZOOM_MAX = ZOOM_MAX_PERCENT / 100;
 
   let view = $state<HTMLDivElement>();
   let vw = $state(0);
@@ -169,9 +174,9 @@
     framed = true;
     centre();
   }
-  function zoomBy(factor: number) {
+  function zoomStep(dir: 1 | -1) {
     leave();
-    zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zoom * factor));
+    zoom = stepZoom(zoom * 100, dir) / 100;
   }
 
   // A mouse drag pans; touch pans by the browser's own scrolling.
@@ -196,6 +201,8 @@
     view.scrollTop = pan.top - (e.clientY - pan.y);
   }
   const up = () => (pan = null);
+  // The image address that failed to load, if the current one did.
+  let failedUrl = $state<string | null>(null);
 </script>
 
 <div class="ffwrap">
@@ -225,14 +232,20 @@
       follow: true,
     })}
   >
-    {#if k}
+    {#if failedUrl === url}
+      <Notice
+        tone="err"
+        surface="inline"
+        title="The facsimile could not be loaded"
+      />
+    {:else if k}
       <svg
         width={width * k}
         height={3 * height * k}
         viewBox={`0 ${-height} ${width} ${3 * height}`}
         aria-hidden="true"
       >
-        <image href={url} {width} {height} />
+        <image href={url} {width} {height} onerror={() => (failedUrl = url)} />
         {#if mark}<rect
             class="ffmark"
             x={mark.ulx}
@@ -251,8 +264,7 @@
       aria-label="Zoom out"
       title="Zoom out"
       disabled={zoom <= ZOOM_MIN}
-      onclick={() => zoomBy(1 / ZOOM_STEP)}
-      ><Icon name="zoom-out" size={16} /></button
+      onclick={() => zoomStep(-1)}><Icon name="zoom-out" size={16} /></button
     >
     <button
       type="button"
@@ -260,8 +272,7 @@
       aria-label="Zoom in"
       title="Zoom in"
       disabled={zoom >= ZOOM_MAX}
-      onclick={() => zoomBy(ZOOM_STEP)}
-      ><Icon name="zoom-in" size={16} /></button
+      onclick={() => zoomStep(1)}><Icon name="zoom-in" size={16} /></button
     >
     <button
       type="button"
@@ -270,7 +281,7 @@
       aria-pressed={framed && !away}
       aria-label={fitLabel}
       title={fitLabel}
-      onclick={fit}><Icon name="focus" size={16} /></button
+      onclick={fit}><FitIcon kind="page" /></button
     >
   </div>
 </div>

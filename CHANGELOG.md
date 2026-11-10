@@ -3,8 +3,185 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-10
+
+- The README, the broker README and the broker's example settings describe the current app.
+- A submission opened after its claim ran out is rejected even while an earlier one by the same person is open.
+- Expired work that cannot be kept no longer stops the campaign's other operations.
+- A pull request decided in the meantime is not closed as not processed.
+- A fault in the campaign's own score is recorded as a failed join, not as an invalid encoding.
+- GitHub's rate limit on the broker's write check is reported as GitHub's.
+- A verdict written under another automation contract shows as a rejection, not as a failed run.
+- A correction that drops a page keeps the tasks that depended on that page's task.
+- A repeated pre-task submission with other content is refused while the first is open.
+- A setup whose image store cannot be opened stops the resume instead of losing its images.
+- A whole-file submission that cannot be joined no longer names a page.
+- A picked-up corner can be put down inside its own box, in the pieces step and the measure correction.
+- The pieces step shows a region's delete button above its handles.
+- The align page no longer has a separate error card for a failed alignment.
+- The side panel's header buttons have the colour of the panel's other buttons.
+- The score setup's source view zooms in the same steps and shows the same fit icon as the other viewers.
+- The instruments step edits groups with the score setup's group fields, including the brace or bracket.
+- The score preview steps the selected measure with A and D, and every selection block is built from one component.
+- The next, just completed and just submitted badges, the count pills and the board's chips share one look.
+- A name that is reserved, blocked or being set up shows as a card like the campaign page's other states.
+- An address that can't be a campaign name says so instead of Page not found.
+- A one-character name counts as an invalid campaign name, as in the registry.
+- The wizard's piece regions get the zones page's eight resize handles and its Draw and Select several toggles.
+- Every inline confirmation is one component, and Discard setup asks and behaves the same in the wizard and the drafts list.
+- The wizard's pane divider moves with the arrow keys, like the score setup's.
+- The owner board's empty text says why no task is open, and the wizard's piece buttons are standard buttons.
+- Every link to a task, its score check or its review comes from one set of route helpers.
+
+## 2026-11-09
+
+- A measure or layout correction leaves each remaining page with its own task id.
+- The plan editor keeps a task whose encoding was accepted, even after a failed review.
+- The review page and the pre-task editors pick up other people's changes to the campaign while open.
+- Accepted whole-file and pre-task submissions keep the campaign's score header.
+- Table reads without the batch query read every file at the same head commit.
+- Opening a claimed task in mei-friend starts from the score as it stands after the claim.
+- The broker follows GitHub's redirect for a renamed campaign repository instead of passing it to the browser.
+- The campaign list shows only repositories the registry holds under their configured name.
+- The task branch is looked up in the repository the claim came from, not by current push access.
+- Score headers record each contributor's GitHub account id with the login.
+- The recorded change message is the newest commit the volunteer wrote, not one of the app's.
+- Your open work on the campaign list drops expired claims and updates its times every minute.
+- A background submission is followed until it is decided, once a minute after the first 70 minutes.
+- Verdict comments carry the automation's contract number, and the app reports a different one as an error.
+- The campaign workflow runs pull requests of up to 50 files and the coordinator action checks the entry point.
+- A repeated pre-task submission follows the one already open from another tab instead of opening a second.
+- A campaign setup open in two tabs stops saving in the tab that did not save last.
+- A batch table read with a GraphQL field error fails instead of reporting files as missing.
+- A rejection of an expired claim says the claim was released and its work kept.
+- Each phase of the scheduled run runs even when an earlier one failed.
+- Campaign pull requests older than seven days are closed with a comment saying they were not processed.
+- A pull request the workflow skipped is closed with a comment naming the requirements.
+- An unconfirmed claim no longer starts the editor's after-claim step.
+- The progress overlay shows a pending or partial result as a warning instead of Finished.
+- A plan save or cleanup whose history row could not be written reports a partial result.
+- Reading instrument names reports the pages whose images could not be read.
+- A return from mei-friend for a removed task or with an unknown status is shown.
+- The IIIF relay passes a source's error status on instead of answering 415.
+- Broker and registry error texts reach the messages the app shows.
+- The OMR relay's own refusals are marked as the broker's.
+- A failed staff recognition run names its reason.
+- A network error while reading the GitHub user at login ends as a login error.
+- The campaign list says when GitHub's search did not finish.
+- OMR page checks that could not be read are shown on the task.
+- A name that could not be given back on discard is reported.
+- Page images the browser's storage cannot read stop the resume instead of being dropped.
+- An unreadable alignment record stops the align page instead of starting without links.
+- Facsimile images that fail to load show an error in the score preview and the crop view.
+- Page images whose size cannot be read are reported in the pieces step.
+- The setup preview's render error is shown as an error.
+- Only a locator of the form surface-N counts as a page task, everywhere.
+- Piece fields in config.yaml are read the same way, quoted or not, by the board, the app and the coordinator.
+- A failed relay request is attributed to the broker unless the service it reached is named as the source.
+- Browser storage is read and written through one module, so blocked site data no longer breaks a command.
+- The browser databases are opened by one helper that gives up after two seconds.
+- MEI and record attributes are read by one reader that takes exact names, either quote and spaced equals signs.
+- The campaign page takes the title and composer from the title statement, as the metadata form does.
+- Pre-task names, routes, stages and instructions come from one table, with the same wording on the card and in the task box.
+- The next-task badge takes the purple of its stage.
+- Relative times come from one helper and say nothing for an unreadable time.
+- The dev scripts encode file paths and quote CSV like the app.
+- Claim and continue buttons take their label, tooltip, target and colour from one function everywhere.
+- A held encoding says Continue in mei-friend, and a held score-check task continues in the score check from Your open work too.
+- The score check's own claim button is encoding blue.
+- The score check and the score setup share their key, time signature and staff transposition fields.
+- The zones page, the score preview and the wizard's page views share one viewer toolbar.
+- On a phone the step bar fits the screen and names only the active step.
+
+## 2026-11-06
+
+- The setup wizard continues only with page images or an uploaded encoding.
+- The reason a wizard step cannot continue wraps instead of being cut off.
+- The publishing acknowledgement sits beside the upload step's buttons again.
+- Failed layout detection and staff recognition offer a Try again button.
+- Results, errors and page notices share one notice line with icon, headline and button.
+- Actions shown as underlined link text are buttons now.
+- A score-setup review can be approved again.
+- Uploaded encodings keep clefs, keys, meter and braces written as child elements.
+- The score setup no longer adds, removes or moves staves in a score that holds notation.
+- An uploaded encoding's own system breaks no longer push its measures out of place.
+- The score viewer and the alignment editor tell apart measures of equal number in different movements.
+- An uploaded encoding's braced staves go to the braced staves of a piece that names its instruments.
+- A short piece's uploaded encoding with one or two extra measures can still be submitted.
+- A partly encoded upload no longer puts its final barline in the middle of the score.
+- The campaign copy script copies a piece's uploaded encoding.
+- A piece's last page keeps the measures of a movement that starts on it.
+- A piece marked as covering no regions on purpose is left out of the new campaign.
+- Show measure in a comment works on the alignment page and is gone from the score check.
+- A score check in review opens the review view.
+- A failed or rejected mei-friend submission no longer shows as just completed.
+- Comment and change-request text comes back when its submission is rejected.
+- A failed logout keeps the session and says so.
+- Work kept from an expired claim is replaced only once its new copy exists, and a failure to keep it is retried.
+- Following a submission survives a failed read of its run or its pull request.
+- An earlier pull request's run for the same commit is no longer taken for a new submission's.
+- A submission whose run failed is followed on until the scheduled run decides it.
+- A submission still shown as being processed disappears once the tables record its decision.
+- A comment or resolution still being processed after the wait says so with its link.
+- A GitHub error during the broker's campaign check no longer shows as a refused write.
+- Creating a campaign stops with an error when the measure detector fails on a page twice.
+- Leaving a pre-task editor waits for its draft to be saved and stays on a failed save.
+- Failed refreshes on the campaign list show in the refresh notice.
+- An accepted submission whose record is read late no longer shows as rejected.
+- The app checks a submitted encoding as the automation assembles it, opening and header included.
+
+## 2026-11-03
+
+- Operations start their pull request at the head their tables were read at.
+- Saving the plan is refused when the plan changed while the editor was open.
+- An operation whose run lost every commit to other runs is closed as not recorded.
+- A claim stays while its holder's submission, opened before it ran out, is open.
+- Work of an expired claim is kept when two runs drop the claim at once.
+- The cleanup run completes reviews whose passes reach a lowered threshold.
+- A late background verdict no longer deletes the branch of a newer claim.
+- Draft saves from two tabs no longer overwrite each other.
+- A second submission of the same task follows the one already open.
+- A push during an encoding's decision leaves it to the run for that push.
+- A comment resolved or a task claimed from another tab shows as done.
+- A cleanup run replaced by a scheduled one shows as pending.
+- Finishing one setup from two tabs commits the campaign once.
+- The setup's staff list and the plan editor share one reorder control, and the task pages share their panel tab and footer rules.
+- Approve waits while a change request is being written, and the plan editor asks before dropping unsaved edits.
+- The campaign page and list keep only their latest reads, and page drafts no longer use the score preview's toolkit.
+- Pre-task pages undo instrument names, approve a setup only after both steps were opened and tint comments in review.
+- The pre-task editors ask before the tab closes while a draft is not yet saved.
+- OMR runs are followed until they settle, stop when their page is left and retry relay refusals like image downloads.
+- Piece previews reload when the score changes, and the recognition record keeps why a staff failed.
+- Requests recover from lost responses, stale forks and server errors, and logging out forgets cached reads.
+- Polling no longer drops the refresh when a tab is shown again.
+- Setup drafts are kept per account, survive leaving the page and no longer return from another tab.
+- Pieces follow their pages when other pages are chosen and are set up again after a new upload.
+- The name step reports reserved names, and a run-out reservation is renewed before the repository is created.
+- Creating a campaign is more robust, and a registered setup can only be continued, not discarded.
+- A failed login check is retried, and a broker 401 marks the login as expired.
+- Login and logout reload the other tabs, keeping unsent text, and two-tab logins return to their own page.
+- The broker and registry fix several session, reservation and relay edge cases and run one worker.
+- Pending submissions are followed until decided, survive a reload and hold their task's controls.
+- Submission outcomes are read from the campaign history, and failed openings show as failed.
+- The app offers a claim only where the campaign automation would grant it.
+- The coordinator processes every submission once and treats reaped or unreadable claims as expired.
+- Kept work, task ids and review cells follow the campaign history.
+- Task views open fresh on another task or campaign, and links open the task on the board.
+- The zones page and the setup's Pieces step share one box editor.
+- The Pieces step keeps the piece name and Continue's reason in place on a phone.
+
+## 2026-11-02
+
+- State from another task, campaign or account no longer carries over into the open view.
+- Esc or leaving the window cancels a box drag on the zones page.
+- The setup shows which pages it keeps and whether they are stored.
+- The scheduled run also deletes leftover comment-resolve branches.
+- Verovio is updated to 6.4.
+
 ## 2026-10-29
 
+- The setup rail's footer links are left-aligned in a smaller size, with long campaign names shortened.
+- The Drafts list's Resume link matches the size of its line.
 - The "Parts are instruments" option of the instrument naming is removed.
 - Logged in, the campaign list reads all campaigns' tables in one GraphQL query.
 - The broker proxy relays GraphQL queries but no mutations.
@@ -16,6 +193,12 @@ parentheses.
 - A layout, measure correction or score setup can be submitted without changes.
 - Scripts to copy a campaign with another preparation and to compare the two campaigns page by page.
 - The score setup of an `omr` piece fills in staves, clefs, signatures and labels from the recognition again.
+- An uploaded encoding can be aligned with a piece's corrected measures and merged into its score.
+- A facsimile piece can start from an uploaded encoding, which is committed next to its score.
+- A piece that starts from an uploaded encoding gets an encoding alignment task before its score setup.
+- The encoding alignment task has its own editor for checking and fixing where the file's measures go.
+- Score setup keeps the measures of a score that already holds notation.
+- With uploaded encodings, the preparation step asks what goes where a measure is empty or missing in the file.
 
 ## 2026-10-28
 

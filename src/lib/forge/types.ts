@@ -40,6 +40,8 @@ export interface ChangeRequest {
   html_url: string;
   /** The head commit SHA — identifies the CI run the request triggers. */
   headSha?: string;
+  /** When the forge created the request (ISO); its runs start after it. */
+  createdAt?: string;
 }
 
 /** A ChangeRequest whose head branch the client created itself. */
@@ -56,14 +58,21 @@ export interface ForgeClient {
   changeRequestWebUrl(owner: string, repo: string, number: number): string;
   /** An account's page on the forge's website. */
   userWebUrl(login: string): string;
-  /** The authenticated user + the scopes their token actually holds, or null. */
+  /**
+   * The authenticated user + the scopes their token actually holds; null when
+   * the token is rejected (401). Throws on any other failure.
+   */
   getAuthenticatedUser(): Promise<{ user: GitHubUser; scopes: string } | null>;
   /** Resolve a numeric account id to its current login, or null. Memoised. */
   getUserLogin(id: number): Promise<string | null>;
   /** Resolve a numeric repo id to its current owner/name, or null. Memoised. */
   getRepoById(id: number): Promise<RepoRef | null>;
   /** Repos tagged with `topic` that the user can see. */
-  searchReposByTopic(topic: string): Promise<RepoSummary[]>;
+  /** The repos with `topic`; `incomplete` when the forge's search stopped
+      before it was done. */
+  searchReposByTopic(
+    topic: string,
+  ): Promise<{ repos: RepoSummary[]; incomplete: boolean }>;
   /** Create a repo from a template into `owner`'s account. */
   createRepoFromTemplate(opts: {
     templateOwner: string;
@@ -151,6 +160,12 @@ export interface ForgeClient {
     repo: string,
     opts?: { attempts?: number; delayMs?: number },
   ): Promise<{ owner: string; repo: string }>;
+  /** The commit a branch points at, or null when there is no such branch. */
+  getBranchHead(
+    owner: string,
+    repo: string,
+    branch: string,
+  ): Promise<string | null>;
   /** Create a branch at `fromSha`. */
   createBranch(
     owner: string,
@@ -173,7 +188,11 @@ export interface ForgeClient {
     repo: string,
     opts: { title: string; head: string; base: string; body: string },
   ): Promise<ChangeRequest>;
-  /** Commit `files` to a fresh branch (in the repo or the user's fork) and open a PR upstream. */
+  /**
+   * Commit `files` to a fresh branch (in the repo or the user's fork) and open
+   * a PR upstream. The branch starts at `baseSha` when given, else at the
+   * default branch's head.
+   */
   openChangePr(
     owner: string,
     repo: string,
@@ -183,6 +202,7 @@ export interface ForgeClient {
       message: string;
       title: string;
       body: string;
+      baseSha?: string;
     },
   ): Promise<OpenedChangeRequest>;
   /** Trigger a CI run (GitHub: workflow_dispatch) of `workflow` on `ref`. */
@@ -198,8 +218,35 @@ export interface ForgeClient {
     repo: string,
     number: number,
   ): Promise<string>;
-  /** Close a pull/merge request without merging it. */
-  closePullRequest(owner: string, repo: string, number: number): Promise<void>;
+  /** The commit a pull/merge request's head branch points at. */
+  getPullRequestHead(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<string>;
+  /** The newest open pull/merge request by account `userId` whose head
+      branch starts with `branchPrefix`; null when there is none. */
+  findOpenChangeRequest(
+    owner: string,
+    repo: string,
+    userId: string,
+    branchPrefix: string,
+  ): Promise<OpenedChangeRequest | null>;
+  /** The repo a pull/merge request's head branch is in; null when that repo
+      no longer exists. */
+  getPullRequestHeadRepo(
+    owner: string,
+    repo: string,
+    number: number,
+  ): Promise<{ owner: string; repo: string } | null>;
+  /** Close a pull/merge request without merging it, after posting `comment`
+      on it when given. */
+  closePullRequest(
+    owner: string,
+    repo: string,
+    number: number,
+    comment?: string,
+  ): Promise<void>;
   /** The most recent comment on a pull/merge request, or null. */
   getLastIssueComment(
     owner: string,

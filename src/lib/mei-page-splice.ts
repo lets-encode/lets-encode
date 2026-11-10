@@ -7,8 +7,8 @@
 //
 // A page's extent is delimited by the `<pb/>` markers written at stage C
 // (mei-facsimile.ts): the page's `<pb facs="#surface-N"/>` opens it and the
-// next page's `<pb/>` (or the end of the enclosing element, on the last page)
-// closes it. The join keeps the base file verbatim outside that span and takes
+// next page's `<pb/>` (or the close of the score's last `<section>`, on the
+// last page) closes it. The join keeps the base file verbatim outside that span and takes
 // the fork's span content wholesale, so everything the volunteer wrote inside
 // their page — measures, a mid-piece <scoreDef>, added or removed measures —
 // lands in the base. The base's own `<pb/>` markers stay authoritative: which
@@ -25,6 +25,13 @@ import {
   type ScoreDefModel,
   type StaffModel,
 } from "./mei-facsimile.ts";
+
+/**
+ * A page splice failed on a precondition of the base score: the page's
+ * `<pb>`, or the next page's, is missing from it, or a measure of the page
+ * stands outside the page's span in it.
+ */
+export class BaseScoreError extends Error {}
 
 /**
  * The `<pb>` tags of `xml` from offset `from`, outside comments, with the
@@ -60,38 +67,62 @@ function pbTagAt(
 /**
  * The page's span with its offsets: from `surfaceId`'s `<pb>` to
  * `nextSurfaceId`'s, or — for the last page (`nextSurfaceId` null) — to the
- * close of the enclosing element. Ending at the next surface's own marker
+ * close of the score's last `<section>`. Ending at the next surface's own marker
  * rather than at just any `<pb>` keeps a stray page break inside the span,
  * where the integrity checks see it, instead of silently truncating there.
+ * A missing `<pb>` throws `Fault`.
  */
 function pageSpanAt(
   xml: string,
   surfaceId: string,
   nextSurfaceId: string | null,
+  Fault: new (message: string) => Error = Error,
 ): { from: number; to: number } {
   const pb = pbTagAt(xml, surfaceId);
-  if (!pb) throw new Error(`No page break found for ${surfaceId}.`);
+  if (!pb) throw new Fault(`No page break found for ${surfaceId}.`);
   const from = pb.end;
-  if (nextSurfaceId === null) return { from, to: closeOfEnclosure(xml, from) };
+  if (nextSurfaceId === null) return { from, to: lastSectionClose(xml, from) };
   const next = pbTagAt(xml, nextSurfaceId, from);
-  if (!next) throw new Error(`No page break found for ${nextSurfaceId}.`);
+  if (!next) throw new Fault(`No page break found for ${nextSurfaceId}.`);
   return { from, to: next.start };
 }
 
-// A span that runs to the end of the body must not swallow the enclosing
-// section/score markup: it closes at the matching close of the element
-// enclosing it. <section>/<mdiv> elements opened inside the span are tracked
-// by depth, so a nested section's close does not end the span early.
-function closeOfEnclosure(xml: string, from: number): number {
-  let depth = 0;
-  for (const tag of tagsIn(xml, from)) {
-    if (tag.name !== "section" && tag.name !== "mdiv") continue;
-    if (tag.kind === "start") depth++;
-    else if (tag.kind === "empty") continue;
-    else if (depth === 0) return tag.start;
-    else depth--;
+// The last page's span runs to the close of the score's last <section>: a
+// movement that starts on the page, and a section nested in it, belong to the
+// page, while the closing section/score markup after it stays outside.
+function lastSectionClose(xml: string, from: number): number {
+  let close = -1;
+  for (const tag of tagsIn(xml, from))
+    if (tag.name === "section" && tag.kind === "end") close = tag.start;
+  return close < 0 ? xml.length : close;
+}
+
+/**
+ * The measures of `mei` whose zone lies on surface `surfaceId` but which stand
+ * outside `span`, by xml:id or, without one, by zone.
+ */
+function pageMeasuresOutside(
+  mei: string,
+  surfaceId: string,
+  span: { from: number; to: number },
+): string[] {
+  const surface = [...elementsNamed(mei, "surface")].find(
+    (el) => /\bxml:id="([^"]*)"/.exec(el.tag)?.[1] === surfaceId,
+  );
+  if (!surface) return [];
+  const zones = new Set(
+    [...surface.inner.matchAll(/<zone\b[^>]*?\bxml:id="([^"]*)"/g)].map(
+      (m) => m[1],
+    ),
+  );
+  const outside: string[] = [];
+  for (const tag of tagsIn(mei)) {
+    if (tag.name !== "measure" || tag.kind === "end") continue;
+    const zone = (tag.attributes?.get("facs") ?? "").replace(/^#/, "");
+    if (zones.has(zone) && (tag.start < span.from || tag.start >= span.to))
+      outside.push(tag.attributes?.get("xml:id") ?? zone);
   }
-  return xml.length;
+  return outside;
 }
 
 /** Every `<pb>` facs target ("surface-N") in `xml`, in document order. */
@@ -174,8 +205,20 @@ function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
   const surfaces = pbSurfaces(baseMei);
   const at = surfaces.indexOf(locator);
   const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
-  const base = pageSpanAt(baseMei, locator, nextSurface);
+  const base = pageSpanAt(baseMei, locator, nextSurface, BaseScoreError);
   const fork = pageSpanAt(forkMei, locator, nextSurface);
+  // A measure drawn on the page outside its span would keep the base's
+  // content, or lose the fork's.
+  for (const [side, mei, span, Fault] of [
+    ["base score", baseMei, base, BaseScoreError],
+    ["submitted score", forkMei, fork, Error],
+  ] as const) {
+    const missed = pageMeasuresOutside(mei, locator, span);
+    if (missed.length)
+      throw new Fault(
+        `Measure ${missed[0]} of ${locator} lies outside the page in the ${side}.`,
+      );
+  }
   const spliced =
     baseMei.slice(0, base.from) +
     forkMei.slice(fork.from, fork.to) +
@@ -231,7 +274,8 @@ export function firstElementOfPage(
  * page's `surface-N` id; the base's span for that page is replaced by the
  * fork's span content wholesale, and everything outside it is preserved from
  * the base. Throws if either side is missing the page break or the result
- * fails the integrity checks (assertSpliceIntegrity).
+ * fails the integrity checks (assertSpliceIntegrity); a failure on the base
+ * score is a BaseScoreError.
  */
 export function splicePage(
   baseMei: string,

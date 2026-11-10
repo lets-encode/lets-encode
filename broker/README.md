@@ -146,6 +146,7 @@ Environment variables:
 | `RATELIMIT_STORAGE_URI` | optional: flask-limiter counter storage (default `memory://`, per worker process — see Deployment notes)                                                                                                                                                                                                 |
 | `MUSIBOT_URL`           | optional: the Musibot OMR API the `/omr` relay forwards to (default `https://quest.ms.mff.cuni.cz/musibot/api`)                                                                                                                                                                                          |
 | `MUSIBOT_TOKEN`         | the Musibot API token (**secret**, only here); without it `/omr` answers 503 and the OMR preparation cannot run                                                                                                                                                                                          |
+| `PORT`                  | the loopback port `gunicorn_config.py` binds; read by gunicorn before `.env` is loaded, so it comes from the process environment (see Run)                                                                                                                                                               |
 
 The broker loads these from its process environment. The simplest way locally is a
 `broker/.env` file (auto-loaded via python-dotenv, and gitignored):
@@ -172,7 +173,7 @@ PORT=7777 gunicorn -c gunicorn_config.py wsgi:app
 
 `wsgi.py` is a thin shim re-exporting `app`, so service managers can point at the
 conventional `wsgi:app` target. `gunicorn_config.py` binds to loopback on
-`PORT` (default 7777); each deployed instance runs its own broker on its own
+`PORT` (the file's default differs per branch); each deployed instance runs its own broker on its own
 port — production 7777, staging 7778, testing 7779, matching the reverse
 proxy's targets (`README.md` §6). Only the proxy needs to reach the bind
 address, so it stays on loopback.
@@ -217,11 +218,12 @@ they are reported separately from GitHub primary or secondary limits.
   with the request's host. The proxy must send `X-Forwarded-Host` (Apache's
   `mod_proxy` does by default) and `PROXY_FIX_X_FOR` must be set; otherwise the
   host is the proxy's upstream address and every write is answered 403.
-- **Rate-limit counters are per worker by default** — the limiter's `memory://`
-  storage is in-process, so with gunicorn's 2 workers the effective limits are
-  twice the stated ones, and counters reset on restart. Set
-  `RATELIMIT_STORAGE_URI` to a shared store (redis/memcached) for exact,
-  restart-surviving limits.
+- **Rate-limit counters and relay slots are per worker process** — the
+  limiter's `memory://` storage and the relay slots are in-process, so
+  `gunicorn_config.py` runs one worker (with threads); counters reset on
+  restart. With more workers each counts separately; `RATELIMIT_STORAGE_URI`
+  set to a shared store (redis/memcached) shares the limiter's counters, not
+  the relay slots.
 - **Nothing may rewrite the session cookie** — the production cookie name uses
   the `__Host-` prefix, which browsers reject outright unless the cookie is
   `Secure`, scoped to `Path=/`, and carries no `Domain` attribute. A proxy that

@@ -352,6 +352,16 @@ class RegistryTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIsNotNone(slug_validation.registration_error(name))
 
+    def test_the_app_checks_names_with_the_same_pattern(self):
+        # The app pre-checks a name as it is typed (campaign-handle.ts); its
+        # pattern must be the registry's.
+        root = Path(__file__).resolve().parent.parent
+        source = (root / "src" / "lib" / "campaign-handle.ts").read_text()
+        self.assertIn(
+            "const SLUG_RE = /{}/;".format(slug_validation.SLUG_RE.pattern),
+            source,
+        )
+
     # ---------------------------------------------------- names and owners
 
     def test_register_requires_the_repository_to_carry_the_name(self):

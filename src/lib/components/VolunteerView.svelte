@@ -14,27 +14,38 @@
     pieceLabel,
     pieceZone,
   } from "$lib/campaign-tables.ts";
-  import type { LockRow, PieceRef, TaskRow } from "$lib/campaign-tables.ts";
+  import type {
+    HistoryRow,
+    LockRow,
+    PieceRef,
+    TaskRow,
+  } from "$lib/campaign-tables.ts";
   import {
     cardName,
     cardPill,
     doneLabel,
     stageOf,
   } from "$lib/campaign-board.ts";
-  import { pageOfLocator, claimLabel, workPlace } from "$lib/campaign-graph.ts";
+  import {
+    pageOfLocator,
+    taskAction,
+    type TaskAction,
+  } from "$lib/campaign-graph.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
-  import { piecePreview } from "$lib/piece-previews.ts";
+  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { PagePreview, PiecePreview } from "$lib/piece-previews.ts";
 
   let {
+    repoId,
     owner,
     repo,
     cards,
     nextCard,
     completedTask,
     taskDefs,
+    history,
     locks,
     viewer,
     pieces,
@@ -46,6 +57,8 @@
     onact,
     onopen,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     owner: string;
     repo: string;
     /** Every board card, in column order. */
@@ -56,6 +69,7 @@
         place while set; null otherwise. */
     completedTask: string | null;
     taskDefs: TaskRow[];
+    history: HistoryRow[];
     locks: LockRow[];
     viewer: string;
     pieces: PieceRef[];
@@ -108,22 +122,22 @@
       submission still being processed. */
   const running = $derived(
     cards.filter(
-      (c) => c.task !== featured?.task && pendingVerdicts.forTask(c.task),
+      (c) =>
+        c.task !== featured?.task && pendingVerdicts.forTask(c.task, repoId),
     ),
   );
 
-  // The kind filters over the open-task list; a card's kind is the stage its
-  // claim starts.
-  type Kind = "enc" | "review" | "pre";
-  const kindOf = (c: BoardCard): Kind =>
-    c.column === "validation" ? "review" : c.pre ? "pre" : "enc";
+  // The kind filters over the open-task list; a card's kind is its stage
+  // (stageOf), the stage its claim starts. Open tasks are never done.
+  type Kind = "encode" | "review" | "pre";
+  const kindOf = (c: BoardCard): Kind => stageOf(c) as Kind;
   const KINDS: { key: Kind; label: string }[] = [
-    { key: "enc", label: "Encoding" },
+    { key: "encode", label: "Encoding" },
     { key: "review", label: "Review" },
     { key: "pre", label: "Preparation" },
   ];
   let kinds = $state<Record<Kind, boolean>>({
-    enc: true,
+    encode: true,
     review: true,
     pre: true,
   });
@@ -135,25 +149,23 @@
   // A single-piece campaign keeps its one piece expanded.
   const lone = $derived(pieces.length === 1);
 
-  const actLabel = (c: BoardCard): string => {
-    if (viewer === "") return "Log in with GitHub to claim";
-    if (c.column === "ready")
-      return c.checksOpening
-        ? "Claim & open score check"
-        : claimLabel(c.locator);
-    if (c.column === "validation" && c.slots.some((s) => s.claimable))
-      return "Claim to review";
-    return "Open task";
-  };
+  // The card's claim: of the task when it is open, of a review when one is
+  // free; null when the button only opens the task.
+  const claimOf = (c: BoardCard): TaskAction | null =>
+    c.column === "ready"
+      ? taskAction(c, "claim")
+      : c.column === "validation" && c.slots.some((s) => s.claimable)
+        ? taskAction(c, "claim-review")
+        : null;
+  const actLabel = (c: BoardCard): string =>
+    viewer === ""
+      ? "Log in with GitHub to claim"
+      : (claimOf(c)?.label ?? "Open task");
   // What the card's button does, for its tooltip.
-  const actTitle = (c: BoardCard): string => {
-    if (viewer === "") return "Log in with GitHub to claim this task.";
-    if (c.column === "validation")
-      return "Claims a review of this task for you.";
-    if (c.pre)
-      return `Claims this task for you and opens the ${workPlace(c.locator)}.`;
-    return "Claims this task for you and opens the score in mei-friend.";
-  };
+  const actTitle = (c: BoardCard): string =>
+    viewer === ""
+      ? "Log in with GitHub to claim this task."
+      : (claimOf(c)?.title ?? "Opens the task.");
 
   // The stage a claim starts, as the button's colour class.
   const stageClass = (c: BoardCard) =>
@@ -165,13 +177,18 @@
   const startPage = (c: BoardCard): number | null => pageOfLocator(c.locator);
 
   // First-page thumbnails, page crops and measure counts, loaded per piece.
+  // A piece's preview is loaded again when its score has changed; the one
+  // shown stays until the new one is there.
   let previews = $state<Record<string, PiecePreview>>({});
+  const loadedVersions: Record<string, string> = {};
   $effect(() => {
     const f = readForge();
     for (const piece of pieces) {
       const path = piece.path;
-      if (previews[path]) continue;
-      piecePreview(f, owner, repo, path).then((preview) => {
+      const version = scoreVersion(history, taskDefs, path);
+      if (loadedVersions[path] === version) continue;
+      loadedVersions[path] = version;
+      piecePreview(f, owner, repo, path, true, version).then((preview) => {
         previews[path] = preview;
       });
     }
@@ -317,11 +334,11 @@
              sit above it. The badge on its top edge names the card, as the
              board's "your next task" badge does. -->
         <div
-          class="nextcard stage-{kindOf(featured)}"
+          class="nextcard stage-{stageOf(featured)}"
           data-stage={stageOf(featured)}
         >
           <span
-            class="nextbadge"
+            class="taskbadge edge"
             class:done={!!completedCard}
             aria-hidden="true"
             >{completedCard ? "just completed" : "your next task"}</span
@@ -359,7 +376,7 @@
             >
             <span class="nextcontext">{nextContext}</span>
             {@render failChip(featured)}
-            <TaskRunState task={featured.task} pill large />
+            <TaskRunState task={featured.task} {repoId} pill large />
             <!-- A card whose action only opens the task leaves it to the task's
                  panel while that shows it. -->
             {#if !completedCard && !(featured.task === shownTask && actLabel(featured) === "Open task")}
@@ -369,11 +386,11 @@
                   class="btn btn-primary {stageClass(featured)}"
                   onclick={() => (viewer === "" ? login() : onact(featured))}
                   disabled={busy ||
-                    pendingVerdicts.taskProcessing(featured.task)}
+                    pendingVerdicts.taskProcessing(featured.task, repoId)}
                   title={actTitle(featured)}
                   >{actLabel(
                     featured,
-                  )}{#if viewer !== "" && featured.column === "ready" && !featured.pre}<Icon
+                  )}{#if viewer !== "" && claimOf(featured)?.target === "mei-friend"}<Icon
                       name="external"
                     />{/if}</button
                 >
@@ -480,7 +497,7 @@
         {#each running as card (card.task)}
           <div class="runcard" data-stage={stageOf(card)}>
             <span class="runtitle">{card.title}</span>
-            <TaskRunState task={card.task} pill large />
+            <TaskRunState task={card.task} {repoId} pill large />
           </div>
         {/each}
       </div>
@@ -553,17 +570,19 @@
                   {/if}
                 {/if}
                 {#if counts.enc > 0}
-                  <span class="scount enc">{counts.enc} open</span>
+                  <span class="countpill scount enc">{counts.enc} open</span>
                 {/if}
                 {#if counts.review > 0}
-                  <span class="scount review"
+                  <span class="countpill scount review"
                     >{counts.review} review{counts.review === 1
                       ? ""
                       : "s"}</span
                   >
                 {/if}
                 {#if counts.pre > 0}
-                  <span class="scount pre">{counts.pre} preparation</span>
+                  <span class="countpill scount pre"
+                    >{counts.pre} preparation</span
+                  >
                 {/if}
                 <span class="vspacer"></span>
                 {#if !lone}
@@ -581,7 +600,7 @@
                       <div class="taskrow still" data-stage={stageOf(card)}>
                         <span class="tasktitle">{cardName(card)}</span>
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} pill short />
+                        <TaskRunState task={card.task} {repoId} pill short />
                         <span class="vspacer"></span>
                         <span class="waits">waits for {card.waitsFor}</span>
                       </div>
@@ -594,7 +613,7 @@
                           title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} pill short />
+                        <TaskRunState task={card.task} {repoId} pill short />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         <span class="merged"
@@ -612,13 +631,13 @@
                           title="Open this task">{cardName(card)}</button
                         >
                         <span class="ttype">{typeOf(card)}</span>
-                        <TaskRunState task={card.task} pill short />
+                        <TaskRunState task={card.task} {repoId} pill short />
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}
-                          <span class="chip">just completed</span>
+                          <span class="taskbadge done">just completed</span>
                         {:else if card.nextUp && !completedCard && !lone}
-                          <span class="chip">your next task</span>
+                          <span class="taskbadge">your next task</span>
                         {:else if card.column === "validation" && card.submittedByViewer}
                           <span
                             class="chip"
@@ -730,23 +749,15 @@
   }
 
   /* ------------------------------------------------------- next-task card */
-  .nextbadge {
+  /* The badge (.taskbadge, ui.css) sits on the card's top edge. */
+  .edge {
     position: absolute;
     top: -9px;
     left: 18px;
     z-index: 1;
-    background: var(--accent);
-    color: var(--invert-ink);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1;
-    padding: 4px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
   }
-  /* The badge and the border take the stage of the task: encoding blue,
-     preparation purple, review orange. */
+  /* The border takes the stage of the task: encoding blue, preparation
+     purple, review orange. */
   .nextcard.stage-pre {
     border-color: color-mix(in srgb, var(--pre) 45%, var(--line));
   }
@@ -762,22 +773,6 @@
     .nextcard.stage-review:hover {
       border-color: var(--warn);
     }
-  }
-  .stage-pre .nextbadge,
-  .stage-review .nextbadge {
-    color: #fff;
-  }
-  .stage-pre .nextbadge {
-    background: var(--pre-solid);
-  }
-  .stage-review .nextbadge {
-    background: var(--warn-solid);
-  }
-  .nextbadge.done {
-    background: var(--ok);
-  }
-  :global([data-theme="dark"]) .nextbadge.done {
-    color: #fff;
   }
   .nextcard {
     position: relative;
@@ -1079,29 +1074,15 @@
     font-weight: 600;
   }
   /* Open work per stage, in the stage colours. */
-  .scount {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 8px;
-    border: 1px solid transparent;
-    white-space: nowrap;
-  }
+  /* The counts (.countpill, ui.css) in their stage's colour. */
   .scount.pre {
     color: var(--pre);
-    background: var(--pre-wash);
-    border-color: var(--pre);
   }
   .scount.review {
     color: var(--warn);
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
   }
   .scount.enc {
     color: var(--info);
-    background: var(--info-bg);
-    border-color: var(--info-line);
   }
   .pchev {
     font-size: 20px;

@@ -20,20 +20,27 @@
   // Mirror the wizard's entries into the browser as they change, so a setup
   // interrupted here can be continued from the landing's draft list. The draft
   // is collected on every change but written on a debounce, since one write
-  // serialises all of it; a page about to go away — a Back press, a closed tab —
-  // writes what is pending first, so the last edits before it are kept.
+  // serialises all of it; a page about to go away — a Back press, a closed tab,
+  // a link to another page of the app — writes what is pending first, so the
+  // last edits before it are kept.
+  let pending: (() => void) | null = null;
   $effect(() => {
     const owner = auth.user?.login;
     const snapshot = draftSnapshot();
     if (!owner) return;
-    const timer = setTimeout(() => saveDraft(owner, snapshot), 500);
-    const flush = () => saveDraft(owner, snapshot);
+    const flush = () => {
+      pending = null;
+      saveDraft(owner, snapshot);
+    };
+    pending = flush;
+    const timer = setTimeout(flush, 500);
     addEventListener("pagehide", flush);
     return () => {
       clearTimeout(timer);
       removeEventListener("pagehide", flush);
     };
   });
+  $effect(() => () => pending?.());
 </script>
 
 <svelte:head>

@@ -63,7 +63,8 @@ const crops = (n: number) => Array.from({ length: n }, () => new Blob(["x"]));
 
 test("transcribeStaves: one page, one execution over every crop, null for a staff without a transcription", async () => {
   const { client, calls } = fakeClient("completed", [1, 3]);
-  const xmls = await transcribeStaves(client, pipeline, crops(3));
+  const { xmls, error } = await transcribeStaves(client, pipeline, crops(3));
+  assert.equal(error, null);
   assert.deepEqual(xmls, [
     "<xml>Staves/1/transcription.musicxml</xml>",
     null,
@@ -79,12 +80,12 @@ test("transcribeStaves: one page, one execution over every crop, null for a staf
   ]);
 });
 
-test("transcribeStaves: a failed execution (every staff failed) yields null for every staff", async () => {
+test("transcribeStaves: a failed execution (every staff failed) yields null for every staff, with its reason", async () => {
   const { client, calls } = fakeClient("failed", []);
-  assert.deepEqual(await transcribeStaves(client, pipeline, crops(2)), [
-    null,
-    null,
-  ]);
+  assert.deepEqual(await transcribeStaves(client, pipeline, crops(2)), {
+    xmls: [null, null],
+    error: "all failed",
+  });
   assert.deepEqual(calls, [
     "create",
     "upload p1 Staves/1/image.jpg,Staves/2/image.jpg",
@@ -99,7 +100,7 @@ test("transcribeStaves: results stay in crop order", async () => {
     Array.from({ length: 40 }, (_, k) => 40 - k),
   );
   assert.deepEqual(
-    await transcribeStaves(client, pipeline, crops(40)),
+    (await transcribeStaves(client, pipeline, crops(40))).xmls,
     crops(40).map(
       (_, k) => `<xml>Staves/${k + 1}/transcription.musicxml</xml>`,
     ),
@@ -112,5 +113,8 @@ test("transcribeStaves: no crops, no page", async () => {
       throw new Error("should not be called");
     },
   } as unknown as OmrClient;
-  assert.deepEqual(await transcribeStaves(client, pipeline, []), []);
+  assert.deepEqual(await transcribeStaves(client, pipeline, []), {
+    xmls: [],
+    error: null,
+  });
 });

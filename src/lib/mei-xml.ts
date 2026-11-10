@@ -154,6 +154,19 @@ function attributesOf(text: string): Map<string, string> | null {
 }
 
 /**
+ * The value of attribute `name` on the first tag of `text` (a start tag, or
+ * an element that starts with one), unescaped; null when that tag lacks it.
+ * Double- and single-quoted values are read, with space around "=" allowed.
+ */
+export function tagAttribute(text: string, name: string): string | null {
+  for (const tag of tagsIn(text)) {
+    const value = tag.attributes?.get(name);
+    return value === undefined ? null : xmlUnescape(value);
+  }
+  return null;
+}
+
+/**
  * The tags of `xml` from offset `from`, in document order, found in linear
  * time. Comments, CDATA sections, processing instructions and declarations
  * hold no tags; a tag ends at the first ">" outside quotes. The scan stops at

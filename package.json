@@ -40,7 +40,7 @@
     "dompurify": "^3.4.13",
     "pdfjs-dist": "^4.10.38",
     "tesseract.js": "^7.0.0",
-    "verovio": "^6.2.0"
+    "verovio": "^6.4.0"
   },
   "overrides": {
     "cookie": "^0.7.2"

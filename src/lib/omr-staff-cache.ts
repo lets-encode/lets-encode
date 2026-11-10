@@ -5,6 +5,7 @@
 // IndexedDB (a piece's MusicXML outgrows localStorage). Failed staves are not
 // kept. Every call resolves, and without IndexedDB nothing is kept.
 
+import { storeOpener } from "./idb-store.ts";
 import type { MeasureBox } from "./mei-facsimile.ts";
 import type { OmrPipeline } from "./omr-client.ts";
 
@@ -24,35 +25,20 @@ export const staffCacheKey = (
   pipeline: OmrPipeline,
   cropMargin: number,
 ): string =>
+  // Corners rounded to whole pixels, as the record compares them (sameBox).
   [
     repoId,
     zone,
-    box.ulx,
-    box.uly,
-    box.lrx,
-    box.lry,
+    Math.round(box.ulx),
+    Math.round(box.uly),
+    Math.round(box.lrx),
+    Math.round(box.lry),
     pipeline.name,
     pipeline.version,
     cropMargin,
   ].join("|");
 
-let opening: Promise<IDBDatabase | null> | null = null;
-
-function open(): Promise<IDBDatabase | null> {
-  if (typeof indexedDB === "undefined") return Promise.resolve(null);
-  opening ??= new Promise((resolve) => {
-    try {
-      const request = indexedDB.open(DB, 1);
-      request.onupgradeneeded = () => request.result.createObjectStore(STORE);
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => resolve(null);
-      request.onblocked = () => resolve(null);
-    } catch {
-      resolve(null);
-    }
-  });
-  return opening;
-}
+const open = storeOpener(DB, STORE);
 
 /** The kept staves for `keys`, by key; a key with nothing kept is absent. */
 export async function readCachedStaves(

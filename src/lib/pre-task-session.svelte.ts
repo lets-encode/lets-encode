@@ -5,10 +5,10 @@
 // it through the hooks.
 //
 // Constructed during a component's initialisation: the effects run for the
-// component's lifetime and start over when the campaign or task changes.
+// component's lifetime, which is one campaign and task
+// (routes/[campaign]/+layout.svelte).
 
-import { untrack } from "svelte";
-import { goto } from "$app/navigation";
+import { beforeNavigate, goto } from "$app/navigation";
 import { auth, forge } from "./auth.svelte.ts";
 import type { ForgeClient } from "./forge/types.ts";
 import { commands, invoke, commentInput } from "./commands.ts";
@@ -32,15 +32,15 @@ import {
   piecePreparationsOf,
 } from "./campaign-tables.ts";
 import { liveLocks } from "./campaign-reaper.ts";
+import { canClaim } from "./campaign-graph.ts";
 import { CampaignResolution } from "./campaign-resolution.svelte.ts";
 import { CommandRunner, viewerId } from "./command-runner.svelte.ts";
 import { pendingVerdicts } from "./pending-verdicts.svelte.ts";
+import { startAutoRefresh } from "./auto-refresh.ts";
 
 export interface PreTaskHooks {
   /** Fill the editor's working copy from a fresh load. */
   loaded(d: FacsimileTaskData): void;
-  /** Clear the editor's working copy on a navigation to another campaign or task. */
-  reset(): void;
   /**
    * Continue a granted claim in the same overlay (one step list, one
    * Continue); null when there is nothing to continue with.
@@ -65,6 +65,11 @@ export class PreTaskSession {
   #draftKey: string | null = null;
   #draftTimer: ReturnType<typeof setTimeout> | null = null;
   #draftInput: DraftInput | null = null;
+  // The task branch commit the editor's state was loaded from or last saved
+  // as, and the save in progress; saves run one after another, each on top
+  // of the one before.
+  #draftBase: string | null = null;
+  #saving: Promise<void> = Promise.resolve();
 
   // Whether a load has been attempted for the current params; a failed load
   // stays on its error banner instead of retrying.
@@ -91,13 +96,18 @@ export class PreTaskSession {
   // The submission runs in the background; the editor holds until its
   // verdict lands, since a repeat would only be rejected.
   submitting = $derived.by(() =>
-    pendingVerdicts.isProcessing(`encode:${this.#taskId()}`),
+    pendingVerdicts.isProcessing(
+      { kind: "encode", task: this.#taskId() },
+      this.campaign.repoId,
+    ),
   );
   canEdit = $derived(this.holds && !this.submitting);
   // Any submission on the task still being processed (claim, encoding,
   // verdict) holds the editor's actions until it lands.
   busy = $derived.by(
-    () => this.runner.busy || pendingVerdicts.taskProcessing(this.#taskId()),
+    () =>
+      this.runner.busy ||
+      pendingVerdicts.taskProcessing(this.#taskId(), this.campaign.repoId),
   );
   /** id → login for every user the tables mention. */
   logins = $derived(this.tables?.logins ?? {});
@@ -138,6 +148,15 @@ export class PreTaskSession {
       ? buildRecord(this.card, this.viewer).find((r) => r.mine)?.sub
       : undefined,
   );
+  /** What the side panel's footer holds: the editor's actions while the
+      task is encoded, the viewer's verdict while they hold its review. */
+  footerMode = $derived<"edit" | "review" | null>(
+    this.data?.status === "encoding_required"
+      ? "edit"
+      : this.reviewSub !== undefined
+        ? "review"
+        : null,
+  );
 
   constructor(name: () => string, taskId: () => string, hooks: PreTaskHooks) {
     this.#name = name;
@@ -150,16 +169,32 @@ export class PreTaskSession {
       return () => clearInterval(timer);
     });
 
-    // A same-route navigation to another campaign or task starts over: the
-    // loaded task belongs to the previous params, its waiting draft is saved.
+    // Closing the tab asks first while a draft is waiting or being saved: a
+    // save started as the tab closes may not complete.
     $effect(() => {
-      void name();
-      void taskId();
-      untrack(() => void this.flushDraft());
-      this.data = null;
-      this.loadError = null;
-      this.#attempted = false;
-      hooks.reset();
+      const ask = (e: BeforeUnloadEvent) => {
+        if (this.#draftInput || this.draftState === "saving")
+          e.preventDefault();
+      };
+      addEventListener("beforeunload", ask);
+      return () => removeEventListener("beforeunload", ask);
+    });
+
+    // Leaving the editor within the app waits for a waiting draft to be
+    // saved; a save that fails keeps the editor open with its error.
+    beforeNavigate((nav) => {
+      if (nav.willUnload || !nav.to) return;
+      if (!this.#draftInput && this.draftState !== "saving") return;
+      nav.cancel();
+      const to = nav.to.url;
+      const delta = nav.type === "popstate" ? nav.delta : undefined;
+      void this.flushDraft()
+        .then(() => this.#saving)
+        .then(() => {
+          if (this.draftState !== "saved") return;
+          if (delta) history.go(delta);
+          else void goto(to);
+        });
     });
 
     // A pending draft is saved when the page is hidden or left.
@@ -192,31 +227,32 @@ export class PreTaskSession {
     // Opening the editor claims the task, the same way opening a score in
     // mei-friend does — a read-only look is served by the console's score
     // preview, so reaching the editor means intent to edit. Fire once per
-    // task, and only when the claim can actually be granted: never while
-    // someone else holds the task or a dependency still blocks it — that PR
+    // task, and only when the campaign automation would grant the claim and
+    // no submission on the task is still being processed — any other claim
     // would only come back rejected.
     $effect(() => {
       const d = this.data;
+      const t = this.tables;
       if (
         d &&
-        !this.runner.busy &&
+        t &&
+        !this.busy &&
         this.#autoClaimedFor !== taskId() &&
-        d.status === "encoding_required" &&
         !d.holdsLock &&
-        !d.encodingLockUser &&
-        !d.blockedBy
+        canClaim({ ...t, locks: liveLocks(t.locks) }, this.viewer, taskId())
       ) {
         this.#autoClaimedFor = taskId();
         this.claim();
       }
     });
 
-    // A settled background verdict changed the tables; reload the read-only
-    // view so it shows the recorded state. An edit session only refreshes
-    // the tables — a reload would discard the volunteer's unsubmitted work.
+    // A settled background verdict on this campaign changed the tables;
+    // reload the read-only view so it shows the recorded state. An edit
+    // session only refreshes the tables — a reload would discard the
+    // volunteer's unsubmitted work.
     $effect(() =>
-      pendingVerdicts.onSettled(() => {
-        if (this.runner.busy) return;
+      pendingVerdicts.onSettled((entry) => {
+        if (entry.repoId !== this.campaign.repoId || this.runner.busy) return;
         if (!this.canEdit) {
           this.data = null;
           this.#attempted = false;
@@ -225,6 +261,39 @@ export class PreTaskSession {
         }
       }),
     );
+
+    // Other people's claims, verdicts and comments: the tables are read again
+    // whenever the default branch has moved since the last read. The
+    // read-only view reloads when the task's own state row changed; an edit
+    // session only takes the new tables, as above.
+    $effect(() => {
+      const { owner, repo } = this.campaign;
+      if (auth.status !== "authenticated" || !owner || !repo) return;
+      return startAutoRefresh({
+        interval: () => 10_000,
+        held: () => !this.tables || this.loading || this.busy,
+        poll: async () => {
+          const f = forge();
+          const shown = this.tables;
+          if (!f || !shown) return;
+          const { sha } = await f.getRepoHead(owner, repo);
+          if (sha === shown.headSha) return;
+          const read = await invoke(commands.readTables, {}, this.ctx(f));
+          // A load that ran meanwhile has newer tables.
+          if (this.tables !== shown) return;
+          this.tables = read;
+          const task = this.#taskId();
+          if (
+            !this.canEdit &&
+            JSON.stringify(findRow(shown.rows, task, "")) !==
+              JSON.stringify(findRow(read.rows, task, ""))
+          ) {
+            this.data = null;
+            this.#attempted = false;
+          }
+        },
+      });
+    });
   }
 
   /**
@@ -253,17 +322,24 @@ export class PreTaskSession {
     const f = forge();
     this.#cancelDraft();
     if (!input || !f) return;
-    const { task_id, ...state } = input;
+    const save = this.#saving.then(() => this.#saveDraft(f, input));
+    this.#saving = save;
+    await save;
+  }
+
+  async #saveDraft(f: ForgeClient, input: DraftInput) {
+    const { task_id: _, ...state } = input;
     this.draftState = "saving";
-    const result = await invoke(commands.saveDraft, input, {
-      ...this.ctx(f),
-      progress: () => {},
-    });
-    if (task_id !== this.#taskId()) return;
+    const result = await invoke(
+      commands.saveDraft,
+      { ...input, base: this.#draftBase },
+      { ...this.ctx(f), progress: () => {} },
+    );
     if (result.error) {
       this.draftState = result.error;
       return;
     }
+    if (result.sha) this.#draftBase = result.sha;
     this.#draftKey = JSON.stringify(state);
     this.draftState = "saved";
   }
@@ -288,10 +364,7 @@ export class PreTaskSession {
   async load() {
     const f = forge();
     if (!f) return;
-    // Results for a task the page has since navigated away from are dropped.
     const task = this.#taskId();
-    const name = this.#name();
-    const stale = () => task !== this.#taskId() || name !== this.#name();
     this.loading = true;
     this.loadError = null;
     try {
@@ -299,17 +372,16 @@ export class PreTaskSession {
         invoke(commands.readFacsimile, { task_id: task }, this.ctx(f)),
         invoke(commands.readTables, {}, this.ctx(f)),
       ]);
-      if (stale()) return;
       this.data = d;
       this.tables = t;
       this.#cancelDraft();
       this.#draftKey = null;
+      this.#draftBase = d.draftBase;
       this.#hooks.loaded(d);
     } catch (e) {
-      if (!stale())
-        this.loadError = `Could not load ${task}: ${(e as Error).message}`;
+      this.loadError = `Could not load ${task}: ${(e as Error).message}`;
     } finally {
-      if (!stale()) this.loading = false;
+      this.loading = false;
     }
   }
 
@@ -330,8 +402,12 @@ export class PreTaskSession {
         // reload would discard the work the volunteer may retry from.
         if (result.error) return;
         if (opts.overviewOnSuccess) {
-          if (result.ok && !result.warn) await goto(`/${this.#name()}`);
-          // Still processing (warn): keep the editor and its work as they are.
+          if (result.ok && result.outcome !== "pending") {
+            // The submission carried the editor's state; no draft is due.
+            this.#cancelDraft();
+            await goto(`/${this.#name()}`);
+          }
+          // Still processing: keep the editor and its work as they are.
           return;
         }
         // A background command changed nothing yet — the settle listener
@@ -353,7 +429,9 @@ export class PreTaskSession {
         { task_id: this.#taskId() },
         this.ctx(f),
       );
-      if (result.error) return result;
+      // A claim still being processed is not confirmed yet: the after-claim
+      // step waits for it, and its warning stays.
+      if (result.error || result.outcome === "pending") return result;
       this.runner.log.step("Reloading…");
       await this.load();
       if (!this.data) return result;

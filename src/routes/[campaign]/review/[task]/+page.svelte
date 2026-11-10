@@ -8,7 +8,7 @@
   new comment. Pre-tasks are reviewed in their own editors, not here.
 -->
 <script lang="ts">
-  import { untrack, type Snippet } from "svelte";
+  import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { goto } from "$app/navigation";
@@ -21,6 +21,7 @@
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
   import { commands, invoke, commentInput } from "$lib/commands.ts";
+  import { startAutoRefresh } from "$lib/auto-refresh.ts";
   import { anchorCell } from "$lib/campaign-submit.ts";
   import type {
     CommandContext,
@@ -45,7 +46,7 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import { pageOfLocator, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { pageOfLocator, preTaskHref } from "$lib/campaign-graph.ts";
   import { buildBoard, buildRecord } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -53,6 +54,7 @@
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
+  import Notice from "$lib/components/Notice.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import ScorePreview from "$lib/components/ScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
@@ -128,7 +130,7 @@
   // A pre-task is reviewed in its own editor; its review address leads there.
   $effect(() => {
     if (card?.pre)
-      goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`, {
+      goto(preTaskHref(campaign, card.locator, card.task), {
         replaceState: true,
       });
   });
@@ -158,9 +160,6 @@
   }
   // The side panel's tab: the comments, until a measure is selected.
   let panelTab = $state<"selection" | "comments">("comments");
-  $effect(() => {
-    if (selectedMeasure) untrack(() => (panelTab = "selection"));
-  });
   // A new comment carries the selected measure as its anchor.
   const selectedAnchor = (): CommentAnchorInput | undefined =>
     selectedMeasure
@@ -191,16 +190,22 @@
   const ctx = (f: ForgeClient): CommandContext =>
     runner.context(f, { repoId, owner, repo });
 
+  // The default branch's head commit the shown tables were read at; null when
+  // it could not be read.
+  let headSha: string | null = null;
+
   // Read the tracking tables for the task's record, discussion and controls.
   // Only the first read shows the loading state; refreshes update in place.
-  async function load() {
+  // A background poll's failed read keeps the shown tables and throws.
+  async function load(background = false) {
     const f = readForge();
+    // The title is recorded under the name it was read for.
     const name = campaign;
     if (!loaded) loading = true;
-    loadError = null;
+    if (!background) loadError = null;
     try {
       const tables = await invoke(commands.readTables, {}, ctx(f));
-      if (name !== campaign) return;
+      headSha = tables.headSha;
       notInitialised = tables.notInitialised;
       recordCampaignTitle(name, tables.title);
       canPush = tables.canPush;
@@ -216,31 +221,37 @@
       allowSelfValidation = tables.allowSelfValidation;
       loaded = true;
     } catch (e) {
-      if (name === campaign) loadError = campaignLoadFailure(e);
+      if (background) throw e;
+      loadError = campaignLoadFailure(e);
     } finally {
-      if (name === campaign) loading = false;
+      loading = false;
     }
   }
-
-  // A same-route navigation to another campaign or task starts over.
-  $effect(() => {
-    void campaign;
-    void taskId;
-    loaded = false;
-    loadError = null;
-    anchor = null;
-    selectedMeasure = null;
-  });
 
   $effect(() => {
     if (auth.status !== "loading" && owner && repo && !loaded) load();
   });
 
-  // Background verdicts refresh the tables when they land — unless a command
-  // overlay is up, whose own after-refresh will catch the change.
+  // Other reviewers' verdicts, review edits and comments: the tables are read
+  // again whenever the default branch has moved since the last read.
+  $effect(() => {
+    if (!owner || !repo) return;
+    return startAutoRefresh({
+      interval: () => (auth.user ? 10_000 : 300_000),
+      held: () => !loaded || loading || runner.busy,
+      poll: async () => {
+        const { sha } = await readForge().getRepoHead(owner, repo);
+        if (sha !== headSha) await load(true);
+      },
+    });
+  });
+
+  // Background verdicts on this campaign refresh the tables when they land —
+  // unless a command overlay is up, whose own after-refresh will catch the
+  // change.
   $effect(() =>
-    pendingVerdicts.onSettled(() => {
-      if (!runner.busy && owner && repo) load();
+    pendingVerdicts.onSettled((entry) => {
+      if (entry.repoId === repoId && !runner.busy && owner && repo) load();
     }),
   );
 
@@ -258,7 +269,8 @@
       async (result) => {
         if (result.error) return;
         if (opts.overviewOnSuccess) {
-          if (result.ok && !result.warn) await goto(`/${campaign}`);
+          if (result.ok && result.outcome !== "pending")
+            await goto(`/${campaign}`);
           return;
         }
         // A background command changed nothing yet — the settle listener
@@ -301,7 +313,7 @@
         { task_id, subtask_id, comment },
         c,
       );
-      if (!edit.ok || edit.warn) return edit;
+      if (!edit.ok || edit.outcome === "pending") return edit;
       return invoke(
         commands.openEditor,
         { task_id, campaign, base: location.origin },
@@ -350,13 +362,15 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
 
 <!-- The last command's result, in the task box. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} bar collapsible />
+  <RunnerBanner {runner} surface="inline" />
 {/snippet}
 
 <div class="review sidehost" data-stage="review">
@@ -379,6 +393,7 @@
   {:else}
     {#snippet taskBox(headAction: Snippet | undefined)}
       <TaskBox
+        {repoId}
         {card}
         pieceName={card.piece}
         {campaign}
@@ -400,16 +415,13 @@
     <div class="scorecol" bind:clientWidth={scoreW}>
       <h1 class="vh">{card.title}</h1>
       {#if !auth.user}
-        <div class="banner warn">
-          <span>
-            {#if auth.expired}Your GitHub login has expired.{/if}
-            Viewing read-only.
-            <button type="button" class="linkish" onclick={() => login()}
-              >Log in with GitHub</button
-            >
-            to review.
-          </span>
-        </div>
+        <Notice
+          tone="warn"
+          icon="eye"
+          title={auth.expired ? "Your GitHub login has expired" : "Read-only"}
+          detail="Log in to review this task."
+          action={{ label: "Log in with GitHub", run: () => login() }}
+        />
       {/if}
       {#if fragment}
         {#if scoreW > 0}
@@ -447,6 +459,7 @@
     {#snippet reviewFooter()}
       {#if reviewSub !== undefined}
         <ReviewActions
+          {repoId}
           task={card.task}
           sub={reviewSub}
           {runner}
@@ -459,6 +472,7 @@
       {/if}
     {/snippet}
     <TaskPageSidePanel
+      {repoId}
       tables={panelTables}
       {taskId}
       {viewer}
@@ -471,6 +485,7 @@
       selection={measureSelection}
       selectionLabel="Selection"
       selectionActive={!!selectedMeasure}
+      selected={selectedMeasure}
       footer={reviewSub !== undefined ? reviewFooter : undefined}
       bind:tab={panelTab}
       composerHint={selectedMeasure

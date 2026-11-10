@@ -18,7 +18,7 @@ test("parses the header buildPieceHead emits", () => {
 });
 
 test("collects non-composer people with their roles, deduplicated", () => {
-  const mei = `<mei><meiHead>
+  const mei = `<mei><meiHead><fileDesc>
 		<titleStmt>
 			<title>Trio</title>
 			<respStmt>
@@ -28,7 +28,7 @@ test("collects non-composer people with their roles, deduplicated", () => {
 				<persName>C. Anonymous</persName>
 			</respStmt>
 		</titleStmt>
-	</meiHead></mei>`;
+	</fileDesc></meiHead></mei>`;
   assert.deepEqual(parseMeiHeader(mei), {
     title: "Trio",
     composer: "A. Composer",
@@ -37,6 +37,19 @@ test("collects non-composer people with their roles, deduplicated", () => {
       { name: "C. Anonymous", role: "" },
     ],
   });
+});
+
+test("the composer is the title statement's, as the metadata form reads it", () => {
+  const mei = `<mei><meiHead><fileDesc>
+		<titleStmt><title>Trio</title><respStmt>
+			<persName role="composer">A. Composer</persName>
+		</respStmt></titleStmt>
+		</fileDesc>
+		<manifestationList><manifestation><respStmt>
+			<persName role="composer">Someone Else</persName>
+		</respStmt></manifestation></manifestationList>
+	</meiHead></mei>`;
+  assert.equal(parseMeiHeader(mei)?.composer, "A. Composer");
 });
 
 test("an accepted contribution shows each person once", () => {

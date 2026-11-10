@@ -22,6 +22,9 @@ import {
   RateLimitError,
   getGitHubRequestTelemetry,
   resetGitHubRequestTelemetry,
+  getAuthenticatedUser,
+  brokerFetch,
+  onSessionRejected,
 } from "../forge/github-rest.ts";
 
 before(() => routeSessionVia("/auth/proxy/api.github.com"));
@@ -270,10 +273,16 @@ test("searchReposByTopic reads every search page", async (t) => {
         page === "1"
           ? Array.from({ length: 100 }, (_, i) => item(i))
           : [item(100)],
+      incomplete_results: page === "2",
     });
   });
-  const repos = await searchReposByTopic("paged-topic", "token");
+  const { repos, incomplete } = await searchReposByTopic(
+    "paged-topic",
+    "token",
+  );
   assert.equal(repos.length, 101);
+  // A page GitHub stopped searching for marks the whole listing.
+  assert.equal(incomplete, true);
   assert.deepEqual(
     urls.map((url) => new URL(url).searchParams.get("page")),
     ["1", "2"],
@@ -369,7 +378,11 @@ test("getRepoFilesBatch reads every repo's files in one GraphQL query", async (t
             defaultBranchRef: null,
           },
         },
-        errors: [{ type: "NOT_FOUND", message: "Could not resolve" }],
+        errors: [
+          { type: "NOT_FOUND", message: "Could not resolve", path: ["r1"] },
+          // An organisation's access restriction hides that repository only.
+          { type: "FORBIDDEN", message: "Restricted", path: ["r1"] },
+        ],
       });
     },
   );
@@ -402,6 +415,34 @@ test("getRepoFilesBatch reads every repo's files in one GraphQL query", async (t
   assert.equal(bodies[0].variables.n1, "gone");
   assert.equal(bodies[0].variables.p0, "tracking/task.csv");
   assert.doesNotMatch(bodies[0].query, /gone|tracking/);
+});
+
+test("getRepoFilesBatch fails on a field error instead of reading a missing file", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({
+      data: {
+        r0: {
+          isPrivate: false,
+          viewerPermission: "READ",
+          defaultBranchRef: { target: { oid: "sha0", f0: null } },
+        },
+      },
+      errors: [
+        {
+          message: "Timeout on blob",
+          path: ["r0", "defaultBranchRef", "target", "f0"],
+        },
+      ],
+    }),
+  );
+  await assert.rejects(
+    getRepoFilesBatch(
+      "token",
+      [{ owner: "o", repo: "a" }],
+      ["tracking/task.csv"],
+    ),
+    /Timeout on blob/,
+  );
 });
 
 test("getRepoFilesBatch returns null without a token", async (t) => {
@@ -461,6 +502,53 @@ test("commitFiles builds one tree and advances the requested branch from the sup
     },
   );
   assert.deepEqual(calls.at(-1)?.body, { sha: "new-commit" });
+});
+
+test("commitFiles with replaceBranch moves an existing branch, or creates a missing one, after the commit", async (t) => {
+  for (const exists of [true, false]) {
+    const calls: RecordedCall[] = [];
+    gitDataMock(t, {
+      record: calls,
+      extra: (url, method) =>
+        !exists && method === "PATCH"
+          ? Response.json(
+              { message: "Reference does not exist" },
+              { status: 422 },
+            )
+          : url.endsWith("/git/refs") && method === "POST"
+            ? Response.json({})
+            : undefined,
+    });
+    await commitFiles(
+      "token",
+      "owner",
+      "repo",
+      [{ path: "sources/score.mei", content: "work" }],
+      "Keep work",
+      { baseSha: "base-sha", newBranch: "wip-T0001", replaceBranch: true },
+    );
+    const writes = calls
+      .filter((c) => c.method !== "GET")
+      .map(
+        (c) =>
+          `${c.method} ${new URL(c.url).pathname.replace(/^.*\/repos\/owner\/repo/, "")}`,
+      );
+    assert.deepEqual(
+      writes,
+      [
+        "POST /git/trees",
+        "POST /git/commits",
+        "PATCH /git/refs/heads/wip-T0001",
+        ...(exists ? [] : ["POST /git/refs"]),
+      ],
+      exists ? "existing branch" : "missing branch",
+    );
+    assert.deepEqual(calls.find((c) => c.method === "PATCH")?.body, {
+      sha: "new-commit",
+      force: true,
+    });
+    t.mock.restoreAll();
+  }
 });
 
 test("commitFiles removes the paths it is told to delete in the same commit", async (t) => {
@@ -658,7 +746,13 @@ test("deleteBranch keeps a crafted branch name inside the ref path", async (t) =
   assert.equal(urls.length, 1);
 });
 
-test("openChangePr removes its prepared branch when PR creation fails", async (t) => {
+// A change PR on lifecycle-owner/score whose creation request fails with
+// `failure`; `open` is what GitHub lists as open PRs from the branch.
+async function failedChangePr(
+  t: TestContext,
+  failure: Response,
+  open: unknown[],
+) {
   let deleted = false;
   gitDataMock(t, {
     extra: (url, method) => {
@@ -675,15 +769,9 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
       }
       if (url.endsWith("/git/refs") && method === "POST")
         return Response.json({}, { status: 201 });
-      if (url.endsWith("/pulls") && method === "POST") {
-        return Response.json(
-          {
-            message: "Validation Failed",
-            errors: [{ message: "No commits between main and work" }],
-          },
-          { status: 422 },
-        );
-      }
+      if (url.endsWith("/pulls") && method === "POST") return failure;
+      if (url.includes("/pulls?state=open&head=") && method === "GET")
+        return Response.json(open);
       if (url.endsWith("/git/refs/heads/work") && method === "DELETE") {
         deleted = true;
         return new Response(null, { status: 204 });
@@ -691,18 +779,42 @@ test("openChangePr removes its prepared branch when PR creation fails", async (t
       return undefined;
     },
   });
+  const result = openChangePr("token", "lifecycle-owner", "score", {
+    branch: "work",
+    files: [{ path: "tracking/lock.csv", content: "lock" }],
+    message: "Prepare claim",
+    title: "Claim",
+    body: "Claim body",
+  });
+  return { result, deleted: () => deleted };
+}
 
-  await assert.rejects(
-    openChangePr("token", "lifecycle-owner", "score", {
-      branch: "work",
-      files: [{ path: "tracking/lock.csv", content: "lock" }],
-      message: "Prepare claim",
-      title: "Claim",
-      body: "Claim body",
-    }),
-    /No commits between main and work/,
+test("openChangePr removes its prepared branch when PR creation fails", async (t) => {
+  const { result, deleted } = await failedChangePr(
+    t,
+    Response.json(
+      {
+        message: "Validation Failed",
+        errors: [{ message: "No commits between main and work" }],
+      },
+      { status: 422 },
+    ),
+    [],
   );
-  assert.equal(deleted, true);
+  await assert.rejects(result, /No commits between main and work/);
+  assert.equal(deleted(), true);
+});
+
+test("openChangePr returns the PR whose creation response was lost and keeps its branch", async (t) => {
+  const { result, deleted } = await failedChangePr(
+    t,
+    new Response("", { status: 502 }),
+    [{ number: 7, html_url: "https://example.test/pr/7", head: { sha: "s1" } }],
+  );
+  const pr = await result;
+  assert.equal(pr.number, 7);
+  assert.equal(pr.headSha, "s1");
+  assert.equal(deleted(), false);
 });
 
 test("403 and 429 responses are rate limits only when GitHub or the broker reports one", async (t) => {
@@ -912,4 +1024,49 @@ test("getPullRequest keeps the diff error when the commit does not sit on the ba
     getPullRequest("token", "owner", "repo", 7),
     /diff is temporarily unavailable/,
   );
+});
+
+test("the login check is null only for a 401 and throws for any other failure", async (t) => {
+  let status = 401;
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("{}", { status }),
+  );
+  assert.equal(await getAuthenticatedUser(SESSION), null);
+  status = 502;
+  await assert.rejects(getAuthenticatedUser(SESSION), /answered 502/);
+});
+
+test("a 401 from a broker endpoint reports the session as rejected", async (t) => {
+  let rejected = 0;
+  onSessionRejected(() => rejected++);
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async (input: RequestInfo | URL) =>
+      new Response("{}", {
+        status: String(input).endsWith("/claim") ? 401 : 200,
+      }),
+  );
+  await brokerFetch("/registry/api/slug/x");
+  assert.equal(rejected, 0);
+  await brokerFetch("/registry/claim", { method: "POST" });
+  assert.equal(rejected, 1);
+});
+
+test("a 401 a relay passes on from a source does not end the session", async (t) => {
+  let rejected = 0;
+  onSessionRejected(() => rejected++);
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () =>
+      new Response("{}", {
+        status: 401,
+        headers: { "X-Lets-Encode-Upstream": "iiif" },
+      }),
+  );
+  await brokerFetch("/iiif?url=https://ex.test/page");
+  assert.equal(rejected, 0);
 });

@@ -1,6 +1,6 @@
 <!--
   Wizard step 3: what the campaign is built from — page images, PDFs, existing
-  encodings, a IIIF manifest, or nothing at all.
+  encodings or a IIIF manifest. A campaign needs page images or an encoding.
 
   Continuing reads the upload: a PDF is rasterised to one page per document page,
   a manifest's canvases are listed, and each page gets a small preview. Nothing
@@ -19,6 +19,7 @@
   } from "$lib/prepare-images.ts";
   import {
     wizard,
+    currentSetup,
     nextStep,
     previousStep,
     COPYRIGHT_ACKNOWLEDGEMENT,
@@ -35,13 +36,21 @@
 
   const manifestUrl = $derived(wizard.iiifManifestUrl.trim());
   const hasUpload = $derived(wizard.files.length > 0 || manifestUrl !== "");
+  // Without new material the pages chosen and encodings read earlier (or kept
+  // with a continued setup) go on to the next steps.
+  const kept = $derived(wizard.images.length);
+  const noMaterial = $derived(!hasUpload && !kept && !wizard.encodings.length);
   // The acknowledgement is about material being published, so it only gates
   // Continue when there is material.
   const canContinue = $derived(
-    !busy && (!hasUpload || wizard.copyrightAccepted),
+    !busy && !noMaterial && (!hasUpload || wizard.copyrightAccepted),
   );
   const continueLabel = $derived(
-    busy ? "Working…" : hasUpload ? "Continue" : "Continue without images",
+    busy
+      ? "Working…"
+      : !hasUpload && kept
+        ? `Continue with ${kept} kept page${kept === 1 ? "" : "s"}`
+        : "Continue",
   );
 
   // What the rail reports while this step is open.
@@ -55,10 +64,14 @@
     return parts.join(" · ") || "adding material";
   });
 
-  // What the pages already read were read from. A file is identified by name and
-  // size, which is what the dropzone treats as one file too.
+  // What the pages already read were read from. A file is identified by name,
+  // size and modification time, so a changed file of the same name and size
+  // is read again.
   const uploadKey = $derived(
-    [...wizard.files.map((f) => `${f.name}:${f.size}`), manifestUrl].join("|"),
+    [
+      ...wizard.files.map((f) => `${f.name}:${f.size}:${f.lastModified}`),
+      manifestUrl,
+    ].join("|"),
   );
 
   async function continueToNextStep() {
@@ -78,6 +91,9 @@
 
     busy = true;
     log.clear();
+    // The read belongs to this setup and to the material added when it began.
+    const setup = currentSetup();
+    const key = uploadKey;
     try {
       let canvases: IiifCanvas[] = [];
       if (manifestUrl) {
@@ -95,6 +111,13 @@
         },
         { brokerUrl: provider.brokerUrl },
       );
+      busy = false;
+      if (setup !== currentSetup()) return;
+      if (!prepared.candidates.length && !prepared.encodings.length) {
+        error = "The upload contains no pages or encodings.";
+        log.fail();
+        return;
+      }
       // Everything is kept to begin with, so an upload that is all of the source
       // needs no choosing.
       wizard.candidates = prepared.candidates.map((page) => ({
@@ -102,10 +125,14 @@
         include: true,
       }));
       wizard.encodings = prepared.encodings;
-      wizard.uploadKey = uploadKey;
+      wizard.uploadKey = key;
+      // Pieces set up for another upload are set up again from this one.
+      if (wizard.pieces.length && key !== wizard.piecesUpload) {
+        wizard.pieces = [];
+        wizard.piecesRedone = true;
+      }
 
       log.done();
-      busy = false;
       nextStep();
     } catch (err) {
       console.error("Upload step failed:", (err as Error).message);
@@ -115,6 +142,14 @@
     }
   }
 </script>
+
+<!-- The acknowledgement gating Continue sits on the buttons' row. -->
+{#snippet acknowledgement()}
+  <label class="ack">
+    <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
+    <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
+  </label>
+{/snippet}
 
 <WizardCard
   step="upload"
@@ -129,9 +164,10 @@
   nextLabel={continueLabel}
   nextIcon={busy ? null : "arrow-right"}
   nextDisabled={!canContinue}
-  nextReason={!busy && hasUpload && !wizard.copyrightAccepted
-    ? "Confirm that you have the right to publish these materials."
+  nextReason={!busy && noMaterial
+    ? "Add page images, a PDF, a IIIF manifest or an encoding."
     : undefined}
+  footnote={hasUpload ? acknowledgement : undefined}
 >
   <FileDropzone bind:files={wizard.files} />
 
@@ -151,11 +187,6 @@
       Its canvases are downloaded and committed with the campaign, so it keeps
       working if the source server does not.
     </span>
-  </label>
-
-  <label class="ack">
-    <input type="checkbox" bind:checked={wizard.copyrightAccepted} />
-    <span>{COPYRIGHT_ACKNOWLEDGEMENT.text}</span>
   </label>
 
   {#snippet pinned()}
@@ -193,8 +224,10 @@
   .ack {
     display: flex;
     align-items: flex-start;
+    align-self: center;
     gap: 9px;
-    margin-top: 22px;
+    min-width: 0;
+    margin-right: auto;
     font-size: 12.5px;
     font-weight: 400;
     line-height: 1.5;

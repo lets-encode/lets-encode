@@ -120,6 +120,14 @@ class RelayStore:
                 (page_id, login, now.isoformat(timespec="seconds")),
             )
 
+    def remove_page(self, page_id: str) -> None:
+        """Drop the record of a deleted page and of the runs started on it."""
+        with self._connect() as conn:
+            conn.execute(
+                "DELETE FROM omr_executions WHERE page_id = ?", (page_id,)
+            )
+            conn.execute("DELETE FROM omr_pages WHERE page_id = ?", (page_id,))
+
     def page_creator(self, page_id: str) -> str | None:
         """The login that created the page, or None for a page not recorded."""
         with self._connect() as conn:

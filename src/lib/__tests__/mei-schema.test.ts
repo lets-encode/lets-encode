@@ -31,6 +31,9 @@ import {
   systemScoreDef,
   type NamingPage,
 } from "../instrument-naming.ts";
+import { alignMeasures, mapStaves, readMeasures } from "../encoding-align.ts";
+import { mergeEncoding } from "../encoding-merge.ts";
+import { skeleton, upload } from "./encoding-fixture.ts";
 import {
   loadMeiValidator,
   validateMei,
@@ -463,4 +466,27 @@ test("named instruments validate: parts, layers, a brace, harps without a bracke
     mei.slice(0, second) + change + mei.slice(second),
   );
   assert.ok(check.ok, `named instruments: ${check.error}`);
+});
+
+test("an uploaded encoding merged into a layout skeleton is valid MEI", async () => {
+  const layout = skeleton([2, 2], 2, { 1: { rptEnd: true } });
+  const fileMei = upload(
+    `<measure n="1"><staff n="1"><layer n="1"><note xml:id="a" pname="c" oct="4" dur="2"/></layer></staff>` +
+      `<staff n="2"><layer n="1"/></staff><slur startid="#a" endid="#b"/><dynam staff="1" tstamp="1">p</dynam></measure>` +
+      `<measure n="2" right="rptend"><staff n="1"><layer n="1"><note xml:id="b" pname="d" oct="4" dur="2"/></layer></staff>` +
+      `<staff n="2"><layer n="1"><rest dur="2"/></layer></staff></measure>` +
+      `<sb/><scoreDef meter.count="2" meter.unit="4"/>` +
+      `<measure n="3"><staff n="1"><layer n="1"><multiRest num="2"/></layer></staff><staff n="2"><layer n="1"><multiRest num="2"/></layer></staff></measure>`,
+    `<scoreDef keysig="1s" meter.count="3" meter.unit="4"><staffGrp><staffDef n="1" lines="5" clef.shape="G" clef.line="2"/><staffDef n="2" lines="5" clef.shape="F" clef.line="4"/></staffGrp></scoreDef>`,
+  );
+  const result = mergeEncoding(
+    layout,
+    fileMei,
+    alignMeasures(readMeasures(layout), readMeasures(fileMei)),
+    mapStaves(["G2", "F4"], 2),
+    2,
+  );
+  assert.deepEqual(result.filled, [0, 1, 2, 3]);
+  const check = await validateMei(result.mei);
+  assert.ok(check.ok, `merged encoding: ${check.error}`);
 });

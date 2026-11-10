@@ -6,7 +6,8 @@
 // commit, the source's files as of its default branch:
 //   config.yaml             new name, title, repo id and instigator;
 //                           `preparation` set on every facsimile piece
-//   caller.yml, page images as they are
+//   caller.yml, page images, uploaded encodings
+//                           as they are
 //   README.md               new title and address
 //   sources/<piece>/        a facsimile piece's score with the source's
 //                           corrected boxes (below); any other piece's score
@@ -51,6 +52,8 @@ import {
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
+  configEntryZones,
+  configPieceEntries,
   configString,
 } from "../src/lib/campaign-tables.ts";
 import {
@@ -152,32 +155,19 @@ async function read(path: string): Promise<string | null> {
 
 /** The pieces of config.yaml, read as configPieces reads them, with the fields the task plan needs. */
 function configPieces(yaml: string): ConfigPiece[] {
-  const block = /^pieces:[^\S\n]*\n((?:[ \t].*\n?)*)/m.exec(yaml)?.[1] ?? "";
-  return block
-    .split(/^ {2}- /m)
-    .slice(1)
-    .map((entry) => ({
-      id: configString(entry, "id"),
-      kind: configString(entry, "kind"),
-      path: configString(entry, "path"),
-      preparation: configString(entry, "preparation") || undefined,
-      pages: Number(configString(entry, "pages")) || undefined,
-      zones: [
-        ...entry.matchAll(
-          /\{ surface: (\d+), ulx: (\d+), uly: (\d+), lrx: (\d+), lry: (\d+) \}/g,
-        ),
-      ].map(([, surface, ulx, uly, lrx, lry]) => ({
-        surface: Number(surface),
-        ulx: Number(ulx),
-        uly: Number(uly),
-        lrx: Number(lrx),
-        lry: Number(lry),
-      })),
-      header: {
-        title: configString(entry, "title"),
-        composer: configString(entry, "composer"),
-      },
-    }));
+  return configPieceEntries(yaml).map((entry) => ({
+    id: configString(entry, "id"),
+    kind: configString(entry, "kind"),
+    path: configString(entry, "path"),
+    preparation: configString(entry, "preparation") || undefined,
+    encoding: configString(entry, "encoding") || undefined,
+    pages: Number(configString(entry, "pages")) || undefined,
+    zones: configEntryZones(entry),
+    header: {
+      title: configString(entry, "title"),
+      composer: configString(entry, "composer"),
+    },
+  }));
 }
 
 /**
@@ -304,10 +294,17 @@ for (const piece of pieces) {
 }
 
 const copied = new Set(files.map((f) => f.path));
+const encodings = new Set(
+  pieces.flatMap((p) => (p.encoding ? [p.encoding] : [])),
+);
 for (const path of srcPaths) {
   if (copied.has(path) || path === CONFIG_PATH || path.startsWith("tracking/"))
     continue;
-  if (path.startsWith("sources/") && !/\.(jpe?g|png|tiff?|webp)$/i.test(path))
+  if (
+    path.startsWith("sources/") &&
+    !encodings.has(path) &&
+    !/\.(jpe?g|png|tiff?|webp)$/i.test(path)
+  )
     continue;
   if (path === "README.md") {
     const readme = (await read(path)) ?? "";

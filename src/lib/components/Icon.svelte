@@ -29,6 +29,7 @@
     | "plus"
     | "sort"
     | "clock"
+    | "clock-pause"
     | "upload"
     | "zoom-in"
     | "zoom-out"
@@ -38,13 +39,13 @@
     | "page-none"
     | "undo"
     | "redo"
+    | "reply"
     | "help"
     | "minus"
     | "trash"
     | "copy"
     | "select-several"
     | "draw-box"
-    | "focus"
     | "comment"
     | "more"
     | "grip"
@@ -59,7 +60,8 @@
     | "repeat-end"
     | "repeat-both"
     | "segno"
-    | "coda";
+    | "coda"
+    | "wand";
   let {
     name,
     size = 14,
@@ -103,15 +105,15 @@
     minus: "M5 12h14",
     sort: "M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4",
     clock: "M12 7v5l3 2M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
+    "clock-pause": "M12 7v5l2 1M20.8 13.5A9 9 0 1 0 13.5 20.8M17 16v5M21 16v5",
     undo: "M9 14 4 9l5-5M4 9h10.5a5.5 5.5 0 0 1 0 11H11",
     redo: "M15 14l5-5-5-5M20 9H9.5a5.5 5.5 0 0 0 0 11H13",
+    reply: "M18 18v-6a3 3 0 0 0-3-3H5M9 13 5 9l4-4",
     help: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0zM9.2 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
     trash: "M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10.5 10.5v5M13.5 10.5v5",
     copy: "M9 9h11v11H9zM15 5V4H4v11h1",
     "select-several": "M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 17.5l2 2 4-4",
     "draw-box": "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4",
-    focus:
-      "M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4M14.5 12a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z",
     comment: "M5 5h14v10h-9l-4 4v-4H5z",
     more: "M5 12h.01M12 12h.01M19 12h.01",
     grip: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
@@ -123,6 +125,7 @@
     segno:
       "M16 7c-1.5-2.5-8-2.5-8 1s8 4.5 8 8-6.5 3.5-8 1M6 18 18 6M7 11h.01M17 13h.01",
     coda: "M12 5a4.5 7 0 1 0 0 14 4.5 7 0 1 0 0-14zM12 2v20M3 12h18",
+    wand: "M2.4 3.6 3.6 2.4a1.2 1.2 0 0 1 1.7 0l16.3 16.2a1.2 1.2 0 0 1 0 1.7l-1.3 1.3a1.2 1.2 0 0 1-1.7 0L2.4 5.4a1.2 1.2 0 0 1 0-1.8zM10 7l-3 3M19 6v4M5 14v4M14 2v2M17 8h4M3 16h4M13 3h2",
     "page-two": "M2.5 5H12v14H2.5zM12 5h9.5v14H12z",
     "page-whole": "M5 3h14v18H5zM8 6h8v7H8z",
     overlap: "M4 4h10v10H4zM10 10h10v10H10zM10 14l4-4",

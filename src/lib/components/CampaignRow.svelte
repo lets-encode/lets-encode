@@ -6,21 +6,20 @@
   below 600px the next task moves under the campaign as a strip.
 -->
 <script lang="ts">
-  import {
-    claimLabel,
-    preTaskHref,
-    reviewHref,
-    workPlace,
-  } from "$lib/campaign-graph.ts";
+  import { taskAction, taskActionHref } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
   import ProgressBar from "./ProgressBar.svelte";
-  import { elapsed } from "$lib/campaign-board.ts";
-  import { attentionCount, nextTask } from "$lib/campaign-stats.ts";
+  import { timeAgo } from "$lib/campaign-board.ts";
+  import {
+    attentionCount,
+    nextTask,
+    nextTaskMode,
+  } from "$lib/campaign-stats.ts";
   import type { CampaignStats, NextTask } from "$lib/campaign-stats.ts";
   import { login } from "$lib/auth.svelte.ts";
   import { readForge } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { piecePreview } from "$lib/piece-previews.ts";
+  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import type { PiecePreview } from "$lib/piece-previews.ts";
   import { systemThumb } from "$lib/system-thumbs.ts";
 
@@ -43,11 +42,9 @@
   const next = $derived(nextTask(stats, viewer));
 
   const activity = $derived.by(() => {
-    if (stats.lastActivity) {
-      const e = elapsed(stats.lastActivity);
-      return e === "now" ? "active just now" : `active ${e} ago`;
-    }
-    if (stats.createdAt) return `created ${elapsed(stats.createdAt)} ago`;
+    if (timeAgo(stats.lastActivity))
+      return `active ${timeAgo(stats.lastActivity)}`;
+    if (timeAgo(stats.createdAt)) return `created ${timeAgo(stats.createdAt)}`;
     return "no activity yet";
   });
   const attention = $derived(owned ? attentionCount(stats) : 0);
@@ -64,6 +61,9 @@
   const piecePath = $derived(stats.taskDefs.find((t) => t.fragment)?.fragment);
   const repoOwner = $derived(stats.owner);
   const repoName = $derived(stats.repo);
+  const version = $derived(
+    piecePath ? scoreVersion(stats.history, stats.taskDefs, piecePath) : "",
+  );
   let preview = $state<PiecePreview | null>(null);
   // Raised by "Try again" to load a failed preview anew.
   let attempt = $state(0);
@@ -71,9 +71,11 @@
     const path = piecePath;
     void attempt;
     if (!path) return;
-    piecePreview(readForge(), repoOwner, repoName, path, false).then((p) => {
-      preview = p;
-    });
+    piecePreview(readForge(), repoOwner, repoName, path, false, version).then(
+      (p) => {
+        preview = p;
+      },
+    );
   });
 
   // A small image of the first page's first system, cut in the browser and
@@ -114,27 +116,8 @@
     n.action === "review" ||
     (n.action === "continue" && n.kind !== "review" && !n.pre);
 
-  const actLabel = (n: NextTask): string => {
-    if (n.action === "review") return "Claim to review";
-    if (n.checksOpening)
-      return n.action === "continue"
-        ? "Continue in score check"
-        : "Claim & open score check";
-    if (n.action === "continue") return "Continue in mei-friend";
-    return claimLabel(n.locator);
-  };
-  const claimTip = (n: NextTask): string =>
-    n.action === "continue"
-      ? n.checksOpening
-        ? "Opens the score check of the task you hold."
-        : "Opens the task you hold in mei-friend."
-      : n.action === "review"
-        ? "Claims a review of this task for you and opens the review."
-        : n.checksOpening
-          ? "Claims this task for you and opens the score check."
-          : n.pre
-            ? `Claims this task for you and opens the ${workPlace(n.locator)}.`
-            : "Claims this task for you and opens the score in mei-friend.";
+  // The next task's button: a claim, or the work the viewer holds.
+  const actionOf = (n: NextTask) => taskAction(n, nextTaskMode(n));
 </script>
 
 <div class="shelfrow">
@@ -182,33 +165,27 @@
     {#if next}
       <span class="nexttitle" title={next.title}>{next.title}</span>
       {#if claimable(next)}
+        {@const act = actionOf(next)}
         <button
           type="button"
-          class="btn btn-primary {next.action === 'review'
-            ? 'btn-review'
-            : next.pre
-              ? 'btn-pre'
-              : 'btn-enc'}"
-          title={claimTip(next)}
+          class="btn btn-primary btn-{act.stage}"
+          title={act.title}
           disabled={busy ||
             pendingVerdicts.taskProcessing(next.task, stats.repoId)}
           onclick={() => onact(stats, next)}
-          >{actLabel(next)}{#if next.action !== "review" && !next.pre}<Icon
+          >{act.label}{#if act.target === "mei-friend"}<Icon
               name="external"
             />{/if}</button
         >
       {:else if next.action === "continue"}
+        {@const act = actionOf(next)}
         <a
           class="btn"
-          href={next.kind === "review"
-            ? reviewHref(stats.name, next.locator, next.task)
-            : preTaskHref(stats.name, next.locator, next.task)}
-          >{next.kind === "review"
-            ? "Continue in review"
-            : `Continue in ${workPlace(next.locator)}`}</a
+          href={taskActionHref(stats.name, next, act)}
+          title={act.title}>{act.label}</a
         >
       {:else if !viewer}
-        <button type="button" class="linkish" onclick={() => login()}
+        <button type="button" class="btn" onclick={() => login()}
           >Log in with GitHub to claim</button
         >
       {:else}

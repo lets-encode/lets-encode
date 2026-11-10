@@ -8,7 +8,12 @@
   import AbandonButton from "$lib/components/AbandonButton.svelte";
   import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
 
-  let { session }: { session: PreTaskSession } = $props();
+  // The stage whose colour the claim button takes: preparation, or encoding
+  // for the score check, the first step of an encoding task.
+  let {
+    session,
+    stage = "pre",
+  }: { session: PreTaskSession; stage?: "pre" | "enc" } = $props();
   const d = $derived(session.data!);
 </script>
 
@@ -22,14 +27,14 @@
   >
   <button
     type="button"
-    class="btn btn-pre"
+    class="btn btn-{stage}"
     onclick={() => session.claim()}
     disabled={session.busy}>Claim task</button
   >
 {:else if d.status === "encoding_required" && !d.blockedBy && !d.encodingLockUser}
   <button
     type="button"
-    class="btn btn-pre"
+    class="btn btn-{stage}"
     onclick={() => session.claim()}
     disabled={session.busy}>Claim task</button
   >

@@ -168,7 +168,10 @@ class SessionFiles(FileSystemCache):
                 str(value["githubToken"]).encode()
             ).decode()
         except InvalidToken:
-            del opened["githubToken"]
+            # Without its token the session is no login: what it recorded
+            # for that login goes too.
+            for key in ("githubToken", "userLogin", "campaignRepos"):
+                opened.pop(key, None)
         return opened
 
     def _prune(self):
@@ -241,9 +244,9 @@ if proxy_hops:
 
 
 # Rate-limit counters live in the storage RATELIMIT_STORAGE_URI names. The
-# default memory:// keeps them in-process: with several gunicorn workers the
-# effective limit is the stated limit times the worker count, and counters
-# reset on restart. Point the URI at redis/memcached to share counters.
+# default memory:// keeps them in-process (gunicorn_config.py runs one worker),
+# and counters reset on restart. Point the URI at redis/memcached to share
+# counters between processes.
 def client_network():
     """
     The client's address as the rate limits key on it: an IPv6 address by its
@@ -306,10 +309,10 @@ def relay_fetch_only():
 # path is passed through unchanged by the production reverse proxy and by the
 # Vite dev proxy.
 try:
-    from .registry import GITHUB_API, registry
+    from .registry import GITHUB_API, registry, signed_in
 except ImportError:
     # Run as a top-level module (flask --app app run, gunicorn app:app).
-    from registry import GITHUB_API, registry
+    from registry import GITHUB_API, registry, signed_in
 app.register_blueprint(registry, url_prefix="/registry")
 
 # The registry's admin routes serve only when ADMIN_TOKEN and
@@ -498,15 +501,30 @@ def write_beyond_the_app(path):
 # generated from the campaign template, or a fork whose parent is one. The
 # template itself takes /generate only. Repositories found to be campaign
 # repositories, and those /generate created, are kept in the session as
-# "campaignRepos" (lower-case owner/name).
+# "campaignRepos" (lower-case owner/name → when found) for
+# CAMPAIGN_REPO_CHECK_S; a name is looked up again after that, since a
+# renamed repository's old name can come to name another repository.
+CAMPAIGN_REPO_CHECK_S = 600
 CAMPAIGN_TEMPLATE = (
     getenv("CAMPAIGN_TEMPLATE") or "lets-encode/campaign-template"
 ).lower()
 _REPO_PATH = re.compile(r"/repos/([^/]+/[^/]+)(/.*)?")
 
 
+class RepositoryLookupFailed(Exception):
+    """GitHub answered a repository lookup with neither the repository nor 404."""
+
+    def __init__(self, response):
+        super().__init__(response.status_code)
+        self.response = response
+
+
 def fetch_repository(full_name):
-    """GitHub's description of a repository as the session sees it, or None."""
+    """
+    GitHub's description of a repository as the session sees it, or None when
+    GitHub does not show it (404). Raises RepositoryLookupFailed for any other
+    failed answer.
+    """
     response = requests.get(
         "{}/repos/{}".format(GITHUB_API, full_name),
         headers={
@@ -515,8 +533,10 @@ def fetch_repository(full_name):
         },
         timeout=(10, 30),
     )
-    if not response.ok:
+    if response.status_code == 404:
         return None
+    if not response.ok:
+        raise RepositoryLookupFailed(response)
     body = response.json()
     return body if isinstance(body, dict) else None
 
@@ -527,14 +547,25 @@ def generated_from_template(repository):
 
 
 def remember_campaign_repo(full_name):
-    known = session.get("campaignRepos", [])
-    if full_name.lower() not in known:
-        session["campaignRepos"] = [*known, full_name.lower()]
+    now = time.time()
+    known = session.get("campaignRepos")
+    session["campaignRepos"] = {
+        **{
+            name: found
+            for name, found in (
+                known if isinstance(known, dict) else {}
+            ).items()
+            if now - found < CAMPAIGN_REPO_CHECK_S
+        },
+        full_name.lower(): now,
+    }
 
 
 def campaign_repository(full_name):
     """Whether the proxy may write to `full_name`. May raise RequestException."""
-    if full_name.lower() in session.get("campaignRepos", []):
+    known = session.get("campaignRepos")
+    found = known.get(full_name.lower()) if isinstance(known, dict) else None
+    if found is not None and time.time() - found < CAMPAIGN_REPO_CHECK_S:
         return True
     repository = fetch_repository(full_name)
     if repository is None:
@@ -554,6 +585,47 @@ def campaign_repository(full_name):
         return False
     remember_campaign_repo(full_name)
     return True
+
+
+# GitHub's answer to the write check's repository lookup, when it is neither
+# the repository nor 404: an ended session (401) and a rate limit keep GitHub's
+# status and rate-limit headers and are marked as GitHub's, so the app reads
+# them as it reads any GitHub answer; any other failure is a 502.
+RATE_LIMIT_HEADERS = (
+    "Retry-After",
+    "X-RateLimit-Limit",
+    "X-RateLimit-Remaining",
+    "X-RateLimit-Reset",
+    "X-RateLimit-Resource",
+)
+
+
+def repository_lookup_failure(upstream):
+    status = upstream.status_code
+    rate_limited = status == 429 or (
+        status == 403 and upstream.headers.get("X-RateLimit-Remaining") == "0"
+    )
+    if status == 401 or rate_limited:
+        try:
+            body = upstream.json()
+        except ValueError:
+            body = None
+        message = body.get("message", "") if isinstance(body, dict) else ""
+        response = jsonify(message=message or "GitHub refused the request")
+        response.status_code = status
+        for name in RATE_LIMIT_HEADERS:
+            if name in upstream.headers:
+                response.headers[name] = upstream.headers[name]
+        response.headers["X-Lets-Encode-Upstream"] = "github"
+        return response
+    return (
+        jsonify(
+            error="GitHub could not be asked whether this is a campaign repository ({})".format(
+                status
+            )
+        ),
+        502,
+    )
 
 
 def write_outside_campaigns(path):
@@ -787,7 +859,7 @@ def in_relay_slot(view):
 
     @functools.wraps(view)
     def wrapped(*args, **kwargs):
-        if "githubToken" not in session:
+        if not signed_in():
             return view(*args, **kwargs)
         login = session.get("userLogin")
         with relay_use.lock:
@@ -927,14 +999,21 @@ AUTH_ERROR_CODES = {"access_denied": "denied", "mismatching_state": "state"}
 @limiter.limit("300 per minute", key_func=lambda: "all")
 def login():
     # Remember where the SPA wants the user back, then hand off to GitHub.
-    # authlib generates and session-stores the OAuth `state` parameter.
-    session["return_to"] = safe_return_path(request.args.get("return_to"))
-    return github.authorize_redirect(oauth_callback_url())
+    # authlib generates and session-stores the OAuth `state` parameter; the
+    # return path is kept under it, so logins started in two tabs each come
+    # back where they started.
+    redirect_uri = oauth_callback_url()
+    rv = github.create_authorization_url(redirect_uri)
+    github.save_authorize_data(redirect_uri=redirect_uri, **rv)
+    session["return_to:" + rv["state"]] = safe_return_path(
+        request.args.get("return_to")
+    )
+    return redirect(rv["url"])
 
 
 @app.route("/authorize")
 def authorize():
-    return_to = session.pop("return_to", "/")
+    return_to = session.pop("return_to:" + request.args.get("state", ""), "/")
     try:
         token = github.authorize_access_token()
     except Exception as e:
@@ -955,14 +1034,22 @@ def authorize():
         return redirect(
             with_auth_error(return_to, AUTH_ERROR_CODES.get(error, "failed"))
         )
-    resp = github.get("user", token=token)
-    if not resp.ok:
+    # A failed or unreadable answer ends as a login error, like a missing login.
+    try:
+        resp = github.get("user", token=token)
+        login = resp.json().get("login") if resp.ok else None
+    except (requests.RequestException, ValueError):
+        login = None
+    if not (isinstance(login, str) and login):
         return redirect(with_auth_error(return_to, "user"))
-    # Replace the pre-login session ID after authentication so an ID fixed by
-    # an attacker cannot become an authenticated session.
-    app.session_interface.regenerate(session)
+    # What the session recorded for an earlier login does not carry over; the
+    # OAuth data of logins still under way in other tabs stays. Replace the
+    # pre-login session ID after authentication so an ID fixed by an attacker
+    # cannot become an authenticated session.
+    session.pop("campaignRepos", None)
     session["githubToken"] = token["access_token"]
-    session["userLogin"] = resp.json().get("login", "")
+    session["userLogin"] = login
+    app.session_interface.regenerate(session)
     return redirect(return_to)
 
 
@@ -977,13 +1064,25 @@ def revoke_github_token(token):
         return
     try:
         # 204 = revoked, 404 = already invalid; both leave the token unusable.
-        requests.delete(
+        res = requests.delete(
             "{}/applications/{}/token".format(GITHUB_API, client_id),
             auth=(client_id, client_secret),
             json={"access_token": token},
             headers={"Accept": "application/vnd.github+json"},
             timeout=5,
         )
+        if res.status_code not in (204, 404):
+            app.logger.warning(
+                "token_revoke %s",
+                json.dumps(
+                    {
+                        "source": "broker",
+                        "event": "revoke_failed",
+                        "status": res.status_code,
+                    },
+                    separators=(",", ":"),
+                ),
+            )
     except requests.RequestException as e:
         app.logger.warning(
             "token_revoke %s",
@@ -1032,7 +1131,7 @@ def iiif_fetch():
     session gates who may use the relay, nothing more — and redirects are
     followed manually so each hop is re-checked against the address rules.
     """
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     target = request.args.get("url", "")
     if not target:
@@ -1088,6 +1187,19 @@ def iiif_fetch():
             continue
         break
 
+    # A source's error answer is passed on as its status, marked as the
+    # source's, whatever its body: an error page is not relayed.
+    if response.status_code >= 400:
+        response.close()
+        failed = jsonify(
+            error="The source answered {}".format(response.status_code)
+        )
+        failed.status_code = response.status_code
+        failed.headers["X-Lets-Encode-Upstream"] = "iiif"
+        if "retry-after" in response.headers:
+            failed.headers["Retry-After"] = response.headers["retry-after"]
+        return failed
+
     content_type = response.headers.get("content-type", "")
     if not content_type.startswith(IIIF_ALLOWED_CONTENT):
         response.close()
@@ -1115,6 +1227,14 @@ def iiif_fetch():
     )
 
 
+def omr_refusal(error, status):
+    """The broker's own refusal of an OMR request, marked as the broker's."""
+    response = jsonify(error=error, source="musibot")
+    response.status_code = status
+    response.headers["X-Lets-Encode-Upstream"] = "broker"
+    return response
+
+
 @app.route("/omr/api/<path:path>", methods=["GET", "POST", "DELETE"])
 # Transcribing a page is one execution per staff plus the polling for each,
 # so a page is a burst of a few dozen calls.
@@ -1127,24 +1247,16 @@ def omr_api(path):
     Relay one Musibot API call, attaching the institutional token. JSON in,
     JSON out; the upstream status is passed through.
     """
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     if not MUSIBOT_TOKEN:
-        return (
-            jsonify(
-                error="OMR is not configured on this instance", source="musibot"
-            ),
-            503,
-        )
+        return omr_refusal("OMR is not configured on this instance", 503)
     for method, pattern in OMR_ROUTES:
         route = pattern.fullmatch(path) if method == request.method else None
         if route:
             break
     else:
-        return (
-            jsonify(error="That OMR endpoint is not relayed", source="musibot"),
-            404,
-        )
+        return omr_refusal("That OMR endpoint is not relayed", 404)
     login = session.get("userLogin")
     groups = route.groups()
     page_id = groups[0] if groups else None
@@ -1156,12 +1268,8 @@ def omr_api(path):
             and not relay_store.has_execution(page_id, execution_id)
         )
     ):
-        return (
-            jsonify(
-                error="That OMR page or run does not belong to this account",
-                source="musibot",
-            ),
-            404,
+        return omr_refusal(
+            "That OMR page or run does not belong to this account", 404
         )
     starts_run = request.method == "POST" and path.endswith(
         "/pipeline-executions"
@@ -1204,6 +1312,8 @@ def omr_api(path):
         created = json_field(response, "page_id")
         if isinstance(created, str):
             relay_store.add_page(created, login)
+    elif response.ok and request.method == "DELETE":
+        relay_store.remove_page(page_id)
     elif response.ok and starts_run:
         started = str(json_field(response, "execution_id"))
         if re.fullmatch(r"0|[1-9][0-9]{0,17}", started):
@@ -1236,7 +1346,7 @@ def omr_blob():
     handed out. Only URLs on the service's own host are relayed, and a body
     in either direction is capped.
     """
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     url = request.args.get("url", "")
     parsed = urlsplit(url)
@@ -1343,6 +1453,101 @@ def omr_blob():
     )
 
 
+def refused(event, error, path):
+    """A 403 from the broker for a request it does not relay, logged."""
+    app.logger.warning(
+        "github_api %s",
+        json.dumps(
+            {
+                "source": "broker",
+                "event": event,
+                "method": request.method,
+                "endpoint": path,
+                "user": session.get("userLogin"),
+            },
+            separators=(",", ":"),
+        ),
+    )
+    response = jsonify(error=error, source="broker")
+    response.status_code = 403
+    response.headers["X-Lets-Encode-Upstream"] = "broker"
+    return response
+
+
+def relay_refusal(path):
+    """
+    The broker's answer when the proxy may not relay this request to the
+    api.github.com `path`, or None when it may.
+    """
+    # A "." or ".." segment would move the request to another endpoint:
+    # requests resolves them before sending.
+    if any(segment in (".", "..") for segment in path.split("/")):
+        return jsonify(error="Path not allowed"), 400
+    routes = PROXY_ROUTES.get(request.method)
+    if (
+        routes is None
+        or not routes.fullmatch(path)
+        or write_beyond_the_app(path)
+    ):
+        return refused(
+            "endpoint_refused", "That GitHub endpoint is not relayed", path
+        )
+    try:
+        outside = write_outside_campaigns(path)
+    except requests.Timeout:
+        return jsonify(error="Upstream request timed out"), 504
+    except RepositoryLookupFailed as e:
+        return repository_lookup_failure(e.response)
+    except (requests.RequestException, ValueError):
+        return jsonify(error="Upstream request failed"), 502
+    if outside:
+        return refused(
+            "write_refused", "Writes go to campaign repositories only", path
+        )
+    return None
+
+
+_MOVED_REPO = re.compile(r"/repositories/(\d+)(/.*)?")
+
+
+def moved_repository_url(location):
+    """
+    The URL a GitHub redirect to /repositories/<id>/… stands for under the
+    repository's current name, with the redirect's query; None for any other
+    redirect or when GitHub does not show the repository.
+    """
+    parts = urlsplit(location)
+    match = _MOVED_REPO.fullmatch(parts.path)
+    if (
+        parts.scheme != "https"
+        or parts.netloc not in ALLOWED_DOMAINS
+        or not match
+    ):
+        return None
+    lookup = requests.get(
+        "{}/repositories/{}".format(GITHUB_API, match.group(1)),
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": "token " + session["githubToken"],
+        },
+        timeout=(10, 30),
+    )
+    full_name = json_field(lookup, "full_name") if lookup.ok else None
+    if not isinstance(full_name, str) or not _REPO_PATH.fullmatch(
+        "/repos/" + full_name
+    ):
+        return None
+    return urlunsplit(
+        (
+            "https",
+            parts.netloc,
+            "/repos/" + quote(full_name) + (match.group(2) or ""),
+            parts.query,
+            "",
+        )
+    )
+
+
 @app.route(
     "/proxy/<path:url>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]
 )
@@ -1359,7 +1564,7 @@ def proxy(url):
     # token, and gating it prevents abuse as an open relay. Anonymous reads
     # (e.g. the public campaign listing) go directly to the API from the
     # browser instead.
-    if "githubToken" not in session:
+    if not signed_in():
         return jsonify(error="Authentication required"), 401
     # The server has already percent-decoded the path. Quoting it again keeps
     # a literal %, ? or # in a file name inside the path GitHub receives.
@@ -1369,61 +1574,10 @@ def proxy(url):
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.netloc not in ALLOWED_DOMAINS:
         return jsonify(error="Domain not allowed"), 400
-    # A "." or ".." segment would move the request to another endpoint:
-    # requests resolves them before sending.
-    if any(segment in (".", "..") for segment in parsed.path.split("/")):
-        return jsonify(error="Path not allowed"), 400
-    routes = PROXY_ROUTES.get(request.method)
-    if (
-        routes is None
-        or not routes.fullmatch(parsed.path)
-        or write_beyond_the_app(parsed.path)
-    ):
-        app.logger.warning(
-            "github_api %s",
-            json.dumps(
-                {
-                    "source": "broker",
-                    "event": "endpoint_refused",
-                    "method": request.method,
-                    "endpoint": parsed.path,
-                    "user": session.get("userLogin"),
-                },
-                separators=(",", ":"),
-            ),
-        )
-        response = jsonify(
-            error="That GitHub endpoint is not relayed", source="broker"
-        )
-        response.status_code = 403
-        response.headers["X-Lets-Encode-Upstream"] = "broker"
-        return response
-    try:
-        outside = write_outside_campaigns(parsed.path)
-    except requests.Timeout:
-        return jsonify(error="Upstream request timed out"), 504
-    except (requests.RequestException, ValueError):
-        return jsonify(error="Upstream request failed"), 502
-    if outside:
-        app.logger.warning(
-            "github_api %s",
-            json.dumps(
-                {
-                    "source": "broker",
-                    "event": "write_refused",
-                    "method": request.method,
-                    "endpoint": parsed.path,
-                    "user": session.get("userLogin"),
-                },
-                separators=(",", ":"),
-            ),
-        )
-        response = jsonify(
-            error="Writes go to campaign repositories only", source="broker"
-        )
-        response.status_code = 403
-        response.headers["X-Lets-Encode-Upstream"] = "broker"
-        return response
+    refusal = relay_refusal(parsed.path)
+    if refusal is not None:
+        return refusal
+    path = parsed.path
     if request.query_string:
         url += "?" + request.query_string.decode()
 
@@ -1455,13 +1609,43 @@ def proxy(url):
             timeout=(10, 60),
             allow_redirects=False,
         )
+        # A renamed or transferred repository answers its old name with a
+        # redirect to /repositories/<id>/…. The request is sent once more,
+        # to the repository's current name, after the same checks.
+        if response.status_code in (301, 302, 307, 308):
+            moved = moved_repository_url(
+                requests.structures.CaseInsensitiveDict(
+                    response.raw.headers
+                ).get("Location", "")
+            )
+            if moved is None:
+                return (
+                    jsonify(
+                        error="GitHub redirected the request elsewhere",
+                        source="broker",
+                    ),
+                    502,
+                )
+            path = urlsplit(moved).path
+            refusal = relay_refusal(path)
+            if refusal is not None:
+                return refusal
+            url = moved
+            response = requests.request(
+                request.method,
+                url,
+                headers=headers,
+                data=body,
+                timeout=(10, 60),
+                allow_redirects=False,
+            )
     except requests.Timeout:
         return jsonify(error="Upstream request timed out"), 504
     except requests.RequestException:
         return jsonify(error="Upstream request failed"), 502
     if (
         request.method == "POST"
-        and parsed.path.endswith("/generate")
+        and path.endswith("/generate")
         and response.status_code == 201
     ):
         created = json_field(response, "full_name")
@@ -1508,7 +1692,7 @@ def proxy(url):
             {
                 "source": "github",
                 "method": request.method,
-                "endpoint": parsed.path,
+                "endpoint": path,
                 "status": response.status_code,
                 "duration_ms": round((time.monotonic() - started_at) * 1000),
                 "user": session.get("userLogin"),

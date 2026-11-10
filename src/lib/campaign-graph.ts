@@ -4,7 +4,8 @@
 // state.csv, lock.csv and config.yaml, so the projection re-derives on every
 // table refresh. No Svelte, no GitHub.
 
-import { isFinalValidation } from "./campaign-tables.ts";
+import { isPassVerdict } from "./campaign-tables.ts";
+import { claimRefusal, waitsFor } from "./campaign-claim.ts";
 import type { TaskRow, StateRow, LockRow } from "./campaign-tables.ts";
 
 /**
@@ -41,17 +42,11 @@ export type StatusKey =
   | "review"
   | "open";
 
-const STATUS_KEYS = new Set<string>([
-  "completed",
+// The statuses state.csv holds on a task row.
+const TASK_STATUSES = new Set<string>([
   "encoding_required",
-  "encoding",
-  "claimed",
   "validation_required",
-  "pending",
-  "blocked",
-  "pass",
-  "review",
-  "open",
+  "completed",
 ]);
 
 /** One validation slot on its task node. */
@@ -87,23 +82,80 @@ export interface TaskNode {
 
 /**
  * Whether a task is a pre-task: score setup (the score's staves, clefs, key
- * signature and meter, filled in the setup editor) or measure correction
+ * signature and meter, filled in the setup editor), measure correction
  * (`measure-zones`, or `omr-layout` for an OMR-prepared piece, which also
- * corrects the staff boxes; both in the zone editor). Encoding tasks — whole-file
+ * corrects the staff boxes; both in the zone editor) or encoding alignment
+ * (`encoding-align`: an uploaded encoding's measures placed in the corrected
+ * ones, in the alignment editor). Encoding tasks — whole-file
  * (empty locator) and per-page (`surface-N`) — are not pre-tasks and use
  * mei-friend.
  */
 export function isPreTask(locator: string): boolean {
-  return (
-    locator === "score-setup" ||
-    locator === "measure-zones" ||
-    locator === "omr-layout"
-  );
+  return Object.hasOwn(PRE_TASKS, locator);
+}
+
+/** A task's work stage. */
+export type WorkStage =
+  | "score setup"
+  | "measure correction"
+  | "encoding alignment"
+  | "encoding";
+
+/** What the app knows of each kind of pre-task: the route segment of its own
+    editor, its work stage, its name, and what it asks for, briefly (the
+    board's card) and in full (the task box). */
+const PRE_TASKS: Record<
+  string,
+  {
+    route: "setup" | "zones" | "align";
+    stage: WorkStage;
+    name: string;
+    brief: string;
+    full: string;
+  }
+> = {
+  "score-setup": {
+    route: "setup",
+    stage: "score setup",
+    name: "Score setup",
+    brief:
+      "Copy the staves, clefs, key signature and time signature from the source's first measure.",
+    full: "Copy the staves, clefs, key signature and time signature from the source's first measure, shown with its staves level with the preview's; the divider between them resizes the two. In step 2, mark each brace or bracket by clicking or tapping its first and last staff in the preview.",
+  },
+  "omr-layout": {
+    route: "zones",
+    stage: "measure correction",
+    name: "Measure correction",
+    brief:
+      "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.",
+    full: "Check the staff boxes, then the grand staves, then the measures on each page and correct the wrong ones.",
+  },
+  "measure-zones": {
+    route: "zones",
+    stage: "measure correction",
+    name: "Measure correction",
+    brief: "Check the measure boxes on each page and correct the wrong ones.",
+    full: "Check the measure boxes on each page and correct the wrong ones.",
+  },
+  "encoding-align": {
+    route: "align",
+    stage: "encoding alignment",
+    name: "Encoding alignment",
+    brief:
+      "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.",
+    full: "Check which measure of the uploaded encoding each measure box received and correct the wrong ones.",
+  },
+};
+
+/** What a pre-task asks for, briefly or in full; '' for any other locator. */
+export function preTaskInstruction(locator: string, full = false): string {
+  if (!isPreTask(locator)) return "";
+  return full ? PRE_TASKS[locator].full : PRE_TASKS[locator].brief;
 }
 
 /** The console route segment a pre-task's own editor lives under. */
 export function preTaskRoute(locator: string): string {
-  return locator === "score-setup" ? "setup" : "zones";
+  return isPreTask(locator) ? PRE_TASKS[locator].route : "zones";
 }
 
 /** The console route of a pre-task's own editor. */
@@ -113,6 +165,10 @@ export const preTaskHref = (
   task: string,
 ): string => `/${campaign}/${preTaskRoute(locator)}/${task}`;
 
+/** The full-screen review view of an encoding task. */
+export const reviewViewHref = (campaign: string, task: string): string =>
+  `/${campaign}/review/${task}`;
+
 /** Where a review of the task happens: a pre-task's own editor, else the review view. */
 export const reviewHref = (
   campaign: string,
@@ -121,18 +177,19 @@ export const reviewHref = (
 ): string =>
   isPreTask(locator)
     ? preTaskHref(campaign, locator, task)
-    : `/${campaign}/review/${task}`;
+    : reviewViewHref(campaign, task);
 
-/** A task's work stage. */
-export type WorkStage = "score setup" | "measure correction" | "encoding";
+/** The score check of an encoding task's first page. */
+export const checkHref = (campaign: string, task: string): string =>
+  `/${campaign}/check/${task}`;
+
+/** The campaign page, with `task` open in its side panel when given. */
+export const taskHref = (campaign: string, task?: string | null): string =>
+  `/${encodeURIComponent(campaign)}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
 
 /** A task's work stage from its locator; a send-back returns the task to it. */
 export const workStage = (locator: string): WorkStage =>
-  locator === "score-setup"
-    ? "score setup"
-    : locator === "measure-zones" || locator === "omr-layout"
-      ? "measure correction"
-      : "encoding";
+  isPreTask(locator) ? PRE_TASKS[locator].stage : "encoding";
 
 /** Where a task's work happens: mei-friend for an encoding, the pre-task's own page otherwise. */
 export const workPlace = (locator: string): string =>
@@ -146,6 +203,103 @@ export const claimLabel = (locator: string): string =>
   isPreTask(locator)
     ? `Claim & open ${workStage(locator)}`
     : "Claim & open in mei-friend";
+
+/** What the viewer is about to do with a task: claim its encoding (or
+    pre-task), continue the one they hold, claim a review, or continue it. */
+export type TaskActionMode =
+  | "claim"
+  | "continue"
+  | "claim-review"
+  | "continue-review";
+
+/** A task's main button: its label, its tooltip, where it leads and the
+    stage whose colour it takes. */
+export interface TaskAction {
+  label: string;
+  title: string;
+  /** mei-friend (another site, opened by the editor command), the score
+      check, a pre-task's own editor, or the review view. */
+  target: "mei-friend" | "check" | "pre" | "review";
+  stage: "enc" | "pre" | "review";
+}
+
+/**
+ * The main button for `task` in `mode`, the same wherever a task is offered.
+ * A pre-task is worked on and reviewed in its own editor; an encoding that
+ * starts with a check of the score definition (checksOpening) goes through
+ * the score check, any other encoding to mei-friend.
+ */
+export function taskAction(
+  task: { locator: string; pre: boolean; checksOpening: boolean },
+  mode: TaskActionMode,
+): TaskAction {
+  const place = workPlace(task.locator);
+  if (mode === "claim-review")
+    return {
+      label: "Claim to review",
+      title: task.pre
+        ? `Claims a review of this task for you and opens the ${place}.`
+        : "Claims a review of this task for you and opens the review.",
+      target: task.pre ? "pre" : "review",
+      stage: "review",
+    };
+  if (mode === "continue-review")
+    return task.pre
+      ? {
+          label: `Continue in ${place}`,
+          title: `Opens the ${place} to review the submitted work.`,
+          target: "pre",
+          stage: "review",
+        }
+      : {
+          label: "Continue in review",
+          title:
+            "Opens the review view: score and facsimile side by side, with the Approve and Request changes buttons.",
+          target: "review",
+          stage: "review",
+        };
+  const claim = mode === "claim";
+  if (task.pre)
+    return {
+      label: claim ? claimLabel(task.locator) : `Continue in ${place}`,
+      title: claim
+        ? `Claims this task for you and opens the ${place}.`
+        : `Opens the ${place} of the task you hold.`,
+      target: "pre",
+      stage: "pre",
+    };
+  if (task.checksOpening)
+    return {
+      label: claim ? "Claim & open score check" : "Continue in score check",
+      title: claim
+        ? "Claims this task for you and opens the score check of the clefs, key signatures, meter and transpositions, before the draft opens in mei-friend."
+        : "Opens the score check of the task you hold, which opens the draft in mei-friend.",
+      target: "check",
+      stage: "enc",
+    };
+  return {
+    label: claim ? claimLabel(task.locator) : "Continue in mei-friend",
+    title: claim
+      ? "Claims this task for you and opens the score in mei-friend."
+      : "Opens the task you hold in mei-friend. Completing it there submits it for review.",
+    target: "mei-friend",
+    stage: "enc",
+  };
+}
+
+/** The app page a task's button leads to; null for mei-friend, which the
+    editor command opens. */
+export function taskActionHref(
+  campaign: string,
+  task: { task: string; locator: string },
+  action: TaskAction,
+): string | null {
+  if (action.target === "pre")
+    return preTaskHref(campaign, task.locator, task.task);
+  if (action.target === "check") return checkHref(campaign, task.task);
+  if (action.target === "review") return reviewViewHref(campaign, task.task);
+  return null;
+}
 
 /**
  * How many pass verdicts complete a task: the per-subtask threshold times its
@@ -166,10 +320,7 @@ export function pageOfLocator(locator: string): number | null {
 /** What the task asks for, from its locator. An encoding task is called
     "Encode" whether it starts from scratch or from a recognised draft. */
 export function taskDescription(locator: string): string {
-  if (locator === "score-setup") return "Score setup";
-  if (locator === "measure-zones" || locator === "omr-layout")
-    return "Measure correction";
-  return "Encode";
+  return isPreTask(locator) ? PRE_TASKS[locator].name : "Encode";
 }
 
 /** The part of the piece a task covers ("p. 3"); '' for the whole piece. */
@@ -252,12 +403,37 @@ const encodingLock = (d: GraphData, task: string) =>
 const validationLocks = (d: GraphData, task: string, sub: string) =>
   lockIndex(d.locks).get(`${task}|${sub}|validation`) ?? [];
 
-/** The incomplete task this task waits for (task.csv depends_on), or ''. */
-export function blockedBy(d: GraphData, task: string): string {
-  const dep = taskDef(d, task)?.depends_on;
-  if (!dep || taskState(d, dep)?.status === "completed") return "";
-  return dep;
+/**
+ * Whether `viewer` may claim the task (`sub` '') or a review of its subtask
+ * `sub` now, by the rule the campaign automation decides claims with.
+ */
+export function canClaim(
+  d: GraphData,
+  viewer: string,
+  task: string,
+  sub = "",
+): boolean {
+  return (
+    viewer !== "" &&
+    claimRefusal({
+      tasks: d.taskDefs,
+      state: d,
+      locks: d.locks,
+      intent: {
+        task_id: task,
+        subtask_id: sub,
+        kind: sub ? "validation" : "encoding",
+      },
+      author: viewer,
+      allowSelfValidation: d.allowSelfValidation,
+      passThreshold: d.passThreshold,
+    }) === null
+  );
 }
+
+/** The incomplete task this task waits for (task.csv depends_on), or ''. */
+export const blockedBy = (d: GraphData, task: string): string =>
+  waitsFor(taskDef(d, task)?.depends_on, (t) => taskState(d, t)?.status);
 
 const isEncoded = (status: string) =>
   status === "validation_required" || status === "completed";
@@ -265,8 +441,7 @@ const isEncoded = (status: string) =>
 const cellsOf = (d: GraphData, row: StateRow) =>
   d.validationColumns.map((c) => row[c] ?? "");
 const passesOf = (d: GraphData, row: StateRow) =>
-  cellsOf(d, row).filter((c) => isFinalValidation(c) && c.startsWith("pass|"))
-    .length;
+  cellsOf(d, row).filter(isPassVerdict).length;
 
 // Validation locks do not carry a slot number. Assign them in table order to
 // the still-empty validation cells, which is the same order submissions fill.
@@ -282,11 +457,11 @@ const nextUnreservedSlot = (d: GraphData, row: StateRow): number =>
     (cell, slot) => cell === "" && !validationLockForSlot(d, row, slot),
   );
 
-// Whether `viewer` already recorded a final verdict on this subtask row. One
+// Whether `viewer` already recorded a pass on this subtask row. One
 // verdict per person (unless self-validation is allowed), matching checkClaim.
 const hasVerdictBy = (d: GraphData, row: StateRow, viewer: string): boolean =>
   cellsOf(d, row).some(
-    (cell) => isFinalValidation(cell) && cell.split("|")[1] === viewer,
+    (cell) => isPassVerdict(cell) && cell.split("|")[1] === viewer,
   );
 
 // The main node's status key: blocked wins, then a held encoding lock, then
@@ -299,7 +474,7 @@ function mainStatusKey(d: GraphData, task: string): StatusKey {
   if (status === "encoding_required" && encodingLock(d, task)) {
     return isPreTask(taskDef(d, task)?.locator ?? "") ? "claimed" : "encoding";
   }
-  if (STATUS_KEYS.has(status)) return status as StatusKey;
+  if (TASK_STATUSES.has(status)) return status as StatusKey;
   return "pending";
 }
 
@@ -313,8 +488,8 @@ interface SlotState {
   needsAnother?: boolean;
 }
 
-// The slot's state from its validate_status cell: a final verdict renders
-// solid, active locks occupy separate empty slots, and the rest are open.
+// The slot's state from its validate_status cell: a pass renders solid,
+// active locks occupy separate empty slots, and the rest are open.
 // `viewer` tailors the open-slot text: the encoder — and a validator who
 // already recorded a verdict on the subtask — sees that another volunteer is
 // needed rather than a claim prompt.
@@ -326,11 +501,11 @@ function slotState(
   logins: Logins = {},
 ): SlotState {
   const cell = cellsOf(d, row)[slot] ?? "";
-  if (isFinalValidation(cell)) {
-    const [verdict, user, ts] = cell.split("|");
+  if (isPassVerdict(cell)) {
+    const [, user, ts] = cell.split("|");
     return {
-      key: verdict as StatusKey,
-      sub: `@${handle(logins, user)} · ${verdict === "pass" ? "approved" : "changes requested"}`,
+      key: "pass",
+      sub: `@${handle(logins, user)} · approved`,
       running: false,
       user,
       ts,
@@ -394,11 +569,7 @@ export function buildGraph(
   let nextUpTaken = false;
   for (const def of defs) {
     const task = def.task_id;
-    const state = taskState(d, task);
     const statusKey = mainStatusKey(d, task);
-    const lock = encodingLock(d, task);
-    const encoded = isEncoded(state?.status ?? "");
-    const blocked = blockedBy(d, task);
     const subRows = subRowsOf(d, task);
 
     const slots: NodeSlot[] = subRows.flatMap((row) =>
@@ -411,22 +582,10 @@ export function buildGraph(
           label: `${row.subtask_id}·${slot + 1}`,
           who: s.sub,
           running: s.running,
+          // The slot a claim would take, when the viewer may claim one.
           claimable:
-            viewer !== "" &&
-            encoded &&
-            row.status === "validation_required" &&
-            (d.allowSelfValidation ||
-              (state?.encoder !== viewer && !hasVerdictBy(d, row, viewer))) &&
-            // Reviews of a task run one at a time (mirrors checkClaim).
-            !d.locks.some(
-              (l) => l.task_id === row.task_id && l.kind === "validation",
-            ) &&
             slot === nextUnreservedSlot(d, row) &&
-            // Claimable only while the verdict can still land: passes plus
-            // active locks below the pass threshold (mirrors checkClaim).
-            passesOf(d, row) +
-              validationLocks(d, row.task_id, row.subtask_id).length <
-              d.passThreshold,
+            canClaim(d, viewer, row.task_id, row.subtask_id),
           needsAnother: s.needsAnother ?? false,
           user: s.user,
           ts: s.ts,
@@ -439,11 +598,7 @@ export function buildGraph(
     const mineLock =
       viewer !== "" &&
       d.locks.some((l) => l.task_id === task && l.user_id === viewer);
-    const claimableEncoding =
-      viewer !== "" &&
-      !blocked &&
-      state?.status === "encoding_required" &&
-      !lock;
+    const claimableEncoding = canClaim(d, viewer, task);
     const claimableValidation = slots.some((slot) => slot.claimable);
     const nextUp =
       viewer !== "" &&

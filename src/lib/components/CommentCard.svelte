@@ -11,8 +11,10 @@
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import { handle } from "$lib/campaign-graph.ts";
   import { elapsed, initialOf } from "$lib/campaign-board.ts";
+  import Icon from "./Icon.svelte";
 
   let {
+    repoId,
     comment,
     logins,
     viewer,
@@ -26,6 +28,8 @@
     onreply,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     comment: CommentRow;
     logins: Record<string, string>;
     viewer: string;
@@ -40,8 +44,8 @@
     reply?: boolean;
     /** Anchor links read as in-view highlights instead of score links. */
     inScore?: boolean;
-    /** Show the comment's measure range in the score. */
-    onanchor: (comment: CommentRow) => void;
+    /** Show the comment's measure range in the score; absent hides the action. */
+    onanchor?: (comment: CommentRow) => void;
     /** Start a reply to this comment; absent hides the Reply action. */
     onreply?: (comment: CommentRow) => void;
     onresolve: (comment_id: string) => Promise<unknown>;
@@ -60,7 +64,19 @@
   // Pending from the click until the resolution PR's verdict lands: first the
   // foreground command, then its background entry in the verdict store.
   const resolvePending = $derived(
-    resolving || pendingVerdicts.isProcessing(`resolve:${comment.comment_id}`),
+    resolving ||
+      pendingVerdicts.isProcessing(
+        { kind: "resolve", task: comment.task_id, comment: comment.comment_id },
+        repoId,
+      ),
+  );
+
+  // A resolution whose verdict did not land within the wait.
+  const resolveStuck = $derived(
+    pendingVerdicts.timedOut(
+      { kind: "resolve", task: comment.task_id, comment: comment.comment_id },
+      repoId,
+    ),
   );
 
   async function resolve() {
@@ -106,16 +122,16 @@
     {/if}
   </div>
   <span class="cbody">{comment.body}</span>
-  {#if !reply && (measureLabel || (onreply && auth.user) || (!resolved && canResolve))}
+  {#if !reply && ((measureLabel && onanchor) || (onreply && auth.user) || (!resolved && canResolve))}
     <div class="cacts">
-      {#if measureLabel}
+      {#if measureLabel && onanchor}
         <button type="button" class="anchor" onclick={() => onanchor(comment)}>
           {anchorLabel}
         </button>
       {/if}
       {#if onreply && auth.user}
-        <button type="button" class="linkish" onclick={() => onreply(comment)}>
-          Reply
+        <button type="button" class="btn" onclick={() => onreply(comment)}>
+          <Icon name="reply" />Reply
         </button>
       {/if}
       {#if !resolved && canResolve}
@@ -124,14 +140,22 @@
             <span class="spinner" aria-hidden="true"></span>
             Resolving…
           </span>
+        {:else if resolveStuck}
+          <span class="resolving"
+            >Resolution <a
+              href={resolveStuck.prUrl}
+              target="_blank"
+              rel="noreferrer">#{resolveStuck.prNumber}</a
+            > is still being processed</span
+          >
         {:else}
           <button
             type="button"
-            class="linkish"
+            class="btn"
             onclick={resolve}
             disabled={runner.busy}
           >
-            Resolve
+            <Icon name="check" />Resolve
           </button>
         {/if}
       {/if}
@@ -210,17 +234,14 @@
     overflow-wrap: anywhere;
     white-space: pre-wrap;
   }
-  /* The anchor and the actions are 24px tall to tap, 32px on a touch
-     screen; the row's negative margin keeps the extra height out of the
-     card. */
+  /* The anchor is 24px tall to tap, 32px on a touch screen. */
   .anchor {
     min-height: 24px;
     display: inline-flex;
     align-items: center;
   }
   @media (pointer: coarse) {
-    .anchor,
-    .linkish {
+    .anchor {
       min-height: 32px;
     }
   }
@@ -236,12 +257,16 @@
     text-align: left;
     font-family: inherit;
   }
+  /* The actions sit on the card's paper in the soft fill. */
   .cacts {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 0 12px;
-    margin: -4px 0;
+    gap: 6px;
+    margin-top: 3px;
+    --btn-bg: var(--soft);
+    --btn-shadow: none;
+    --btn-bg-hover: var(--soft-hover);
   }
   .resolving {
     display: inline-flex;

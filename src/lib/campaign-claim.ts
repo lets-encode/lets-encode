@@ -9,7 +9,7 @@
 // `now`) and `expires` is `now` plus the lock lifetime, never values the fork
 // supplied.
 
-import { findRow, isFinalValidation, LOCK_PATH } from "./campaign-tables.ts";
+import { findRow, isPassVerdict, LOCK_PATH } from "./campaign-tables.ts";
 import { claimRanOut } from "./campaign-reaper.ts";
 import type { ParsedState, TaskRow, LockRow } from "./campaign-tables.ts";
 
@@ -76,94 +76,16 @@ export function boundaryCheck(
 
 /** Decide a claim. */
 export function checkClaim({
-  tasks,
-  state,
-  locks,
-  intent,
-  author,
   changedPaths,
   now,
   staleAfterMinutes,
-  allowSelfValidation,
-  passThreshold,
-  maxClaims,
+  ...rule
 }: CheckClaimArgs): ClaimResult {
   // A claim may only touch the lock table.
   if (!boundaryCheck(changedPaths, [LOCK_PATH])) return reject("out_of_bounds");
-
-  if (!CLAIM_KINDS.includes(intent.kind)) return reject("invalid_kind");
-  // Encoding is task-level, validation is subtask-level — the key must match.
-  if (intent.kind === "encoding" && intent.subtask_id !== "")
-    return reject("invalid_target");
-  if (intent.kind === "validation" && intent.subtask_id === "")
-    return reject("invalid_target");
-
-  const row = findRow(state.rows, intent.task_id, intent.subtask_id);
-  if (!row) return reject("unknown_task");
-
-  // Dependency gate: a task chained after another (task.csv depends_on) opens
-  // only once that task has completed.
-  const dependsOn = findRow(tasks, intent.task_id, "")?.depends_on;
-  if (dependsOn && findRow(state.rows, dependsOn, "")?.status !== "completed") {
-    return reject("dependency_incomplete");
-  }
-
-  const activeSameKind = locks.filter(
-    (l) =>
-      l.task_id === intent.task_id &&
-      l.subtask_id === intent.subtask_id &&
-      l.kind === intent.kind,
-  );
-
-  if (intent.kind === "encoding") {
-    if (row.status !== "encoding_required") return reject("wrong_state");
-    if (activeSameKind.length > 0) return reject("already_locked");
-  } else {
-    if (row.status !== "validation_required") return reject("wrong_state");
-    // The encoder is recorded on the task row; no validating your own
-    // encoding, unless the campaign's config allows it.
-    const taskRow = findRow(state.rows, intent.task_id, "");
-    if (!allowSelfValidation && author === taskRow?.encoder)
-      return reject("self_validation");
-    // One verdict per person: a validator who already recorded pass/fail on
-    // this subtask cannot claim another of its slots. The same config flag
-    // lifts it — a single-person campaign fills every slot themselves.
-    const hasVerdict = state.validationColumns.some((c) => {
-      const cell = row[c] ?? "";
-      return isFinalValidation(cell) && cell.split("|")[1] === author;
-    });
-    if (!allowSelfValidation && hasVerdict) return reject("already_validated");
-
-    // Open slot = (final pass/fail cells) + (active validation locks) < slots.
-    const finals = state.validationColumns.filter((c) =>
-      isFinalValidation(row[c] ?? ""),
-    ).length;
-    if (finals + activeSameKind.length >= state.validationColumns.length) {
-      return reject("no_open_validation_slot");
-    }
-    // A verdict can only land while the subtask needs more passes: once
-    // recorded passes plus active locks reach the pass threshold, a further
-    // claim's verdict would arrive after completion and be rejected.
-    const slots = state.validationColumns.length;
-    const needed = Math.min(passThreshold ?? slots, slots);
-    const passes = state.validationColumns.filter((c) => {
-      const cell = row[c] ?? "";
-      return isFinalValidation(cell) && cell.startsWith("pass|");
-    }).length;
-    if (passes + activeSameKind.length >= needed)
-      return reject("no_open_validation_slot");
-    if (activeSameKind.some((l) => l.user_id === author))
-      return reject("already_locked");
-    // Reviews of a task run one at a time: any review claim on any of its
-    // subtasks holds the others back.
-    if (
-      locks.some((l) => l.task_id === intent.task_id && l.kind === "validation")
-    )
-      return reject("review_in_progress");
-  }
-  if (maxClaims !== undefined && claimLimitReached(locks, author, maxClaims))
-    return reject("too_many_claims");
-
+  const refusal = claimRefusal(rule);
+  if (refusal) return reject(refusal);
+  const { intent, author } = rule;
   return {
     ok: true,
     lock: {
@@ -177,6 +99,124 @@ export function checkClaim({
       ).toISOString(),
     },
   };
+}
+
+/** The encoding claim `viewer` holds on the task among `locks`, if any. */
+export const encodingClaimOf = (
+  locks: LockRow[],
+  task_id: string,
+  viewer: string,
+): LockRow | undefined =>
+  viewer === ""
+    ? undefined
+    : locks.find(
+        (l) =>
+          l.task_id === task_id &&
+          l.subtask_id === "" &&
+          l.kind === "encoding" &&
+          l.user_id === viewer,
+      );
+
+/**
+ * The task a task depends on (its task.csv `depends_on`) while that task is
+ * not completed; '' otherwise. `statusOf` gives a task row's status.
+ */
+export const waitsFor = (
+  dependsOn: string | undefined,
+  statusOf: (task_id: string) => string | undefined,
+): string =>
+  dependsOn && statusOf(dependsOn) !== "completed" ? dependsOn : "";
+
+/**
+ * Why `author` may not claim `intent` with the tables as they are, as the
+ * rejection code checkClaim gives; null when the claim would be granted. The
+ * coordinator decides claims with it, and the app offers a claim only where
+ * it returns null.
+ */
+export function claimRefusal({
+  tasks,
+  state,
+  locks,
+  intent,
+  author,
+  allowSelfValidation,
+  passThreshold,
+  maxClaims,
+}: Omit<
+  CheckClaimArgs,
+  "changedPaths" | "now" | "staleAfterMinutes" | "state"
+> & {
+  state: Pick<ParsedState, "rows" | "validationColumns">;
+}): string | null {
+  if (!CLAIM_KINDS.includes(intent.kind)) return "invalid_kind";
+  // Encoding is task-level, validation is subtask-level — the key must match.
+  if (intent.kind === "encoding" && intent.subtask_id !== "")
+    return "invalid_target";
+  if (intent.kind === "validation" && intent.subtask_id === "")
+    return "invalid_target";
+
+  const row = findRow(state.rows, intent.task_id, intent.subtask_id);
+  if (!row) return "unknown_task";
+
+  // Dependency gate: a task chained after another (task.csv depends_on) opens
+  // only once that task has completed.
+  if (
+    waitsFor(
+      findRow(tasks, intent.task_id, "")?.depends_on,
+      (t) => findRow(state.rows, t, "")?.status,
+    )
+  )
+    return "dependency_incomplete";
+
+  const activeSameKind = locks.filter(
+    (l) =>
+      l.task_id === intent.task_id &&
+      l.subtask_id === intent.subtask_id &&
+      l.kind === intent.kind,
+  );
+
+  if (intent.kind === "encoding") {
+    if (row.status !== "encoding_required") return "wrong_state";
+    if (activeSameKind.length > 0) return "already_locked";
+  } else {
+    if (row.status !== "validation_required") return "wrong_state";
+    // The encoder is recorded on the task row; no validating your own
+    // encoding, unless the campaign's config allows it.
+    const taskRow = findRow(state.rows, intent.task_id, "");
+    if (!allowSelfValidation && author === taskRow?.encoder)
+      return "self_validation";
+    // One verdict per person: a validator who already recorded a pass on
+    // this subtask cannot claim another of its slots. The same config flag
+    // lifts it — a single-person campaign fills every slot themselves.
+    const hasVerdict = state.validationColumns.some((c) => {
+      const cell = row[c] ?? "";
+      return isPassVerdict(cell) && cell.split("|")[1] === author;
+    });
+    if (!allowSelfValidation && hasVerdict) return "already_validated";
+
+    // A verdict can only land while the subtask needs more passes: once
+    // recorded passes plus active locks reach the pass threshold (at most
+    // the slot count), a further claim's verdict would arrive after
+    // completion and be rejected.
+    const slots = state.validationColumns.length;
+    const needed = Math.min(passThreshold ?? slots, slots);
+    const passes = state.validationColumns.filter((c) =>
+      isPassVerdict(row[c] ?? ""),
+    ).length;
+    if (passes + activeSameKind.length >= needed)
+      return "no_open_validation_slot";
+    if (activeSameKind.some((l) => l.user_id === author))
+      return "already_locked";
+    // Reviews of a task run one at a time: any review claim on any of its
+    // subtasks holds the others back.
+    if (
+      locks.some((l) => l.task_id === intent.task_id && l.kind === "validation")
+    )
+      return "review_in_progress";
+  }
+  if (maxClaims !== undefined && claimLimitReached(locks, author, maxClaims))
+    return "too_many_claims";
+  return null;
 }
 
 export interface CheckReleaseArgs {

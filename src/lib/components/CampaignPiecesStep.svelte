@@ -21,9 +21,12 @@
     initialPieces,
     pagesCovered,
     pieceColour,
+    startFromEncoding,
   } from "$lib/pieces.ts";
+  import { encodingSize } from "$lib/encoding-align.ts";
   import {
     wizard,
+    isSkipped,
     nextStep,
     piecesSummary,
     previousStep,
@@ -34,6 +37,7 @@
     finishSummary,
   } from "$lib/campaign-finish.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
+  import ConfirmInline from "./ConfirmInline.svelte";
   import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
@@ -42,48 +46,63 @@
   import { pieceIdLabel } from "$lib/campaign-tables.ts";
 
   let selected = $state(0);
-  // With no page images the preparation step is skipped, so this step
-  // finishes the setup itself.
-  const last = $derived(wizard.images.length === 0);
+  // With the preparation step skipped, this step finishes the setup itself.
+  const last = $derived(isSkipped("preparation"));
   const finisher = new CampaignFinisher();
   onDestroy(() => finisher.cancel());
   const busy = $derived(finisher.busy);
 
-  // Seed the pieces the first time the step is opened; returning from a later
-  // step must not discard edits.
+  // Seed the pieces the first time the step is opened, and again after a new
+  // upload has dropped them; returning from a later step must not discard
+  // edits.
   const seeded = !wizard.pieces.length;
   if (seeded) {
     wizard.pieces = initialPieces(
       wizard.encodings.map((encoding) => encoding.name),
       wizard.images.length > 0,
     );
+    wizard.piecesUpload = wizard.uploadKey;
   }
+  onDestroy(() => (wizard.piecesRedone = false));
 
   // The pages the editor draws on: object URLs over the prepared page images,
   // with the pixel size the regions are expressed in. A superseded set is
   // released once its replacement is on screen; the live set on destroy.
   let liveUrls: string[] = [];
   let pages = $state<{ url: string; width: number; height: number }[]>([]);
+  // Why the page images could not be measured, naming the page.
+  let pagesError = $state<string | null>(null);
   $effect(() => {
+    const images = wizard.images;
     let cancelled = false;
     (async () => {
-      const urls: string[] = [];
-      const built = await Promise.all(
-        wizard.images.map(async (image) => {
-          const { width, height } = await imageSize(image.blob);
-          const url = URL.createObjectURL(image.blob);
-          urls.push(url);
-          return { url, width, height };
-        }),
-      );
-      if (cancelled) {
-        // Superseded before it was ever shown.
-        urls.forEach((url) => URL.revokeObjectURL(url));
+      // The sizes are read first; the object URLs are made only for a set
+      // that is shown.
+      let sizes: { width: number; height: number }[];
+      try {
+        sizes = await Promise.all(
+          images.map((image, i) =>
+            imageSize(image.blob).catch((e: Error) => {
+              throw new Error(
+                `The size of page ${i + 1} (${image.path}) could not be read: ${e.message}`,
+              );
+            }),
+          ),
+        );
+      } catch (e) {
+        if (!cancelled) pagesError = (e as Error).message;
         return;
       }
+      // Superseded before it was ever shown.
+      if (cancelled) return;
+      pagesError = null;
+      const built = images.map((image, i) => ({
+        url: URL.createObjectURL(image.blob),
+        ...sizes[i],
+      }));
       pages = built;
       liveUrls.forEach((url) => URL.revokeObjectURL(url));
-      liveUrls = urls;
+      liveUrls = built.map((page) => page.url);
     })();
     return () => {
       cancelled = true;
@@ -128,6 +147,27 @@
     wizard.pieces = [...wizard.pieces, createEncodedPiece(wizard.pieces, name)];
     selected = wizard.pieces.length - 1;
   }
+
+  // The uploaded encoding the selected facsimile piece starts from; choosing
+  // one takes the file from the encoded piece it was.
+  function startFrom(name: string) {
+    const id = wizard.pieces[selected].id;
+    wizard.pieces = startFromEncoding(
+      wizard.pieces,
+      selected,
+      name || undefined,
+    );
+    selected = wizard.pieces.findIndex((p) => p.id === id);
+  }
+
+  const encodingFacts = $derived.by(() => {
+    const encoding = wizard.encodings.find(
+      (e) => e.name === piece?.encodingName,
+    );
+    if (piece?.kind !== "facsimile" || !encoding) return "";
+    const { measures, staves } = encodingSize(encoding.mei);
+    return `${measures} measure${measures === 1 ? "" : "s"}, ${staves} ${staves === 1 ? "staff" : "staves"}.`;
+  });
 
   // Removing a piece is confirmed in place: the button turns into a question
   // with Remove and Cancel. An encoded piece cannot be re-added without
@@ -334,25 +374,20 @@
         </div>
         {#if confirmingRemove === p.id}
           <div class="ask">
-            <span class="q">Remove {labelOf(p)}?</span>
-            <button
-              type="button"
-              class="btn btn-danger"
-              onclick={() => removePiece(i)}
-              disabled={busy}>Remove</button
-            >
-            <button
-              type="button"
-              class="btn"
-              onclick={() => (confirmingRemove = null)}>Cancel</button
-            >
+            <ConfirmInline
+              question={`Remove ${labelOf(p)}?`}
+              confirm="Remove"
+              onconfirm={() => removePiece(i)}
+              oncancel={() => (confirmingRemove = null)}
+              disabled={busy}
+            />
           </div>
         {/if}
         {#if selected === i && p.kind === "facsimile" && pages.length}
           <div class="piece-actions">
             <button
               type="button"
-              class="pill pill-sm"
+              class="btn"
               onclick={assignAllPages}
               disabled={busy}
             >
@@ -360,7 +395,7 @@
             </button>
             <button
               type="button"
-              class="pill pill-sm"
+              class="btn"
               onclick={clearRegions}
               disabled={busy || !p.zones.length}
             >
@@ -397,7 +432,7 @@
           </span>
           <button
             type="button"
-            class="pill pill-sm"
+            class="btn"
             onclick={() => readdEncoding(encoding.name)}
             disabled={busy}
           >
@@ -424,7 +459,7 @@
         {/snippet}
         {#snippet subhead()}
           <div class="copy-row">
-            <button type="button" class="pill pill-sm" onclick={copyFromSource}>
+            <button type="button" class="btn" onclick={copyFromSource}>
               Copy from the source
             </button>
             {#if wizard.pieces.length > 1}
@@ -462,6 +497,36 @@
             has no regions marked yet. Mark them {wherePages}.
           {/if}
         </p>
+        {#if wizard.encodings.length}
+          <label
+            class="field encoding-field"
+            title="The file's measures are placed into this piece's measures once they are corrected. Measures the file lacks stay empty."
+          >
+            Start from encoding
+            <select
+              class="input encoding-select"
+              value={piece.encodingName ?? ""}
+              onchange={(e) => startFrom(e.currentTarget.value)}
+              disabled={busy}
+            >
+              <option value="">None</option>
+              {#each wizard.encodings as encoding (encoding.name)}
+                <option
+                  value={encoding.name}
+                  disabled={wizard.pieces.some(
+                    (p) =>
+                      p !== piece &&
+                      p.kind === "facsimile" &&
+                      p.encodingName === encoding.name,
+                  )}>{encoding.name}</option
+                >
+              {/each}
+            </select>
+            {#if encodingFacts}
+              <span class="hint">{encodingFacts}</span>
+            {/if}
+          </label>
+        {/if}
       {:else if piece.kind === "physical-only"}
         <p class="covered">
           <strong style="color: {pieceColour(selected)}">{label}</strong>
@@ -495,6 +560,14 @@
   {/if}
 
   {#snippet pinned()}
+    {#if pagesError}
+      <p class="msg-error" role="alert">{pagesError}</p>
+    {/if}
+    {#if wizard.piecesRedone}
+      <p class="msg-warn" role="status">
+        The upload changed, so the pieces were set up again.
+      </p>
+    {/if}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
     {:else if last && !finisher.busy && auth.user}
@@ -597,27 +670,13 @@
     }
   }
   .ask {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
     padding: 0 12px 10px 35px;
-  }
-  .q {
-    font-size: 13px;
-    color: var(--ink-soft);
   }
   .piece-actions {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
     padding: 0 12px 10px 35px;
-  }
-  @media (hover: hover) {
-    .piece-actions .pill:hover:not(:disabled) {
-      color: var(--piece);
-      border-color: var(--piece);
-    }
   }
   /* The switch takes the piece's colour in place of the stage's. */
   .piece-actions .chip-switch {
@@ -664,8 +723,12 @@
     font-size: 12px;
     color: var(--ink-faint);
   }
-  .pages-field {
+  .pages-field,
+  .encoding-field {
     margin-top: 11px;
+  }
+  .encoding-select {
+    max-width: 320px;
   }
   .pages-input {
     max-width: 110px;

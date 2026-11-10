@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildGraph, blockedBy, claimLabel } from "../campaign-graph.ts";
+import {
+  buildGraph,
+  blockedBy,
+  canClaim,
+  claimLabel,
+  taskAction,
+  taskActionHref,
+  taskHref,
+} from "../campaign-graph.ts";
 import type { GraphData } from "../campaign-graph.ts";
 import type { StateRow, TaskRow } from "../campaign-tables.ts";
 
@@ -279,4 +287,82 @@ test("claimLabel names mei-friend for an encoding only", () => {
   assert.equal(claimLabel("score-setup"), "Claim & open score setup");
   assert.equal(claimLabel("omr-layout"), "Claim & open measure correction");
   assert.equal(claimLabel("measure-zones"), "Claim & open measure correction");
+});
+
+test("canClaim offers only the claims the campaign automation grants", () => {
+  const d: GraphData = {
+    taskDefs: [task("T0001"), subDef("T0001"), task("T0002")],
+    rows: [
+      state("T0001", "", "validation_required", "7"),
+      state("T0001", "S0001", "validation_required", "7", ["pass|8|t"]),
+      // A status the app does not know is shown as pending, never as open.
+      state("T0002", "", "archived"),
+    ],
+    validationColumns: ["validate_status_1", "validate_status_2"],
+    locks: [],
+    passThreshold: 1,
+  };
+  // T0002's unknown status refuses an encoding claim.
+  assert.equal(canClaim(d, "9", "T0002"), false);
+  // The single pass the threshold asks for is in: no review is left to claim.
+  assert.equal(canClaim(d, "9", "T0001", "S0001"), false);
+  assert.equal(
+    canClaim({ ...d, passThreshold: 2 }, "9", "T0001", "S0001"),
+    true,
+  );
+  // The encoder may not review their own work.
+  assert.equal(
+    canClaim({ ...d, passThreshold: 2 }, "7", "T0001", "S0001"),
+    false,
+  );
+  // Nobody signed in claims nothing.
+  assert.equal(
+    canClaim({ ...d, passThreshold: 2 }, "", "T0001", "S0001"),
+    false,
+  );
+});
+
+test("taskAction: one button per task and mode, wherever the task is offered", () => {
+  const encode = { locator: "surface-2", pre: false, checksOpening: false };
+  const check = { locator: "surface-1", pre: false, checksOpening: true };
+  const pre = { locator: "omr-layout", pre: true, checksOpening: false };
+
+  assert.equal(taskAction(encode, "claim").label, "Claim & open in mei-friend");
+  assert.equal(taskAction(encode, "claim").target, "mei-friend");
+  assert.equal(taskAction(encode, "continue").label, "Continue in mei-friend");
+  // A held score-check task continues in the score check, not in mei-friend.
+  assert.equal(taskAction(check, "continue").label, "Continue in score check");
+  assert.match(taskAction(check, "claim").title, /score check/);
+  assert.equal(taskAction(check, "claim").stage, "enc");
+  assert.equal(taskAction(pre, "claim").stage, "pre");
+  assert.equal(
+    taskAction(encode, "claim-review").title,
+    "Claims a review of this task for you and opens the review.",
+  );
+  assert.equal(
+    taskActionHref(
+      "c",
+      { task: "T0001", ...check },
+      taskAction(check, "claim"),
+    ),
+    "/c/check/T0001",
+  );
+  assert.equal(
+    taskActionHref("c", { task: "P0001", ...pre }, taskAction(pre, "continue")),
+    "/c/zones/P0001",
+  );
+  assert.equal(
+    taskActionHref(
+      "c",
+      { task: "T0002", ...encode },
+      taskAction(encode, "claim"),
+    ),
+    null,
+  );
+});
+
+test("taskHref: the campaign page, with the task open when given", () => {
+  assert.equal(taskHref("verdi-requiem"), "/verdi-requiem");
+  assert.equal(taskHref("verdi-requiem", null), "/verdi-requiem");
+  assert.equal(taskHref("verdi-requiem", "T0003"), "/verdi-requiem?task=T0003");
 });

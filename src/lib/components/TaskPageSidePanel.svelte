@@ -6,7 +6,7 @@
   tools, a selection or a footer gets the score-workspace panel (SidePanel).
 -->
 <script lang="ts">
-  import type { Snippet } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CampaignTables, Result } from "$lib/commands.ts";
   import type { CommentRow } from "$lib/campaign-tables.ts";
@@ -20,6 +20,7 @@
   >;
 
   let {
+    repoId,
     tables,
     taskId,
     viewer,
@@ -35,6 +36,7 @@
     selection,
     selectionLabel,
     selectionActive = false,
+    selected = null,
     tab = $bindable("selection"),
     compose,
     footer,
@@ -44,6 +46,8 @@
     oncomment,
     onresolve,
   }: {
+    /** The campaign's repository id; task ids repeat across campaigns. */
+    repoId: number;
     tables: PanelTables;
     /** The task the view is open on. */
     taskId: string;
@@ -69,6 +73,8 @@
     selectionLabel?: string;
     /** Something is selected (SidePanel). */
     selectionActive?: boolean;
+    /** The selected item: each new one shows the selection tab. */
+    selected?: unknown;
     tab?: "selection" | "comments";
     /** Each change opens the comment field (SidePanel). */
     compose?: number;
@@ -78,8 +84,8 @@
     bar?: Snippet;
     /** Docked: whether the panel is opened (SidePanel). */
     open?: boolean;
-    /** Show a comment's measure range in the view's own viewer. */
-    onanchor: (comment: CommentRow) => void;
+    /** Show a comment's measure range in the view's own viewer; absent hides the action. */
+    onanchor?: (comment: CommentRow) => void;
     oncomment: (
       task: string,
       kind: string,
@@ -88,6 +94,10 @@
     ) => Promise<Result | null>;
     onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
+
+  $effect(() => {
+    if (selected) untrack(() => (tab = "selection"));
+  });
 
   // The pieces the tasks address, in the campaign page's order, so the colour
   // slot matches the piece's tint there.
@@ -106,6 +116,7 @@
 
 <SidePanel
   task={taskId}
+  {repoId}
   zone={pieceZone(index)}
   {review}
   {done}

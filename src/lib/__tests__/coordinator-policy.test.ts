@@ -3,15 +3,31 @@ import assert from "node:assert/strict";
 
 import { type TaskRow } from "../campaign-tables.ts";
 import {
+  buildFacsimileMei,
+  initialFacsimileModel,
+  parseScoreDef,
+} from "../mei-facsimile.ts";
+import { buildPieceHead, emptySourceMetadata } from "../source-metadata.ts";
+import { applicationNamesIn, recordApplications } from "../mei-provenance.ts";
+import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
+  assembleSubmission,
+  AUTOMATION_CONTRACT,
   checksOpening,
+  contractMarker,
+  isCampaignOperation,
+  rejectionOutcome,
+  splitContract,
   claimPullRequest,
   classifyPullRequest,
+  heldByOpenOperation,
   isAutomaticCommit,
   isLeftoverOperationBranch,
   isReviewEdit,
   keptWorkSince,
+  lockIntentFromRow,
+  locksAtOpening,
   touchesCampaignPaths,
   pieceFieldForPath,
   pieceKindForPath,
@@ -26,6 +42,8 @@ import {
   validationIntentFromPatch,
   validationVerdict,
 } from "../coordinator-policy.ts";
+import { appendEnvelopeToPrBody } from "../command-envelope.ts";
+import { checkValidation } from "../campaign-submit.ts";
 
 const STATE_HEADER = [
   "task_id",
@@ -46,6 +64,24 @@ test("claim intent accepts exactly one added row and no removals", () => {
   assert.equal(addedRowFromPatch("@@\n+one\n+two"), null);
   assert.equal(addedRowFromPatch("@@\n-old\n+new"), null);
   assert.equal(addedRowFromPatch(undefined), null);
+});
+
+test("a lock row's intent is parsed as CSV", () => {
+  assert.deepEqual(lockIntentFromRow("T0001,,42,time,encoding,"), {
+    task_id: "T0001",
+    subtask_id: "",
+    kind: "encoding",
+  });
+  assert.deepEqual(lockIntentFromRow('"T0001",S0001,"4,2",time,validation'), {
+    task_id: "T0001",
+    subtask_id: "S0001",
+    kind: "validation",
+  });
+  assert.deepEqual(lockIntentFromRow(""), {
+    task_id: "",
+    subtask_id: "",
+    kind: "",
+  });
 });
 
 test("release intent is exactly one removed row and no additions", () => {
@@ -283,7 +319,7 @@ test("an encoding submission resolves by its envelope, else its task branch", ()
   );
 });
 
-test("pieceFieldForPath and pieceKindForPath read one quoted field of the piece at a path", () => {
+test("pieceFieldForPath and pieceKindForPath read one field of the piece at a path", () => {
   const config =
     "pieces:\n" +
     '  - id: "piece-01"\n' +
@@ -319,6 +355,26 @@ test("pieceFieldForPath and pieceKindForPath read one quoted field of the piece 
   );
   assert.equal(pieceKindForPath(config, "sources/piece-09/score.mei"), null);
   assert.equal(pieceKindForPath(null, "sources/piece-01/score.mei"), null);
+});
+
+test("pieceFieldForPath reads an unquoted field as the board does", () => {
+  const config =
+    "pieces:\n" +
+    "  - id: piece-01\n" +
+    "    kind: physical-only\n" +
+    "    preparation: omr-instruments  # set by hand\n" +
+    "    path: sources/piece-01/score.mei\n" +
+    "    zones: []\n" +
+    "fragmentation:\n" +
+    "  strategy: page\n";
+  assert.equal(
+    pieceKindForPath(config, "sources/piece-01/score.mei"),
+    "physical-only",
+  );
+  assert.equal(
+    pieceFieldForPath(config, "sources/piece-01/score.mei", "preparation"),
+    "omr-instruments",
+  );
 });
 
 test("priorDecision: the last history row of the pull request, or null", () => {
@@ -521,6 +577,22 @@ test("checksOpening: the page task of an omr-instruments piece that waits for it
   assert.equal(checksOpening(tasks[2], tasks, "omr-instruments"), false);
   assert.equal(checksOpening(tasks[1], tasks, "omr"), false);
   assert.equal(checksOpening(tasks[0], tasks, "omr-instruments"), false);
+  const aligned = [
+    row("P0001", "omr-layout"),
+    row("P0002", "encoding-align", "P0001"),
+    row("T0001", "surface-1", "P0002"),
+  ];
+  assert.equal(
+    checksOpening(aligned[2], aligned, "omr-instruments"),
+    true,
+    "after the encoding alignment",
+  );
+  // A locator that is not a page (pageOfLocator) is a whole-file task.
+  const loose = [
+    row("P0001", "omr-layout"),
+    row("T0001", "surface-1a", "P0001"),
+  ];
+  assert.equal(checksOpening(loose[1], loose, "omr-instruments"), false);
 });
 
 test("isLeftoverOperationBranch takes old operation branches without an open pull request", () => {
@@ -532,6 +604,8 @@ test("isLeftoverOperationBranch takes old operation branches without an open pul
   assert.equal(left("claim-T0001-S0001-450a7323"), true);
   assert.equal(left("review-edit-T0002-0a1b2c3d"), true);
   assert.equal(left("layout-P0001-662a10a7"), true);
+  assert.equal(left("align-P0002-1f2e3d4c"), true);
+  assert.equal(left("resolve-C0004-9b8a7c6d"), true);
   // younger than the grace period: its pull request may still be opening
   assert.equal(left("claim-T0001-8fe2db55", "2026-10-29T11:30:00Z"), false);
   // the head of an open pull request
@@ -544,4 +618,287 @@ test("isLeftoverOperationBranch takes old operation branches without an open pul
   assert.equal(left("wip-T0001"), false);
   assert.equal(left("main"), false);
   assert.equal(left("claim-T0001"), false);
+});
+
+test("an expired lock stays while its holder's submission opened in time is open", () => {
+  const lock = {
+    task_id: "T0001",
+    subtask_id: "",
+    user_id: "7",
+    timestamp: "2026-11-02T12:00:00Z",
+    kind: "encoding",
+    expires: "2026-11-03T12:00:00Z",
+  };
+  const envelope = (command: string, task_id: string) =>
+    appendEnvelopeToPrBody("", {
+      command,
+      version: 1,
+      user_id: "7",
+      timestamp: "2026-11-03T11:59:50Z",
+      input: { task_id },
+    });
+  const pr = (overrides: object) => ({
+    number: 5,
+    created_at: "2026-11-03T11:59:50Z",
+    draft: false,
+    user: { id: 7 },
+    head: { ref: "zones-T0001-abcd" },
+    body: envelope("campaign.submitZones", "T0001"),
+    ...overrides,
+  });
+  const now = Date.parse("2026-11-03T12:00:30Z");
+  const week = 7 * 24 * 60 * 60_000;
+  const held = (prs: object[]) =>
+    heldByOpenOperation(lock, prs as never, now, week);
+
+  assert.equal(held([pr({})]), true);
+  // The head branch names the task when there is no envelope.
+  assert.equal(held([pr({ body: "", head: { ref: "encode-T0001" } })]), true);
+  assert.equal(held([pr({ created_at: "2026-11-03T12:00:10Z" })]), false);
+  assert.equal(held([pr({ user: { id: 8 } })]), false);
+  assert.equal(
+    held([pr({ body: envelope("campaign.submitZones", "T0002") })]),
+    false,
+  );
+  assert.equal(
+    held([pr({ body: envelope("campaign.submitComment", "T0001") })]),
+    false,
+  );
+  assert.equal(held([pr({ draft: true })]), false);
+  assert.equal(
+    heldByOpenOperation(lock, [pr({})] as never, now + week, week),
+    false,
+  );
+});
+
+test("a pull request is decided against the locks in force when it was opened", () => {
+  // A review lock that ran out at 10:00, kept in lock.csv for the holder's
+  // pull request opened at 09:59 (heldByOpenOperation).
+  const lock = {
+    task_id: "T0001",
+    subtask_id: "a",
+    user_id: "7",
+    timestamp: "2026-11-03T09:00:00Z",
+    kind: "validation",
+    expires: "2026-11-03T10:00:00Z",
+  };
+  const other = { ...lock, task_id: "T0002", user_id: "8" };
+  const kept = [lock, other];
+  const state = {
+    header: STATE_HEADER,
+    validationColumns: ["validate_status_1"],
+    rows: [
+      {
+        task_id: "T0001",
+        subtask_id: "",
+        status: "validation_required",
+        encoder: "9",
+        encoded_at: "2026-11-02T12:00:00Z",
+        validate_status_1: "",
+      },
+      {
+        task_id: "T0001",
+        subtask_id: "a",
+        status: "validation_required",
+        encoder: "",
+        encoded_at: "",
+        validate_status_1: "",
+      },
+    ],
+  };
+  const decide = (openedAt: string) => {
+    const opening = locksAtOpening(kept, "7", openedAt);
+    return {
+      opening,
+      verdict: checkValidation({
+        state,
+        locks: opening.decide,
+        intent: { task_id: "T0001", subtask_id: "a", verdict: "pass" },
+        author: "7",
+        changedPaths: ["tracking/state.csv"],
+        passThreshold: 1,
+        failComment: null,
+        now: "2026-11-03T10:40:00Z",
+        expired: opening.expired,
+      }),
+    };
+  };
+
+  // Opened at 09:59, decided by a run at 10:40: accepted.
+  const early = decide("2026-11-03T09:59:00Z");
+  assert.deepEqual(early.opening, { decide: kept, expired: [] });
+  assert.equal(early.verdict.ok, true);
+
+  // Opened at 10:30 while the older pull request keeps the lock: the lock
+  // counts as expired for it. Another person's lock stays in the decision.
+  const late = decide("2026-11-03T10:30:00Z");
+  assert.deepEqual(late.opening, { decide: [other], expired: [lock] });
+  assert.equal(late.verdict.ok, false);
+  assert.equal(!late.verdict.ok && late.verdict.reason, "claim_expired");
+});
+
+test("assembleSubmission splices the page, takes a checked opening and records the contribution", () => {
+  const box = (i: number) => ({
+    ulx: 100 * i,
+    uly: 10,
+    lrx: 100 * i + 90,
+    lry: 90,
+  });
+  const base = buildFacsimileMei(
+    {
+      ...initialFacsimileModel([
+        {
+          image: "img/01.jpg",
+          width: 400,
+          height: 200,
+          measures: [box(0), box(1)],
+        },
+        { image: "img/02.jpg", width: 400, height: 200, measures: [box(0)] },
+      ]),
+      headXml: buildPieceHead(
+        { title: "Lied", composer: "" },
+        emptySourceMetadata(),
+        { date: "2026-11-06" },
+      ),
+    },
+    { withBreaks: true },
+  );
+  // The volunteer encoded every page and changed the opening clef.
+  const fork = base
+    .replace(/<mRest\b[^>]*\/>/g, '<note dur="4" oct="4" pname="c"/>')
+    .replace('clef.shape="G" clef.line="2"', 'clef.shape="F" clef.line="4"');
+  const row = (task_id: string, locator: string, depends_on = ""): TaskRow => ({
+    task_id,
+    subtask_id: "",
+    fragment: "sources/piece-01/score.mei",
+    locator,
+    allowlist: "",
+    blocklist: "",
+    depends_on,
+  });
+  const tasks = [
+    row("P0001", "omr-layout"),
+    row("T0001", "surface-1", "P0001"),
+  ];
+  const config =
+    "pieces:\n" +
+    '  - id: "piece-01"\n' +
+    '    kind: "facsimile"\n' +
+    '    preparation: "omr-instruments"\n' +
+    '    path: "sources/piece-01/score.mei"\n' +
+    "    zones: []\n";
+
+  const mei = assembleSubmission({
+    task: tasks[1],
+    tasks,
+    configYaml: config,
+    baseMei: base,
+    forkMei: fork,
+    contributions: [
+      {
+        name: "volunteer",
+        message: "Encoding of T0001",
+        isodate: "2026-11-06",
+      },
+    ],
+  });
+
+  // Page 1's two measures come from the fork, page 2 stays as in the base.
+  assert.equal((mei.match(/<note /g) ?? []).length, 2);
+  assert.equal((mei.match(/<mRest\b/g) ?? []).length, 1);
+  assert.equal(parseScoreDef(mei).staves[0].clefShape, "F");
+  assert.match(mei, /volunteer/);
+  assert.match(mei, /Encoding of T0001/);
+});
+
+test("assembleSubmission keeps the campaign's header for a whole-file task", () => {
+  const base = buildFacsimileMei(
+    {
+      ...initialFacsimileModel([
+        {
+          image: "img/01.jpg",
+          width: 400,
+          height: 200,
+          measures: [{ ulx: 0, uly: 10, lrx: 90, lry: 90 }],
+        },
+      ]),
+      headXml: buildPieceHead(
+        { title: "Lied", composer: "" },
+        emptySourceMetadata(),
+        { date: "2026-11-06" },
+      ),
+    },
+    { withBreaks: true },
+  );
+  // The fork renames the piece, credits someone and adds two applications.
+  const fork = recordApplications(
+    base
+      .replace(/<mRest\b[^>]*\/>/g, '<note dur="4" oct="4" pname="c"/>')
+      .replace(">Lied</title>", ">Mallory's Lied</title>"),
+    ["Uploaded encoding", "Other tool"],
+  );
+  const task: TaskRow = {
+    task_id: "T0001",
+    subtask_id: "",
+    fragment: "sources/piece-01/score.mei",
+    locator: "",
+    allowlist: "",
+    blocklist: "",
+    depends_on: "",
+  };
+  const input = {
+    task,
+    tasks: [task],
+    configYaml: null,
+    forkMei: fork,
+    contributions: [
+      {
+        name: "volunteer",
+        message: "Encoding of T0001",
+        isodate: "2026-11-06",
+      },
+    ],
+  };
+
+  const mei = assembleSubmission({ ...input, baseMei: base });
+  assert.match(mei, /<note /);
+  assert.match(mei, />Lied<\/title>/);
+  assert.doesNotMatch(mei, /Mallory/);
+  const apps = applicationNamesIn(mei);
+  assert.ok(apps.includes("Uploaded encoding"));
+  assert.ok(!apps.includes("Other tool"));
+  assert.match(mei, /Encoding of T0001/);
+  assert.throws(
+    () => assembleSubmission({ ...input, baseMei: null }),
+    /missing from the campaign/,
+  );
+});
+
+test("a verdict comment's contract line is split off", () => {
+  assert.deepEqual(splitContract(`✅ Claim accepted.\n\n${contractMarker()}`), {
+    text: "✅ Claim accepted.",
+    contract: AUTOMATION_CONTRACT,
+  });
+  assert.deepEqual(splitContract("✅ Claim accepted."), {
+    text: "✅ Claim accepted.",
+    contract: null,
+  });
+});
+
+test("a rejection says when an expired claim was released", () => {
+  assert.equal(rejectionOutcome("mei_invalid", true), "No changes were made.");
+  assert.match(
+    rejectionOutcome("claim_expired", true),
+    /released; any unsubmitted work on its task branch was kept/,
+  );
+  assert.equal(
+    rejectionOutcome("claim_expired", false),
+    "The claim had run out and has been released.",
+  );
+});
+
+test("a campaign operation is told from any other pull request", () => {
+  assert.equal(isCampaignOperation(["tracking/lock.csv"], null, "x"), true);
+  assert.equal(isCampaignOperation(["README.md"], null, "encode-T0001"), true);
+  assert.equal(isCampaignOperation(["README.md"], null, "fix-typo"), false);
 });

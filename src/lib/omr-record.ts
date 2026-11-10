@@ -10,6 +10,7 @@
 
 import type { MeasureBox } from "./mei-facsimile.ts";
 import type { OmrPipeline } from "./omr-client.ts";
+import { tagAttribute, xmlEscape, xmlUnescape } from "./mei-xml.ts";
 
 export const OMR_RECORD_SCHEMA = 1;
 
@@ -54,20 +55,6 @@ export interface OmrRecord {
 export const omrRecordPath = (fragment: string): string =>
   `${fragment.slice(0, fragment.lastIndexOf("/") + 1)}omr.xml`;
 
-const escape = (s: string): string =>
-  s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-
-const unescape = (s: string): string =>
-  s
-    .replace(/&quot;/g, '"')
-    .replace(/&gt;/g, ">")
-    .replace(/&lt;/g, "<")
-    .replace(/&amp;/g, "&");
-
 const boxAttributes = (box: MeasureBox): string =>
   `ulx="${box.ulx}" uly="${box.uly}" lrx="${box.lrx}" lry="${box.lry}"`;
 
@@ -85,19 +72,19 @@ export function serializeOmrRecord(record: OmrRecord): string {
     XML_DECLARATION.trim(),
     `<omr schema="${OMR_RECORD_SCHEMA}" cropMargin="${record.cropMargin}">`,
     "  <models>",
-    `    <staffPipeline name="${escape(record.staffPipeline.name)}" version="${escape(record.staffPipeline.version)}"/>`,
-    `    <ocr engine="${escape(record.ocr.engine)}" version="${escape(record.ocr.version)}" language="${escape(record.ocr.language)}"/>`,
+    `    <staffPipeline name="${xmlEscape(record.staffPipeline.name)}" version="${xmlEscape(record.staffPipeline.version)}"/>`,
+    `    <ocr engine="${xmlEscape(record.ocr.engine)}" version="${xmlEscape(record.ocr.version)}" language="${xmlEscape(record.ocr.language)}"/>`,
     "  </models>",
   ];
   for (const page of record.pages) {
-    lines.push(`  <page n="${page.n}" image="${escape(page.image)}">`);
+    lines.push(`  <page n="${page.n}" image="${xmlEscape(page.image)}">`);
     for (const staff of page.staves) {
-      const open = `    <staff zone="${escape(staff.zone)}" ${boxAttributes(staff.box)}`;
+      const open = `    <staff zone="${xmlEscape(staff.zone)}" ${boxAttributes(staff.box)}`;
       const label = staff.label
-        ? `      <label>${escape(staff.label)}</label>`
+        ? `      <label>${xmlEscape(staff.label)}</label>`
         : "";
-      if (staff.musicxml === null) {
-        const error = ` error="${escape(staff.error || "not transcribed")}"`;
+      if (!staff.musicxml) {
+        const error = ` error="${xmlEscape(staff.error || "not transcribed")}"`;
         lines.push(
           label
             ? `${open}${error}>\n${label}\n    </staff>`
@@ -116,20 +103,15 @@ export function serializeOmrRecord(record: OmrRecord): string {
   }
   for (const c of record.clefs) {
     lines.push(
-      `  <clef staff="${c.staff}" read="${escape(c.read)}" corrected="${escape(c.corrected)}"/>`,
+      `  <clef staff="${c.staff}" read="${xmlEscape(c.read)}" corrected="${xmlEscape(c.corrected)}"/>`,
     );
   }
   lines.push("</omr>");
   return lines.join("\n") + "\n";
 }
 
-const attr = (tag: string, name: string): string | null => {
-  const value = new RegExp(`\\s${name}="([^"]*)"`).exec(tag)?.[1];
-  return value === undefined ? null : unescape(value);
-};
-
 const num = (tag: string, name: string): number =>
-  Number(attr(tag, name) ?? NaN);
+  Number(tagAttribute(tag, name) ?? NaN);
 
 /** A record read from `omr.xml`, or null for a file of another schema or none. */
 export function parseOmrRecord(xml: string | null): OmrRecord | null {
@@ -153,39 +135,43 @@ export function parseOmrRecord(xml: string | null): OmrRecord | null {
         staff,
       )?.[1];
       staves.push({
-        zone: attr(open, "zone") ?? "",
+        zone: tagAttribute(open, "zone") ?? "",
         box: {
           ulx: num(open, "ulx"),
           uly: num(open, "uly"),
           lrx: num(open, "lrx"),
           lry: num(open, "lry"),
         },
-        label: label === undefined ? "" : unescape(label),
+        label: label === undefined ? "" : xmlUnescape(label),
         musicxml: score ? XML_DECLARATION + score : null,
-        error: score ? "" : (attr(open, "error") ?? "not transcribed"),
+        error: score ? "" : (tagAttribute(open, "error") ?? "not transcribed"),
       });
     }
-    pages.push({ n: num(tag, "n"), image: attr(tag, "image") ?? "", staves });
+    pages.push({
+      n: num(tag, "n"),
+      image: tagAttribute(tag, "image") ?? "",
+      staves,
+    });
   }
   // Assignments and clef corrections sit after the pages, outside every staff's MusicXML.
   const tail = xml.slice(xml.lastIndexOf("</page>") + 1);
   return {
     cropMargin: num(root, "cropMargin"),
     staffPipeline: {
-      name: attr(pipeline, "name") ?? "",
-      version: attr(pipeline, "version") ?? "",
+      name: tagAttribute(pipeline, "name") ?? "",
+      version: tagAttribute(pipeline, "version") ?? "",
     },
     ocr: {
-      engine: attr(ocr, "engine") ?? "",
-      version: attr(ocr, "version") ?? "",
-      language: attr(ocr, "language") ?? "",
+      engine: tagAttribute(ocr, "engine") ?? "",
+      version: tagAttribute(ocr, "version") ?? "",
+      language: tagAttribute(ocr, "language") ?? "",
     },
     pages,
     clefs: (tail.match(/<clef\b[^>]*\bcorrected="[^"]*"[^>]*>/g) ?? []).map(
       (tag) => ({
         staff: num(tag, "staff"),
-        read: attr(tag, "read") ?? "",
-        corrected: attr(tag, "corrected") ?? "",
+        read: tagAttribute(tag, "read") ?? "",
+        corrected: tagAttribute(tag, "corrected") ?? "",
       }),
     ),
   };

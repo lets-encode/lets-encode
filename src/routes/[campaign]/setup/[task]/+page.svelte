@@ -10,12 +10,14 @@
   import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
+  import PaneDivider from "$lib/components/PaneDivider.svelte";
+  import GroupFields from "$lib/components/GroupFields.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import MusicGlyph, {
     type MusicGlyphName,
   } from "$lib/components/MusicGlyph.svelte";
   import { page } from "$app/state";
-  import { tick, untrack, type Snippet } from "svelte";
+  import { onDestroy, tick, untrack, type Snippet } from "svelte";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
@@ -38,16 +40,7 @@
     staffKeysig,
     withoutIds,
   } from "$lib/mei-facsimile.ts";
-  import {
-    COMMON_TRANSPOSITIONS,
-    PITCHES,
-    fromCustom,
-    keysigText,
-    soundsText,
-    toCustom,
-    transpositionFromLabel,
-  } from "$lib/transposition.ts";
-  import type { Transposition } from "$lib/transposition.ts";
+  import { keysigText, soundsText, toCustom } from "$lib/transposition.ts";
   import type {
     MeasureBox,
     ScoreDefModel,
@@ -96,9 +89,14 @@
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import ReviewActions from "$lib/components/ReviewActions.svelte";
+  import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import { StaffPitchEditor } from "$lib/staff-pitch.svelte.ts";
+  import KeyTimeFields from "$lib/components/KeyTimeFields.svelte";
+  import StaffPitchSelects from "$lib/components/StaffPitchSelects.svelte";
+  import StaffCustomPitch from "$lib/components/StaffCustomPitch.svelte";
   import {
     CLEF_OPTIONS,
     COMMON_CLEFS,
@@ -106,11 +104,8 @@
     clefGlyph,
     clefOption,
     clefText,
-    followedKey as followedStaffKey,
     linesChoices,
     setClef as setStaffClef,
-    setTransposition as setStaffTransposition,
-    settleKey as settleStaffKey,
     transOf,
     transposes,
     unpitched,
@@ -122,12 +117,6 @@
   const taskId = $derived(page.params.task!);
 
   const METER_NAMES = { common: "Common time", cut: "Cut time" };
-  const METER_KINDS = [
-    { value: "numeric", label: "Numbers", glyph: "threeFour" },
-    { value: "common", label: METER_NAMES.common, glyph: "common" },
-    { value: "cut", label: METER_NAMES.cut, glyph: "cut" },
-  ] as const;
-  const METER_UNITS = [1, 2, 4, 8, 16];
   const MAX_STAVES = 24;
 
   // The form's working copy of the score definition.
@@ -170,9 +159,6 @@
           );
         }
       },
-      reset() {
-        staves = [];
-      },
       // A claim of an OMR piece's setup task continues into the piece's
       // recognition in the same overlay.
       afterClaim(f, d) {
@@ -183,6 +169,11 @@
     },
   );
   const runner = session.runner;
+  // The recognition service's calls stop when the page goes away.
+  const omrStop = new AbortController();
+  onDestroy(() => omrStop.abort());
+  const omrClient = () =>
+    createOmrClient(provider.brokerUrl, { signal: omrStop.signal });
   const data = $derived(session.data);
   const holds = $derived(session.holds);
   // Only the volunteer holding the task edits it; everyone else, and everyone
@@ -271,10 +262,6 @@
     };
   });
   let anchorPage = $state<number | null>(null);
-  $effect(() => {
-    void taskId;
-    anchorPage = null;
-  });
   function showAnchorFor(c: CommentRow) {
     const p = commentAnchor(c).page - 1;
     anchorPage = data && p >= 0 && p < data.model.pages.length ? p : null;
@@ -436,32 +423,9 @@
     return { width: Math.floor(width), offset: Math.round(offset) };
   });
 
-  // Dragging the divider, or its arrow keys, moves the boundary between the
-  // source and the preview; each keeps at least a fifth of the width.
+  // The divider moves the boundary between the source and the preview; each
+  // keeps at least a fifth of the width.
   let desk = $state<HTMLDivElement>();
-  let splitting = false;
-  const clampSplit = (v: number) => Math.min(0.8, Math.max(0.2, v));
-  function splitDown(e: PointerEvent) {
-    e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    splitting = true;
-  }
-  // One update per frame, however often the pointer moves.
-  let splitFrame = 0;
-  function splitMove(e: PointerEvent) {
-    if (!splitting || !desk) return;
-    const box = desk.getBoundingClientRect();
-    const to = clampSplit((e.clientX - box.left) / box.width);
-    cancelAnimationFrame(splitFrame);
-    splitFrame = requestAnimationFrame(() => (split[setupStep] = to));
-  }
-  const splitUp = () => (splitting = false);
-  function splitKey(e: KeyboardEvent) {
-    const d = e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
-    if (!d) return;
-    e.preventDefault();
-    split[setupStep] = clampSplit(split[setupStep] + d);
-  }
 
   const submit = () =>
     run(
@@ -519,10 +483,6 @@
   let unset = $state(false);
   let recognition = $state<PieceRecognition | null>(null);
   let recognisedFor = $state<string | null>(null);
-  $effect(() => {
-    void taskId;
-    recognition = null;
-  });
 
   // While the task is held, its definition (and the recognition record this
   // session made) is saved as a draft after each pause in editing.
@@ -675,7 +635,7 @@
       filled++;
       return { ...staff, label: read[i] };
     });
-    staves.forEach(fillFromLabel);
+    staves.forEach((staff) => pitch.fillFromLabel(staff));
     // The fullest system's grand-staff boxes become braces, unless the
     // definition has groups already; a span repeating or crossing an earlier
     // one is left out.
@@ -710,9 +670,7 @@
     f: ForgeClient,
     d: FacsimileTaskData,
   ): Promise<Result> {
-    const client = createOmrClient(provider.brokerUrl);
-    // A run finishing after the page moved to another task is dropped.
-    const task = taskId;
+    const client = omrClient();
     try {
       runner.log.step("Reading the recognition record");
       // A record saved with the work, or kept from an expired claim, comes
@@ -740,10 +698,6 @@
         pipeline: omrModels.staffPipeline,
         progress: (step) => runner.log.step(step),
       });
-      if (task !== taskId)
-        return {
-          error: "The recognition finished after another task was opened.",
-        };
       recognition = result;
       const total = result.record.pages.reduce(
         (n, pg) => n + pg.staves.length,
@@ -752,7 +706,9 @@
       const failed = result.failed.length
         ? ` ${result.failed.length} of ${total} staves could not be transcribed (${result.failed
             .map((s) => `page ${s.page}, staff ${s.staff}`)
-            .join("; ")}); use “Transcribe failed staves again”.`
+            .join(
+              "; ",
+            )})${result.runErrors.length ? `; the staff pipeline reported: ${result.runErrors.join("; ")}` : ""}. Use “Transcribe failed staves again”.`
         : "";
       const labels = result.labelErrors.length
         ? ` The instrument labels could not be read on page${result.labelErrors.length === 1 ? "" : "s"} ${result.labelErrors.map((e) => e.page).join(", ")} (${result.labelErrors[0].error}).`
@@ -761,11 +717,17 @@
       unset = false;
       return {
         ok: true,
-        warn: result.failed.length > 0 || result.labelErrors.length > 0,
+        outcome:
+          result.failed.length > 0 || result.labelErrors.length > 0
+            ? "partial"
+            : undefined,
         message: `${total - result.failed.length} of ${total} staves are transcribed.${failed}${labels}${filled}`,
       };
     } catch (e) {
-      return { error: `Recognition failed: ${(e as Error).message}` };
+      return {
+        error: `Recognition failed: ${(e as Error).message}`,
+        retry: recognise,
+      };
     }
   }
 
@@ -934,59 +896,16 @@
   // The staff edits against the score's key (staff-edit.ts).
   const setClef = (staff: StaffModel, key: string) =>
     setStaffClef(keysig, staff, key);
-  const followedKey = (staff: StaffModel) => followedStaffKey(keysig, staff);
-  const settleKey = (staff: StaffModel) => settleStaffKey(keysig, staff);
-  const setTransposition = (staff: StaffModel, t: Transposition | null) =>
-    setStaffTransposition(keysig, staff, t);
 
-  // Staves whose transposition the volunteer chose, which a label no longer
-  // fills, and those showing the pitch fields although a listed
-  // transposition matches.
-  const transChosen = new SvelteSet<StaffModel>();
-  const transCustom = new SvelteSet<StaffModel>();
-  /** The transposition select's value: 'none', a list index, or 'other'. */
-  function transValue(staff: StaffModel): string {
-    if (transCustom.has(staff)) return "other";
-    if (!transposes(staff)) return "none";
-    const i = COMMON_TRANSPOSITIONS.findIndex(
-      (t) => t.diat === staff.transDiat && t.semi === staff.transSemi,
-    );
-    return i < 0 ? "other" : String(i);
-  }
-  function pickTransposition(staff: StaffModel, value: string) {
-    transChosen.add(staff);
-    if (value === "other") {
-      transCustom.add(staff);
-      return;
-    }
-    transCustom.delete(staff);
-    setTransposition(
-      staff,
-      value === "none" ? null : COMMON_TRANSPOSITIONS[Number(value)],
-    );
-  }
-  /** The pitch fields of a staff with a transposition outside the list. */
-  const customOf = (staff: StaffModel) =>
-    toCustom(transOf(staff)) ?? { pitch: "C", higher: false, octaves: 0 };
-  function setCustom(
-    staff: StaffModel,
-    change: Partial<ReturnType<typeof customOf>>,
-  ) {
-    setTransposition(staff, fromCustom({ ...customOf(staff), ...change }));
-  }
-  /** Fill a staff's transposition from its label, unless one is set or was chosen. */
-  function fillFromLabel(staff: StaffModel) {
-    if (transChosen.has(staff) || transposes(staff) || unpitched(staff)) return;
-    const t = transpositionFromLabel(staff.label);
-    if (t) setTransposition(staff, t);
-  }
+  // The staves' transposition fields (StaffPitchSelects, StaffCustomPitch).
+  const pitch = new StaffPitchEditor(() => keysig);
   // Labels already in the file or a saved draft fill the transpositions
   // once the holder opens the task.
   let labelsReadFor = $state<string | null>(null);
   $effect(() => {
     if (!canEdit || staves.length === 0 || labelsReadFor === taskId) return;
     labelsReadFor = taskId;
-    untrack(() => staves.forEach(fillFromLabel));
+    untrack(() => staves.forEach((staff) => pitch.fillFromLabel(staff)));
   });
   /** "in B♭, sounds a major 2nd lower", or '' for a staff that does not transpose. */
   function transText(staff: StaffModel): string {
@@ -996,15 +915,17 @@
       c && !(c.pitch === "C" && c.octaves > 0) ? `in ${c.pitch}, ` : "";
     return `${pitch}sounds ${soundsText(transOf(staff))}`;
   }
-  const STAFF_KEYS = KEY_SIGNATURES;
+  // Removing or moving a staff by other means drops a staff picked to move.
   function removeStaff(i: number) {
     if (staves.length <= 1) return;
+    reorder.drop();
     groups = removeStaffFromGroups(groups, i);
     clearMark();
     staves = staves.filter((_, n) => n !== i);
   }
   function moveStaff(from: number, to: number) {
     if (from === to || to < 0 || to >= staves.length) return;
+    reorder.drop();
     groups = moveStaffInGroups(groups, staves.length, from, to);
     clearMark();
     reorderStaves(from, to);
@@ -1016,105 +937,49 @@
     staves = next;
   }
 
-  // Reordering by a staff's handle (its number): dragged, the staff takes
-  // the place of each row the pointer crosses, and the list scrolls near its
-  // container's edges. A click picks the staff and a click on another
-  // staff's handle moves it there; the arrow keys move it by one.
+  // Reordering by a staff's handle, its number (HandleReorder). A drag's
+  // groups follow one move from the row it began on, as a click move would:
+  // each row crossed starts again from the groups' ranges then.
   let staffList = $state<HTMLOListElement | null>(null);
-  let dragging = $state<number | null>(null);
-  let picked = $state<number | null>(null);
-  // A drag's groups follow one move from the row it began on, as a click
-  // move would: each row crossed starts again from the groups' ranges then.
-  let gesture: {
-    x: number;
-    y: number;
-    moved: boolean;
-    origin: number;
-    groups: { g: StaffGroupModel; start: number; end: number }[];
-  } | null = null;
-  let swallowClick = false;
-  function handleDown(i: number, e: PointerEvent) {
-    if (e.button !== 0) return;
-    gesture = {
-      x: e.clientX,
-      y: e.clientY,
-      moved: false,
-      origin: i,
-      groups: groups.map((g) => ({ g, start: g.start, end: g.end })),
-    };
-    dragging = i;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function handleMove(e: PointerEvent) {
-    if (!gesture || dragging === null || !staffList) return;
-    if (!gesture.moved) {
-      if (Math.hypot(e.clientX - gesture.x, e.clientY - gesture.y) < 4) return;
-      gesture.moved = true;
-      picked = null;
-    }
-    const rows = [...staffList.children] as HTMLElement[];
-    const over = rows.findIndex((row) => {
-      const box = row.getBoundingClientRect();
-      return e.clientY >= box.top && e.clientY < box.bottom;
-    });
-    if (over >= 0 && over !== dragging) {
-      for (const { g, start, end } of gesture.groups) {
+  let dragGroups: { g: StaffGroupModel; start: number; end: number }[] = [];
+  const reorder = new HandleReorder({
+    rows: () => [...(staffList?.children ?? [])] as HTMLElement[],
+    scroller: () => {
+      let scroller = staffList?.parentElement ?? null;
+      while (
+        scroller &&
+        !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
+      )
+        scroller = scroller.parentElement;
+      return scroller;
+    },
+    handle: (i) => staffList?.querySelectorAll<HTMLElement>(".staffgrip")[i],
+    count: () => staves.length,
+    keyOf: (i) => String(i),
+    move: moveStaff,
+    dragStart: () =>
+      (dragGroups = groups.map((g) => ({ g, start: g.start, end: g.end }))),
+    dragMove: (origin, from, to) => {
+      for (const { g, start, end } of dragGroups) {
         g.start = start;
         g.end = end;
       }
       groups = moveStaffInGroups(
-        gesture.groups.map(({ g }) => g),
+        dragGroups.map(({ g }) => g),
         staves.length,
-        gesture.origin,
-        over,
+        origin,
+        to,
       );
       clearMark();
-      reorderStaves(dragging, over);
-      dragging = over;
-    }
-    let scroller = staffList.parentElement;
-    while (
-      scroller &&
-      !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)
-    )
-      scroller = scroller.parentElement;
-    if (!scroller) return;
-    const box = scroller.getBoundingClientRect();
-    if (e.clientY < box.top + 40) scroller.scrollTop -= 10;
-    else if (e.clientY > box.bottom - 40) scroller.scrollTop += 10;
-  }
-  function handleUp() {
-    swallowClick = !!gesture?.moved;
-    gesture = null;
-    dragging = null;
-  }
-  function handleClick(i: number) {
-    if (swallowClick) {
-      swallowClick = false;
-      return;
-    }
-    if (picked === null) picked = i;
-    else {
-      moveStaff(picked, i);
-      picked = null;
-    }
-  }
-  async function handleKey(i: number, e: KeyboardEvent) {
-    const to =
-      e.key === "ArrowUp" ? i - 1 : e.key === "ArrowDown" ? i + 1 : null;
-    if (e.key === "Escape") picked = null;
-    if (to === null || to < 0 || to >= staves.length) return;
-    e.preventDefault();
-    moveStaff(i, to);
-    await tick();
-    staffList?.querySelectorAll<HTMLElement>(".staffgrip")[to]?.focus();
-  }
+      reorderStaves(from, to);
+    },
+  });
   const handleTitle = (i: number) =>
-    picked === null
+    reorder.picked < 0
       ? "Drag to move this staff. Or click it, then click the staff whose place it takes. The arrow keys move it up and down."
-      : picked === i
+      : reorder.picked === i
         ? "Click again to leave this staff where it is."
-        : `Click to move staff ${picked + 1} here.`;
+        : `Click to move staff ${reorder.picked + 1} here.`;
 
   // ------------------------------------------------------------------------
   // Preview
@@ -1302,6 +1167,8 @@
     log={runner.log}
     finished={runner.held}
     error={runner.result?.error}
+    outcome={runner.result?.outcome}
+    message={runner.result?.message}
     onContinue={() => runner.dismiss()}
   />
 {/if}
@@ -1343,7 +1210,7 @@
          without page images has the preview alone. -->
     <div class="main">
       <h1 class="vh">Score setup · {session.pieceName || campaign}</h1>
-      <div class="runrow"><TaskRunState task={taskId} pill /></div>
+      <div class="runrow"><TaskRunState task={taskId} {repoId} pill /></div>
       <div class="desk" bind:this={desk}>
         {#if firstMeasure && data.imageUrls[shownPage]}
           {@const pg = data.model.pages[shownPage]}
@@ -1380,22 +1247,18 @@
               />
             </div>
           </section>
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-          <div
-            class="pane-grip"
-            role="separator"
-            tabindex="0"
-            aria-label="Resize the source and the preview"
-            aria-orientation="vertical"
-            aria-valuenow={Math.round(split[setupStep] * 100)}
-            aria-valuemin={20}
-            aria-valuemax={80}
-            onpointerdown={splitDown}
-            onpointermove={splitMove}
-            onpointerup={splitUp}
-            onpointercancel={splitUp}
-            onkeydown={splitKey}
-          ></div>
+          <PaneDivider
+            label="Resize the source and the preview"
+            bind:value={() => split[setupStep], (v) => (split[setupStep] = v)}
+            min={0.2}
+            max={0.8}
+            step={0.05}
+            fraction
+            at={(e) => {
+              const box = desk!.getBoundingClientRect();
+              return (e.clientX - box.left) / box.width;
+            }}
+          />
         {/if}
         <section class="previewbox" aria-label="Preview of the setup">
           <span class="page-label">Preview of the setup</span>
@@ -1406,7 +1269,7 @@
           {:else if !groupsValid}
             <p class="muted">Fix the staff groups to see the preview.</p>
           {:else if previewError}
-            <p class="muted">{previewError}</p>
+            <p class="msg-error">{previewError}</p>
           {:else if previewSvg}
             <!-- In step 2 the staves take clicks and taps; the Groups section
                  of the panel is the path without a pointer. -->
@@ -1560,58 +1423,13 @@
           {#if setupStep === 1}
             <fieldset disabled={!canEdit} class="sec-meter">
               <p class="grouphead">Key and time signature</p>
-              <div class="meterrow">
-                <label class="mfield">
-                  <span>Key signature</span>
-                  <select
-                    class="ctl"
-                    bind:value={keysig}
-                    title="The accidentals the score opens with, on the staves that do not transpose."
-                  >
-                    {#each KEY_SIGNATURES as key (key.value)}
-                      <option value={key.value}>{key.label}</option>
-                    {/each}
-                  </select>
-                </label>
-                <div class="mfield">
-                  <span>Time signature</span>
-                  <GlyphSelect
-                    class="ctl"
-                    options={METER_KINDS}
-                    value={meterType}
-                    onchange={(v) => (meterType = v as typeof meterType)}
-                    label="Time signature"
-                    title="Numbers (beats over a beat unit), or a symbol: common time or cut time."
-                  />
-                </div>
-              </div>
-              {#if meterType === "numeric"}
-                <div class="meterrow">
-                  <label class="mfield">
-                    <span>Beats</span>
-                    <input
-                      class="ctl"
-                      type="text"
-                      inputmode="numeric"
-                      bind:value={meterCount}
-                      class:bad={!meterValid}
-                      title="The number of beats in a bar — the upper number of the time signature."
-                    />
-                  </label>
-                  <label class="mfield">
-                    <span>Beat unit</span>
-                    <select
-                      class="ctl"
-                      bind:value={meterUnit}
-                      title="The note value that counts as one beat — the lower number of the time signature."
-                    >
-                      {#each METER_UNITS as unit (unit)}
-                        <option value={String(unit)}>{unit}</option>
-                      {/each}
-                    </select>
-                  </label>
-                </div>
-              {/if}
+              <KeyTimeFields
+                bind:keysig
+                bind:meterType
+                bind:meterCount
+                bind:meterUnit
+                {meterValid}
+              />
             </fieldset>
 
             <fieldset disabled={!canEdit} class="sec-staves">
@@ -1622,28 +1440,29 @@
                     class="staffrow"
                     class:transposing={!unpitched(staff) && transposes(staff)}
                     class:pointed={pointedStaff === i}
-                    class:dragged={dragging === i && picked === null}
-                    class:picked={picked === i}
+                    class:dragged={reorder.dragging === i && reorder.picked < 0}
+                    class:picked={reorder.picked === i}
                     {...pointAt(i)}
                   >
-                    {#if canEdit && staves.length > 1}
+                    {#if canEdit && staves.length > 1 && !data?.hasNotation}
                       <button
                         type="button"
                         class="grip staffgrip"
-                        class:target={picked !== null && picked !== i}
-                        style:grid-row="2 / span {transValue(staff) ===
+                        class:target={reorder.picked >= 0 &&
+                          reorder.picked !== i}
+                        style:grid-row="2 / span {pitch.value(staff) ===
                           'other' && !unpitched(staff)
                           ? 2
                           : 1}"
                         aria-label={`Staff ${i + 1}: move`}
-                        aria-pressed={picked === i}
+                        aria-pressed={reorder.picked === i}
                         title={handleTitle(i)}
-                        onpointerdown={(e) => handleDown(i, e)}
-                        onpointermove={handleMove}
-                        onpointerup={handleUp}
-                        onpointercancel={handleUp}
-                        onclick={() => handleClick(i)}
-                        onkeydown={(e) => handleKey(i, e)}
+                        onpointerdown={(e) => reorder.down(i, e)}
+                        onpointermove={(e) => reorder.pointerMove(e)}
+                        onpointerup={() => reorder.up()}
+                        onpointercancel={() => reorder.up()}
+                        onclick={() => reorder.click(i)}
+                        onkeydown={(e) => reorder.key(i, e)}
                       >
                         <Icon name="grip" />
                       </button>
@@ -1654,7 +1473,7 @@
                         class="ctl grow"
                         type="text"
                         bind:value={staff.label}
-                        oninput={() => fillFromLabel(staff)}
+                        oninput={() => pitch.fillFromLabel(staff)}
                         placeholder="Instrument"
                         aria-label={`Staff ${i + 1}: instrument`}
                         title="The instrument or voice name printed in front of this staff. Leave empty for none. A name with a pitch, like Clarinetto in B, sets the transposition."
@@ -1664,10 +1483,9 @@
                           type="button"
                           class="btn btn-icon btn-danger"
                           onclick={() => removeStaff(i)}
-                          disabled={staves.length <= 1 ||
-                            (omr && data?.hasNotation)}
+                          disabled={staves.length <= 1 || data?.hasNotation}
                           aria-label={`Remove staff ${i + 1}`}
-                          title={omr && data?.hasNotation
+                          title={data?.hasNotation
                             ? "The staff count is fixed once the piece holds notation"
                             : "Remove this staff"}><Icon name="trash" /></button
                         >
@@ -1714,106 +1532,21 @@
                           {/each}
                         </select>
                       {:else if !unpitched(staff)}
-                        <select
-                          class="ctl trans"
-                          value={transValue(staff)}
-                          onchange={(e) =>
-                            pickTransposition(
-                              staff,
-                              (e.target as HTMLSelectElement).value,
-                            )}
-                          aria-label={`Staff ${i + 1}: transposition`}
-                          title={transposes(staff)
-                            ? `Sounds ${soundsText(transOf(staff))} than written.`
-                            : "Whether the instrument transposes: its music is written at another pitch than it sounds."}
-                        >
-                          <option value="none">Not transposing</option>
-                          {#each COMMON_TRANSPOSITIONS as t, n (n)}
-                            <option value={String(n)}>{t.label}</option>
-                          {/each}
-                          <option value="other">Other…</option>
-                        </select>
-                        <select
-                          class="ctl key"
-                          value={staff.keysig ?? ""}
-                          onchange={(e) => {
-                            const v = (e.target as HTMLSelectElement).value;
-                            if (v === "") delete staff.keysig;
-                            else staff.keysig = v;
-                            settleKey(staff);
-                          }}
-                          aria-label={`Staff ${i + 1}: key signature`}
-                          title={staff.keysig === undefined
-                            ? transposes(staff)
-                              ? "The key signature of this staff: the score's, moved by the transposition."
-                              : "The key signature of this staff: the score's."
-                            : "The key signature of this staff, chosen for it alone."}
-                        >
-                          <optgroup
-                            label={transposes(staff)
-                              ? "Score key, transposed"
-                              : "Score key"}
-                          >
-                            <option value=""
-                              >{keysigText(followedKey(staff))}</option
-                            >
-                          </optgroup>
-                          <optgroup label="This staff only">
-                            {#each STAFF_KEYS as k (k.value)}
-                              <option value={k.value}>{k.label}</option>
-                            {/each}
-                          </optgroup>
-                        </select>
+                        <StaffPitchSelects
+                          editor={pitch}
+                          {staff}
+                          scoreKey={keysig}
+                          name={`Staff ${i + 1}`}
+                        />
                       {/if}
                     </div>
-                    {#if transValue(staff) === "other" && !unpitched(staff)}
-                      {@const c = customOf(staff)}
+                    {#if pitch.value(staff) === "other" && !unpitched(staff)}
                       <div class="staffline custom">
-                        <select
-                          class="ctl"
-                          value={c.pitch}
-                          onchange={(e) =>
-                            setCustom(staff, {
-                              pitch: (e.target as HTMLSelectElement).value,
-                            })}
-                          aria-label={`Staff ${i + 1}: instrument pitch`}
-                          title="The pitch the instrument is in: the note that sounds when a C is written."
-                        >
-                          {#each PITCHES as p (p.name)}
-                            <option value={p.name}>in {p.name}</option>
-                          {/each}
-                        </select>
-                        <select
-                          class="ctl"
-                          value={c.higher ? "higher" : "lower"}
-                          onchange={(e) =>
-                            setCustom(staff, {
-                              higher:
-                                (e.target as HTMLSelectElement).value ===
-                                "higher",
-                            })}
-                          aria-label={`Staff ${i + 1}: sounds higher or lower`}
-                          title="Whether the instrument sounds higher or lower than written."
-                        >
-                          <option value="lower">sounds lower</option>
-                          <option value="higher">sounds higher</option>
-                        </select>
-                        <select
-                          class="ctl"
-                          value={String(c.octaves)}
-                          onchange={(e) =>
-                            setCustom(staff, {
-                              octaves: Number(
-                                (e.target as HTMLSelectElement).value,
-                              ),
-                            })}
-                          aria-label={`Staff ${i + 1}: added octaves`}
-                          title="Whole octaves added to the interval, as for a bass clarinet."
-                        >
-                          <option value="0">no octave</option>
-                          <option value="1">+1 octave</option>
-                          <option value="2">+2 octaves</option>
-                        </select>
+                        <StaffCustomPitch
+                          editor={pitch}
+                          {staff}
+                          name={`Staff ${i + 1}`}
+                        />
                       </div>
                     {/if}
                   </li>
@@ -1824,9 +1557,8 @@
                   type="button"
                   class="btn addbtn"
                   onclick={() => addStaff()}
-                  disabled={staves.length >= MAX_STAVES ||
-                    (omr && data?.hasNotation)}
-                  title={omr && data?.hasNotation
+                  disabled={staves.length >= MAX_STAVES || data?.hasNotation}
+                  title={data?.hasNotation
                     ? "The staff count is fixed once the piece holds notation"
                     : "Add a staff below the last one."}
                   ><Icon name="plus" />Add staff</button
@@ -1967,126 +1699,36 @@
           <span class="glabel">{g.label.trim()}</span>
         </button>
         {#if openG === g}
-          <div class="gfields">
-            <div class="gfirst">
-              <div class="field">
-                <span>Symbol</span>
-                <GlyphSelect
-                  options={[
-                    {
-                      value: "brace",
-                      label: "Brace",
-                      glyph: "brace",
-                      disabled: !fitsWith(g, { symbol: "brace" }),
-                    },
-                    { value: "bracket", label: "Bracket", glyph: "bracket" },
-                  ]}
-                  value={g.symbol}
-                  onchange={(v) => (g.symbol = v)}
-                  label="Symbol"
-                  title="A brace joins the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2. A bracket joins a section, like the strings."
-                />
-              </div>
-              <label class="field narrow">
-                <span>From staff</span>
-                <select
-                  class="ctl"
-                  bind:value={g.start}
-                  title="The group's first staff."
-                >
-                  {#each staves as _, n (n)}
-                    <option
-                      value={n + 1}
-                      disabled={!fitsWith(g, { start: n + 1 })}>{n + 1}</option
-                    >
-                  {/each}
-                </select>
-              </label>
-              <label class="field narrow">
-                <span>To staff</span>
-                <select
-                  class="ctl"
-                  bind:value={g.end}
-                  title="The group's last staff."
-                >
-                  {#each staves as _, n (n)}
-                    <option
-                      value={n + 1}
-                      disabled={!fitsWith(g, { end: n + 1 })}>{n + 1}</option
-                    >
-                  {/each}
-                </select>
-              </label>
-              {#if canEdit}
-                <button
-                  type="button"
-                  class="btn btn-icon btn-danger"
-                  onclick={() => removeGroup(g)}
-                  aria-label={`Remove the ${symbolName(g.symbol).toLowerCase()} over staves ${g.start}–${g.end}`}
-                  title="Remove this group"><Icon name="trash" /></button
-                >
-              {/if}
-            </div>
-            <label class="field">
-              <span>Label</span>
-              <input
-                class="ctl"
-                type="text"
-                bind:value={g.label}
-                placeholder={canEdit ? "optional" : "—"}
-                title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
-              />
-            </label>
-            <div class="gtoggles">
-              <div class="mfield">
-                <span id="gbar-{g.start}-{g.end}">Barlines</span>
-                <div
-                  class="seg gseg"
-                  role="group"
-                  aria-labelledby="gbar-{g.start}-{g.end}"
-                  title="Whether the barlines run through the group's staves or stop at each staff, as on the page."
-                >
-                  <button
-                    type="button"
-                    class:on={g.barThru}
-                    aria-pressed={g.barThru}
-                    onclick={() => (g.barThru = true)}>Through</button
-                  >
-                  <button
-                    type="button"
-                    class:on={!g.barThru}
-                    aria-pressed={!g.barThru}
-                    onclick={() => (g.barThru = false)}>Per staff</button
-                  >
-                </div>
-              </div>
-              {#if g.symbol === "brace"}
-                <div class="mfield">
-                  <span id="ginstr-{g.start}-{g.end}">Staves</span>
-                  <div
-                    class="seg gseg"
-                    role="group"
-                    aria-labelledby="ginstr-{g.start}-{g.end}"
-                    title="One instrument: one player's part over several staves, like a piano or a harp. Separate staves: one instrument per staff, like Horn 1 and 2. Set from the labels until chosen here."
-                  >
-                    <button
-                      type="button"
-                      class:on={g.oneInstrument}
-                      aria-pressed={g.oneInstrument}
-                      onclick={() => setOneInstrument(g, true)}
-                      >One instrument</button
-                    >
-                    <button
-                      type="button"
-                      class:on={!g.oneInstrument}
-                      aria-pressed={!g.oneInstrument}
-                      onclick={() => setOneInstrument(g, false)}
-                      >Separate staves</button
-                    >
-                  </div>
-                </div>
-              {/if}
-            </div>
+          <div class="gbody">
+            <GroupFields
+              unit="staff"
+              from={g.start}
+              to={g.end}
+              fromOptions={staves.map((_, n) => ({
+                value: n + 1,
+                label: `${n + 1}`,
+                disabled: !fitsWith(g, { start: n + 1 }),
+              }))}
+              toOptions={staves.map((_, n) => ({
+                value: n + 1,
+                label: `${n + 1}`,
+                disabled: !fitsWith(g, { end: n + 1 }),
+              }))}
+              onfrom={(v) => (g.start = v)}
+              onto={(v) => (g.end = v)}
+              symbol={g.symbol}
+              onsymbol={(v) => (g.symbol = v)}
+              braceDisabled={!fitsWith(g, { symbol: "brace" })}
+              label={g.label}
+              onlabelinput={(v) => (g.label = v)}
+              barThru={g.barThru}
+              onbarthru={(v) => (g.barThru = v)}
+              oneInstrument={g.oneInstrument}
+              ononeinstrument={(v) => setOneInstrument(g, v)}
+              disabled={!canEdit}
+              onremove={() => removeGroup(g)}
+              removeLabel={`Remove the ${symbolName(g.symbol).toLowerCase()} over staves ${g.start}–${g.end}`}
+            />
           </div>
         {/if}
       </div>
@@ -2122,8 +1764,8 @@
       </div>
     {/snippet}
 
-    <!-- The task tools: the setup's steps, and transcribing the staves
-         again (an OMR-prepared piece). -->
+    <!-- The task tools: the setup's steps, and transcribing failed
+         staves again (an OMR-prepared piece). -->
     {#snippet tools()}
       {#if !docked}{@render steps()}{/if}
       {#if omr && canEdit && recognition && recognition.failed.length > 0}
@@ -2136,16 +1778,6 @@
             .length} staves it could not transcribe"
         >
           Transcribe failed staves again
-        </button>
-      {:else if omr && canEdit && !recognition && recognisedFor === taskId}
-        <button
-          type="button"
-          class="btn"
-          onclick={() => recognise()}
-          disabled={busy}
-          title="Transcribe the staves again; staves already transcribed in this browser are kept"
-        >
-          Transcribe the staves again
         </button>
       {/if}
     {/snippet}
@@ -2197,6 +1829,7 @@
     {#snippet reviewFooter()}
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
+          {repoId}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
@@ -2215,7 +1848,7 @@
 
     <!-- The last command's result, in the task box. -->
     {#snippet resultNote()}
-      <RunnerBanner {runner} bar collapsible />
+      <RunnerBanner {runner} surface="inline" />
     {/snippet}
 
     {#snippet taskBox(headAction: Snippet | undefined)}
@@ -2232,8 +1865,10 @@
 
     {#if tables}
       <TaskPageSidePanel
+        {repoId}
         {tables}
         {taskId}
+        review={data?.status === "validation_required"}
         done={data?.status === "completed"}
         {viewer}
         {runner}
@@ -2248,9 +1883,9 @@
         selectionActive={canEdit}
         bind:tab={panelTab}
         bind:open={sheetOpen}
-        footer={data.status === "encoding_required"
+        footer={session.footerMode === "edit"
           ? footer
-          : session.reviewSub !== undefined
+          : session.footerMode === "review"
             ? reviewFooter
             : undefined}
         onanchor={showAnchorFor}
@@ -2455,32 +2090,8 @@
     white-space: nowrap;
     color: var(--ink-soft);
   }
-  .gfields {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+  .gbody {
     padding: 2px 10px 10px;
-  }
-  .gfirst {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-  }
-  .gfirst > .field.narrow {
-    width: 72px;
-  }
-  .gtoggles {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-  }
-  .gseg {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-  }
-  .gseg > button {
-    justify-content: center;
   }
   .groupwarn {
     margin: 8px 0 0;
@@ -2551,7 +2162,7 @@
     gap: 6px;
     min-width: 0;
   }
-  .staffline > .ctl,
+  .staffline > :global(.ctl),
   .staffline > :global(.gsel) {
     flex: 1 1 0;
     min-width: 0;
@@ -2559,14 +2170,14 @@
   .staffline > :global(.gsel.clef) {
     flex: 0 1 96px;
   }
-  .staffline > .ctl.key {
+  .staffline > :global(.ctl.key) {
     flex: 0 0 68px;
   }
   /* The staff blocks take the section's width up to a narrow margin. */
   .setup fieldset.sec-staves {
     padding-inline: 8px;
   }
-  .staffline.custom > .ctl:first-child {
+  .staffline.custom > :global(.ctl:first-child) {
     flex: 0 0 72px;
   }
   /* Docked, the text is larger: the transposition takes its own line below
@@ -2577,10 +2188,10 @@
   .setup.docked .staffline > :global(.gsel.clef) {
     flex: 1 1 0;
   }
-  .setup.docked .staffline > .ctl.key {
+  .setup.docked .staffline > :global(.ctl.key) {
     flex: 1 1 0;
   }
-  .setup.docked .staffline > .ctl.trans {
+  .setup.docked .staffline > :global(.ctl.trans) {
     order: 1;
     flex-basis: 100%;
   }
@@ -2751,9 +2362,6 @@
     font-size: 11.5px;
     font-weight: 600;
     color: var(--ink-faint);
-  }
-  .mfield > .ctl.bad {
-    border-color: var(--danger-line);
   }
   .field {
     flex: 1;

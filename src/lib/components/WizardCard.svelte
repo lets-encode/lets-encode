@@ -45,21 +45,26 @@
 </script>
 
 <script lang="ts">
+  import PaneDivider from "$lib/components/PaneDivider.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { untrack, type Snippet } from "svelte";
   import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
-  import { releaseClaim } from "$lib/campaign-resolve.ts";
-  import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
+  import { timeAgo } from "$lib/campaign-board.ts";
+  import { resumableDrafts } from "$lib/wizard-draft.ts";
+  import DiscardSetupConfirm from "$lib/components/DiscardSetupConfirm.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
   import { markHidden } from "$lib/scroll-edges.ts";
   import {
     WIZARD_STEPS,
+    discardSetup,
     draftSnapshot,
     draftStatus,
+    goToStep,
     isSkipped,
     piecesSummary,
+    registeredNote,
     resetWizard,
     resumeDraft,
     saveDraft,
@@ -84,6 +89,7 @@
     nextIcon = "arrow-right",
     nextDisabled = false,
     nextReason,
+    footnote,
     backDisabled = false,
     navBlocked,
     finish = false,
@@ -130,6 +136,9 @@
      * behind the other tab, with the button's tooltip repeating it.
      */
     nextReason?: string;
+    /** A control on the footer's row left of the buttons, in place of the reason. */
+    footnote?: Snippet;
+    /** A step's work is under way: Back, Discard and the other setups wait. */
     backDisabled?: boolean;
     /**
      * Why the step cannot be left right now: disables Back, Next and the
@@ -142,7 +151,10 @@
     footer?: Snippet;
   } = $props();
   const reasonId = $props.id();
-  const reasonShown = $derived(nextDisabled && !!nextReason);
+  const reasonShown = $derived(nextDisabled && !!nextReason && !footnote);
+  // The reason's height; on a phone it lies over the body, which scrolls
+  // that much further.
+  let noteH = $state(0);
 
   const sidebar = $derived(wizardLayout.sidebar);
   const short = $derived(wizardLayout.short);
@@ -214,10 +226,7 @@
   });
   const savedAgo = $derived.by(() => {
     if (draftStatus.savedAt === null) return null;
-    const minutes = Math.floor((now - draftStatus.savedAt) / 60_000);
-    if (minutes < 1) return "just now";
-    if (minutes < 60) return `${minutes} min ago`;
-    return `${Math.floor(minutes / 60)} h ago`;
+    return timeAgo(new Date(draftStatus.savedAt).toISOString(), now);
   });
 
   // Other setups of this account stored in the browser, listed so one of them
@@ -242,56 +251,34 @@
     const owner = auth.user?.login;
     if (owner) saveDraft(owner, draftSnapshot());
     try {
-      await resumeDraft(handle);
+      await resumeDraft(owner ?? "", handle);
     } catch (err) {
       resumeError = `Could not resume “${handle}”: ${(err as Error).message}`;
     }
     resuming = null;
   }
 
-  // Dragging the divider resizes the work card (side by side) or the
-  // material pane (stacked); the other takes whatever is left. The card's
-  // width is in pixels so the choice survives a window resize; both are
-  // clamped so the two stay usable.
+  // The divider resizes the work card (side by side) or the material pane
+  // (stacked); the other takes whatever is left. The card's width is in
+  // pixels so the choice survives a window resize; both are clamped so the
+  // two stay usable.
   let area = $state<HTMLDivElement>();
-  let resizing = false;
-  function startResize(e: PointerEvent) {
-    resizing = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function onResize(e: PointerEvent) {
-    if (!resizing) return;
-    if (mode === "stacked") {
-      if (!area) return;
-      const box = area.getBoundingClientRect();
-      stackShare[step] = Math.min(
-        Math.max((e.clientY - box.top) / box.height, 0.2),
-        0.8,
-      );
-      return;
-    }
-    // The card is anchored to the right, so it grows as the pointer moves left.
-    workWidth = Math.min(
-      Math.max(window.innerWidth - e.clientX, 380),
-      Math.min(860, window.innerWidth * 0.65),
-    );
-  }
-  function endResize(e: PointerEvent) {
-    resizing = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-  }
+  let workW = $state(0);
+  let winW = $state(0);
 
-  // Discarding asks once before it lets go of everything collected.
+  // Discarding asks once before it lets go of everything collected. A setup
+  // whose name is registered is a reachable campaign: it can only be finished.
   let confirmingDiscard = $state(false);
-  function discardSetup() {
-    const handle = wizard.handle.trim();
-    const claim = wizard.claim;
+  const registered = $derived(wizard.claim?.registered === true);
+  const registeredTitle = $derived(
+    registered && wizard.claim ? registeredNote(wizard.claim.name) : undefined,
+  );
+  function discardThisSetup() {
     confirmingDiscard = false;
-    if (handle) discardDraft(handle);
+    // The draft goes at once; the name is given back while the page moves
+    // to the campaign list.
+    void discardSetup(auth.user?.login, wizard.handle.trim(), wizard.claim);
     resetWizard();
-    // Give the name back so it is free again straight away. Best-effort: an
-    // unreleased hold runs out on its own.
-    if (claim) void releaseClaim(claim.name, claim.token);
     void goto("/campaigns");
   }
 
@@ -358,6 +345,7 @@
 </script>
 
 <svelte:window
+  bind:innerWidth={winW}
   onpointerdown={onWindowPointerDown}
   onkeydown={(e) => e.key === "Escape" && closePopups()}
   onresize={() => (popup = null)}
@@ -393,7 +381,7 @@
               class="rail-step"
               disabled={!done || backDisabled || navBlocked !== undefined}
               title={done ? navBlocked : undefined}
-              onclick={() => (wizard.step = s.id)}
+              onclick={() => goToStep(s.id)}
               aria-current={active ? "step" : undefined}
             >
               <span class="rail-chain">
@@ -445,23 +433,29 @@
             {:else}
               <button
                 type="button"
-                class="linkish"
+                class="btn btn-danger"
                 onclick={() => (confirmingDiscard = true)}
+                disabled={backDisabled || registered}
+                title={registeredTitle}
               >
-                Discard this setup
+                <Icon name="trash" />Discard this setup
               </button>
             {/if}
           {/if}
           {#each otherDrafts as draft (draft.handle)}
+            {@const name = draft.entries?.title?.trim() || draft.handle}
             <button
               type="button"
-              class="linkish other-draft"
+              class="btn other-draft"
+              title={`Resume setup of “${name}”`}
               onclick={() => resumeOther(draft.handle)}
-              disabled={resuming !== null}
+              disabled={resuming !== null || backDisabled}
             >
-              {resuming === draft.handle
-                ? "Working…"
-                : `Resume setup of “${draft.entries?.title?.trim() || draft.handle}”`}
+              <span class="resume-text">
+                {resuming === draft.handle
+                  ? "Working…"
+                  : `Resume setup of “${name}”`}
+              </span>
             </button>
           {/each}
           {#if resumeError}
@@ -519,7 +513,7 @@
                   disabled={!done || backDisabled || navBlocked !== undefined}
                   title={(done && navBlocked) || value || undefined}
                   aria-label={s.label}
-                  onclick={() => (wizard.step = s.id)}
+                  onclick={() => goToStep(s.id)}
                   aria-current={active ? "step" : undefined}
                 >
                   <span class="hit">
@@ -570,21 +564,40 @@
         {@render material()}
       </div>
 
-      <div
-        class="pane-grip"
-        role="separator"
-        aria-label={mode === "stacked"
-          ? "Resize the material pane"
-          : "Resize the work card"}
-        aria-orientation={mode === "stacked" ? "horizontal" : "vertical"}
-        onpointerdown={startResize}
-        onpointermove={onResize}
-        onpointerup={endResize}
-        onpointercancel={endResize}
-      ></div>
+      {#if mode === "stacked"}
+        <PaneDivider
+          label="Resize the material pane"
+          vertical={false}
+          bind:value={
+            () => stackShare[step] ?? DEFAULT_SHARE[step] ?? 0.5,
+            (v) => (stackShare[step] = v)
+          }
+          min={0.2}
+          max={0.8}
+          step={0.05}
+          fraction
+          at={(e) => {
+            const box = area!.getBoundingClientRect();
+            return (e.clientY - box.top) / box.height;
+          }}
+        />
+      {:else}
+        <!-- The card is anchored to the right: it grows as the divider
+             moves left. -->
+        <PaneDivider
+          label="Resize the work card"
+          bind:value={() => workWidth ?? workW, (v) => (workWidth = v)}
+          min={380}
+          max={Math.min(860, winW * 0.65)}
+          step={24}
+          reverse
+          at={(e) => window.innerWidth - e.clientX}
+        />
+      {/if}
 
       <div
         class="work"
+        bind:clientWidth={workW}
         style={workWidth === null || mode === "stacked"
           ? undefined
           : `--work-width: ${workWidth}px`}
@@ -607,7 +620,7 @@
             type="button"
             class="resume"
             onclick={() => resumeOther(draft.handle)}
-            disabled={resuming !== null}
+            disabled={resuming !== null || backDisabled}
           >
             <span class="resume-text">
               {resuming === draft.handle
@@ -635,7 +648,7 @@
   {#if otherDrafts.length}
     <button
       type="button"
-      class="linkish others"
+      class="btn others"
       data-popup
       aria-expanded={popup?.kind === "others"}
       onclick={(e) => togglePopup("others", e, 320)}
@@ -649,31 +662,33 @@
     {@const open = asPopup ? popup?.kind === "discard" : confirmingDiscard}
     <button
       type="button"
-      class="linkish"
+      class="btn btn-danger"
       data-popup
       aria-expanded={open}
       onclick={(e) =>
         asPopup ? togglePopup("discard", e, 260) : toggleDiscard()}
+      disabled={backDisabled || registered}
+      title={registeredTitle}
     >
-      {discardLabel}
+      <Icon name="trash" />{discardLabel}
     </button>
   {/if}
 {/snippet}
 
 {#snippet discardQuestion()}
-  <span>Discard everything entered so far?</span>
-  <span class="discard-row">
-    <button type="button" class="btn btn-danger" onclick={discardSetup}>
-      Discard for good
-    </button>
-    <button type="button" class="btn" onclick={closePopups}>Cancel</button>
-  </span>
+  <DiscardSetupConfirm
+    repo={wizard.repo}
+    onconfirm={discardThisSetup}
+    oncancel={closePopups}
+    disabled={backDisabled}
+  />
 {/snippet}
 
 {#snippet workCard()}
   {@const solo = !material}
   <section
     class="card"
+    style:--note-h="{noteH}px"
     class:solo
     class:hug={solo}
     class:wide={solo && step === "upload"}
@@ -767,7 +782,7 @@
     <!-- Every step draws the frame, so the one place to report that this setup
          is no longer being kept for later — or why it opened where it did — is
          here. -->
-    {#if draftStatus.resumeNotice || draftStatus.saveError || pinned}
+    {#if draftStatus.resumeNotice || draftStatus.saveError || draftStatus.imagesError || pinned}
       <div class="pinned">
         {#if draftStatus.resumeNotice}
           <p class="msg-warn" role="status">{draftStatus.resumeNotice}</p>
@@ -776,6 +791,11 @@
           <p class="msg-warn" role="status">
             This setup can't be saved in your browser, so it won't be offered
             for continuing if you leave: {draftStatus.saveError}
+          </p>
+        {:else if draftStatus.imagesError}
+          <p class="msg-warn" role="status">
+            The page images can't be kept in your browser, so continuing this
+            setup later needs them uploaded again: {draftStatus.imagesError}
           </p>
         {/if}
         {@render pinned?.()}
@@ -788,13 +808,15 @@
       {:else}
         <!-- Beside pages fitted to the card's height the line is kept while
              empty, so the reason coming and going does not rescale them. -->
-        {#if reasonShown || material}
+        {#if footnote}
+          {@render footnote()}
+        {:else if reasonShown || material}
           <span
             class="footnote"
             id={reasonId}
             role="status"
             title={reasonShown ? nextReason : undefined}
-            >{reasonShown ? nextReason : ""}</span
+            bind:offsetHeight={noteH}>{reasonShown ? nextReason : ""}</span
           >
         {/if}
         {#if onBack}
@@ -916,23 +938,10 @@
   .rail-unnamed {
     color: var(--ink-faint);
   }
-  .others {
-    gap: 4px;
-  }
-  @media (pointer: coarse) {
-    .linkish {
-      min-height: 44px;
-    }
-    /* In the line above the track the press area overlaps its neighbours
-       rather than making the line taller. */
-    .thead .linkish {
-      margin-block: -10px;
-    }
-  }
-  .discard-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
+  /* In the line above the track a button overlaps the line's padding
+     rather than making the line taller. */
+  .thead .btn {
+    margin-block: -4px;
   }
 
   /* ---- Popups ------------------------------------------------------------ */
@@ -1098,7 +1107,11 @@
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    gap: 2px;
+    gap: 6px;
+    font-size: 12.5px;
+  }
+  .rail-foot .btn {
+    max-width: 100%;
   }
   .discard-inline {
     display: flex;
@@ -1109,6 +1122,7 @@
     color: var(--ink-soft);
   }
   .other-draft {
+    max-width: 100%;
     margin-top: 4px;
   }
 
@@ -1363,12 +1377,12 @@
   }
   /* The divider between the material pane and the work card (.pane-grip in
      ui.css); stacked, it lies across. */
-  .stacked .pane-grip {
+  .stacked :global(.pane-grip) {
     width: auto;
     height: 22px;
     cursor: ns-resize;
   }
-  .stacked .pane-grip::before {
+  .stacked :global(.pane-grip)::before {
     width: 2.8rem;
     height: 4px;
     background: var(--line-strong);
@@ -1705,10 +1719,35 @@
       padding-bottom: 12px;
     }
     .footer {
+      position: relative;
       flex-wrap: wrap;
     }
     .footer > :global(*:not(.btn)) {
       flex: 1 1 100%;
+    }
+    /* Why Continue waits lies over the foot of the body, in full, so it
+       takes no height: the body keeps its size whether it shows or not, and
+       its content scrolls clear of it. */
+    .card-body {
+      padding-bottom: calc(18px + var(--note-h));
+    }
+    .inpane :global(.material-body) {
+      padding-bottom: var(--note-h);
+    }
+    .footer > .footnote {
+      position: absolute;
+      /* Above the body's fade at its foot. */
+      z-index: 2;
+      left: 0;
+      right: 0;
+      bottom: 100%;
+      padding: 6px var(--pad-x);
+      white-space: normal;
+      background: var(--card);
+      border-top: 1px solid var(--line);
+    }
+    .footer > .footnote:empty {
+      display: none;
     }
     .footer > :global(.btn-primary) {
       flex: 1;
