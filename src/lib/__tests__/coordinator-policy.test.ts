@@ -27,6 +27,7 @@ import {
   isReviewEdit,
   keptWorkSince,
   lockIntentFromRow,
+  locksAtOpening,
   touchesCampaignPaths,
   pieceFieldForPath,
   pieceKindForPath,
@@ -42,6 +43,7 @@ import {
   validationVerdict,
 } from "../coordinator-policy.ts";
 import { appendEnvelopeToPrBody } from "../command-envelope.ts";
+import { checkValidation } from "../campaign-submit.ts";
 
 const STATE_HEADER = [
   "task_id",
@@ -667,6 +669,72 @@ test("an expired lock stays while its holder's submission opened in time is open
     heldByOpenOperation(lock, [pr({})] as never, now + week, week),
     false,
   );
+});
+
+test("a pull request is decided against the locks in force when it was opened", () => {
+  // A review lock that ran out at 10:00, kept in lock.csv for the holder's
+  // pull request opened at 09:59 (heldByOpenOperation).
+  const lock = {
+    task_id: "T0001",
+    subtask_id: "a",
+    user_id: "7",
+    timestamp: "2026-11-03T09:00:00Z",
+    kind: "validation",
+    expires: "2026-11-03T10:00:00Z",
+  };
+  const other = { ...lock, task_id: "T0002", user_id: "8" };
+  const kept = [lock, other];
+  const state = {
+    header: STATE_HEADER,
+    validationColumns: ["validate_status_1"],
+    rows: [
+      {
+        task_id: "T0001",
+        subtask_id: "",
+        status: "validation_required",
+        encoder: "9",
+        encoded_at: "2026-11-02T12:00:00Z",
+        validate_status_1: "",
+      },
+      {
+        task_id: "T0001",
+        subtask_id: "a",
+        status: "validation_required",
+        encoder: "",
+        encoded_at: "",
+        validate_status_1: "",
+      },
+    ],
+  };
+  const decide = (openedAt: string) => {
+    const opening = locksAtOpening(kept, "7", openedAt);
+    return {
+      opening,
+      verdict: checkValidation({
+        state,
+        locks: opening.decide,
+        intent: { task_id: "T0001", subtask_id: "a", verdict: "pass" },
+        author: "7",
+        changedPaths: ["tracking/state.csv"],
+        passThreshold: 1,
+        failComment: null,
+        now: "2026-11-03T10:40:00Z",
+        expired: opening.expired,
+      }),
+    };
+  };
+
+  // Opened at 09:59, decided by a run at 10:40: accepted.
+  const early = decide("2026-11-03T09:59:00Z");
+  assert.deepEqual(early.opening, { decide: kept, expired: [] });
+  assert.equal(early.verdict.ok, true);
+
+  // Opened at 10:30 while the older pull request keeps the lock: the lock
+  // counts as expired for it. Another person's lock stays in the decision.
+  const late = decide("2026-11-03T10:30:00Z");
+  assert.deepEqual(late.opening, { decide: [other], expired: [lock] });
+  assert.equal(late.verdict.ok, false);
+  assert.equal(!late.verdict.ok && late.verdict.reason, "claim_expired");
 });
 
 test("assembleSubmission splices the page, takes a checked opening and records the contribution", () => {

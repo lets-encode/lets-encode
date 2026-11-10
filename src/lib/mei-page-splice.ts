@@ -27,6 +27,13 @@ import {
 } from "./mei-facsimile.ts";
 
 /**
+ * A page splice failed on a precondition of the base score: the page's
+ * `<pb>`, or the next page's, is missing from it, or a measure of the page
+ * stands outside the page's span in it.
+ */
+export class BaseScoreError extends Error {}
+
+/**
  * The `<pb>` tags of `xml` from offset `from`, outside comments, with the
  * surface each names ("surface-N" from facs="#surface-N"), or null when it
  * names none or its attributes cannot be read.
@@ -63,18 +70,20 @@ function pbTagAt(
  * close of the score's last `<section>`. Ending at the next surface's own marker
  * rather than at just any `<pb>` keeps a stray page break inside the span,
  * where the integrity checks see it, instead of silently truncating there.
+ * A missing `<pb>` throws `Fault`.
  */
 function pageSpanAt(
   xml: string,
   surfaceId: string,
   nextSurfaceId: string | null,
+  Fault: new (message: string) => Error = Error,
 ): { from: number; to: number } {
   const pb = pbTagAt(xml, surfaceId);
-  if (!pb) throw new Error(`No page break found for ${surfaceId}.`);
+  if (!pb) throw new Fault(`No page break found for ${surfaceId}.`);
   const from = pb.end;
   if (nextSurfaceId === null) return { from, to: lastSectionClose(xml, from) };
   const next = pbTagAt(xml, nextSurfaceId, from);
-  if (!next) throw new Error(`No page break found for ${nextSurfaceId}.`);
+  if (!next) throw new Fault(`No page break found for ${nextSurfaceId}.`);
   return { from, to: next.start };
 }
 
@@ -196,17 +205,17 @@ function spliceSpan(baseMei: string, forkMei: string, locator: string): string {
   const surfaces = pbSurfaces(baseMei);
   const at = surfaces.indexOf(locator);
   const nextSurface = at === -1 ? null : (surfaces[at + 1] ?? null);
-  const base = pageSpanAt(baseMei, locator, nextSurface);
+  const base = pageSpanAt(baseMei, locator, nextSurface, BaseScoreError);
   const fork = pageSpanAt(forkMei, locator, nextSurface);
   // A measure drawn on the page outside its span would keep the base's
   // content, or lose the fork's.
-  for (const [side, mei, span] of [
-    ["base score", baseMei, base],
-    ["submitted score", forkMei, fork],
+  for (const [side, mei, span, Fault] of [
+    ["base score", baseMei, base, BaseScoreError],
+    ["submitted score", forkMei, fork, Error],
   ] as const) {
     const missed = pageMeasuresOutside(mei, locator, span);
     if (missed.length)
-      throw new Error(
+      throw new Fault(
         `Measure ${missed[0]} of ${locator} lies outside the page in the ${side}.`,
       );
   }
@@ -265,7 +274,8 @@ export function firstElementOfPage(
  * page's `surface-N` id; the base's span for that page is replaced by the
  * fork's span content wholesale, and everything outside it is preserved from
  * the base. Throws if either side is missing the page break or the result
- * fails the integrity checks (assertSpliceIntegrity).
+ * fails the integrity checks (assertSpliceIntegrity); a failure on the base
+ * score is a BaseScoreError.
  */
 export function splicePage(
   baseMei: string,

@@ -8,9 +8,10 @@ const OPEN_TIMEOUT = 2000;
 
 /**
  * A function that opens database `db` with its one object store `store`,
- * once, and hands out the same connection afterwards; null when the browser
- * has no IndexedDB, or the open fails, is blocked or takes longer than
- * OPEN_TIMEOUT. A failed open is tried again on the next call.
+ * once, and hands out the same connection afterwards until the browser closes
+ * it or another tab asks for a newer version; null when the browser has no
+ * IndexedDB, or the open fails, is blocked or takes longer than OPEN_TIMEOUT.
+ * A failed or closed connection is opened again on the next call.
  */
 export function storeOpener(
   db: string,
@@ -20,21 +21,33 @@ export function storeOpener(
   return () => {
     if (typeof indexedDB === "undefined") return Promise.resolve(null);
     if (opening) return opening;
-    opening = new Promise<IDBDatabase | null>((resolve) => {
+    const attempt = new Promise<IDBDatabase | null>((resolve) => {
       setTimeout(() => resolve(null), OPEN_TIMEOUT);
       try {
         const request = indexedDB.open(db, 1);
         request.onupgradeneeded = () => request.result.createObjectStore(store);
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => {
+          const connection = request.result;
+          const drop = () => {
+            if (opening === attempt) opening = null;
+          };
+          connection.onclose = drop;
+          connection.onversionchange = () => {
+            connection.close();
+            drop();
+          };
+          resolve(connection);
+        };
         request.onerror = () => resolve(null);
         request.onblocked = () => resolve(null);
       } catch {
         resolve(null);
       }
     });
-    void opening.then((connection) => {
-      if (!connection) opening = null;
+    opening = attempt;
+    void attempt.then((connection) => {
+      if (!connection && opening === attempt) opening = null;
     });
-    return opening;
+    return attempt;
   };
 }

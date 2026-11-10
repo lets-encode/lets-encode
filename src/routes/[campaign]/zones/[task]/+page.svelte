@@ -2228,6 +2228,7 @@
                     <div
                       class="canvas"
                       bind:clientWidth={canvasW[p]}
+                      onpointerdowncapture={(e) => ed.placeArmed(e, p)}
                       style:width={isWhole(v, pg)
                         ? undefined
                         : `${(pg.width / vw) * 100}%`}
@@ -2246,7 +2247,6 @@
                         class:pan={coarse && (!ed.drawMode || !showBoxes)}
                         role="application"
                         aria-label={`Page ${p + 1}, ${tool === "staves" ? "staff boxes" : tool === "grandstaves" ? "grand staves" : "measures"}`}
-                        onpointerdowncapture={(e) => ed.placeArmed(e, p)}
                         onpointerdown={(e) => ed.pageDown(e, p)}
                       >
                         <!-- Pages far from the view keep their size but draw nothing. -->

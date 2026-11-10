@@ -581,7 +581,7 @@
         {@render bar()}
       </div>{/if}
     {@render banner?.()}
-    <div class="sphead" class:hidden={peek} class:bare={toggleInHead}>
+    <div class="sphead on-tint" class:hidden={peek} class:bare={toggleInHead}>
       {#if ondeselect}
         <button
           type="button"
@@ -780,7 +780,6 @@
   .sp > :global(*) {
     flex: none;
   }
-  .sphead,
   .sphead {
     display: flex;
     align-items: center;

@@ -3,7 +3,9 @@
   (BoxEditor): the body moves the box, the four edges and four corners resize
   it, and a handle pressed without dragging is picked up for the next press.
   Laid beside the page's SVG, in a container of the page's size. `children`
-  adds controls inside the box, under the handles.
+  adds controls inside the box, after the handles. The handles are marked
+  data-control, so a capture-phase placeArmed on a container keeps their
+  press.
 
   --hit is a corner's target, --dot its visible dot (down to --dot-min on a
   thin box) and --edge an edge handle's thickness; edges show no mark, the
@@ -94,10 +96,10 @@
     aria-hidden="true"
     onpointerdown={(e) => editor.boxDown(e, p, item)}
   ></div>
-  {@render children?.()}
   {#each HANDLES as h (h.edges)}
     <div
       class="hd hd-{h.edges}"
+      data-control
       class:armed={editor.armed?.item === item &&
         editor.armed.edges === h.edges}
       style:cursor={cursor(h.edges)}
@@ -110,6 +112,7 @@
       }}
     ></div>
   {/each}
+  {@render children?.()}
 </div>
 
 <style>

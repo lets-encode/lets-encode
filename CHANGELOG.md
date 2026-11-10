@@ -5,6 +5,20 @@ parentheses.
 
 ## 2026-11-10
 
+- A submission opened after its claim ran out is rejected even while an earlier one by the same person is open.
+- Expired work that cannot be kept no longer stops the campaign's other operations.
+- A pull request decided in the meantime is not closed as not processed.
+- A fault in the campaign's own score is recorded as a failed join, not as an invalid encoding.
+- GitHub's rate limit on the broker's write check is reported as GitHub's.
+- A verdict written under another automation contract shows as a rejection, not as a failed run.
+- A correction that drops a page keeps the tasks that depended on that page's task.
+- A repeated pre-task submission with other content is refused while the first is open.
+- A setup whose image store cannot be opened stops the resume instead of losing its images.
+- A whole-file submission that cannot be joined no longer names a page.
+- A picked-up corner can be put down inside its own box, in the pieces step and the measure correction.
+- The pieces step shows a region's delete button above its handles.
+- A failed alignment shows no Try again button.
+- The side panel's header buttons have the colour of the panel's other buttons.
 - The score setup's source view zooms in the same steps and shows the same fit icon as the other viewers.
 - The instruments step edits groups with the score setup's group fields, including the brace or bracket.
 - The score preview steps the selected measure with A and D, and every selection block is built from one component.

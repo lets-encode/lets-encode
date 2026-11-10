@@ -66,6 +66,7 @@ import {
   sideFilesOf,
 } from "../src/lib/campaign-submit.ts";
 import { measuredSurfaceIds } from "../src/lib/mei-facsimile.ts";
+import { BaseScoreError } from "../src/lib/mei-page-splice.ts";
 import { replanPageTasks } from "../src/lib/campaign-plan.ts";
 import type { Contribution } from "../src/lib/mei-provenance.ts";
 import { reapedLocks, reapLocks } from "../src/lib/campaign-reaper.ts";
@@ -79,6 +80,7 @@ import {
   classifyPullRequest,
   heldByOpenOperation,
   isAutomaticCommit,
+  locksAtOpening,
   contractMarker,
   rejectionOutcome,
   isLeftoverOperationBranch,
@@ -263,7 +265,8 @@ let openPullRequests: OpenPullRequest[] = [];
 // Split `locks` into those in force at `now` and those dropped as expired. A
 // lock past its `expires` stays while another open pull request of its holder
 // still needs it (heldByOpenOperation): that pull request's run judges it at
-// its opening time.
+// its opening time. The bound pull request itself is decided against
+// locksAtOpening, where such a lock of its author counts as expired.
 function reapAt(locks: LockRow[], now: string): ReapLocksResult {
   const { removed } = reapLocks({ locks, now });
   const nowMs = Date.parse(now);
@@ -313,8 +316,10 @@ const expiredLocks = (
 // their own. The copy starts from `main` at `sha` and carries the task's
 // score and side files; a later expiry moves `wip-<task>` to the new copy once
 // it exists. Returns the locks whose work was kept. A claim whose pull request,
-// repo or branch no longer exists has none; any other failure throws, so the
-// attempt is retried.
+// repo or branch no longer exists has none. A write GitHub refused for good
+// (REFUSED_WRITE), or any failure on the decision's last attempt, is logged
+// and its claim is released without kept work; any other failure throws, so
+// the attempt is retried.
 async function keepExpiredWork(
   removed: LockRow[],
   historyCsv: string | null,
@@ -329,49 +334,57 @@ async function keepExpiredWork(
     (await getRepoFile(token, owner, repo, TASK_PATH, sha)) ?? "",
   );
   for (const lock of encoding) {
-    const task = tasks.find(
-      (t) => t.task_id === lock.task_id && t.subtask_id === "",
-    );
-    const claimPr = claimPullRequest(history, lock.task_id, lock.user_id);
-    if (!task || claimPr === null) continue;
-    const { headRepo: workRepo } = await getPullRequestDetails(
-      token,
-      owner,
-      repo,
-      claimPr,
-    );
-    if (!workRepo) continue;
-    const [workOwner, workName] = workRepo.split("/");
-    const ref = `encode-${lock.task_id}`;
-    const messages = await compareCommitMessages(
-      token,
-      owner,
-      repo,
-      mainBranch,
-      workOwner === owner && workName === repo ? ref : `${workOwner}:${ref}`,
-    );
-    if (!messages?.some((m) => !isAutomaticCommit(m))) continue;
-    const paths = [task.fragment, ...sideFilesOf(task)];
-    const contents = await Promise.all(
-      paths.map((path) => getRepoFile(token, workOwner, workName, path, ref)),
-    );
-    const files = paths.flatMap((path, i) =>
-      contents[i] == null ? [] : [{ path, content: contents[i]! }],
-    );
-    if (files.length === 0) continue;
-    await commitFiles(
-      token,
-      owner,
-      repo,
-      files,
-      `Keep the unsubmitted work on ${lock.task_id} from an expired claim`,
-      {
-        baseSha: sha,
-        newBranch: keptWorkBranch(lock.task_id),
-        replaceBranch: true,
-      },
-    );
-    kept.add(lock);
+    try {
+      const task = tasks.find(
+        (t) => t.task_id === lock.task_id && t.subtask_id === "",
+      );
+      const claimPr = claimPullRequest(history, lock.task_id, lock.user_id);
+      if (!task || claimPr === null) continue;
+      const { headRepo: workRepo } = await getPullRequestDetails(
+        token,
+        owner,
+        repo,
+        claimPr,
+      );
+      if (!workRepo) continue;
+      const [workOwner, workName] = workRepo.split("/");
+      const ref = `encode-${lock.task_id}`;
+      const messages = await compareCommitMessages(
+        token,
+        owner,
+        repo,
+        mainBranch,
+        workOwner === owner && workName === repo ? ref : `${workOwner}:${ref}`,
+      );
+      if (!messages?.some((m) => !isAutomaticCommit(m))) continue;
+      const paths = [task.fragment, ...sideFilesOf(task)];
+      const contents = await Promise.all(
+        paths.map((path) => getRepoFile(token, workOwner, workName, path, ref)),
+      );
+      const files = paths.flatMap((path, i) =>
+        contents[i] == null ? [] : [{ path, content: contents[i]! }],
+      );
+      if (files.length === 0) continue;
+      await commitFiles(
+        token,
+        owner,
+        repo,
+        files,
+        `Keep the unsubmitted work on ${lock.task_id} from an expired claim`,
+        {
+          baseSha: sha,
+          newBranch: keptWorkBranch(lock.task_id),
+          replaceBranch: true,
+        },
+      );
+      kept.add(lock);
+    } catch (e) {
+      const message = (e as Error).message;
+      if (!lastAttempt && !REFUSED_WRITE.test(message)) throw e;
+      console.warn(
+        `The unsubmitted work on ${lock.task_id} was not kept; its expired claim is released without it: ${message}`,
+      );
+    }
   }
   return kept;
 }
@@ -406,6 +419,9 @@ class TablesBusy extends Error {}
 // run for that push, queued behind this one, decides it instead.
 class HeadMoved extends Error {}
 
+// Whether withRetry is running the last attempt of a decision.
+let lastAttempt = false;
+
 // Run one optimistic decide-and-apply pass, retrying when it throws — most
 // often the non-fast-forward commit failing because the branch head moved.
 // Every error is retried (up to MAX_ATTEMPTS) but a write GitHub refused for
@@ -417,6 +433,7 @@ class HeadMoved extends Error {}
 // committed.
 async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
   for (let i = 0; ; i++) {
+    lastAttempt = i === MAX_ATTEMPTS - 1;
     try {
       return await attempt();
     } catch (e) {
@@ -641,12 +658,13 @@ async function attemptRelease(
     parseLockCsv(lockCsv ?? ""),
     submittedAt,
   );
+  const opening = locksAtOpening(locks, author, submittedAt);
   const verdict = checkRelease({
-    locks,
+    locks: opening.decide,
     intent,
     author,
     changedPaths,
-    expired: expiredLocks(removed, historyCsv),
+    expired: expiredLocks([...removed, ...opening.expired], historyCsv),
   });
   if (isAuditFree(verdict)) return verdict;
   const history: HistoryRow = {
@@ -755,9 +773,10 @@ async function attemptReviewEdit(
     parseLockCsv(lockCsv ?? ""),
     submittedAt,
   );
+  const opening = locksAtOpening(locks, author, submittedAt);
   const verdict = checkReviewEdit({
     state: parseStateCsv(stateCsv ?? ""),
-    locks,
+    locks: opening.decide,
     intent,
     author,
     changedPaths,
@@ -768,7 +787,7 @@ async function attemptReviewEdit(
       "stale_after_minutes",
       DEFAULT_STALE_MINUTES,
     ),
-    expired: expiredLocks(removed, historyCsv),
+    expired: expiredLocks([...removed, ...opening.expired], historyCsv),
   });
   if (isAuditFree(verdict)) return verdict;
 
@@ -801,7 +820,10 @@ async function attemptReviewEdit(
     // comment does.
     files.push(
       { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
-      { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+      {
+        path: LOCK_PATH,
+        content: serializeLockCsv([...verdict.locks, ...opening.expired]),
+      },
       {
         path: COMMENT_PATH,
         content: serializeCommentCsv([
@@ -870,6 +892,7 @@ async function decideEncoding(
   now: string,
   expired: LockRow[],
   pastHistory: HistoryRow[],
+  held: LockRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -889,8 +912,9 @@ async function decideEncoding(
   // Failing to assemble the MEI at all and assembling one the schema rejects
   // are both `mei_invalid` submissions; which of the two it was survives only
   // in `detail`, since the reason code is what the tables record. A page
-  // whose file passes the schema on its own while the assembled score fails
-  // is `splice_invalid`: the join is at fault, not the encoding.
+  // whose file passes the schema on its own while the assembled score fails,
+  // or the splice fails on the campaign's score (BaseScoreError), is
+  // `splice_invalid`: the join is at fault, not the encoding.
   // Everything but the MEI check is decided before the fork's file is read:
   // a submitter who holds no claim cannot make the run parse their file.
   const precheck = checkEncoding({
@@ -932,6 +956,7 @@ async function decideEncoding(
   logPhase("read_pr_files", readStart);
   const checkStart = Date.now();
   let mei: string | null = null;
+  let baseFailed = false;
   let detail =
     forkMei == null ? `${task.fragment} is missing from the fork.` : "";
   if (forkMei != null && baseMei == null) {
@@ -989,11 +1014,12 @@ async function decideEncoding(
         `Page splice failed for ${task.task_id} (${task.locator}): ${message}`,
       );
       detail = `Could not splice page ${task.locator} into ${task.fragment}: ${message}`;
+      baseFailed = err instanceof BaseScoreError;
     }
   }
 
   let meiValid = false;
-  let joinFailed = false;
+  let joinFailed = baseFailed && (await checkMeiOnce(forkMei!)).ok;
   if (mei != null) {
     const check = await checkMeiOnce(mei);
     meiValid = check.ok;
@@ -1055,6 +1081,8 @@ async function decideEncoding(
     return content == null ? [] : [{ path, content }];
   });
 
+  // The author's locks the decision left out stay in lock.csv.
+  const nextLocks = [...verdict.locks, ...held];
   // An accepted measure or layout correction fixes which pages carry
   // measures: the piece's page tasks are rebuilt for those pages, so a page
   // without music gets no task.
@@ -1063,7 +1091,7 @@ async function decideEncoding(
       ? replanPageTasks(
           tasks,
           verdict.state,
-          verdict.locks,
+          nextLocks,
           pastHistory,
           task.fragment,
           measuredSurfaceIds(mei!),
@@ -1083,7 +1111,7 @@ async function decideEncoding(
         ? [{ path: TASK_PATH, content: serializeTaskCsv(replan.tasks) }]
         : []),
       { path: STATE_PATH, content: serializeStateCsv(newState) },
-      { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+      { path: LOCK_PATH, content: serializeLockCsv(nextLocks) },
     ],
     message: `Accept encoding of ${task.task_id} by ${authorLabel}`,
   };
@@ -1097,6 +1125,7 @@ async function decideValidation(
   changedPaths: string[],
   now: string,
   expired: LockRow[],
+  held: LockRow[],
 ): Promise<
   Omit<SubmitOutcome, "files" | "message" | "history"> & Partial<SubmitOutcome>
 > {
@@ -1179,7 +1208,8 @@ async function decideValidation(
 
   const files: FileChange[] = [
     { path: STATE_PATH, content: serializeStateCsv(verdict.state) },
-    { path: LOCK_PATH, content: serializeLockCsv(verdict.locks) },
+    // The author's locks the decision left out stay in lock.csv.
+    { path: LOCK_PATH, content: serializeLockCsv([...verdict.locks, ...held]) },
   ];
   if (status === "fail") {
     // The fail's comment is part of the verdict: it carries the verdict's own
@@ -1236,6 +1266,8 @@ async function attemptSubmit(
     parseLockCsv(lockCsv ?? ""),
     submittedAt,
   );
+  const opening = locksAtOpening(locks, author, submittedAt);
+  const expired = expiredLocks([...removed, ...opening.expired], historyCsv);
 
   const decideStart = Date.now();
   const outcome =
@@ -1243,22 +1275,24 @@ async function attemptSubmit(
       ? await decideValidation(
           sha,
           state,
-          locks,
+          opening.decide,
           prFiles,
           changedPaths,
           now,
-          expiredLocks(removed, historyCsv),
+          expired,
+          opening.expired,
         )
       : await decideEncoding(
           sha,
           tasks,
           state,
-          locks,
+          opening.decide,
           changedPaths,
           envelope,
           now,
-          expiredLocks(removed, historyCsv),
+          expired,
           parseHistoryCsv(historyCsv ?? ""),
+          opening.expired,
         );
   logPhase("decide", decideStart);
   if (isAuditFree(outcome)) return outcome;
@@ -1716,11 +1750,13 @@ async function closeUndecided(
   open: OpenPullRequest[],
 ): Promise<void> {
   if (stale.length === 0) return;
-  let history: HistoryRow[];
-  try {
-    history = parseHistoryCsv(
+  const readHistory = async (): Promise<HistoryRow[]> =>
+    parseHistoryCsv(
       (await getRepoFile(token, owner, repo, HISTORY_PATH)) ?? "",
     );
+  let history: HistoryRow[];
+  try {
+    history = await readHistory();
   } catch (e) {
     // The pass for the younger pull requests goes on without this one.
     console.error(
@@ -1751,6 +1787,11 @@ async function closeUndecided(
         )
       )
         continue;
+      // A run may have decided it since the history was read.
+      if (priorDecision(await readHistory(), pr.number)) {
+        console.log(`PR #${pr.number} was decided meanwhile; not closed.`);
+        continue;
+      }
       await commentAndClose(
         "❌ Not processed: this pull request was not decided within seven days of being opened. No changes were made. Submit it again.",
         pr.number,

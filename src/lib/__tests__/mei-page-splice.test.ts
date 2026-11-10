@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  BaseScoreError,
   firstElementOfPage,
   spliceOpeningScoreDef,
   splicePage,
@@ -300,6 +301,45 @@ test("a measure of the page outside the submitted page is refused", () => {
   assert.throws(
     () => splicePage(base, moved, "surface-2"),
     /measure-5 of surface-2 lies outside the page in the submitted score/,
+  );
+  assert.throws(
+    () => splicePage(base, moved, "surface-2"),
+    (err: Error) => !(err instanceof BaseScoreError),
+  );
+});
+
+test("a fault of the base score is a BaseScoreError", () => {
+  const moved = base.replace(
+    /(<measure xml:id="measure-5"[\s\S]*?<\/measure>)([\s\S]*?<\/section>)/,
+    "$2$1",
+  );
+  assert.throws(
+    () => splicePage(moved, forkAll, "surface-2"),
+    (err: Error) =>
+      err instanceof BaseScoreError &&
+      /measure-5 of surface-2 lies outside the page in the base score/.test(
+        err.message,
+      ),
+  );
+  // A page break missing from the base score.
+  assert.throws(
+    () =>
+      splicePage(
+        base.replace(/<pb\b[^>]*facs="#surface-2"[^>]*\/>/, ""),
+        forkAll,
+        "surface-2",
+      ),
+    BaseScoreError,
+  );
+  // The same page break missing from the submitted score.
+  assert.throws(
+    () =>
+      splicePage(
+        base,
+        forkAll.replace(/<pb\b[^>]*facs="#surface-2"[^>]*\/>/, ""),
+        "surface-2",
+      ),
+    (err: Error) => !(err instanceof BaseScoreError),
   );
 });
 

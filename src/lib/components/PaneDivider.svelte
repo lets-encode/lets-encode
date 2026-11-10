@@ -19,7 +19,6 @@
     fraction = false,
     reverse = false,
     at,
-    class: extra = "",
   }: {
     /** The divider's accessible name. */
     label: string;
@@ -34,7 +33,6 @@
     reverse?: boolean;
     /** The value for a pointer position. */
     at: (e: PointerEvent) => number;
-    class?: string;
   } = $props();
 
   const clamp = (v: number) => Math.min(max, Math.max(min, v));
@@ -71,7 +69,7 @@
      interactive widget; the lint counts every separator as static. -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div
-  class="pane-grip {extra}"
+  class="pane-grip"
   role="separator"
   tabindex="0"
   aria-label={label}

@@ -22,7 +22,8 @@
   }: {
     /** What is loading, as in "the campaign". */
     loading?: string;
-    /** A failed load's message, shown with Try again (`onretry`). */
+    /** A failed load's message, shown with Try again when `onretry` is
+        given. */
     error?: string | null;
     onretry?: () => void;
     /** The name of a campaign that does not exist. */
@@ -62,7 +63,7 @@
     <Notice
       tone="err"
       {...splitMessage(error)}
-      action={{ label: "Try again", run: onretry }}
+      action={onretry ? { label: "Try again", run: onretry } : undefined}
     />
   {:else if missingCampaign}
     <Notice

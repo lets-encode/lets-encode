@@ -209,7 +209,14 @@ test("a verdict from a coordinator on another contract is reported as an error, 
   }
 });
 
-test("a repeat measure correction follows the viewer's open pull request instead of opening another", async (t) => {
+// Submit P0001's measure correction twice: first with no pull request open,
+// then while the first one is open, its head branch holding the first
+// submission's files with `change` applied. Returns the second submission's
+// verdict and how many pull requests it opened.
+async function repeatZones(
+  t: TestContext,
+  change: (held: Record<string, string>) => void,
+) {
   offline(t);
   const score = buildFacsimileMei({
     ...initialFacsimileModel([
@@ -232,12 +239,15 @@ test("a repeat measure correction follows the viewer's open pull request instead
       "P0001,,sources/score.mei,measure-zones,,,\n",
     "sources/score.mei": score,
   };
+  const held: Record<string, string> = {};
+  let open = false;
   let opened = 0;
   const forge = fakeForge({
     getRepoSubscription: async () => ({ subscribed: false, ignored: true }),
-    getRepoFile: async (_owner, _repo, path) => files[path] ?? null,
+    getRepoFile: async (_owner, _repo, path, ref) =>
+      (ref === "zones-P0001-abcd" ? held[path] : files[path]) ?? null,
     findOpenChangeRequest: async (_owner, _repo, userId, branchPrefix) =>
-      userId === "9001" && branchPrefix === "zones-P0001-"
+      open && userId === "9001" && branchPrefix === "zones-P0001-"
         ? {
             number: 41,
             html_url: "https://example.test/pr/41",
@@ -248,9 +258,18 @@ test("a repeat measure correction follows the viewer's open pull request instead
             },
           }
         : null,
-    openChangePr: async () => {
+    openChangePr: async (_owner, _repo, opts) => {
       opened++;
-      throw new Error("a second pull request was opened");
+      for (const file of opts.files) held[file.path] = file.content!;
+      return {
+        number: 41,
+        html_url: "https://example.test/pr/41",
+        head: {
+          owner: "volunteer",
+          repo: "campaign",
+          branch: "zones-P0001-abcd",
+        },
+      };
     },
     getPullRequestState: async () => "closed",
     getLastIssueComment: async () => bot("✅ Submission accepted."),
@@ -266,20 +285,42 @@ test("a repeat measure correction follows the viewer's open pull request instead
     }),
     deleteBranch: async () => {},
   });
-  const verdict = captureVerdict();
+  const submit = () => {
+    const verdict = captureVerdict();
+    return withImmediateTimeouts(async () => {
+      await invoke(
+        commands.submitZones,
+        { task_id: "P0001", pages: parseFacsimileMei(score).pages },
+        context(withDecision(forge, 41)),
+      );
+      return verdict;
+    });
+  };
+  await submit();
+  open = true;
+  opened = 0;
+  change(held);
+  return { verdict: await submit(), opened };
+}
 
-  const result = await withImmediateTimeouts(async () => {
-    const res = await invoke(
-      commands.submitZones,
-      { task_id: "P0001", pages: parseFacsimileMei(score).pages },
-      context(withDecision(forge, 41)),
-    );
-    await verdict;
-    return res;
+test("a repeat measure correction with the same content follows the viewer's open pull request", async (t) => {
+  const { verdict, opened } = await repeatZones(t, () => {});
+
+  assert.equal(opened, 0);
+  assert.equal(verdict.state, "accepted", verdict.message);
+});
+
+test("a repeat measure correction with other content fails while the viewer's pull request is open", async (t) => {
+  const { verdict, opened } = await repeatZones(t, (held) => {
+    held["sources/score.mei"] += "<!-- other device -->";
   });
 
-  assert.equal(result.background, true);
   assert.equal(opened, 0);
+  assert.equal(verdict.state, "rejected");
+  assert.match(
+    verdict.message,
+    /submission #41 of P0001 is still open with other content and must be decided first/,
+  );
 });
 
 test("readTables decodes generated quoted config values", async () => {
@@ -899,6 +940,43 @@ test("a submission followed again after a reload settles with its verdict", asyn
   );
 
   assert.equal((await verdict).state, "accepted");
+});
+
+test("a verdict on another contract settles as a rejection naming both contracts, not as a failed run", async () => {
+  const forge = claimForge(22, {
+    getPullRequestState: async () => "closed",
+    getLastIssueComment: async () =>
+      "✅ Claim accepted.\n\n<!-- lets-encode-contract: 999 -->",
+  });
+  const settles: { state: string; message: string; runFailed?: boolean }[] = [];
+  const settled = new Promise<void>((resolve) =>
+    setVerdictSink({
+      begin: () => "follow",
+      attachPr: () => {},
+      settle: (_id, state, message, runFailed) => {
+        settles.push({ state, message, runFailed });
+        resolve();
+      },
+      recorded: () => {},
+    }),
+  );
+
+  await withImmediateTimeouts(async () => {
+    resumeFollowing(
+      context(withDecision(forge, 22)),
+      "Encoding claim of T0001",
+      { kind: "claim", task: "T0001" },
+      "entry-1",
+      { number: 22, html_url: "https://example.test/pr/22" },
+      Date.now(),
+    );
+    await settled;
+  });
+
+  assert.equal(settles.length, 1);
+  assert.equal(settles[0].state, "rejected");
+  assert.ok(!settles[0].runFailed);
+  assert.match(settles[0].message, /contract 999; this app expects contract/);
 });
 
 test("a submission still open past the follow's first wait is followed until it is decided", async () => {

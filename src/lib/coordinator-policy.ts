@@ -29,6 +29,7 @@ import {
 } from "./mei-provenance.ts";
 import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
 import { pageOfLocator } from "./campaign-graph.ts";
+import { reapLocks } from "./campaign-reaper.ts";
 import { replaceMeiHead } from "./mei-facsimile.ts";
 import { firstElementNamed } from "./mei-xml.ts";
 import { UPLOAD_APPLICATION } from "./encoding-merge.ts";
@@ -587,6 +588,27 @@ export function heldByOpenOperation(
         : "");
     return task === lock.task_id;
   });
+}
+
+/**
+ * The locks a pull request by `author`, opened at `openedAt`, is decided
+ * against, out of `kept`, the locks lock.csv keeps for the decision; and the
+ * author's locks among `kept` past their `expires` at `openedAt` (`expired`).
+ * lock.csv keeps such a lock while another of the author's open pull requests
+ * needs it (heldByOpenOperation); for this pull request it counts as expired.
+ */
+export function locksAtOpening(
+  kept: LockRow[],
+  author: string,
+  openedAt: string,
+): { decide: LockRow[]; expired: LockRow[] } {
+  const expired = reapLocks({ locks: kept, now: openedAt }).removed.filter(
+    (lock) => lock.user_id === author,
+  );
+  return {
+    decide: kept.filter((lock) => !expired.includes(lock)),
+    expired,
+  };
 }
 
 export function shouldCleanupSubmission(

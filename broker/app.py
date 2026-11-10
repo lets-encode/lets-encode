@@ -589,8 +589,8 @@ def campaign_repository(full_name):
 
 # GitHub's answer to the write check's repository lookup, when it is neither
 # the repository nor 404: an ended session (401) and a rate limit keep GitHub's
-# status and rate-limit headers, so the app reads them as it reads any GitHub
-# answer; any other failure is a 502.
+# status and rate-limit headers and are marked as GitHub's, so the app reads
+# them as it reads any GitHub answer; any other failure is a 502.
 RATE_LIMIT_HEADERS = (
     "Retry-After",
     "X-RateLimit-Limit",
@@ -616,6 +616,7 @@ def repository_lookup_failure(upstream):
         for name in RATE_LIMIT_HEADERS:
             if name in upstream.headers:
                 response.headers[name] = upstream.headers[name]
+        response.headers["X-Lets-Encode-Upstream"] = "github"
         return response
     return (
         jsonify(

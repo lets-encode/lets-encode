@@ -589,7 +589,12 @@ class BrokerTest(unittest.TestCase):
             )
             if status == 403:
                 self.assertEqual(response.headers["X-RateLimit-Reset"], "99")
-                self.assertNotIn("X-Lets-Encode-Upstream", response.headers)
+            if expected != 502:
+                self.assertEqual(
+                    response.headers.get("X-Lets-Encode-Upstream"),
+                    "github",
+                    status,
+                )
             request_upstream.assert_not_called()
 
     def test_proxy_refuses_dot_segments(self):

@@ -431,7 +431,10 @@
           {#if failed[i]}
             <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
           {/if}
-          <div class="pagebox">
+          <div
+            class="pagebox"
+            onpointerdowncapture={(e) => ed.placeArmed(e, i)}
+          >
             <svg
               bind:this={svgEls[i]}
               bind:clientWidth={svgWidths[i]}
@@ -439,7 +442,6 @@
               style="aspect-ratio: {page.width} / {page.height}"
               role="application"
               aria-label={`Page ${i + 1}: piece regions`}
-              onpointerdowncapture={(e) => ed.placeArmed(e, i)}
               onpointerdown={(e) => ed.pageDown(e, i)}
             >
               <image
@@ -553,6 +555,7 @@
                 <button
                   type="button"
                   class="delbtn"
+                  data-control
                   style:left={`${(btnX - sel.zone.ulx) * scale}px`}
                   style:top={`${(btnY - sel.zone.uly) * scale}px`}
                   aria-label={`${label}: remove region`}
@@ -712,8 +715,8 @@
       row-gap: 6px;
       padding-block: 8px;
     }
-    :global(.touch) .pchip,
-    :global(.touch) :global(.mode) {
+    .material-card > :global(.vtoolbar.touch) :global(.pchip),
+    .material-card > :global(.vtoolbar.touch) :global(.mode) {
       order: -1;
     }
     .pchip {
@@ -792,9 +795,11 @@
   .pagebox {
     position: relative;
   }
-  /* The selected region's delete button, inside its top-right corner. */
+  /* The selected region's delete button, inside its top-right corner, over
+     the corner handle. */
   .delbtn {
     position: absolute;
+    z-index: 1;
     box-sizing: border-box;
     width: 24px;
     height: 24px;

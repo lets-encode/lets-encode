@@ -179,9 +179,10 @@ export function nextTaskId(
  * without measures are dropped. Each rebuilt task keeps the first existing
  * page task's dependency and subtask rows, except where the later page tasks
  * depend on the first one: then every rebuilt task after the first depends on
- * the first rebuilt task. Returns null — the tables stay as
- * they are — when the piece has no page tasks, when they already match, or
- * when the rewrite is not allowed (a page task has started, or another task
+ * the first rebuilt task. A task outside the pages that depends on a dropped
+ * page task depends on the first rebuilt task. Returns null — the tables stay
+ * as they are — when the piece has no page tasks, when they already match, or
+ * when the rewrite is not allowed (a page task has started, or a started task
  * depends on a dropped one).
  */
 export function replanPageTasks(
@@ -220,7 +221,15 @@ export function replanPageTasks(
   });
 
   const first = current.findIndex((r) => r.task_id === ids[0]);
-  const kept = current.filter((r) => !ids.includes(r.task_id));
+  // A task outside the pages that depends on a dropped page task depends on
+  // the first rebuilt task instead.
+  const rebuiltIds = new Set(rebuilt.map((r) => r.task_id));
+  const dropped = new Set(ids.filter((id) => !rebuiltIds.has(id)));
+  const kept = current
+    .filter((r) => !ids.includes(r.task_id))
+    .map((r) =>
+      dropped.has(r.depends_on) ? { ...r, depends_on: firstId } : r,
+    );
   const at = current
     .slice(0, first)
     .filter((r) => !ids.includes(r.task_id)).length;

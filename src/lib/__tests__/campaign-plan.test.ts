@@ -346,6 +346,50 @@ test("replanPageTasks: page tasks chained to the first page task stay chained", 
   );
 });
 
+// The piece's page tasks with T0010, a task outside the pages, depending on
+// page task `dependency`.
+const withOutsideDependent = (dependency: string) => ({
+  tasks: parseTaskCsv(
+    TASK_HEADER +
+      "T0001,,sources/score.mei,surface-1,,,\n" +
+      "T0002,,sources/score.mei,surface-2,,,\n" +
+      "T0003,,sources/score.mei,surface-3,,,\n" +
+      `T0010,,sources/other.mei,,,,${dependency}\n`,
+  ),
+  state: parseStateCsv(
+    STATE_HEADER +
+      ["T0001", "T0002", "T0003", "T0010"]
+        .map((t) => `${t},,encoding_required,,,\n`)
+        .join(""),
+  ),
+});
+
+test("replanPageTasks: a task depending on a dropped first page depends on the first rebuilt page task", () => {
+  const { tasks, state } = withOutsideDependent("T0001");
+  const r = replanPageTasks(tasks, state, [], [], "sources/score.mei", [
+    "surface-2",
+    "surface-3",
+  ]);
+  assert.ok(r);
+  assert.deepEqual(
+    r.tasks.map((t) => `${t.task_id}:${t.locator}:${t.depends_on}`),
+    ["T0002:surface-2:", "T0003:surface-3:", "T0010::T0002"],
+  );
+});
+
+test("replanPageTasks: a task depending on a dropped later page depends on the first rebuilt page task", () => {
+  const { tasks, state } = withOutsideDependent("T0002");
+  const r = replanPageTasks(tasks, state, [], [], "sources/score.mei", [
+    "surface-1",
+    "surface-3",
+  ]);
+  assert.ok(r);
+  assert.deepEqual(
+    r.tasks.map((t) => `${t.task_id}:${t.locator}:${t.depends_on}`),
+    ["T0001:surface-1:", "T0003:surface-3:", "T0010::T0001"],
+  );
+});
+
 test("replanPageTasks: matching or started page tasks are left as they are", () => {
   const same = ["surface-1", "surface-2", "surface-3"];
   assert.equal(

@@ -962,7 +962,6 @@ async function settleWhenProcessed(
   const until = Date.now() + waitMs;
   let res: Result;
   let runFailed = false;
-  let contractMismatch = false;
   let decidedAt = "";
   try {
     let outcome = await waitForPrProcessed(ctx, pr, {
@@ -976,9 +975,9 @@ async function settleWhenProcessed(
         waitMs: Infinity,
         maxDelayMs: 60_000,
       });
-    // No verdict was read: the run failed, or its record cannot be read.
-    contractMismatch = outcome.state === "contract_mismatch";
-    runFailed = outcome.state === "run_failed" || contractMismatch;
+    // No verdict was read: the run failed. A contract mismatch settles as a
+    // rejection carrying its own text.
+    runFailed = outcome.state === "run_failed";
     if (outcome.state === "decided") decidedAt = outcome.at;
     res = verdictResult(outcome, pr.number, pr.html_url, `${label} processed.`);
   } catch (e) {
@@ -1021,8 +1020,7 @@ async function settleWhenProcessed(
   );
   // A failed run leaves the PR open for the scheduled run: the failure is
   // shown, and the PR is followed on without its run until it is decided.
-  if (runFailed && !contractMismatch)
-    followAfterFailedRun(ctx, label, key, pr, until);
+  if (runFailed) followAfterFailedRun(ctx, label, key, pr, until);
 }
 
 // Follow a PR whose run failed until it is decided, up to `until` (epoch
@@ -1915,7 +1913,7 @@ const submitEncoding: CommandDef<{ task_id: string }, Result> = {
           });
         } catch (e) {
           throw new Error(
-            `page ${task.locator} cannot be joined into ${task.fragment}: ${(e as Error).message}`,
+            `${isPageTask ? `page ${task.locator}` : "the encoding"} cannot be joined into ${task.fragment}: ${(e as Error).message}`,
           );
         }
         const meiError = await checkMei(mei);
@@ -2818,6 +2816,7 @@ async function submitFacsimile(
           ctx,
           layout ? "layout" : "zones",
           task_id,
+          files,
           (branch) =>
             f.openChangePr(owner, repo, {
               branch,
@@ -2838,20 +2837,36 @@ async function submitFacsimile(
 
 // The viewer's pre-task submission on `task_id` still open, from another tab
 // or device (head branch `<prefix>-<task_id>-…`), which a repeat submission
-// follows instead of opening a second pull request that would be rejected;
-// else the one `open` opens on a new branch.
+// follows instead of opening a second pull request that would be rejected,
+// when its head holds `files` as they are; else the one `open` opens on a new
+// branch. Throws when the open submission holds other content.
 async function openPreTaskSubmission(
   ctx: CommandContext,
   prefix: string,
   task_id: string,
+  files: FileChange[],
   open: (branch: string) => Promise<OpenedChangeRequest>,
 ): Promise<OpenedChangeRequest> {
   const { forge: f, owner, repo, viewer } = ctx;
   const branchPrefix = `${prefix}-${task_id}-`;
-  return (
-    (await f.findOpenChangeRequest(owner, repo, viewer, branchPrefix)) ??
-    open(`${branchPrefix}${rand()}`)
+  const pending = await f.findOpenChangeRequest(
+    owner,
+    repo,
+    viewer,
+    branchPrefix,
   );
+  if (!pending) return open(`${branchPrefix}${rand()}`);
+  const { head } = pending;
+  const held = await Promise.all(
+    files.map((file) =>
+      f.getRepoFile(head.owner, head.repo, file.path, head.branch),
+    ),
+  );
+  if (files.some((file, i) => held[i] !== file.content))
+    throw new Error(
+      `submission #${pending.number} of ${task_id} is still open with other content and must be decided first.`,
+    );
+  return pending;
 }
 
 // Measure correction: submit stage C — the corrected zones with one generated
@@ -3020,6 +3035,12 @@ const submitScoreSetup: CommandDef<
         };
       const title = `Set up the score (${task_id})`;
       const body = `${title}. Opened from the score setup editor.`;
+      // The score is committed when unchanged too, which gives the pull
+      // request a commit when the definition is confirmed as it is.
+      const files: FileChange[] = [
+        { path: fragment, content },
+        ...(recordChanged ? [{ path: recordPath, content: record! }] : []),
+      ];
       return openAndFinishInBackground(
         ctx,
         `Score setup of ${task_id}`,
@@ -3030,18 +3051,11 @@ const submitScoreSetup: CommandDef<
             ctx,
             "setup",
             task_id,
+            files,
             (branch) =>
               f.openChangePr(owner, repo, {
                 branch,
-                // The score is committed when unchanged too, which gives the
-                // pull request a commit when the definition is confirmed as it
-                // is.
-                files: [
-                  { path: fragment, content },
-                  ...(recordChanged
-                    ? [{ path: recordPath, content: record! }]
-                    : []),
-                ],
+                files,
                 message: title,
                 title,
                 body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
@@ -3112,6 +3126,14 @@ const submitEncodingAlignment: CommandDef<
         };
       const title = alignmentMessage(task_id, aligned.layout, aligned.merged);
       const body = `${title}. Opened from the encoding alignment editor.`;
+      // The score is committed when unchanged too, which gives the pull
+      // request a commit when the alignment is confirmed as it is.
+      const files: FileChange[] = [
+        { path: task.fragment, content },
+        ...(recordChanged
+          ? [{ path: recordPath, content: aligned.record }]
+          : []),
+      ];
       return openAndFinishInBackground(
         ctx,
         `Encoding alignment of ${task_id}`,
@@ -3122,18 +3144,11 @@ const submitEncodingAlignment: CommandDef<
             ctx,
             "align",
             task_id,
+            files,
             (branch) =>
               f.openChangePr(owner, repo, {
                 branch,
-                // The score is committed when unchanged too, which gives the
-                // pull request a commit when the alignment is confirmed as it
-                // is.
-                files: [
-                  { path: task.fragment, content },
-                  ...(recordChanged
-                    ? [{ path: recordPath, content: aligned.record }]
-                    : []),
-                ],
+                files,
                 message: title,
                 title,
                 body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
