@@ -433,7 +433,6 @@
             {startPage}
             {anchor}
             initialPane={scoreW - 32 < 560 ? "facs" : "both"}
-            initialView={taskPage === null ? null : "single"}
             onmeasureselect={(label) => (selectedMeasure = label)}
           />
         {/if}

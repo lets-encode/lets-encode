@@ -313,13 +313,12 @@
                   {@const pg = data.model.pages[row.at.page]}
                   {@const v = cropOf(row.at.box, row.at.end)}
                   <div class="cropcell">
-                    {#if row.later}
-                      <span
-                        class="first"
-                        title="The staff first appears on this page, so the scan shown is from there."
-                        >p. {row.at.page + 1}</span
-                      >
-                    {/if}
+                    <span
+                      class="first"
+                      title={row.later
+                        ? "The staff first appears on this page, so the scan shown is from there."
+                        : undefined}>Page {row.at.page + 1} · Facsimile</span
+                    >
                     <svg
                       class="crop"
                       viewBox={`${v.x} ${v.y} ${v.w} ${v.h}`}

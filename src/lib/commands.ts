@@ -112,7 +112,12 @@ import {
 } from "./omr-layout.ts";
 import type { LayoutInstruments, LayoutRecord } from "./omr-layout.ts";
 import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
-import { alignmentPath, differentReason, type Pin } from "./encoding-align.ts";
+import {
+  alignmentPath,
+  differentReason,
+  type AlignmentChoices,
+  type Pin,
+} from "./encoding-align.ts";
 import { alignEncoding, alignmentMessage } from "./encoding-merge.ts";
 import {
   instrumentScoreDef,
@@ -3071,9 +3076,15 @@ const submitScoreSetup: CommandDef<
   },
 };
 
-// The score and alignment record an encoding alignment with `pins` amounts
-// to, made on the campaign's score as described at alignEncoding.
-async function alignmentScore(ctx: CommandContext, task: TaskRow, pins: Pin[]) {
+// The score and alignment record an encoding alignment with `pins` and the
+// other choices amounts to, made on the campaign's score as described at
+// alignEncoding.
+async function alignmentScore(
+  ctx: CommandContext,
+  task: TaskRow,
+  pins: Pin[],
+  { scoreStaves, fileEdits }: AlignmentChoices,
+) {
   const { forge: f, owner, repo } = ctx;
   const configYaml = await f.getRepoFile(owner, repo, CONFIG_PATH);
   const [upload, , campaign] = await alignmentInputs(ctx, task, configYaml, {
@@ -3089,6 +3100,8 @@ async function alignmentScore(ctx: CommandContext, task: TaskRow, pins: Pin[]) {
       pieceFieldForPath(configYaml, task.fragment, "preparation") ??
       "measure-detection",
     pins,
+    scoreStaves,
+    fileEdits,
   });
   return aligned;
 }
@@ -3097,7 +3110,7 @@ async function alignmentScore(ctx: CommandContext, task: TaskRow, pins: Pin[]) {
 // measures along the alignment the pins give, with the alignment record. A
 // file that does not fit the piece (kind "different") is not submitted.
 const submitEncodingAlignment: CommandDef<
-  { task_id: string; pins: Pin[] },
+  { task_id: string; pins: Pin[] } & AlignmentChoices,
   Result
 > = {
   id: "campaign.submitEncodingAlignment",
@@ -3105,14 +3118,14 @@ const submitEncodingAlignment: CommandDef<
   log: "pr",
   background: true,
   envelopeInput: ({ task_id, pins }) => ({ task_id, pins: pins.length }),
-  async run({ task_id, pins }, ctx, envelope) {
+  async run({ task_id, pins, ...choices }, ctx, envelope) {
     const { forge: f, owner, repo } = ctx;
     try {
       await muteOnce(ctx);
       const taskCsv = await f.getRepoFile(owner, repo, TASK_PATH);
       const task = findRow(parseTaskCsv(taskCsv ?? ""), task_id, "");
       if (!task) return { error: `Unknown task ${task_id}.` };
-      const aligned = await alignmentScore(ctx, task, pins);
+      const aligned = await alignmentScore(ctx, task, pins, choices);
       if (aligned.summary.kind === "different")
         return { error: differentReason(aligned.summary) };
       const content = aligned.merged.mei;
@@ -3181,6 +3194,10 @@ export type DraftInput = {
   omr?: string;
   /** An encoding alignment's fixed links. */
   pins?: Pin[];
+  /** An encoding alignment's chosen score staves. */
+  scoreStaves?: AlignmentChoices["scoreStaves"];
+  /** An encoding alignment's file measure edits. */
+  fileEdits?: AlignmentChoices["fileEdits"];
   /**
    * The commit of the task branch the editor's state was loaded from or last
    * saved as; null when there was no branch. The save is refused when the
@@ -3237,7 +3254,7 @@ const saveDraft: CommandDef<DraftInput, Result & { sha?: string }> = {
             content: input.omr,
           });
       } else if (input.pins) {
-        const aligned = await alignmentScore(ctx, task, input.pins);
+        const aligned = await alignmentScore(ctx, task, input.pins, input);
         files.push(
           { path: task.fragment, content: aligned.merged.mei },
           { path: alignmentPath(task.fragment), content: aligned.record },

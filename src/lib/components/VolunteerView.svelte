@@ -636,7 +636,7 @@
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}
                           <span class="taskbadge done">just completed</span>
-                        {:else if card.nextUp && !completedCard && !lone}
+                        {:else if card.nextUp && !completedCard && !lone && !pendingVerdicts.taskProcessing(card.task, repoId)}
                           <span class="taskbadge">your next task</span>
                         {:else if card.column === "validation" && card.submittedByViewer}
                           <span

@@ -5,6 +5,12 @@ parentheses.
 
 ## 2026-11-10
 
+- The encoding alignment has a Staves step for choosing which file staff fills each score staff, and their order on pieces without staff boxes.
+- The encoding alignment can remove a measure from the uploaded file and add an empty one at any point.
+- Cross-staff notes, marks and staff groups of an uploaded encoding follow the staves they are placed on.
+- The measure correction and the score preview open with one page per row.
+- The instruments step, the pages step, the score setup and the score check label a scan as Page N · Facsimile.
+- A task whose submission is being processed no longer carries the next-task badge.
 - Compressed MusicXML files can be uploaded as an existing encoding.
 - The README, the broker README and the broker's example settings describe the current app.
 - A submission opened after its claim ran out is rejected even while an earlier one by the same person is open.

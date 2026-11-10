@@ -30,11 +30,7 @@
     readSidePanel,
   } from "$lib/side-panels.ts";
   import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
-  import {
-    buildSpreads,
-    defaultSpreadView,
-    shownPagesLabel,
-  } from "$lib/page-spreads.ts";
+  import { buildSpreads, shownPagesLabel } from "$lib/page-spreads.ts";
   import {
     applyAnchor,
     pagingRow,
@@ -211,10 +207,6 @@
             regions,
           };
         });
-        // A score of one or two pages is shown whole: one page, or both side
-        // by side. Longer scores keep the two-up view with page 1 as a recto.
-        if (pages.length <= 2)
-          ({ view, firstOnRight } = defaultSpreadView(pages.length));
         // A label that differs from what automatic numbering would produce is
         // an override (e.g. 10a/10b) — keep it through renumbering. The
         // measure after each one is included, since a pickup changes the
@@ -492,10 +484,8 @@
 
   // The fit in force, if any: it keeps the zoom at the fit as the desk
   // resizes or the view changes, until the slider is moved. Each freshly
-  // loaded task opens at two pages per row and the whole-page fit; on a
-  // touch screen (a tablet) at one page per row and the page width, and in
-  // an upright window (docked), where a two-page row leaves the desk's
-  // lower part empty, or with a single page, at one page per row.
+  // loaded task opens at one page per row and the whole-page fit; on a
+  // touch screen (a tablet) at the page width.
   let fit = $state<"width" | "page" | null>("page");
   let zoomInitFor = $state<FacsimileTaskData | null>(null);
   $effect(() => {
@@ -503,10 +493,7 @@
     zoomInitFor = data;
     const touch = untrack(() => coarse);
     fit = touch ? "width" : "page";
-    view =
-      touch || untrack(() => docked) || data.model.pages.length === 1
-        ? "single"
-        : "double";
+    view = "single";
   });
   // A narrow tool column has no whole-page fit: it shows the page width.
   $effect(() => {
@@ -522,7 +509,7 @@
   // two-up view pairs 2|3, 4|5, … the way a score opens — the printed page
   // number's side can't be read without OCR, so this convention (with the
   // toggle) stands in for it.
-  let view = $state<"single" | "double">("double");
+  let view = $state<"single" | "double">("single");
   let firstOnRight = $state(true);
   // A narrow tool column (a phone) shows one page per row and hides the
   // switch; the chosen view returns when the column widens. The width is the

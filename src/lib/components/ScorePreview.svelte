@@ -9,13 +9,6 @@
   score built in the browser); new text for the same score keeps the view
   where it is.
 -->
-<script module lang="ts">
-  // Once the user picks a view or flips the recto toggle, the choice holds for
-  // every score opened in this session; before that, each score opens in its
-  // default view. Module-level so it survives the component being remounted.
-  let viewChosen = false;
-</script>
-
 <script lang="ts">
   import { type MeasureAnchor } from "$lib/campaign-tables.ts";
   import Icon from "$lib/components/Icon.svelte";
@@ -26,11 +19,7 @@
   import { startTags } from "$lib/mei-xml.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
-  import {
-    buildSpreads,
-    defaultSpreadView,
-    shownPagesLabel,
-  } from "$lib/page-spreads.ts";
+  import { buildSpreads, shownPagesLabel } from "$lib/page-spreads.ts";
   import {
     applyAnchor,
     pagingRow,
@@ -61,7 +50,6 @@
     startPage = 0,
     anchor = null,
     initialPane = null,
-    initialView = null,
     initialZones = true,
     mei = null,
     onmeasureselect,
@@ -76,8 +64,6 @@
     anchor?: MeasureAnchor | null;
     /** The pane the preview opens with; null uses the stored per-browser choice. */
     initialPane?: PreviewPane | null;
-    /** The spread view the preview opens with; null picks it from the page count. */
-    initialView?: "single" | "double" | null;
     /** Whether the measure-zone overlay starts visible. */
     initialZones?: boolean;
     /**
@@ -379,11 +365,9 @@
   }
   function pvSetView(v: "single" | "double") {
     pvView = v;
-    viewChosen = true;
   }
   function pvSetFirstOnRight(on: boolean) {
     pvFirstOnRight = on;
-    viewChosen = true;
   }
 
   /**
@@ -567,10 +551,6 @@
           return;
         }
         const total = Math.max(facs?.length ?? 0, pageCount);
-        if (initialView) pvView = initialView;
-        else if (!viewChosen)
-          ({ view: pvView, firstOnRight: pvFirstOnRight } =
-            defaultSpreadView(total));
         await tick();
         if (load === loads) showPage(Math.min(from, Math.max(0, total - 1)));
       }

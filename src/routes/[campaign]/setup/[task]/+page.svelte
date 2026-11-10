@@ -1221,8 +1221,8 @@
           >
             <span class="page-label"
               >{anchorPage === null
-                ? "Source · first measure"
-                : `Source · page ${shownPage + 1}`}</span
+                ? "Facsimile · first measure"
+                : `Page ${shownPage + 1} · Facsimile`}</span
             >
             <div
               class="facsbox"

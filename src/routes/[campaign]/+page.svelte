@@ -1890,7 +1890,7 @@
                               title="Open this task"
                               data-stage={stageOf(card)}
                             >
-                              {#if card.nextUp && !completedTask}
+                              {#if card.nextUp && !completedTask && !pendingVerdicts.taskProcessing(card.task, repoId)}
                                 <span class="taskbadge edge"
                                   >your next task</span
                                 >
