@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-10
 
+- The README, the broker README and the broker's example settings describe the current app.
 - A submission opened after its claim ran out is rejected even while an earlier one by the same person is open.
 - Expired work that cannot be kept no longer stops the campaign's other operations.
 - A pull request decided in the meantime is not closed as not processed.
@@ -17,7 +18,7 @@ parentheses.
 - A whole-file submission that cannot be joined no longer names a page.
 - A picked-up corner can be put down inside its own box, in the pieces step and the measure correction.
 - The pieces step shows a region's delete button above its handles.
-- A failed alignment shows no Try again button.
+- The align page no longer has a separate error card for a failed alignment.
 - The side panel's header buttons have the colour of the panel's other buttons.
 - The score setup's source view zooms in the same steps and shows the same fit icon as the other viewers.
 - The instruments step edits groups with the score setup's group fields, including the brace or bracket.

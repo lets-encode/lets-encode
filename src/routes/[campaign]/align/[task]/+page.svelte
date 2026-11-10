@@ -64,28 +64,17 @@
   });
   const canEdit = $derived(session.canEdit);
 
-  const result = $derived.by(
-    (): { ok: AlignedEncoding } | { error: string } | null => {
-      const d = data;
-      if (!d?.upload || !d.campaignScore) return null;
-      try {
-        return {
-          ok: alignEncoding({
-            current: d.campaignScore.mei,
-            corrected: d.campaignScore.corrected,
-            upload: d.upload,
-            preparation: d.preparation,
-            pins: $state.snapshot(pins),
-          }),
-        };
-      } catch (e) {
-        return { error: (e as Error).message };
-      }
-    },
-  );
-  const aligned = $derived<AlignedEncoding | null>(
-    result && "ok" in result ? result.ok : null,
-  );
+  const aligned = $derived.by((): AlignedEncoding | null => {
+    const d = data;
+    if (!d?.upload || !d.campaignScore) return null;
+    return alignEncoding({
+      current: d.campaignScore.mei,
+      corrected: d.campaignScore.corrected,
+      upload: d.upload,
+      preparation: d.preparation,
+      pins: $state.snapshot(pins),
+    });
+  });
 
   // The score viewer, and the measure selected in it: a layout measure label
   // and, where the viewer knows it, its position among the layout measures.
@@ -276,10 +265,6 @@
     <PageState loading="the score" />
   {:else if session.loadError}
     <PageState error={session.loadError} onretry={() => session.load()} />
-  {:else if result && "error" in result}
-    <PageState
-      error={`Could not align the uploaded encoding: ${result.error}`}
-    />
   {:else if data && aligned}
     <div class="scorecol" bind:clientWidth={scoreW}>
       <h1 class="vh">Encoding alignment · {session.pieceName || campaign}</h1>

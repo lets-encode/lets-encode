@@ -1,7 +1,7 @@
-# instigation
+# lets-encode
 
-The **Let's Encode!** instigation GUI: log in with GitHub, create a campaign
-repository from a template, and drive its encoding/validation from a console.
+The **Let's Encode!** app: log in with GitHub, create a campaign
+repository from a template, and drive its encoding/validation from the app.
 
 It is a **static SPA** (SvelteKit); the only server-side piece is the **OAuth
 session broker** (`broker/`, Flask), which keeps the user's GitHub token out of
@@ -107,17 +107,18 @@ npm run dev
 Open <http://localhost:5173>. The routes:
 
 - `/` — the project website (`static/index.html` and its files).
-- `/campaigns` — the SPA's landing: the full campaign list (search, sort,
-  pagination and an open-tasks filter) alongside the start card, unfinished
-  setups and the viewer's claimed work.
-- `/new` — the six-step campaign creation wizard (name, licence, upload,
-  pages, source, pieces). On a clean creation you land on the new campaign's
-  console.
-- `/<campaign>` — the campaign console (the campaign name; the repo it
+- `/campaigns` — the SPA's main screen: unresolved comments on the viewer's
+  work, their open work, the campaign list (search, filter and sort) and
+  unfinished setups.
+- `/new` — the seven-step campaign creation wizard (name, licence, upload,
+  pages, source, pieces, preparation). On a clean creation you land on the new
+  campaign's page.
+- `/<campaign>` — the campaign page (the campaign name; the repo it
   addresses is resolved via the registry).
-- `/<campaign>/zones/<task>`, `/<campaign>/review/<task>`,
-  `/<campaign>/setup/<task>` — the zone editor, the review view and the score
-  setup view for one task.
+- `/<campaign>/zones/<task>`, `/<campaign>/align/<task>`,
+  `/<campaign>/setup/<task>`, `/<campaign>/check/<task>`,
+  `/<campaign>/review/<task>` — the zone editor, the encoding alignment, the
+  score setup view, the score check and the review view for one task.
 
 **Testing a branch's automation.** The dev server writes the branch checked
 out when it starts as `automation.ref` into the campaigns it creates, so they
@@ -142,6 +143,7 @@ another ref, its page on the dev server shows this command.
 npm run build     # static site → ./website (the document root: website index.html at /, SPA fallback spa.html)
 npm run preview   # serve the built site locally
 npm test          # pure campaign-logic unit tests (no network)
+npm run check     # svelte-check for the app, tsc for scripts/ (check:app, check:scripts)
 ```
 
 Formatting is Prettier (`.prettierrc`) for the app and Black (`broker/pyproject.toml`)
@@ -233,9 +235,12 @@ broker (section 4), with its own OAuth App whose callback is
     the broker's environment set to the number of proxies in front (`1` when
     Apache is the only one). Without `X-Forwarded-Host` the broker sees its
     loopback address as the host and rejects every write with 403
-    "cross-origin request rejected" (see `broker/README.md`).
+    "cross-origin request rejected" (see `broker/README.md`). The Apache
+    instance files also set `ProxyPreserveHost On`, which passes the public
+    host on as `Host`.
 - **Broker env, per instance:** `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
-  `FLASK_SECRET`, `PORT`, and
+  `FLASK_SECRET`, `PORT`, `MUSIBOT_TOKEN` (the OMR preparation answers 503
+  without it), and
   `REDIRECT_URL=https://<instance-origin>/auth/authorize` (see
   `broker/README.md`). Never share a `FLASK_SECRET` between instances.
 - **One OAuth App per instance:** a GitHub OAuth App has a single callback
