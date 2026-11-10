@@ -10,6 +10,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
+  import GroupFields from "$lib/components/GroupFields.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import MusicGlyph, {
     type MusicGlyphName,
@@ -1724,126 +1725,36 @@
           <span class="glabel">{g.label.trim()}</span>
         </button>
         {#if openG === g}
-          <div class="gfields">
-            <div class="gfirst">
-              <div class="field">
-                <span>Symbol</span>
-                <GlyphSelect
-                  options={[
-                    {
-                      value: "brace",
-                      label: "Brace",
-                      glyph: "brace",
-                      disabled: !fitsWith(g, { symbol: "brace" }),
-                    },
-                    { value: "bracket", label: "Bracket", glyph: "bracket" },
-                  ]}
-                  value={g.symbol}
-                  onchange={(v) => (g.symbol = v)}
-                  label="Symbol"
-                  title="A brace joins the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2. A bracket joins a section, like the strings."
-                />
-              </div>
-              <label class="field narrow">
-                <span>From staff</span>
-                <select
-                  class="ctl"
-                  bind:value={g.start}
-                  title="The group's first staff."
-                >
-                  {#each staves as _, n (n)}
-                    <option
-                      value={n + 1}
-                      disabled={!fitsWith(g, { start: n + 1 })}>{n + 1}</option
-                    >
-                  {/each}
-                </select>
-              </label>
-              <label class="field narrow">
-                <span>To staff</span>
-                <select
-                  class="ctl"
-                  bind:value={g.end}
-                  title="The group's last staff."
-                >
-                  {#each staves as _, n (n)}
-                    <option
-                      value={n + 1}
-                      disabled={!fitsWith(g, { end: n + 1 })}>{n + 1}</option
-                    >
-                  {/each}
-                </select>
-              </label>
-              {#if canEdit}
-                <button
-                  type="button"
-                  class="btn btn-icon btn-danger"
-                  onclick={() => removeGroup(g)}
-                  aria-label={`Remove the ${symbolName(g.symbol).toLowerCase()} over staves ${g.start}–${g.end}`}
-                  title="Remove this group"><Icon name="trash" /></button
-                >
-              {/if}
-            </div>
-            <label class="field">
-              <span>Label</span>
-              <input
-                class="ctl"
-                type="text"
-                bind:value={g.label}
-                placeholder={canEdit ? "optional" : "—"}
-                title="The name printed in front of the group, like Piano or Violini. Leave empty for none."
-              />
-            </label>
-            <div class="gtoggles">
-              <div class="mfield">
-                <span id="gbar-{g.start}-{g.end}">Barlines</span>
-                <div
-                  class="seg gseg"
-                  role="group"
-                  aria-labelledby="gbar-{g.start}-{g.end}"
-                  title="Whether the barlines run through the group's staves or stop at each staff, as on the page."
-                >
-                  <button
-                    type="button"
-                    class:on={g.barThru}
-                    aria-pressed={g.barThru}
-                    onclick={() => (g.barThru = true)}>Through</button
-                  >
-                  <button
-                    type="button"
-                    class:on={!g.barThru}
-                    aria-pressed={!g.barThru}
-                    onclick={() => (g.barThru = false)}>Per staff</button
-                  >
-                </div>
-              </div>
-              {#if g.symbol === "brace"}
-                <div class="mfield">
-                  <span id="ginstr-{g.start}-{g.end}">Staves</span>
-                  <div
-                    class="seg gseg"
-                    role="group"
-                    aria-labelledby="ginstr-{g.start}-{g.end}"
-                    title="One instrument: one player's part over several staves, like a piano or a harp. Separate staves: one instrument per staff, like Horn 1 and 2. Set from the labels until chosen here."
-                  >
-                    <button
-                      type="button"
-                      class:on={g.oneInstrument}
-                      aria-pressed={g.oneInstrument}
-                      onclick={() => setOneInstrument(g, true)}
-                      >One instrument</button
-                    >
-                    <button
-                      type="button"
-                      class:on={!g.oneInstrument}
-                      aria-pressed={!g.oneInstrument}
-                      onclick={() => setOneInstrument(g, false)}
-                      >Separate staves</button
-                    >
-                  </div>
-                </div>
-              {/if}
-            </div>
+          <div class="gbody">
+            <GroupFields
+              unit="staff"
+              from={g.start}
+              to={g.end}
+              fromOptions={staves.map((_, n) => ({
+                value: n + 1,
+                label: `${n + 1}`,
+                disabled: !fitsWith(g, { start: n + 1 }),
+              }))}
+              toOptions={staves.map((_, n) => ({
+                value: n + 1,
+                label: `${n + 1}`,
+                disabled: !fitsWith(g, { end: n + 1 }),
+              }))}
+              onfrom={(v) => (g.start = v)}
+              onto={(v) => (g.end = v)}
+              symbol={g.symbol}
+              onsymbol={(v) => (g.symbol = v)}
+              braceDisabled={!fitsWith(g, { symbol: "brace" })}
+              label={g.label}
+              onlabelinput={(v) => (g.label = v)}
+              barThru={g.barThru}
+              onbarthru={(v) => (g.barThru = v)}
+              oneInstrument={g.oneInstrument}
+              ononeinstrument={(v) => setOneInstrument(g, v)}
+              disabled={!canEdit}
+              onremove={() => removeGroup(g)}
+              removeLabel={`Remove the ${symbolName(g.symbol).toLowerCase()} over staves ${g.start}–${g.end}`}
+            />
           </div>
         {/if}
       </div>
@@ -2205,32 +2116,8 @@
     white-space: nowrap;
     color: var(--ink-soft);
   }
-  .gfields {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+  .gbody {
     padding: 2px 10px 10px;
-  }
-  .gfirst {
-    display: flex;
-    align-items: flex-end;
-    gap: 8px;
-  }
-  .gfirst > .field.narrow {
-    width: 72px;
-  }
-  .gtoggles {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px 12px;
-  }
-  .gseg {
-    display: grid;
-    grid-auto-flow: column;
-    grid-auto-columns: 1fr;
-  }
-  .gseg > button {
-    justify-content: center;
   }
   .groupwarn {
     margin: 8px 0 0;

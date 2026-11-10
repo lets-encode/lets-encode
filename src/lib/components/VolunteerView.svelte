@@ -338,7 +338,7 @@
           data-stage={stageOf(featured)}
         >
           <span
-            class="nextbadge"
+            class="taskbadge edge"
             class:done={!!completedCard}
             aria-hidden="true"
             >{completedCard ? "just completed" : "your next task"}</span
@@ -570,17 +570,19 @@
                   {/if}
                 {/if}
                 {#if counts.enc > 0}
-                  <span class="scount enc">{counts.enc} open</span>
+                  <span class="countpill scount enc">{counts.enc} open</span>
                 {/if}
                 {#if counts.review > 0}
-                  <span class="scount review"
+                  <span class="countpill scount review"
                     >{counts.review} review{counts.review === 1
                       ? ""
                       : "s"}</span
                   >
                 {/if}
                 {#if counts.pre > 0}
-                  <span class="scount pre">{counts.pre} preparation</span>
+                  <span class="countpill scount pre"
+                    >{counts.pre} preparation</span
+                  >
                 {/if}
                 <span class="vspacer"></span>
                 {#if !lone}
@@ -633,9 +635,9 @@
                         <span class="vspacer"></span>
                         {@render chips(card)}
                         {#if card.task === completedCard?.task}
-                          <span class="chip">just completed</span>
+                          <span class="taskbadge done">just completed</span>
                         {:else if card.nextUp && !completedCard && !lone}
-                          <span class="chip">your next task</span>
+                          <span class="taskbadge">your next task</span>
                         {:else if card.column === "validation" && card.submittedByViewer}
                           <span
                             class="chip"
@@ -747,23 +749,15 @@
   }
 
   /* ------------------------------------------------------- next-task card */
-  .nextbadge {
+  /* The badge (.taskbadge, ui.css) sits on the card's top edge. */
+  .edge {
     position: absolute;
     top: -9px;
     left: 18px;
     z-index: 1;
-    background: var(--accent);
-    color: var(--invert-ink);
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1;
-    padding: 4px 10px;
-    border-radius: 999px;
-    white-space: nowrap;
   }
-  /* The badge and the border take the stage of the task: encoding blue,
-     preparation purple, review orange. */
+  /* The border takes the stage of the task: encoding blue, preparation
+     purple, review orange. */
   .nextcard.stage-pre {
     border-color: color-mix(in srgb, var(--pre) 45%, var(--line));
   }
@@ -779,18 +773,6 @@
     .nextcard.stage-review:hover {
       border-color: var(--warn);
     }
-  }
-  /* The badge's fill is the stage's solid colour (data-stage, ui.css). */
-  .stage-pre .nextbadge,
-  .stage-review .nextbadge {
-    color: #fff;
-    background: var(--st-solid);
-  }
-  .nextbadge.done {
-    background: var(--ok);
-  }
-  :global([data-theme="dark"]) .nextbadge.done {
-    color: #fff;
   }
   .nextcard {
     position: relative;
@@ -1092,29 +1074,15 @@
     font-weight: 600;
   }
   /* Open work per stage, in the stage colours. */
-  .scount {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 8px;
-    border: 1px solid transparent;
-    white-space: nowrap;
-  }
+  /* The counts (.countpill, ui.css) in their stage's colour. */
   .scount.pre {
     color: var(--pre);
-    background: var(--pre-wash);
-    border-color: var(--pre);
   }
   .scount.review {
     color: var(--warn);
-    background: var(--warn-bg);
-    border-color: var(--warn-line);
   }
   .scount.enc {
     color: var(--info);
-    background: var(--info-bg);
-    border-color: var(--info-line);
   }
   .pchev {
     font-size: 20px;

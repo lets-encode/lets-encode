@@ -11,6 +11,25 @@
   export const ZOOM_MIN = 20;
   export const ZOOM_MAX = 400;
 
+  // The slider runs on a log scale: equal drags multiply the zoom equally,
+  // so the low end moves in fine steps and the high end in coarse ones.
+  const STOPS = 100;
+  // One press of zoom out or in: a tenth of the slider, about a third larger
+  // or smaller.
+  const STEP = 10;
+  const posOf = (value: number) =>
+    Math.round(
+      (Math.log(value / ZOOM_MIN) / Math.log(ZOOM_MAX / ZOOM_MIN)) * STOPS,
+    );
+  const valueAt = (pos: number) =>
+    Math.round(ZOOM_MIN * (ZOOM_MAX / ZOOM_MIN) ** (pos / STOPS));
+
+  /** The zoom, in percent, one press of zoom out (-1) or in (1) leads to
+      from `value`: on the slider's stops, a tenth of the range further. */
+  export function stepZoom(value: number, dir: 1 | -1): number {
+    return valueAt(Math.min(STOPS, Math.max(0, posOf(value) + dir * STEP)));
+  }
+
   /**
    * The fit a zoom is close to — within 8% of the width fit (100%) or of the
    * page fit — or null. Lets a pinch that ends near a fit settle on it.
@@ -80,22 +99,12 @@
       value = Math.max(LEAST, fitPage);
   });
 
-  // The slider runs on a log scale: equal drags multiply the zoom equally,
-  // so the low end moves in fine steps and the high end in coarse ones.
   const LEAST = ZOOM_MIN;
   const MOST = ZOOM_MAX;
-  const STOPS = 100;
-  // One press of zoom out or in: a tenth of the slider, about a third larger
-  // or smaller.
-  const STEP = 10;
-  const pos = $derived(
-    Math.round((Math.log(value / LEAST) / Math.log(MOST / LEAST)) * STOPS),
-  );
-  const setPos = (p: number) =>
-    (value = Math.round(LEAST * (MOST / LEAST) ** (p / STOPS)));
+  const pos = $derived(posOf(value));
   // The buttons that stand in for the slider on touch and in narrow panes.
   function step(dir: 1 | -1) {
-    setPos(Math.min(STOPS, Math.max(0, pos + dir * STEP)));
+    value = stepZoom(value, dir);
     fit = null;
   }
 </script>
@@ -123,7 +132,7 @@
     step={1}
     value={pos}
     oninput={(e) => {
-      setPos(Number((e.target as HTMLInputElement).value));
+      value = valueAt(Number((e.target as HTMLInputElement).value));
       fit = null;
     }}
   />

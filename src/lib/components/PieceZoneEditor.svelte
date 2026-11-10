@@ -34,7 +34,10 @@
     type Piece,
     type PieceZone,
   } from "$lib/pieces.ts";
+  import BoxHandles from "./BoxHandles.svelte";
+  import BoxModeToggles from "./BoxModeToggles.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ViewerToolbar from "./ViewerToolbar.svelte";
   import ZoomLevel, {
     fitPageZoom,
     nearFit,
@@ -204,6 +207,33 @@
         .filter(({ zone }) => zone.surface === surface),
     );
 
+  // The selected region on a surface, without a group of several.
+  const selectedOn = (surface: number) =>
+    members.length
+      ? undefined
+      : zonesOn(surface).find(
+          ({ p, z }) => selectedZone?.piece === p && selectedZone?.zone === z,
+        );
+
+  // A region's label pill and the place of its delete button inside its
+  // top-right corner (below the pill where the region is too narrow for
+  // both), in page pixels, at `scale` screen pixels per page pixel.
+  function pillOf(zone: Box, label: string, scale: number, svgW: number) {
+    const rx = 6 / scale;
+    const fs = Math.min(13, Math.max(9, svgW / 30)) / scale;
+    const zw = Math.max(0, zone.lrx - zone.ulx);
+    const pillW = Math.min(
+      label.length * fs * 0.6 + fs,
+      Math.max(0, zw - 2 * rx),
+    );
+    const btnX = Math.max(zone.ulx + 4 / scale, zone.lrx - 31 / scale);
+    const below = btnX < zone.ulx + rx + pillW + 6 / scale;
+    const btnY = below
+      ? zone.uly + rx + fs * 1.5 + 6 / scale
+      : zone.uly + 7 / scale;
+    return { fs, pillW, btnX, btnY };
+  }
+
   // The smallest region worth keeping, and the minimum a resize may shrink to,
   // as a fraction of the page so it holds at any image size.
   const minSizeOn = (surface: number) =>
@@ -292,11 +322,11 @@
 />
 
 <div class="material-card">
-  <div class="material-toolbar" class:touch={wizardLayout.coarse}>
+  <ViewerToolbar class={wizardLayout.coarse ? "touch" : ""}>
     <span class="undoredo">
       <button
         type="button"
-        class="btn btn-icon"
+        class="tbtn tbtn-icon"
         onclick={() => ed.undo()}
         disabled={!ed.canUndo}
         aria-label="Undo"
@@ -304,7 +334,7 @@
       >
       <button
         type="button"
-        class="btn btn-icon"
+        class="tbtn tbtn-icon"
         onclick={() => ed.redo()}
         disabled={!ed.canRedo}
         aria-label="Redo"
@@ -335,28 +365,7 @@
       {#if pieces[selectedPiece]?.kind !== "facsimile"}
         <span class="drag-hint">An uploaded encoding needs no regions</span>
       {/if}
-      <button
-        type="button"
-        class="tbtn tbtn-icon mode"
-        class:on={ed.drawMode}
-        class:drawhint={ed.drawHint && !ed.drawMode}
-        aria-pressed={ed.drawMode}
-        aria-label="Draw"
-        title="Draw: a finger drag draws a new region. Off, a drag scrolls the pages."
-        onclick={() => ed.setDrawMode(!ed.drawMode)}
-        ><Icon name="touch-box" size={16} /></button
-      >
-      <button
-        type="button"
-        class="tbtn tbtn-icon mode"
-        class:on={ed.pickMode}
-        aria-pressed={ed.pickMode}
-        aria-label="Select several"
-        disabled={!ed.drawMode}
-        title="A tap on a region adds it to the selection or takes it out"
-        onclick={() => (ed.pickMode = !ed.pickMode)}
-        ><Icon name="select-several" size={16} /></button
-      >
+      <BoxModeToggles editor={ed} noun="region" class="mode" />
     {:else}
       <span
         class="drag-hint"
@@ -377,10 +386,11 @@
         {/if}
       </span>
     {/if}
-    <div class="toolbar-gap"></div>
-    <span class="per-row-ctl"><PagesPerRow bind:value={perRow} /></span>
-    <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
-  </div>
+    {#snippet end()}
+      <span class="per-row-ctl"><PagesPerRow bind:value={perRow} /></span>
+      <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
+    {/snippet}
+  </ViewerToolbar>
 
   {#if notice}
     <p class="msg-warn notice" role="status">{notice}</p>
@@ -421,180 +431,139 @@
           {#if failed[i]}
             <p class="msg-error-inline">Page {i + 1} could not be displayed.</p>
           {/if}
-          <svg
-            bind:this={svgEls[i]}
-            bind:clientWidth={svgWidths[i]}
-            viewBox={`0 0 ${page.width} ${page.height}`}
-            style="aspect-ratio: {page.width} / {page.height}"
-            role="application"
-            aria-label={`Page ${i + 1}: piece regions`}
-            onpointerdowncapture={(e) => ed.placeArmed(e, i)}
-            onpointerdown={(e) => ed.pageDown(e, i)}
-          >
-            <image
-              href={page.url}
-              width={page.width}
-              height={page.height}
-              style="clip-path: inset(0 round {rx}px)"
-              onerror={() => (failed[i] = true)}
-            />
-            {#each zonesOn(i) as { zone, p, z } (`${p}:${z}`)}
-              {@const fs =
-                Math.min(13, Math.max(9, (svgWidths[i] || 400) / 30)) / scale}
-              {@const label = labelFor(p)}
-              {@const zw = Math.max(0, zone.lrx - zone.ulx)}
-              {@const pillW = Math.min(
-                label.length * fs * 0.6 + fs,
-                Math.max(0, zw - 2 * rx),
-              )}
-              {@const btnX = Math.max(
-                zone.ulx + 4 / scale,
-                zone.lrx - 31 / scale,
-              )}
-              {@const btnBelowLabel = btnX < zone.ulx + rx + pillW + 6 / scale}
-              {@const btnY = btnBelowLabel
-                ? zone.uly + rx + fs * 1.5 + 6 / scale
-                : zone.uly + 7 / scale}
-              <rect
-                class="zone"
-                class:selected={inSelection(p, z)}
-                style="--piece: {pieceColour(p)}"
-                vector-effect="non-scaling-stroke"
-                role="button"
-                tabindex={0}
-                aria-label={`${label}: region on page ${i + 1}`}
-                x={zone.ulx}
-                y={zone.uly}
-                width={Math.max(0, zone.lrx - zone.ulx)}
-                height={Math.max(0, zone.lry - zone.uly)}
-                {rx}
-                onpointerdown={(e) => ed.boxDown(e, i, zone)}
-                onkeydown={(e) => ed.boxKeydown(e, i, zone)}
+          <div class="pagebox">
+            <svg
+              bind:this={svgEls[i]}
+              bind:clientWidth={svgWidths[i]}
+              viewBox={`0 0 ${page.width} ${page.height}`}
+              style="aspect-ratio: {page.width} / {page.height}"
+              role="application"
+              aria-label={`Page ${i + 1}: piece regions`}
+              onpointerdowncapture={(e) => ed.placeArmed(e, i)}
+              onpointerdown={(e) => ed.pageDown(e, i)}
+            >
+              <image
+                href={page.url}
+                width={page.width}
+                height={page.height}
+                style="clip-path: inset(0 round {rx}px)"
+                onerror={() => (failed[i] = true)}
               />
-              {#if wizardLayout.coarse && !members.length && selectedZone?.piece === p && selectedZone?.zone === z}
-                <!-- Press areas around the corner handles, up to 44px but no
-                     more than a quarter of the region, so a small region can
-                     still be moved; drawn under the label and the delete
-                     button. -->
-                {@const hitR =
-                  Math.min(
-                    22,
-                    (Math.min(zw, zone.lry - zone.uly) * scale) / 4,
-                  ) / scale}
-                {#each [{ corner: "nw", cx: zone.ulx, cy: zone.uly }, { corner: "ne", cx: zone.lrx, cy: zone.uly }, { corner: "sw", cx: zone.ulx, cy: zone.lry }, { corner: "se", cx: zone.lrx, cy: zone.lry }] as const as h (h.corner)}
-                  <circle
-                    class="handle-hit"
-                    aria-hidden="true"
-                    data-control
-                    cx={h.cx}
-                    cy={h.cy}
-                    r={hitR}
-                    onpointerdown={(e) => ed.boxDown(e, i, zone, h.corner)}
-                  />
-                {/each}
-              {/if}
-              <clipPath id={`pillclip-${i}-${p}-${z}`}>
+              {#each zonesOn(i) as { zone, p, z } (`${p}:${z}`)}
+                {@const label = labelFor(p)}
+                {@const { fs, pillW } = pillOf(
+                  zone,
+                  label,
+                  scale,
+                  svgWidths[i] || 400,
+                )}
                 <rect
+                  class="zone"
+                  class:selected={inSelection(p, z)}
+                  style="--piece: {pieceColour(p)}"
+                  vector-effect="non-scaling-stroke"
+                  role="button"
+                  tabindex={0}
+                  aria-label={`${label}: region on page ${i + 1}`}
+                  x={zone.ulx}
+                  y={zone.uly}
+                  width={Math.max(0, zone.lrx - zone.ulx)}
+                  height={Math.max(0, zone.lry - zone.uly)}
+                  {rx}
+                  onpointerdown={(e) => ed.boxDown(e, i, zone)}
+                  onkeydown={(e) => ed.boxKeydown(e, i, zone)}
+                />
+                <clipPath id={`pillclip-${i}-${p}-${z}`}>
+                  <rect
+                    x={zone.ulx + rx}
+                    y={zone.uly + rx}
+                    width={pillW}
+                    height={fs * 1.5}
+                    rx={fs * 0.75}
+                  />
+                </clipPath>
+                <rect
+                  class="labelbg"
+                  style="--piece: {pieceColour(p)}"
                   x={zone.ulx + rx}
                   y={zone.uly + rx}
                   width={pillW}
                   height={fs * 1.5}
                   rx={fs * 0.75}
                 />
-              </clipPath>
-              <rect
-                class="labelbg"
-                style="--piece: {pieceColour(p)}"
-                x={zone.ulx + rx}
-                y={zone.uly + rx}
-                width={pillW}
-                height={fs * 1.5}
-                rx={fs * 0.75}
-              />
-              <text
-                class="label"
-                clip-path={`url(#pillclip-${i}-${p}-${z})`}
-                x={zone.ulx + rx + fs * 0.5}
-                y={zone.uly + rx + fs * 1.1}
-                font-size={fs}
+                <text
+                  class="label"
+                  clip-path={`url(#pillclip-${i}-${p}-${z})`}
+                  x={zone.ulx + rx + fs * 0.5}
+                  y={zone.uly + rx + fs * 1.1}
+                  font-size={fs}
+                >
+                  {label}
+                </text>
+              {/each}
+              {#if ed.marquee?.p === i && ed.marquee.moved}
+                {@const marquee = ed.marquee}
+                {@const m = drawnBox(
+                  marquee.sx,
+                  marquee.sy,
+                  marquee.x,
+                  marquee.y,
+                  0,
+                )}
+                <rect
+                  class="marquee"
+                  vector-effect="non-scaling-stroke"
+                  x={m.ulx}
+                  y={m.uly}
+                  width={m.lrx - m.ulx}
+                  height={m.lry - m.uly}
+                />
+              {/if}
+              {#if ed.corner?.p === i}
+                {@const firstCorner = ed.corner}
+                {@const r = 9 / scale}
+                <path
+                  class="corner"
+                  style="--piece: {pieceColour(firstCorner.scope as number)}"
+                  vector-effect="non-scaling-stroke"
+                  d={`M${firstCorner.x - r} ${firstCorner.y}H${firstCorner.x + r}M${firstCorner.x} ${firstCorner.y - r}V${firstCorner.y + r}`}
+                />
+              {/if}
+            </svg>
+            {#if selectedOn(i)}
+              {@const sel = selectedOn(i)!}
+              {@const label = labelFor(sel.p)}
+              {@const { btnX, btnY } = pillOf(
+                sel.zone,
+                label,
+                scale,
+                svgWidths[i] || 400,
+              )}
+              <BoxHandles
+                editor={ed}
+                p={i}
+                item={sel.zone}
+                box={sel.zone}
+                {page}
+                {scale}
+                name={`${label} region`}
+                color={pieceColour(sel.p)}
+                touch={wizardLayout.coarse}
               >
-                {label}
-              </text>
-              {#if !members.length && selectedZone?.piece === p && selectedZone?.zone === z}
-                <!-- A delete button pinned inside the region's top-right corner,
-                   drawn in screen pixels via the inverse-scale transform. -->
-                <g
+                <button
+                  type="button"
                   class="delbtn"
-                  data-control
-                  role="button"
-                  tabindex={0}
+                  style:left={`${(btnX - sel.zone.ulx) * scale}px`}
+                  style:top={`${(btnY - sel.zone.uly) * scale}px`}
                   aria-label={`${label}: remove region`}
-                  transform={`translate(${btnX}, ${btnY}) scale(${1 / scale})`}
+                  title="Remove this region"
                   onpointerdown={(e) => e.stopPropagation()}
                   onclick={() => ed.deleteSelection()}
-                  onkeydown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      ed.deleteSelection();
-                    }
-                  }}
+                  ><Icon name="trash" size={14} /></button
                 >
-                  <rect width="24" height="24" rx="7" />
-                  <path
-                    transform="translate(2 2)"
-                    d="M5.2 6.4h9.6 M8.3 6.2V4.8h3.4v1.4 M6.4 6.6l.5 8.8h6.2l.5-8.8 M8.7 8.8v4.4 M11.3 8.8v4.4"
-                  />
-                </g>
-                {#each [{ corner: "nw", name: "top-left", cx: zone.ulx, cy: zone.uly }, { corner: "ne", name: "top-right", cx: zone.lrx, cy: zone.uly }, { corner: "sw", name: "bottom-left", cx: zone.ulx, cy: zone.lry }, { corner: "se", name: "bottom-right", cx: zone.lrx, cy: zone.lry }] as const as h (h.corner)}
-                  <circle
-                    class="handle"
-                    class:nesw={h.corner === "ne" || h.corner === "sw"}
-                    class:armed={ed.armed?.item === zone &&
-                      ed.armed.edges === h.corner}
-                    data-control
-                    style="--piece: {pieceColour(p)}"
-                    vector-effect="non-scaling-stroke"
-                    role="button"
-                    tabindex={0}
-                    aria-label={`${label}: resize region (${h.name} corner)`}
-                    cx={h.cx}
-                    cy={h.cy}
-                    r={(wizardLayout.coarse ? 7 : 5) / scale}
-                    onpointerdown={(e) => ed.boxDown(e, i, zone, h.corner)}
-                    onkeydown={(e) => ed.edgeKeydown(e, i, zone, h.corner)}
-                  />
-                {/each}
-              {/if}
-            {/each}
-            {#if ed.marquee?.p === i && ed.marquee.moved}
-              {@const marquee = ed.marquee}
-              {@const m = drawnBox(
-                marquee.sx,
-                marquee.sy,
-                marquee.x,
-                marquee.y,
-                0,
-              )}
-              <rect
-                class="marquee"
-                vector-effect="non-scaling-stroke"
-                x={m.ulx}
-                y={m.uly}
-                width={m.lrx - m.ulx}
-                height={m.lry - m.uly}
-              />
+              </BoxHandles>
             {/if}
-            {#if ed.corner?.p === i}
-              {@const firstCorner = ed.corner}
-              {@const r = 9 / scale}
-              <path
-                class="corner"
-                style="--piece: {pieceColour(firstCorner.scope as number)}"
-                vector-effect="non-scaling-stroke"
-                d={`M${firstCorner.x - r} ${firstCorner.y}H${firstCorner.x + r}M${firstCorner.x} ${firstCorner.y - r}V${firstCorner.y + r}`}
-              />
-            {/if}
-          </svg>
+          </div>
         </figure>
       {/each}
     </div>
@@ -738,13 +707,13 @@
      so the picker shows the piece name; undo, redo and the zoom take the
      second. */
   @container material (max-width: 479px) {
-    .material-toolbar.touch {
+    .material-card > :global(.vtoolbar.touch) {
       flex-wrap: wrap;
       row-gap: 6px;
       padding-block: 8px;
     }
-    .touch .pchip,
-    .touch .mode {
+    :global(.touch) .pchip,
+    :global(.touch) :global(.mode) {
       order: -1;
     }
     .pchip {
@@ -819,43 +788,33 @@
     font-weight: 600;
     pointer-events: none;
   }
-  .handle {
-    fill: var(--card);
-    stroke: var(--piece);
-    stroke-width: 2;
-    cursor: nwse-resize;
+  /* The page and, over it, the selected region's handles (BoxHandles). */
+  .pagebox {
+    position: relative;
   }
-  .handle.nesw {
-    cursor: nesw-resize;
-  }
-  /* A picked-up corner (armed) fills with its piece's colour. */
-  .handle.armed {
-    fill: var(--piece);
-  }
-  .handle-hit {
-    fill: transparent;
-  }
+  /* The selected region's delete button, inside its top-right corner. */
   .delbtn {
+    position: absolute;
+    box-sizing: border-box;
+    width: 24px;
+    height: 24px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+    color: var(--danger);
+    background: var(--card);
+    border: 1px solid var(--line-input);
+    border-radius: 7px;
+    pointer-events: auto;
     cursor: pointer;
   }
-  .delbtn rect {
-    fill: var(--card);
-    stroke: var(--line-input);
-  }
-  .delbtn:focus-visible rect {
-    stroke: var(--danger);
+  .delbtn:focus-visible {
+    outline: 2px solid var(--danger);
+    outline-offset: 1px;
   }
   @media (hover: hover) {
-    .delbtn:hover rect {
-      stroke: var(--danger);
+    .delbtn:hover {
+      border-color: var(--danger);
     }
-  }
-  .delbtn path {
-    fill: none;
-    stroke: var(--danger);
-    stroke-width: 1.5;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    pointer-events: none;
   }
 </style>

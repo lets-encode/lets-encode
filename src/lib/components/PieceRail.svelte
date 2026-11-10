@@ -108,7 +108,7 @@
     >
       <span class="dot"></span>
       <span class="railname">All pieces</span>
-      <span class="openpill">{openCount} open</span>
+      <span class="countpill openpill">{openCount} open</span>
     </button>
     {#each pieces as piece, index (piece.path)}
       {@const count = attention.get(piece.path) ?? 0}
@@ -206,11 +206,6 @@
   }
   .openpill {
     margin-left: auto;
-    font-size: 11px;
-    font-weight: 600;
-    background: var(--bg-tint);
-    border-radius: 999px;
-    padding: 1px 7px;
   }
   .railtop {
     display: flex;

@@ -1,21 +1,34 @@
 <!--
   The page shown when a route fails to load or does not exist: what happened,
-  in the layout's frame, with a way back to the campaign list.
+  in the layout's frame, with a way back to the campaign list. A 404 with a
+  detail (an address that can't be a campaign name) says why instead.
 -->
 <script lang="ts">
   import { page } from "$app/state";
 
   const missing = $derived(page.status === 404);
+  const detail = $derived(missing ? page.error?.detail : undefined);
 </script>
 
 <svelte:head>
-  <title>{missing ? "Page not found" : "Error"} · Let's Encode!</title>
+  <title
+    >{detail ? page.error?.message : missing ? "Page not found" : "Error"} · Let's
+    Encode!</title
+  >
 </svelte:head>
 
 <section class="error">
-  <h1>{missing ? "Page not found" : "This page could not be loaded"}</h1>
+  <h1>
+    {detail
+      ? page.error?.message
+      : missing
+        ? "Page not found"
+        : "This page could not be loaded"}
+  </h1>
   <p>
-    {#if missing}
+    {#if detail}
+      {detail}
+    {:else if missing}
       There is no page at this address.
     {:else}
       {page.error?.message ?? "The page failed to load."} Reload the page to try again.

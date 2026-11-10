@@ -30,6 +30,7 @@
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ViewerToolbar from "./ViewerToolbar.svelte";
   import ZoomLevel, {
     fitPageZoom,
     nearFit,
@@ -391,41 +392,41 @@
 
 {#snippet material()}
   <div class="material-card">
-    <div class="material-toolbar">
+    <ViewerToolbar>
       {#if sourceName}
         <span class="toolbar-name">{sourceName}</span>
       {/if}
-      <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
       <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
-      <div class="toolbar-rule"></div>
-      <span class="tbtn-pair keep">
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={chosen.length === wizard.candidates.length}
-          aria-pressed={chosen.length === wizard.candidates.length}
-          aria-label="Keep all"
-          title="Keep all"
-          onclick={() => setAll(true)}
-          disabled={busy}
-        >
-          <Icon name="pages" size={16} />
-        </button>
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={chosen.length === 0}
-          aria-pressed={chosen.length === 0}
-          aria-label="Keep none"
-          title="Keep none"
-          onclick={() => setAll(false)}
-          disabled={busy}
-        >
-          <Icon name="page-none" size={16} />
-        </button>
-      </span>
-    </div>
+      {#snippet end()}
+        <span class="tbtn-pair">
+          <button
+            type="button"
+            class="tbtn tbtn-icon"
+            class:on={chosen.length === wizard.candidates.length}
+            aria-pressed={chosen.length === wizard.candidates.length}
+            aria-label="Keep all"
+            title="Keep all"
+            onclick={() => setAll(true)}
+            disabled={busy}
+          >
+            <Icon name="pages" size={16} />
+          </button>
+          <button
+            type="button"
+            class="tbtn tbtn-icon"
+            class:on={chosen.length === 0}
+            aria-pressed={chosen.length === 0}
+            aria-label="Keep none"
+            title="Keep none"
+            onclick={() => setAll(false)}
+            disabled={busy}
+          >
+            <Icon name="page-none" size={16} />
+          </button>
+        </span>
+      {/snippet}
+    </ViewerToolbar>
     <div
       class="material-body"
       bind:clientWidth={bodyW}
@@ -687,17 +688,6 @@
     gap: 9px;
     font-size: 12.5px;
     color: var(--ink-soft);
-  }
-
-  /* Phone-width panes: the view controls start the row and Keep all / Keep
-     none end it. */
-  @container material (max-width: 479px) {
-    .material-toolbar .toolbar-gap {
-      display: none;
-    }
-    .keep {
-      margin-left: auto;
-    }
   }
 
   /* ---- Page tiles in the material pane ---- */

@@ -19,6 +19,7 @@
   import { onDestroy, type Snippet } from "svelte";
   import type { PageImage } from "$lib/prepare-images.ts";
   import PagesPerRow from "./PagesPerRow.svelte";
+  import ViewerToolbar from "./ViewerToolbar.svelte";
   import ZoomLevel, {
     fitPageZoom,
     nearFit,
@@ -71,17 +72,15 @@
 
 {#if pages.length}
   <div class="material-card">
-    <div class="material-toolbar">
+    <ViewerToolbar end={toolbar}>
       <span
         class="toolbar-name"
         title="The pages kept in the Pages step, shown here to read from while filling the form."
         >{pages.length} page{pages.length === 1 ? "" : "s"}</span
       >
-      <div class="toolbar-gap"></div>
       <PagesPerRow bind:value={perRow} />
       <ZoomLevel bind:value={zoom} bind:fit {fitPage} />
-      {#if toolbar}{@render toolbar()}{/if}
-    </div>
+    </ViewerToolbar>
     <div
       class="material-body"
       bind:clientWidth={bodyW}

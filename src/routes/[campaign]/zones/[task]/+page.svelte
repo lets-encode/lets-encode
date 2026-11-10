@@ -53,6 +53,9 @@
   import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import BoxHandles, { HANDLES } from "$lib/components/BoxHandles.svelte";
+  import BoxModeToggles from "$lib/components/BoxModeToggles.svelte";
+  import SelectionPanel from "$lib/components/SelectionPanel.svelte";
   import PageNav from "$lib/components/PageNav.svelte";
   import PageSpreadControls from "$lib/components/PageSpreadControls.svelte";
   import ViewerToolbar from "$lib/components/ViewerToolbar.svelte";
@@ -1557,14 +1560,6 @@
 
   // The cursor class for a resize handle: a corner gets the diagonal arrows,
   // a side the axis arrows.
-  const resizeCursor = (edges: string) =>
-    edges === "n" || edges === "s"
-      ? "h-ns"
-      : edges === "e" || edges === "w"
-        ? "h-ew"
-        : edges === "nw" || edges === "se"
-          ? "h-nwse"
-          : "h-nesw";
 
   // The selected box's handles: the four edges, then the four corners.
   // The free space above and below a staff or grand-staff box, in page
@@ -1582,16 +1577,6 @@
     });
     return { top, bottom };
   }
-  const HANDLES = [
-    { edges: "n", side: "top edge" },
-    { edges: "s", side: "bottom edge" },
-    { edges: "w", side: "left edge" },
-    { edges: "e", side: "right edge" },
-    { edges: "nw", side: "top-left corner" },
-    { edges: "ne", side: "top-right corner" },
-    { edges: "sw", side: "bottom-left corner" },
-    { edges: "se", side: "bottom-right corner" },
-  ];
 
   // A key on a focused box (ed.boxKeydown). A move can re-sort the page's
   // boxes; the keyboard focus stays on the box.
@@ -1604,14 +1589,6 @@
   }
 
   // Arrow keys on a focused resize handle move that handle's edges.
-  function resizeKeydown(
-    e: KeyboardEvent,
-    p: number,
-    z: number,
-    edges: string,
-  ) {
-    if (ed.edgeKeydown(e, p, items(p)[z], edges)) e.stopPropagation();
-  }
 
   // Add a box to a page's layer; returns its index.
   function addBox(p: number, layer: Layer, box: MeasureBox): number {
@@ -2599,7 +2576,7 @@
           title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
         >
       {/if}
-      {#if canEdit && coarse}{@render drawToggle()}{@render pickButton()}{/if}
+      {#if canEdit && coarse}<BoxModeToggles editor={ed} noun={boxName} />{/if}
       {#if canEdit}<span class="vline"></span>{/if}
       {#if step4}
         <button
@@ -2701,52 +2678,22 @@
          and --h, the box's size on screen, keep the handles' reach into the
          box to a quarter of it. -->
     {#snippet handles(p: number, z: number)}
-      {@const pg = pages[p]}
-      {@const b = items(p)[z].box}
-      {@const name = itemName(p, z)}
-      {@const k = (canvasW[p] || pg.width) / pg.width}
-      {@const sw = (b.lrx - b.ulx) * k}
-      {@const sh = (b.lry - b.uly) * k}
-      {@const room =
-        tool === "measures"
-          ? { top: Infinity, bottom: Infinity }
-          : staffRoom(p, z)}
-      <div
-        class="sel"
-        class:touch={coarse}
-        class:staves={tool === "staves"}
-        class:grandstaves={tool === "grandstaves"}
-        style:left={`${(b.ulx / pg.width) * 100}%`}
-        style:top={`${(b.uly / pg.height) * 100}%`}
-        style:width={`${((b.lrx - b.ulx) / pg.width) * 100}%`}
-        style:height={`${((b.lry - b.uly) / pg.height) * 100}%`}
-        style:--w={`${sw}px`}
-        style:--h={`${sh}px`}
-        style:--room-t={Number.isFinite(room.top)
-          ? `${room.top * k}px`
-          : undefined}
-        style:--room-b={Number.isFinite(room.bottom)
-          ? `${room.bottom * k}px`
-          : undefined}
-      >
-        <div
-          class="selbody"
-          aria-hidden="true"
-          onpointerdown={(ev) => ed.boxDown(ev, p, items(p)[z])}
-        ></div>
-        {#each HANDLES as h (h.edges)}
-          <div
-            class="hd hd-{h.edges} {resizeCursor(h.edges)}"
-            class:armed={ed.armed?.item === items(p)[z] &&
-              ed.armed.edges === h.edges}
-            role="button"
-            tabindex={0}
-            aria-label={`${name}: resize (${h.side})`}
-            onpointerdown={(ev) => ed.boxDown(ev, p, items(p)[z], h.edges)}
-            onkeydown={(ev) => resizeKeydown(ev, p, z, h.edges)}
-          ></div>
-        {/each}
-      </div>
+      <BoxHandles
+        editor={ed}
+        {p}
+        item={items(p)[z]}
+        box={items(p)[z].box}
+        page={pages[p]}
+        scale={(canvasW[p] || pages[p].width) / pages[p].width}
+        name={itemName(p, z)}
+        color={tool === "staves"
+          ? "rgb(var(--layer-staff))"
+          : tool === "grandstaves"
+            ? "rgb(var(--layer-grand))"
+            : "rgb(var(--layer-measure))"}
+        touch={coarse}
+        room={tool === "measures" ? undefined : staffRoom(p, z)}
+      />
     {/snippet}
 
     <!-- The task tools in the side panel: the layout steps (an OMR-prepared
@@ -2790,20 +2737,6 @@
 
     <!-- Draw mode, on a touch screen: on, a finger drag draws and a tap
          selects; off, a drag scrolls the pages and a tap deselects. -->
-    {#snippet drawToggle()}
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        class:on={ed.drawMode}
-        class:drawhint={ed.drawHint && !ed.drawMode}
-        aria-pressed={ed.drawMode}
-        aria-label="Draw"
-        title={`Draw: a finger drag draws a new ${boxName}. Off, a drag scrolls the pages.`}
-        onclick={() => ed.setDrawMode(!ed.drawMode)}
-        ><Icon name="touch-box" size={16} /></button
-      >
-    {/snippet}
-
     {#snippet boxesButton()}
       <button
         type="button"
@@ -2865,36 +2798,37 @@
     <!-- Select several, on a touch screen: a tap on a box adds it to the
          selection or takes it out. With a mouse Shift+click and Shift+drag
          do this. -->
-    {#snippet pickButton()}
+    <!-- The edit actions on one selected box. -->
+    {#snippet editActions()}
       <button
         type="button"
-        class="tbtn tbtn-icon"
-        class:on={ed.pickMode}
-        aria-pressed={ed.pickMode}
-        disabled={!ed.drawMode}
-        aria-label="Select several"
-        title="A tap on a box adds it to the selection or takes it out"
-        onclick={() => (ed.pickMode = !ed.pickMode)}
-        ><Icon name="select-several" size={16} /></button
+        class="btn"
+        onclick={newBox}
+        title={`New ${boxName} beside this one (N)`}
+        ><Icon name="plus" />New {boxName}</button
+      >
+      <button
+        type="button"
+        class="btn btn-danger"
+        onclick={() => ed.deleteSelection()}
+        aria-label={`Delete the ${boxName}`}
+        title={`Delete the ${boxName}`}><Icon name="trash" />Delete</button
       >
     {/snippet}
 
     {#snippet selection()}
       {#if selectedItem && groupZs.length}
-        <div class="selpanel">
-          <div class="selhead">
-            <span class="selname">
-              <StepGlyph
-                kind={toolGlyph.kind}
-                tone={toolGlyph.tone}
-                size={20}
-              />
-              {groupZs.length}
-              {boxNames}
-            </span>
-            <span class="selwhere">page {selectedItem.p + 1}</span>
-          </div>
-          <div class="selactions">
+        <SelectionPanel
+          glyph={toolGlyph.kind}
+          tone={toolGlyph.tone}
+          page={selectedItem.p}
+          ondeselect={coarse && !(docked && canEdit)
+            ? () => ed.select(0, null)
+            : undefined}
+          deselectTitle={`Deselect the ${boxNames}`}
+        >
+          {#snippet name()}{groupZs.length} {boxNames}{/snippet}
+          {#snippet actions()}
             <button
               type="button"
               class="btn"
@@ -2910,229 +2844,170 @@
               title={`Delete the ${groupZs.length} ${boxNames}`}
               ><Icon name="trash" />Delete</button
             >
-            {#if coarse && !(docked && canEdit)}
-              <button
-                type="button"
-                class="btn"
-                onclick={() => ed.select(0, null)}
-                title={`Deselect the ${boxNames}`}
-                ><Icon name="close" />Deselect</button
-              >
-            {/if}
-          </div>
-        </div>
+          {/snippet}
+        </SelectionPanel>
       {:else if selectedItem}
         {@const { p, z } = selectedItem}
-        <div class="selpanel">
-          <div class="selhead">
-            <span class="selname">
-              <StepGlyph
-                kind={toolGlyph.kind}
-                tone={toolGlyph.tone}
-                size={20}
-              />
-              {#if tool === "measures" && canEdit}
-                <label class="selnumlabel"
-                  >Measure {@render numberInput(p, z)}</label
-                >
-              {:else}
-                {itemName(p, z)}
-              {/if}
-            </span>
-            <span class="selwhere">page {p + 1}</span>
-            <span class="selnav">
-              <button
-                type="button"
-                class="btn btn-icon"
-                onclick={() => stepSelection(-1)}
-                disabled={!hasPrev}
-                aria-label={`Previous ${boxName}`}
-                title={`Previous ${boxName} (A)`}
-                ><Icon name="chevron-left" /></button
+        <SelectionPanel
+          glyph={toolGlyph.kind}
+          tone={toolGlyph.tone}
+          page={p}
+          item={boxName}
+          onstep={(dir) => stepSelection(dir)}
+          canStep={(dir) => (dir < 0 ? hasPrev : hasNext)}
+          keys={["A", "D"]}
+          actions={canEdit ? editActions : undefined}
+          oncomment={selectedLabel && auth.user ? () => compose++ : undefined}
+          commentTitle={`Comment on measure ${selectedLabel}`}
+          ondeselect={coarse && !(docked && canEdit)
+            ? () => ed.select(0, null)
+            : undefined}
+          deselectTitle={`Deselect the ${boxName}`}
+        >
+          {#snippet name()}
+            {#if tool === "measures" && canEdit}
+              <label class="selnumlabel"
+                >Measure {@render numberInput(p, z)}</label
               >
-              <button
-                type="button"
-                class="btn btn-icon"
-                onclick={() => stepSelection(1)}
-                disabled={!hasNext}
-                aria-label={`Next ${boxName}`}
-                title={`Next ${boxName} (D)`}
-                ><Icon name="chevron-right" /></button
-              >
-            </span>
-          </div>
-          {#if canEdit || (selectedLabel && auth.user) || coarse}
-            <div class="selactions">
+            {:else}
+              {itemName(p, z)}
+            {/if}
+          {/snippet}
+          {#snippet details()}
+            {#if tool === "measures"}
               {#if canEdit}
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={newBox}
-                  title={`New ${boxName} beside this one (N)`}
-                  ><Icon name="plus" />New {boxName}</button
-                >
-                <button
-                  type="button"
-                  class="btn btn-danger"
-                  onclick={() => ed.deleteSelection()}
-                  aria-label={`Delete the ${boxName}`}
-                  title={`Delete the ${boxName}`}
-                  ><Icon name="trash" />Delete</button
-                >
-              {/if}
-              {#if selectedLabel && auth.user}
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={() => compose++}
-                  aria-label={`Comment on measure ${selectedLabel}`}
-                  title={`Comment on measure ${selectedLabel}`}
-                  ><Icon name="comment" />Comment</button
-                >
-              {/if}
-              {#if coarse && !(docked && canEdit)}
-                <button
-                  type="button"
-                  class="btn"
-                  onclick={() => ed.select(0, null)}
-                  title={`Deselect the ${boxName}`}
-                  ><Icon name="close" />Deselect</button
-                >
-              {/if}
-            </div>
-          {/if}
-          {#if tool === "measures"}
-            {#if canEdit}
-              <div class="selprops">
-                <p class="selgroup">Breaks</p>
-                <div class="selflags" role="group" aria-label="Breaks">
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={sbActive(p, z)}
-                    aria-pressed={sbActive(p, z)}
-                    onclick={() => toggleSb(p, z)}
-                    disabled={pbAt(z)}
-                    title={pbAt(z)
-                      ? "The first measure on a page always starts a system"
-                      : "This measure starts a new system (line) of the score"}
-                    ><span class="sellong">Starts a system</span><span
-                      class="selshort">System</span
-                    ></button
-                  >
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={startsMovement(p, z)}
-                    aria-pressed={startsMovement(p, z)}
-                    onclick={() => toggleSection(p, z)}
-                    disabled={sectionLocked(p, z)}
-                    title={sectionLocked(p, z)
-                      ? "The first measure always starts the first section"
-                      : "This measure starts a new movement or section"}
-                    ><span class="sellong">Starts a section</span><span
-                      class="selshort">Section</span
-                    ></button
-                  >
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={pages[p].zones[z].pickup}
-                    aria-pressed={pages[p].zones[z].pickup}
-                    onclick={() => togglePickup(p, z)}
-                    title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
-                    >Pickup</button
-                  >
-                </div>
-                <p class="selgroup">Repeats</p>
-                <div class="selflags" role="group" aria-label="Repeats">
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={!!pages[p].zones[z].rptStart}
-                    aria-pressed={!!pages[p].zones[z].rptStart}
-                    onclick={() => toggleRepeat(p, z, "start")}
-                    aria-label="Repeat start"
-                    title="A repeat barline at the start of this measure"
-                    ><Icon name="repeat-start" /><span class="sellong"
-                      >Repeat start</span
-                    ></button
-                  >
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={!!pages[p].zones[z].rptEnd}
-                    aria-pressed={!!pages[p].zones[z].rptEnd}
-                    onclick={() => toggleRepeat(p, z, "end")}
-                    aria-label="Repeat end"
-                    title="A repeat barline at the end of this measure"
-                    ><Icon name="repeat-end" /><span class="sellong"
-                      >Repeat end</span
-                    ></button
-                  >
-                  <button
-                    type="button"
-                    class="chip-switch"
-                    class:on={!!pages[p].zones[z].rptBoth}
-                    aria-pressed={!!pages[p].zones[z].rptBoth}
-                    onclick={() => toggleRepeat(p, z, "both")}
-                    title="A double repeat barline at the end of this measure: the end of one repeat and the start of the next"
-                    aria-label="Double repeat"
-                    ><Icon name="repeat-both" /><span class="sellong"
-                      >Double repeat</span
-                    ></button
-                  >
-                  <div
-                    class="seg"
-                    role="group"
-                    aria-label="Ending"
-                    title="The ending (volta) this measure belongs to; neighbouring measures with the same ending share one bracket"
-                  >
-                    {#each ["", "1", "2", "3"] as n (n)}
+                <div class="selprops">
+                  <p class="selgroup">Breaks</p>
+                  <div class="selflags" role="group" aria-label="Breaks">
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={sbActive(p, z)}
+                      aria-pressed={sbActive(p, z)}
+                      onclick={() => toggleSb(p, z)}
+                      disabled={pbAt(z)}
+                      title={pbAt(z)
+                        ? "The first measure on a page always starts a system"
+                        : "This measure starts a new system (line) of the score"}
+                      ><span class="sellong">Starts a system</span><span
+                        class="selshort">System</span
+                      ></button
+                    >
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={startsMovement(p, z)}
+                      aria-pressed={startsMovement(p, z)}
+                      onclick={() => toggleSection(p, z)}
+                      disabled={sectionLocked(p, z)}
+                      title={sectionLocked(p, z)
+                        ? "The first measure always starts the first section"
+                        : "This measure starts a new movement or section"}
+                      ><span class="sellong">Starts a section</span><span
+                        class="selshort">Section</span
+                      ></button
+                    >
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={pages[p].zones[z].pickup}
+                      aria-pressed={pages[p].zones[z].pickup}
+                      onclick={() => togglePickup(p, z)}
+                      title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
+                      >Pickup</button
+                    >
+                  </div>
+                  <p class="selgroup">Repeats</p>
+                  <div class="selflags" role="group" aria-label="Repeats">
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={!!pages[p].zones[z].rptStart}
+                      aria-pressed={!!pages[p].zones[z].rptStart}
+                      onclick={() => toggleRepeat(p, z, "start")}
+                      aria-label="Repeat start"
+                      title="A repeat barline at the start of this measure"
+                      ><Icon name="repeat-start" /><span class="sellong"
+                        >Repeat start</span
+                      ></button
+                    >
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={!!pages[p].zones[z].rptEnd}
+                      aria-pressed={!!pages[p].zones[z].rptEnd}
+                      onclick={() => toggleRepeat(p, z, "end")}
+                      aria-label="Repeat end"
+                      title="A repeat barline at the end of this measure"
+                      ><Icon name="repeat-end" /><span class="sellong"
+                        >Repeat end</span
+                      ></button
+                    >
+                    <button
+                      type="button"
+                      class="chip-switch"
+                      class:on={!!pages[p].zones[z].rptBoth}
+                      aria-pressed={!!pages[p].zones[z].rptBoth}
+                      onclick={() => toggleRepeat(p, z, "both")}
+                      title="A double repeat barline at the end of this measure: the end of one repeat and the start of the next"
+                      aria-label="Double repeat"
+                      ><Icon name="repeat-both" /><span class="sellong"
+                        >Double repeat</span
+                      ></button
+                    >
+                    <div
+                      class="seg"
+                      role="group"
+                      aria-label="Ending"
+                      title="The ending (volta) this measure belongs to; neighbouring measures with the same ending share one bracket"
+                    >
+                      {#each ["", "1", "2", "3"] as n (n)}
+                        <button
+                          type="button"
+                          class:on={(pages[p].zones[z].ending ?? "") === n}
+                          aria-pressed={(pages[p].zones[z].ending ?? "") === n}
+                          onclick={() => setEnding(p, z, n)}
+                          >{#if n}{n}.{:else}<span class="sellong"
+                              >No ending</span
+                            ><span class="selshort">No</span>{/if}</button
+                        >
+                      {/each}
+                    </div>
+                  </div>
+                  <p class="selgroup">Signs</p>
+                  <div class="selflags" role="group" aria-label="Signs">
+                    {#each MEASURE_SIGNS as sign (sign)}
                       <button
                         type="button"
-                        class:on={(pages[p].zones[z].ending ?? "") === n}
-                        aria-pressed={(pages[p].zones[z].ending ?? "") === n}
-                        onclick={() => setEnding(p, z, n)}
-                        >{#if n}{n}.{:else}<span class="sellong">No ending</span
-                          ><span class="selshort">No</span>{/if}</button
+                        class="chip-switch"
+                        class:on={!!pages[p].zones[z].signs?.includes(sign)}
+                        aria-pressed={!!pages[p].zones[z].signs?.includes(sign)}
+                        onclick={() => toggleSign(p, z, sign)}
+                        aria-label={SIGN_NAME[sign]}
+                        title={SIGN_TITLE[sign]}
+                        >{#if sign === "segno" || sign === "coda"}<Icon
+                            name={sign}
+                          /><span class="sellong">{SIGN_NAME[sign]}</span
+                          >{:else}{SIGN_NAME[sign]}{/if}</button
                       >
                     {/each}
                   </div>
                 </div>
-                <p class="selgroup">Signs</p>
-                <div class="selflags" role="group" aria-label="Signs">
-                  {#each MEASURE_SIGNS as sign (sign)}
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={!!pages[p].zones[z].signs?.includes(sign)}
-                      aria-pressed={!!pages[p].zones[z].signs?.includes(sign)}
-                      onclick={() => toggleSign(p, z, sign)}
-                      aria-label={SIGN_NAME[sign]}
-                      title={SIGN_TITLE[sign]}
-                      >{#if sign === "segno" || sign === "coda"}<Icon
-                          name={sign}
-                        /><span class="sellong">{SIGN_NAME[sign]}</span
-                        >{:else}{SIGN_NAME[sign]}{/if}</button
-                    >
-                  {/each}
-                </div>
-              </div>
-            {:else}
-              <!-- Read-only, the toggles give way to the breaks that apply. -->
-              {@const flags = [
-                sbActive(p, z) ? "Starts a system" : "",
-                startsMovement(p, z) ? "Starts a section" : "",
-                pages[p].zones[z].pickup ? "Pickup" : "",
-                ...markNames(p, z),
-              ].filter(Boolean)}
-              {#if flags.length}
-                <p class="selflagtext">{flags.join(" · ")}</p>
+              {:else}
+                <!-- Read-only, the toggles give way to the breaks that apply. -->
+                {@const flags = [
+                  sbActive(p, z) ? "Starts a system" : "",
+                  startsMovement(p, z) ? "Starts a section" : "",
+                  pages[p].zones[z].pickup ? "Pickup" : "",
+                  ...markNames(p, z),
+                ].filter(Boolean)}
+                {#if flags.length}
+                  <p class="selflagtext">{flags.join(" · ")}</p>
+                {/if}
               {/if}
             {/if}
-          {/if}
-        </div>
+          {/snippet}
+        </SelectionPanel>
       {:else if step4}
         <!-- The instruments step selects no boxes: why and how in short;
              the help (?) has the full text. -->
@@ -3946,178 +3821,6 @@
   .swatch.measure {
     border-color: var(--ink-measure);
     background: rgba(var(--layer-measure), 0.2);
-  }
-  .h-ns {
-    cursor: ns-resize;
-  }
-  .h-ew {
-    cursor: ew-resize;
-  }
-  .h-nwse {
-    cursor: nwse-resize;
-  }
-  .h-nesw {
-    cursor: nesw-resize;
-  }
-
-  /* The selected box's body and handles (the handles snippet), in screen
-     pixels over the page: --hit is a corner's target, --dot its visible
-     dot (down to --dot-min on a thin box) and --edge an edge handle's
-     thickness; edges show no mark, the corners take precedence. A touch
-     screen gets 32px corner and 20px edge targets, which keep clear of
-     most of a thin staff's neighbours. Handles reach into the box by at
-     most a quarter of its size on screen (--w, --h), so its middle stays
-     the move target; the rest of each target lies outside the box. */
-  .sel {
-    position: absolute;
-    --hit: 24px;
-    --dot: 10px;
-    --dot-min: 6px;
-    --edge: 16px;
-    --c: rgb(var(--layer-measure));
-    /* Corner and edge reach into the box. */
-    --cx: min(calc(var(--hit) / 2), calc(var(--w) / 4));
-    --cy: min(calc(var(--hit) / 2), calc(var(--h) / 4));
-    --ex: min(calc(var(--edge) / 2), calc(var(--w) / 4));
-    --ey: min(calc(var(--edge) / 2), calc(var(--h) / 4));
-    /* Corner and edge reach above and below the box, up to the free space
-       beside a staff box (--room-t, --room-b). */
-    --cout-t: min(calc(var(--hit) - var(--cy)), var(--room-t, 999px));
-    --cout-b: min(calc(var(--hit) - var(--cy)), var(--room-b, 999px));
-    --eout-t: min(calc(var(--edge) - var(--ey)), var(--room-t, 999px));
-    --eout-b: min(calc(var(--edge) - var(--ey)), var(--room-b, 999px));
-    pointer-events: none;
-    z-index: 4;
-  }
-  .sel.staves {
-    --c: rgb(var(--layer-staff));
-  }
-  .sel.grandstaves {
-    --c: rgb(var(--layer-grand));
-  }
-  .sel.touch {
-    --hit: 32px;
-    --dot: 12px;
-    --dot-min: 8px;
-    --edge: 20px;
-  }
-  .selbody,
-  .hd {
-    position: absolute;
-    pointer-events: auto;
-    touch-action: none;
-  }
-  .selbody {
-    inset: 0;
-    cursor: move;
-  }
-  .hd:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  /* The visible dot or bar, drawn by ::before. */
-  .hd::before {
-    content: "";
-    position: absolute;
-    box-sizing: border-box;
-    background: #fff;
-    border: 2px solid var(--c);
-    box-shadow: 0 1px 3px rgba(31, 36, 51, 0.35);
-  }
-  .hd-nw,
-  .hd-ne,
-  .hd-sw,
-  .hd-se {
-    width: var(--hit);
-    z-index: 1;
-  }
-  .hd-nw,
-  .hd-sw {
-    left: calc(var(--cx) - var(--hit));
-  }
-  .hd-ne,
-  .hd-se {
-    right: calc(var(--cx) - var(--hit));
-  }
-  .hd-nw,
-  .hd-ne {
-    top: calc(-1 * var(--cout-t));
-    height: calc(var(--cout-t) + var(--cy));
-  }
-  .hd-sw,
-  .hd-se {
-    bottom: calc(-1 * var(--cout-b));
-    height: calc(var(--cout-b) + var(--cy));
-  }
-  /* A picked-up corner (armed) fills with its layer colour. */
-  .hd.armed::before {
-    background: var(--c);
-    box-shadow:
-      0 0 0 3px #fff,
-      0 1px 4px rgba(31, 36, 51, 0.45);
-  }
-  /* Each dot sits on its corner of the box. */
-  .hd-nw,
-  .hd-ne,
-  .hd-sw,
-  .hd-se {
-    --d: max(var(--dot-min), min(var(--dot), var(--w), var(--h)));
-  }
-  .hd-nw::before,
-  .hd-ne::before,
-  .hd-sw::before,
-  .hd-se::before {
-    width: var(--d);
-    height: var(--d);
-    border-radius: 50%;
-  }
-  .hd-nw::before,
-  .hd-sw::before {
-    right: calc(var(--cx) - var(--d) / 2);
-  }
-  .hd-ne::before,
-  .hd-se::before {
-    left: calc(var(--cx) - var(--d) / 2);
-  }
-  .hd-nw::before,
-  .hd-ne::before {
-    bottom: calc(var(--cy) - var(--d) / 2);
-  }
-  .hd-sw::before,
-  .hd-se::before {
-    top: calc(var(--cy) - var(--d) / 2);
-  }
-  /* The edges run between the corner targets. */
-  .hd-n,
-  .hd-s {
-    left: var(--cx);
-    right: var(--cx);
-  }
-  .hd-n {
-    top: calc(-1 * var(--eout-t));
-    height: calc(var(--eout-t) + var(--ey));
-  }
-  .hd-s {
-    bottom: calc(-1 * var(--eout-b));
-    height: calc(var(--eout-b) + var(--ey));
-  }
-  .hd-w,
-  .hd-e {
-    top: var(--cy);
-    bottom: var(--cy);
-    width: var(--edge);
-  }
-  .hd-w {
-    left: calc(var(--ex) - var(--edge));
-  }
-  .hd-e {
-    right: calc(var(--ex) - var(--edge));
-  }
-  .hd-n::before,
-  .hd-s::before,
-  .hd-w::before,
-  .hd-e::before {
-    display: none;
   }
   /* The selected measure's number label in the measure colour. */
   .labelbg.on {

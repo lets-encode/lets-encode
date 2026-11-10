@@ -1,6 +1,7 @@
 <!--
   A campaign page's state while it cannot show its content: loading, a
-  failed load with Try again, a campaign or task that does not exist, a
+  failed load with Try again, a campaign or task that does not exist, a name
+  that is not a campaign (being set up, reserved or blocked), a
   repository without tracking tables, or a visitor who is not logged in.
   Pass exactly one of the states.
 -->
@@ -13,6 +14,7 @@
     error,
     onretry,
     missingCampaign,
+    nameState,
     missingTask,
     noTables = false,
     loggedOut = false,
@@ -25,6 +27,12 @@
     onretry?: () => void;
     /** The name of a campaign that does not exist. */
     missingCampaign?: string;
+    /** A name that is not a campaign: held by a setup in progress,
+        reserved for the app's own routes, or blocked. */
+    nameState?: {
+      name: string;
+      state: "pending" | "reserved" | "blocked";
+    };
     /** The id of a task that does not exist in `campaign`. */
     missingTask?: string;
     /** The repository has no tracking tables. */
@@ -61,6 +69,22 @@
       tone="err"
       title={`No campaign called ${missingCampaign}`}
       detail="It may have been removed, or the name may be misspelled."
+      action={allCampaigns}
+    />
+  {:else if nameState?.state === "pending"}
+    <Notice
+      tone="warn"
+      title={`Someone is setting up ${nameState.name}`}
+      detail="If they don't finish it, the name becomes free again."
+      action={allCampaigns}
+    />
+  {:else if nameState}
+    <Notice
+      tone="err"
+      title={nameState.state === "reserved"
+        ? `${nameState.name} is reserved`
+        : `${nameState.name} has been blocked`}
+      detail="It can't be used for a campaign."
       action={allCampaigns}
     />
   {:else if missingTask}

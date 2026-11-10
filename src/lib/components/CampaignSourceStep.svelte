@@ -16,6 +16,7 @@
   import WizardCard from "./WizardCard.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import FacsimilePages from "./FacsimilePages.svelte";
+  import ViewerToolbar from "./ViewerToolbar.svelte";
   import XmlEditor from "./XmlEditor.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
@@ -44,28 +45,33 @@
 {#snippet material()}
   {#if editing}
     <div class="material-card">
-      <div class="material-toolbar">
+      <ViewerToolbar>
         <span class="toolbar-name head-name">meiHead — source header</span>
         <span class="chip" class:chip-ok={xmlValid} class:chip-err={!xmlValid}>
           <span class="chip-dot"></span>
           {xmlValid ? "Well-formed" : "Not a well-formed meiHead"}
         </span>
-        <div class="toolbar-gap"></div>
-        <button
-          type="button"
-          class="chip-switch"
-          class:on={wrap}
-          aria-pressed={wrap}
-          onclick={() => (wrap = !wrap)}
-        >
-          Wrap lines
-        </button>
-        {#if wizard.images.length}
-          <button type="button" class="tbtn" onclick={() => (showPages = true)}>
-            Show the pages
+        {#snippet end()}
+          <button
+            type="button"
+            class="tbtn"
+            class:on={wrap}
+            aria-pressed={wrap}
+            onclick={() => (wrap = !wrap)}
+          >
+            Wrap lines
           </button>
-        {/if}
-      </div>
+          {#if wizard.images.length}
+            <button
+              type="button"
+              class="tbtn"
+              onclick={() => (showPages = true)}
+            >
+              Show the pages
+            </button>
+          {/if}
+        {/snippet}
+      </ViewerToolbar>
       <XmlEditor bind:value={xml} {wrap} fill />
     </div>
   {:else if view === "xml" && !inCard}

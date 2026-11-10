@@ -598,18 +598,28 @@
 
 <!-- Escape clears a measure selection before the page's own Escape (closing
      the score view) sees it: the capture phase runs first, and the page skips
-     a handled key. -->
+     a handled key. A and D select the measure before and after. -->
 <svelte:window
   onkeydowncapture={(e) => {
-    if (e.key !== "Escape" || e.defaultPrevented || selected === null) return;
+    if (e.defaultPrevented || selected === null) return;
     if (
       (e.target as Element).closest(
         "input, textarea, select, [contenteditable]",
       )
     )
       return;
-    e.preventDefault();
-    clearSelection();
+    if (e.key === "Escape") {
+      e.preventDefault();
+      clearSelection();
+    } else if (
+      (e.key === "a" || e.key === "A" || e.key === "d" || e.key === "D") &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey
+    ) {
+      e.preventDefault();
+      stepMeasure(e.key === "a" || e.key === "A" ? -1 : 1);
+    }
   }}
 />
 

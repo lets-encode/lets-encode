@@ -3,6 +3,17 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-10
+
+- The score setup's source view zooms in the same steps and shows the same fit icon as the other viewers.
+- The instruments step edits groups with the score setup's group fields, including the brace or bracket.
+- The score preview steps the selected measure with A and D, and every selection block is built from one component.
+- The next, just completed and just submitted badges, the count pills and the board's chips share one look.
+- A name that is reserved, blocked or being set up shows as a card like the campaign page's other states.
+- An address that can't be a campaign name says so instead of Page not found.
+- A one-character name counts as an invalid campaign name, as in the registry.
+- The wizard's piece regions get the zones page's eight resize handles and its Draw and Select several toggles.
+
 ## 2026-11-09
 
 - A measure or layout correction leaves each remaining page with its own task id.
@@ -60,7 +71,7 @@ parentheses.
 - A held encoding says Continue in mei-friend, and a held score-check task continues in the score check from Your open work too.
 - The score check's own claim button is encoding blue.
 - The score check and the score setup share their key, time signature and staff transposition fields.
-- The zones page and the score preview share one viewer toolbar with the same zoom, paging and page-grouping controls.
+- The zones page, the score preview and the wizard's page views share one viewer toolbar.
 - On a phone the step bar fits the screen and names only the active step.
 
 ## 2026-11-06

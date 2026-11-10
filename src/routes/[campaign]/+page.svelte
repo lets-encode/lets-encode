@@ -20,7 +20,6 @@
     campaignLoadFailure,
   } from "$lib/campaign-resolve.ts";
   import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
-  import { isValidHandle } from "$lib/campaign-handle.ts";
   import {
     findRow,
     pieceNamesOf,
@@ -912,13 +911,6 @@
   // message in the side panel.
   /** An error from the return from mei-friend, shown in the task's panel;
       `label` names mei-friend when the text is its own message. */
-  // The way back from a name that holds no campaign.
-  const allCampaigns = {
-    label: "All campaigns",
-    href: "/campaigns",
-    icon: "arrow-left" as const,
-  };
-
   let editorError = $state<{
     task: string;
     label: string;
@@ -1496,39 +1488,14 @@
 
     {#if resolveError}
       <PageState error={resolveError} onretry={() => (resolveError = null)} />
-    {:else if notFound && !isValidHandle(campaign)}
-      <Notice
-        tone="err"
-        surface="strip"
-        title={`${campaign} can't be a campaign name`}
-        detail="Names are 3–40 characters: lowercase letters, digits, and single internal hyphens."
-        action={allCampaigns}
-      />
     {:else if notFound}
       <PageState missingCampaign={campaign} />
-    {:else if slugState === "pending"}
-      <Notice
-        tone="warn"
-        surface="strip"
-        title={`Someone is setting up ${campaign}`}
-        detail="If they don't finish it, the name becomes free again."
-        action={allCampaigns}
-      />
-    {:else if slugState === "reserved"}
-      <Notice
-        tone="err"
-        surface="strip"
-        title={`${campaign} is reserved`}
-        detail="It can't be used for a campaign."
-        action={allCampaigns}
-      />
-    {:else if slugState === "tombstoned"}
-      <Notice
-        tone="err"
-        surface="strip"
-        title={`${campaign} has been blocked`}
-        detail="It can't be used for a campaign."
-        action={allCampaigns}
+    {:else if slugState}
+      <PageState
+        nameState={{
+          name: campaign,
+          state: slugState === "tombstoned" ? "blocked" : slugState,
+        }}
       />
     {:else}
       <div class="viewcol">
@@ -1923,14 +1890,16 @@
                               data-stage={stageOf(card)}
                             >
                               {#if card.nextUp && !completedTask}
-                                <span class="nextup-badge">your next task</span>
+                                <span class="taskbadge edge"
+                                  >your next task</span
+                                >
                               {/if}
                               {#if card.task === completedTask}
-                                <span class="justmoved-badge"
+                                <span class="taskbadge done edge right"
                                   >just completed</span
                                 >
                               {:else if recentlyFinished.has(card.task)}
-                                <span class="justmoved-badge"
+                                <span class="taskbadge done edge right"
                                   >just submitted</span
                                 >
                               {/if}
@@ -2822,37 +2791,17 @@
     outline: 2px solid var(--accent);
     outline-offset: 1px;
   }
-  /* The next task is marked by its badge only. */
-  .nextup-badge {
+  /* The next task is marked by its badge (.taskbadge, ui.css) only, on
+     the card's top edge: the next task on the left, a finished one on the
+     right. */
+  .edge {
     position: absolute;
     top: -9px;
     left: 12px;
-    background: var(--accent);
-    color: var(--invert-ink);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1;
-    padding: 3px 9px;
-    border-radius: 999px;
-    white-space: nowrap;
   }
-  .justmoved-badge {
-    position: absolute;
-    top: -9px;
+  .edge.right {
+    left: auto;
     right: 12px;
-    background: var(--ok);
-    color: var(--invert-ink);
-    font-size: 9px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-    line-height: 1;
-    padding: 3px 9px;
-    border-radius: 999px;
-    white-space: nowrap;
-  }
-  :global([data-theme="dark"]) .justmoved-badge {
-    color: #fff;
   }
   .card-title {
     font-size: 14px;
@@ -2984,14 +2933,6 @@
     border-top: 1px solid var(--hairline);
     padding-top: 5px;
     flex-wrap: wrap;
-  }
-  .chip {
-    font-size: 11px;
-    font-weight: 600;
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 8px;
-    white-space: nowrap;
   }
   .card-done {
     font-size: 11.5px;
