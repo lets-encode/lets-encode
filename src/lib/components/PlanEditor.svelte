@@ -8,6 +8,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
+  import ConfirmInline from "./ConfirmInline.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { cardTitle } from "$lib/campaign-board.ts";
   import {
@@ -228,13 +229,12 @@
       ><Icon name="plus" />Add task</button
     >
     {#if askingDiscard}
-      <span class="pnote">Discard the changes to the plan?</span>
-      <button type="button" class="btn btn-danger" onclick={oncancel}
-        >Discard changes</button
-      >
-      <button type="button" class="btn" onclick={() => (askingDiscard = false)}
-        >Keep editing</button
-      >
+      <ConfirmInline
+        question="Discard the changes to the plan?"
+        confirm="Discard changes"
+        onconfirm={oncancel}
+        oncancel={() => (askingDiscard = false)}
+      />
     {:else}
       <button type="button" class="btn" onclick={close} disabled={busy}
         >Cancel</button

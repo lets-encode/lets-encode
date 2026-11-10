@@ -38,7 +38,7 @@
       <div class="fail-mark" aria-hidden="true">
         <Icon name="warning" size={22} />
       </div>
-      <p class="overlay-title">
+      <p class="overlay-title failed">
         {rejected.every((e) => e.runFailed)
           ? "Run failed"
           : rejected.some(failed)
@@ -70,12 +70,6 @@
 {/if}
 
 <style>
-  .overlay-title {
-    margin: 0;
-    color: var(--danger);
-    font-weight: 600;
-    font-size: 14px;
-  }
   .failure {
     align-self: stretch;
     padding: 10px 12px;

@@ -76,23 +76,6 @@
     margin-top: 0;
     text-align: left;
   }
-  .overlay-title {
-    margin: 0;
-    font-weight: 600;
-    font-size: 14px;
-  }
-  .overlay-title.failed {
-    color: var(--danger);
-  }
-  .overlay-title.warned {
-    color: var(--warn);
-  }
-  .overlay-error {
-    margin: 0;
-    color: var(--danger);
-    font-size: 0.85rem;
-    overflow-wrap: anywhere;
-  }
   .overlay-sub {
     margin: 0;
     color: var(--ink-faint);

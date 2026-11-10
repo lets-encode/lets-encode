@@ -165,6 +165,10 @@ export const preTaskHref = (
   task: string,
 ): string => `/${campaign}/${preTaskRoute(locator)}/${task}`;
 
+/** The full-screen review view of an encoding task. */
+export const reviewViewHref = (campaign: string, task: string): string =>
+  `/${campaign}/review/${task}`;
+
 /** Where a review of the task happens: a pre-task's own editor, else the review view. */
 export const reviewHref = (
   campaign: string,
@@ -173,7 +177,15 @@ export const reviewHref = (
 ): string =>
   isPreTask(locator)
     ? preTaskHref(campaign, locator, task)
-    : `/${campaign}/review/${task}`;
+    : reviewViewHref(campaign, task);
+
+/** The score check of an encoding task's first page. */
+export const checkHref = (campaign: string, task: string): string =>
+  `/${campaign}/check/${task}`;
+
+/** The campaign page, with `task` open in its side panel when given. */
+export const taskHref = (campaign: string, task?: string | null): string =>
+  `/${encodeURIComponent(campaign)}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
 
 /** A task's work stage from its locator; a send-back returns the task to it. */
 export const workStage = (locator: string): WorkStage =>
@@ -284,8 +296,8 @@ export function taskActionHref(
 ): string | null {
   if (action.target === "pre")
     return preTaskHref(campaign, task.locator, task.task);
-  if (action.target === "check") return `/${campaign}/check/${task.task}`;
-  if (action.target === "review") return `/${campaign}/review/${task.task}`;
+  if (action.target === "check") return checkHref(campaign, task.task);
+  if (action.target === "review") return reviewViewHref(campaign, task.task);
   return null;
 }
 

@@ -27,6 +27,7 @@ import {
   type WizardDraft,
 } from "./wizard-draft.ts";
 import { readDraftImages, storeDraftImages } from "./draft-images.ts";
+import { releaseClaim, releaseFailedNote } from "./campaign-resolve.ts";
 
 /** The wizard's steps, in order. Drives navigation and the progress header. */
 export const WIZARD_STEPS = [
@@ -287,6 +288,25 @@ export const draftStatus = $state<{
 /** A discarded setup whose name could not be given back: the note saying so,
     shown with the drafts once the wizard has been left. */
 export const discardedRelease = $state<{ note: string | null }>({ note: null });
+
+/** Discard an unfinished setup: its draft goes, and its name is given back,
+    so it is free again straight away. A name not given back runs out on its
+    own; `discardedRelease` says so. */
+export async function discardSetup(
+  owner: string | undefined,
+  handle: string,
+  claim: WizardClaim | null,
+): Promise<void> {
+  if (owner && handle) discardDraft(owner, handle);
+  discardedRelease.note = null;
+  if (claim && !(await releaseClaim(claim.name, claim.token)))
+    discardedRelease.note = releaseFailedNote(claim.name);
+}
+
+/** Why a setup whose name is registered cannot be discarded: it is a
+    reachable campaign and can only be finished. */
+export const registeredNote = (name: string) =>
+  `The campaign already works at /${name}. Finish the setup to add it to the list of campaigns.`;
 
 // A setup put into the wizard starts with no draft status of its own.
 function resetDraftStatus(): void {

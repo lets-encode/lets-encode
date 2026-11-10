@@ -505,13 +505,17 @@
 
 {#snippet composer()}
   {#if writeShown}
-    <div class="composerwrap">
+    <div class="composerwrap on-tint">
       <button type="button" class="btn writebtn" onclick={openField}
         ><Icon name="plus" /> {writeLabel}</button
       >
     </div>
   {/if}
-  <div class="composerwrap" class:hidden={!fieldShown} onfocusout={fieldBlur}>
+  <div
+    class="composerwrap on-tint"
+    class:hidden={!fieldShown}
+    onfocusout={fieldBlur}
+  >
     <CommentComposer
       {task}
       {repoId}
@@ -603,17 +607,17 @@
         {@render taskBox(selection || toggleInHead ? headActions : undefined)}
       </div>
     {:else if emptyLine && listShown}
-      <p class="empty">{emptyLine}</p>
+      <p class="empty on-tint">{emptyLine}</p>
     {/if}
     {#if tools}
       <div class="sptools" bind:this={toolsEl}>{@render tools()}</div>
     {/if}
     {#if peek && !lowest && selection && selectionActive}
-      <div class="spsel">{@render selection()}</div>
+      <div class="spsel on-tint">{@render selection()}</div>
     {/if}
     {#if selection && listShown && tab === "selection"}
       <div
-        class="spsel"
+        class="spsel on-tint"
         role="region"
         aria-label={selectionLabel}
         bind:this={selEl}
@@ -624,7 +628,7 @@
     <!-- A task's empty list in a docked or short panel is left out, so it
          adds no gap above the composer. -->
     {#if listShown && commentsShown && !(task && cramped && count === 0)}
-      <div class="clist">
+      <div class="clist on-tint">
         {#if !task}{@render info?.()}{/if}
         <!-- In a docked or short panel, no comments means no list: the
              composer sits right under the task box. -->
@@ -698,7 +702,11 @@
       <div class="spedge bottom" aria-hidden="true"></div>
     {/if}
     {#if footer}
-      <div class="spfoot" class:hidden={lowest} bind:offsetHeight={footHeight}>
+      <div
+        class="spfoot on-tint"
+        class:hidden={lowest}
+        bind:offsetHeight={footHeight}
+      >
         {@render footer()}
       </div>
     {/if}
@@ -773,15 +781,6 @@
     flex: none;
   }
   .sphead,
-  .spsel,
-  .clist,
-  .composerwrap,
-  .empty,
-  .spfoot {
-    --btn-bg: var(--card);
-    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
-  }
   .sphead {
     display: flex;
     align-items: center;

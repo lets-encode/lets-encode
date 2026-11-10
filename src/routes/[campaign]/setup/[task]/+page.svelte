@@ -10,6 +10,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import StepGlyph from "$lib/components/StepGlyph.svelte";
+  import PaneDivider from "$lib/components/PaneDivider.svelte";
   import GroupFields from "$lib/components/GroupFields.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
   import MusicGlyph, {
@@ -422,32 +423,9 @@
     return { width: Math.floor(width), offset: Math.round(offset) };
   });
 
-  // Dragging the divider, or its arrow keys, moves the boundary between the
-  // source and the preview; each keeps at least a fifth of the width.
+  // The divider moves the boundary between the source and the preview; each
+  // keeps at least a fifth of the width.
   let desk = $state<HTMLDivElement>();
-  let splitting = false;
-  const clampSplit = (v: number) => Math.min(0.8, Math.max(0.2, v));
-  function splitDown(e: PointerEvent) {
-    e.preventDefault();
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    splitting = true;
-  }
-  // One update per frame, however often the pointer moves.
-  let splitFrame = 0;
-  function splitMove(e: PointerEvent) {
-    if (!splitting || !desk) return;
-    const box = desk.getBoundingClientRect();
-    const to = clampSplit((e.clientX - box.left) / box.width);
-    cancelAnimationFrame(splitFrame);
-    splitFrame = requestAnimationFrame(() => (split[setupStep] = to));
-  }
-  const splitUp = () => (splitting = false);
-  function splitKey(e: KeyboardEvent) {
-    const d = e.key === "ArrowLeft" ? -0.05 : e.key === "ArrowRight" ? 0.05 : 0;
-    if (!d) return;
-    e.preventDefault();
-    split[setupStep] = clampSplit(split[setupStep] + d);
-  }
 
   const submit = () =>
     run(
@@ -1269,22 +1247,18 @@
               />
             </div>
           </section>
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-          <div
-            class="pane-grip"
-            role="separator"
-            tabindex="0"
-            aria-label="Resize the source and the preview"
-            aria-orientation="vertical"
-            aria-valuenow={Math.round(split[setupStep] * 100)}
-            aria-valuemin={20}
-            aria-valuemax={80}
-            onpointerdown={splitDown}
-            onpointermove={splitMove}
-            onpointerup={splitUp}
-            onpointercancel={splitUp}
-            onkeydown={splitKey}
-          ></div>
+          <PaneDivider
+            label="Resize the source and the preview"
+            bind:value={() => split[setupStep], (v) => (split[setupStep] = v)}
+            min={0.2}
+            max={0.8}
+            step={0.05}
+            fraction
+            at={(e) => {
+              const box = desk!.getBoundingClientRect();
+              return (e.clientX - box.left) / box.width;
+            }}
+          />
         {/if}
         <section class="previewbox" aria-label="Preview of the setup">
           <span class="page-label">Preview of the setup</span>

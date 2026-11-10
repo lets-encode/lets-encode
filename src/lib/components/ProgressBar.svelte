@@ -1,16 +1,26 @@
 <!--
-  A campaign's progress: a bar filled by the share of tasks done and the
-  label "X of Y tasks done". The bar's width is the host's: --track-w sets
-  its largest width (the whole row by default); it shrinks to 48px.
+  A progress bar filled by the share done, with a label beside it: "X of Y
+  tasks done" (a campaign's progress), the host's own (`label`), or none
+  (`label={null}`). The bar's width is the host's: --track-w sets its
+  largest width (the whole row by default); it shrinks to 48px.
 -->
 <script lang="ts">
-  let { done, total }: { done: number; total: number } = $props();
+  import type { Snippet } from "svelte";
+
+  let {
+    done,
+    total,
+    label,
+  }: { done: number; total: number; label?: Snippet | null } = $props();
   const pct = $derived(total ? Math.round((done / total) * 100) : 0);
 </script>
 
 <span class="progressbar">
   <span class="track"><span class="fill" style:width="{pct}%"></span></span>
-  <span class="plabel">{done} of {total} tasks done</span>
+  {#if label}<span class="plabel">{@render label()}</span
+    >{:else if label === undefined}<span class="plabel"
+      >{done} of {total} tasks done</span
+    >{/if}
 </span>
 
 <style>

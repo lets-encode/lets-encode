@@ -253,33 +253,6 @@ a.btn[aria-disabled="true"] {
   cursor: not-allowed;
 }
 
-/* A small pill control for inline actions. `.pill-sm` is the tighter size
-   used inside dense cards. */
-button.pill {
-  cursor: pointer;
-  font: 12px var(--font);
-  padding: 6px 16px;
-  min-height: 24px;
-  color: var(--ink-soft);
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 999px;
-}
-@media (hover: hover) {
-  button.pill:hover:not(:disabled) {
-    color: var(--accent);
-    border-color: var(--accent);
-  }
-}
-button.pill.pill-sm {
-  font-size: 11.5px;
-  padding: 4px 11px;
-}
-button.pill:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
 /* A toolbar button: the soft pill of .btn at toolbar weight; `.on` marks a
    pressed one in the stage tint. */
 .tbtn {
@@ -392,6 +365,13 @@ button.chip {
   border-radius: 999px;
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-variant-numeric: tabular-nums;
+}
+/* Buttons on a tinted background sit on paper: a soft button inside (or
+   the element itself) takes the card's colour and a light shadow. */
+.on-tint {
+  --btn-bg: var(--card);
+  --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+  --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
 }
 /* A task's standing among the viewer's tasks: your next task, just
    completed, just submitted. Filled in the task's stage colour (data-stage),
@@ -1110,6 +1090,25 @@ select.ctl {
   border-radius: 14px;
   box-shadow: 0 12px 44px var(--shade);
   text-align: center;
+}
+/* The overlay card's headline, red for a failure and amber for a warning,
+   and its error line. */
+.overlay-title {
+  margin: 0;
+  font-weight: 600;
+  font-size: 14px;
+}
+.overlay-title.failed {
+  color: var(--danger);
+}
+.overlay-title.warned {
+  color: var(--warn);
+}
+.overlay-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
 }
 /* Sits where the spinner was: a ring of the same size around a cross. */
 .fail-mark {

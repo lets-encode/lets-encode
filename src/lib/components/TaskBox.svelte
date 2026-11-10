@@ -21,6 +21,7 @@
     pageOfLocator,
     preTaskHref,
     preTaskInstruction,
+    reviewViewHref,
     taskAction,
     taskActionHref,
     workPlace,
@@ -196,7 +197,7 @@
 </script>
 
 <div
-  class="taskcard"
+  class="taskcard on-tint"
   data-stage={stage}
   style={zone ? `--zone: var(--zone-${zone})` : ""}
 >
@@ -383,7 +384,7 @@
         {#if !card.pre && !inView}
           <a
             class="btn btn-soft"
-            href={`/${campaign}/review/${card.task}`}
+            href={reviewViewHref(campaign, card.task)}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review</a
           >
@@ -426,9 +427,6 @@
      slate below, each section under a hairline. Buttons sit on paper. */
   .taskcard {
     overflow-x: hidden;
-    --btn-bg: var(--card);
-    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   /* The heading's width is a container (taskhead), so a control at its
      right end can drop its label where the heading is narrow. */

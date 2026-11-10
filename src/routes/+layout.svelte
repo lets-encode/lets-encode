@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { taskHref } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import { onMount } from "svelte";
@@ -59,7 +60,7 @@
   const inScore = $derived(inCampaign && page.url.searchParams.has("score"));
   const campaignHref = $derived.by(() => {
     const task = page.url.searchParams.get("task");
-    return `/${encodeURIComponent(page.params.campaign ?? "")}${task ? `?task=${encodeURIComponent(task)}` : ""}`;
+    return taskHref(page.params.campaign ?? "", task);
   });
 
   // The back link to a campaign names it by its title once a page has read

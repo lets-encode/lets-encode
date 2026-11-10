@@ -45,24 +45,26 @@
 </script>
 
 <script lang="ts">
+  import PaneDivider from "$lib/components/PaneDivider.svelte";
   import Icon from "$lib/components/Icon.svelte";
   import { untrack, type Snippet } from "svelte";
   import { goto } from "$app/navigation";
   import { auth } from "$lib/auth.svelte.ts";
   import { licenseById } from "$lib/licenses.ts";
   import { timeAgo } from "$lib/campaign-board.ts";
-  import { releaseClaim, releaseFailedNote } from "$lib/campaign-resolve.ts";
-  import { discardDraft, resumableDrafts } from "$lib/wizard-draft.ts";
+  import { resumableDrafts } from "$lib/wizard-draft.ts";
+  import DiscardSetupConfirm from "$lib/components/DiscardSetupConfirm.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
   import { markHidden } from "$lib/scroll-edges.ts";
   import {
     WIZARD_STEPS,
-    discardedRelease,
+    discardSetup,
     draftSnapshot,
     draftStatus,
     goToStep,
     isSkipped,
     piecesSummary,
+    registeredNote,
     resetWizard,
     resumeDraft,
     saveDraft,
@@ -256,61 +258,27 @@
     resuming = null;
   }
 
-  // Dragging the divider resizes the work card (side by side) or the
-  // material pane (stacked); the other takes whatever is left. The card's
-  // width is in pixels so the choice survives a window resize; both are
-  // clamped so the two stay usable.
+  // The divider resizes the work card (side by side) or the material pane
+  // (stacked); the other takes whatever is left. The card's width is in
+  // pixels so the choice survives a window resize; both are clamped so the
+  // two stay usable.
   let area = $state<HTMLDivElement>();
-  let resizing = false;
-  function startResize(e: PointerEvent) {
-    resizing = true;
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-  }
-  function onResize(e: PointerEvent) {
-    if (!resizing) return;
-    if (mode === "stacked") {
-      if (!area) return;
-      const box = area.getBoundingClientRect();
-      stackShare[step] = Math.min(
-        Math.max((e.clientY - box.top) / box.height, 0.2),
-        0.8,
-      );
-      return;
-    }
-    // The card is anchored to the right, so it grows as the pointer moves left.
-    workWidth = Math.min(
-      Math.max(window.innerWidth - e.clientX, 380),
-      Math.min(860, window.innerWidth * 0.65),
-    );
-  }
-  function endResize(e: PointerEvent) {
-    resizing = false;
-    (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
-  }
+  let workW = $state(0);
+  let winW = $state(0);
 
   // Discarding asks once before it lets go of everything collected. A setup
   // whose name is registered is a reachable campaign: it can only be finished.
   let confirmingDiscard = $state(false);
   const registered = $derived(wizard.claim?.registered === true);
-  const registeredNote = $derived(
-    registered
-      ? `The campaign already works at /${wizard.claim?.name}. Finish the setup to add it to the list of campaigns.`
-      : undefined,
+  const registeredTitle = $derived(
+    registered && wizard.claim ? registeredNote(wizard.claim.name) : undefined,
   );
-  function discardSetup() {
-    const handle = wizard.handle.trim();
-    const claim = wizard.claim;
+  function discardThisSetup() {
     confirmingDiscard = false;
-    const owner = auth.user?.login;
-    if (handle && owner) discardDraft(owner, handle);
+    // The draft goes at once; the name is given back while the page moves
+    // to the campaign list.
+    void discardSetup(auth.user?.login, wizard.handle.trim(), wizard.claim);
     resetWizard();
-    // Give the name back so it is free again straight away. An unreleased
-    // hold runs out on its own; the drafts list says so.
-    discardedRelease.note = null;
-    if (claim)
-      void releaseClaim(claim.name, claim.token).then((released) => {
-        if (!released) discardedRelease.note = releaseFailedNote(claim.name);
-      });
     void goto("/campaigns");
   }
 
@@ -377,6 +345,7 @@
 </script>
 
 <svelte:window
+  bind:innerWidth={winW}
   onpointerdown={onWindowPointerDown}
   onkeydown={(e) => e.key === "Escape" && closePopups()}
   onresize={() => (popup = null)}
@@ -467,7 +436,7 @@
                 class="btn btn-danger"
                 onclick={() => (confirmingDiscard = true)}
                 disabled={backDisabled || registered}
-                title={registeredNote}
+                title={registeredTitle}
               >
                 <Icon name="trash" />Discard this setup
               </button>
@@ -595,21 +564,40 @@
         {@render material()}
       </div>
 
-      <div
-        class="pane-grip"
-        role="separator"
-        aria-label={mode === "stacked"
-          ? "Resize the material pane"
-          : "Resize the work card"}
-        aria-orientation={mode === "stacked" ? "horizontal" : "vertical"}
-        onpointerdown={startResize}
-        onpointermove={onResize}
-        onpointerup={endResize}
-        onpointercancel={endResize}
-      ></div>
+      {#if mode === "stacked"}
+        <PaneDivider
+          label="Resize the material pane"
+          vertical={false}
+          bind:value={
+            () => stackShare[step] ?? DEFAULT_SHARE[step] ?? 0.5,
+            (v) => (stackShare[step] = v)
+          }
+          min={0.2}
+          max={0.8}
+          step={0.05}
+          fraction
+          at={(e) => {
+            const box = area!.getBoundingClientRect();
+            return (e.clientY - box.top) / box.height;
+          }}
+        />
+      {:else}
+        <!-- The card is anchored to the right: it grows as the divider
+             moves left. -->
+        <PaneDivider
+          label="Resize the work card"
+          bind:value={() => workWidth ?? workW, (v) => (workWidth = v)}
+          min={380}
+          max={Math.min(860, winW * 0.65)}
+          step={24}
+          reverse
+          at={(e) => window.innerWidth - e.clientX}
+        />
+      {/if}
 
       <div
         class="work"
+        bind:clientWidth={workW}
         style={workWidth === null || mode === "stacked"
           ? undefined
           : `--work-width: ${workWidth}px`}
@@ -680,7 +668,7 @@
       onclick={(e) =>
         asPopup ? togglePopup("discard", e, 260) : toggleDiscard()}
       disabled={backDisabled || registered}
-      title={registeredNote}
+      title={registeredTitle}
     >
       <Icon name="trash" />{discardLabel}
     </button>
@@ -688,18 +676,12 @@
 {/snippet}
 
 {#snippet discardQuestion()}
-  <span>Discard everything entered so far?</span>
-  <span class="discard-row">
-    <button
-      type="button"
-      class="btn btn-danger"
-      onclick={discardSetup}
-      disabled={backDisabled}
-    >
-      Discard for good
-    </button>
-    <button type="button" class="btn" onclick={closePopups}>Cancel</button>
-  </span>
+  <DiscardSetupConfirm
+    repo={wizard.repo}
+    onconfirm={discardThisSetup}
+    oncancel={closePopups}
+    disabled={backDisabled}
+  />
 {/snippet}
 
 {#snippet workCard()}
@@ -960,11 +942,6 @@
      rather than making the line taller. */
   .thead .btn {
     margin-block: -4px;
-  }
-  .discard-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
   }
 
   /* ---- Popups ------------------------------------------------------------ */
@@ -1400,12 +1377,12 @@
   }
   /* The divider between the material pane and the work card (.pane-grip in
      ui.css); stacked, it lies across. */
-  .stacked .pane-grip {
+  .stacked :global(.pane-grip) {
     width: auto;
     height: 22px;
     cursor: ns-resize;
   }
-  .stacked .pane-grip::before {
+  .stacked :global(.pane-grip)::before {
     width: 2.8rem;
     height: 4px;
     background: var(--line-strong);

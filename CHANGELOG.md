@@ -13,6 +13,10 @@ parentheses.
 - An address that can't be a campaign name says so instead of Page not found.
 - A one-character name counts as an invalid campaign name, as in the registry.
 - The wizard's piece regions get the zones page's eight resize handles and its Draw and Select several toggles.
+- Every inline confirmation is one component, and Discard setup asks and behaves the same in the wizard and the drafts list.
+- The wizard's pane divider moves with the arrow keys, like the score setup's.
+- The owner board's empty text says why no task is open, and the wizard's piece buttons are standard buttons.
+- Every link to a task, its score check or its review comes from one set of route helpers.
 
 ## 2026-11-09
 

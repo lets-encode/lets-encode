@@ -32,6 +32,7 @@
     reviewHref,
     taskAction,
     taskActionHref,
+    taskHref,
   } from "$lib/campaign-graph.ts";
   import {
     changeRequestTasks,
@@ -371,8 +372,6 @@
     }
   }
 
-  const taskHref = (slug: string, task: string) =>
-    `/${slug}?task=${encodeURIComponent(task)}`;
   const claimExpiry = (t: MyTask): string => {
     const e = expiresIn(t.expiresAt, now);
     return e && `claim ${e}`;

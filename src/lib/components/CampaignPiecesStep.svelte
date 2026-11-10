@@ -37,6 +37,7 @@
     finishSummary,
   } from "$lib/campaign-finish.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
+  import ConfirmInline from "./ConfirmInline.svelte";
   import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
@@ -373,25 +374,20 @@
         </div>
         {#if confirmingRemove === p.id}
           <div class="ask">
-            <span class="q">Remove {labelOf(p)}?</span>
-            <button
-              type="button"
-              class="btn btn-danger"
-              onclick={() => removePiece(i)}
-              disabled={busy}>Remove</button
-            >
-            <button
-              type="button"
-              class="btn"
-              onclick={() => (confirmingRemove = null)}>Cancel</button
-            >
+            <ConfirmInline
+              question={`Remove ${labelOf(p)}?`}
+              confirm="Remove"
+              onconfirm={() => removePiece(i)}
+              oncancel={() => (confirmingRemove = null)}
+              disabled={busy}
+            />
           </div>
         {/if}
         {#if selected === i && p.kind === "facsimile" && pages.length}
           <div class="piece-actions">
             <button
               type="button"
-              class="pill pill-sm"
+              class="btn"
               onclick={assignAllPages}
               disabled={busy}
             >
@@ -399,7 +395,7 @@
             </button>
             <button
               type="button"
-              class="pill pill-sm"
+              class="btn"
               onclick={clearRegions}
               disabled={busy || !p.zones.length}
             >
@@ -436,7 +432,7 @@
           </span>
           <button
             type="button"
-            class="pill pill-sm"
+            class="btn"
             onclick={() => readdEncoding(encoding.name)}
             disabled={busy}
           >
@@ -463,7 +459,7 @@
         {/snippet}
         {#snippet subhead()}
           <div class="copy-row">
-            <button type="button" class="pill pill-sm" onclick={copyFromSource}>
+            <button type="button" class="btn" onclick={copyFromSource}>
               Copy from the source
             </button>
             {#if wizard.pieces.length > 1}
@@ -674,27 +670,13 @@
     }
   }
   .ask {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
     padding: 0 12px 10px 35px;
-  }
-  .q {
-    font-size: 13px;
-    color: var(--ink-soft);
   }
   .piece-actions {
     display: flex;
     gap: 6px;
     flex-wrap: wrap;
     padding: 0 12px 10px 35px;
-  }
-  @media (hover: hover) {
-    .piece-actions .pill:hover:not(:disabled) {
-      color: var(--piece);
-      border-color: var(--piece);
-    }
   }
   /* The switch takes the piece's colour in place of the stage's. */
   .piece-actions .chip-switch {

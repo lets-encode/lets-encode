@@ -12,16 +12,17 @@
   import { goto } from "$app/navigation";
   import { onDestroy } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
+  import DiscardSetupConfirm from "$lib/components/DiscardSetupConfirm.svelte";
   import {
-    discardDraft,
     readDraft,
     resumableDrafts,
     type WizardDraft,
   } from "$lib/wizard-draft.ts";
-  import { releaseClaim, releaseFailedNote } from "$lib/campaign-resolve.ts";
   import {
     WIZARD_STEPS,
+    discardSetup,
     discardedRelease,
+    registeredNote,
     resumeDraft,
     stepIndex,
   } from "$lib/wizard.svelte.ts";
@@ -65,17 +66,9 @@
   }
 
   async function discard(draft: WizardDraft) {
-    discardDraft(draft.owner, draft.handle);
     drafts = drafts.filter((d) => d.handle !== draft.handle);
     confirming = null;
-    // Give the name back, so it is free again straight away instead of staying
-    // reserved until the reservation runs out on its own.
-    discardedRelease.note = null;
-    if (
-      draft.claim &&
-      !(await releaseClaim(draft.claim.name, draft.claim.token))
-    )
-      discardedRelease.note = releaseFailedNote(draft.claim.name);
+    await discardSetup(draft.owner, draft.handle, draft.claim);
   }
 </script>
 
@@ -104,31 +97,23 @@
         <span class="spacer"></span>
         {#if confirming === draft.handle}
           <span class="dnote">
-            Discard everything entered so far?{#if draft.repo}
-              Discarding frees the name but leaves the repository
-              <a href={draft.repo.html_url} target="_blank" rel="noreferrer"
-                >{draft.repo.full_name}</a
-              > — delete it yourself if you don't want it.{/if}
+            <DiscardSetupConfirm
+              repo={draft.repo}
+              onconfirm={() => discard(draft)}
+              oncancel={() => (confirming = null)}
+              disabled={busy !== null}
+            />
           </span>
-          <button
-            type="button"
-            class="btn btn-danger"
-            onclick={() => discard(draft)}
-            disabled={busy !== null}
-          >
-            Discard for good
-          </button>
-          <button type="button" class="btn" onclick={() => (confirming = null)}>
-            Cancel
-          </button>
-        {:else if !draft.claim?.registered}
+        {:else}
           <button
             type="button"
             class="btn btn-icon btn-danger"
             onclick={() => (confirming = draft.handle)}
-            disabled={busy !== null}
+            disabled={busy !== null || draft.claim?.registered}
             aria-label="Discard this setup"
-            title="Discard this setup"><Icon name="trash" /></button
+            title={draft.claim?.registered
+              ? registeredNote(draft.claim.name)
+              : "Discard this setup"}><Icon name="trash" /></button
           >
         {/if}
       </div>
@@ -175,14 +160,9 @@
     white-space: nowrap;
   }
   /* The question, with the repository note, is a sentence the reader needs
-     whole: it takes its own line above its buttons. */
+     whole: it takes the row's full width, above its buttons. */
   .dnote {
     flex: 1 1 100%;
-    font-size: 12px;
-    color: var(--ink-soft);
-  }
-  .dnote a {
-    color: var(--link);
   }
   .spacer {
     flex: 1;

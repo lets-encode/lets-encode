@@ -50,6 +50,7 @@
     reviewHref,
     taskAction,
     taskActionHref,
+    taskHref,
   } from "$lib/campaign-graph.ts";
   import { encodingClaimOf } from "$lib/campaign-claim.ts";
   import {
@@ -514,7 +515,7 @@
     // The lane tabs follow the opened task again.
     pickedLane = null;
     writeLastTask(campaign, task);
-    goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+    goto(taskHref(campaign, task), {
       replaceState: true,
       noScroll: true,
       keepFocus: true,
@@ -601,10 +602,7 @@
     });
   });
   function closeScoreView() {
-    goto(
-      `/${campaign}${detailTask ? `?task=${encodeURIComponent(detailTask)}` : ""}`,
-      { noScroll: true, keepFocus: true },
-    );
+    goto(taskHref(campaign, detailTask), { noScroll: true, keepFocus: true });
   }
   function viewScorePiece(index: number, startPage?: number) {
     const path = previewPieces[index]?.path;
@@ -1070,7 +1068,7 @@
         }
         const msg = page.url.searchParams.get("mf_msg") ?? "";
         // The outcome is handled once; a reload must not repeat it.
-        goto(`/${campaign}?task=${encodeURIComponent(task)}`, {
+        goto(taskHref(campaign, task), {
           replaceState: true,
           noScroll: true,
           keepFocus: true,
@@ -1602,7 +1600,7 @@
                   {#if canViewScore}
                     <button
                       type="button"
-                      class="btn scorebtn"
+                      class="btn scorebtn on-tint"
                       bind:this={viewScoreButton}
                       onclick={viewContextScore}
                       title={scoreHint}>View score</button
@@ -1680,7 +1678,7 @@
                     {#if canViewScore}
                       <button
                         type="button"
-                        class="btn scorebtn"
+                        class="btn scorebtn on-tint"
                         bind:this={viewScoreButton}
                         onclick={viewContextScore}
                         title={scoreHint}>View score</button
@@ -1844,7 +1842,10 @@
                     {/each}
                   </div>
                   {#if boardScope === "open" && scopedColumns.every((c) => c.cards.length === 0)}
-                    <p class="boardnote">No task can be claimed right now.</p>
+                    <p class="boardnote">
+                      No tasks are open right now: every task is claimed, in
+                      review, waiting for an earlier task, or done.
+                    </p>
                   {/if}
                   <div class="board">
                     {#each scopedColumns as col (col.key)}
@@ -2363,12 +2364,6 @@
     display: flex;
     align-items: center;
     gap: 10px;
-  }
-  /* On the page's tinted background the score button sits on paper. */
-  .scorebtn {
-    --btn-bg: var(--card);
-    --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
-    --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
   }
   .slug {
     font-size: 13px;

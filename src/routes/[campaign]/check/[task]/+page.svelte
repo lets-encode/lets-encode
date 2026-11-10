@@ -10,6 +10,7 @@
   read-only and opens mei-friend on it.
 -->
 <script lang="ts">
+  import { reviewViewHref } from "$lib/campaign-graph.ts";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { auth } from "$lib/auth.svelte.ts";
@@ -99,7 +100,7 @@
   // A task in review is reviewed in the review view.
   $effect(() => {
     if (data?.status === "validation_required")
-      goto(`/${campaign}/review/${taskId}`, { replaceState: true });
+      goto(reviewViewHref(campaign, taskId), { replaceState: true });
   });
   $effect(() => {
     if (tables) recordCampaignTitle(campaign, tables.title);

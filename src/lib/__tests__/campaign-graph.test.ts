@@ -7,6 +7,7 @@ import {
   claimLabel,
   taskAction,
   taskActionHref,
+  taskHref,
 } from "../campaign-graph.ts";
 import type { GraphData } from "../campaign-graph.ts";
 import type { StateRow, TaskRow } from "../campaign-tables.ts";
@@ -358,4 +359,10 @@ test("taskAction: one button per task and mode, wherever the task is offered", (
     ),
     null,
   );
+});
+
+test("taskHref: the campaign page, with the task open when given", () => {
+  assert.equal(taskHref("verdi-requiem"), "/verdi-requiem");
+  assert.equal(taskHref("verdi-requiem", null), "/verdi-requiem");
+  assert.equal(taskHref("verdi-requiem", "T0003"), "/verdi-requiem?task=T0003");
 });

@@ -46,7 +46,7 @@
     CommentRow,
     PieceRef,
   } from "$lib/campaign-tables.ts";
-  import { pageOfLocator, preTaskRoute } from "$lib/campaign-graph.ts";
+  import { pageOfLocator, preTaskHref } from "$lib/campaign-graph.ts";
   import { buildBoard, buildRecord } from "$lib/campaign-board.ts";
   import { liveLocks } from "$lib/campaign-reaper.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -130,7 +130,7 @@
   // A pre-task is reviewed in its own editor; its review address leads there.
   $effect(() => {
     if (card?.pre)
-      goto(`/${campaign}/${preTaskRoute(card.locator)}/${card.task}`, {
+      goto(preTaskHref(campaign, card.locator, card.task), {
         replaceState: true,
       });
   });

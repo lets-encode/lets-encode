@@ -29,6 +29,7 @@
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
+  import ProgressBar from "./ProgressBar.svelte";
   import PagesPerRow from "./PagesPerRow.svelte";
   import ViewerToolbar from "./ViewerToolbar.svelte";
   import ZoomLevel, {
@@ -560,16 +561,17 @@
      the card's body. -->
 {#snippet minibar()}
   <div class="minibar">
-    <div class="progress">
-      <div
-        class="progress-fill"
-        style="width: {(chosen.length / wizard.candidates.length) * 100}%"
-      ></div>
-    </div>
-    <span class="minibar-count"
-      ><b>{chosen.length}</b> of {wizard.candidates.length} kept</span
-    >
+    <ProgressBar
+      done={chosen.length}
+      total={wizard.candidates.length}
+      label={keptLabel}
+    />
   </div>
+{/snippet}
+{#snippet keptLabel()}
+  <span class="minibar-count"
+    ><b>{chosen.length}</b> of {wizard.candidates.length} kept</span
+  >
 {/snippet}
 
 <WizardCard
@@ -603,13 +605,12 @@
       <span class="count">{chosen.length}</span>
       <span class="count-of">of {wizard.candidates.length} pages kept</span>
     </div>
-    <div class="progress">
-      <div
-        class="progress-fill"
-        style="width: {wizard.candidates.length
-          ? (chosen.length / wizard.candidates.length) * 100
-          : 0}%"
-      ></div>
+    <div class="keptbar">
+      <ProgressBar
+        done={chosen.length}
+        total={wizard.candidates.length}
+        label={null}
+      />
     </div>
     {@render hints()}
   {/if}
@@ -643,26 +644,9 @@
     font-size: 14px;
     color: var(--ink-faint);
   }
-  .progress {
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-tint);
-    margin-top: 10px;
-    overflow: hidden;
-  }
-  .progress-fill {
-    height: 100%;
-    background: linear-gradient(90deg, var(--blue), var(--green));
-  }
+  .keptbar,
   .minibar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
     margin-top: 10px;
-  }
-  .minibar .progress {
-    flex: 1;
-    margin: 0;
   }
   /* A window 500px tall or less shows the count in the step rail beside the
      card, so the pages get this row too. */
