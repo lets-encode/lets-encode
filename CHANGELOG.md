@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-10
 
+- Compressed MusicXML files can be uploaded as an existing encoding.
 - The README, the broker README and the broker's example settings describe the current app.
 - A submission opened after its claim ran out is rejected even while an earlier one by the same person is open.
 - Expired work that cannot be kept no longer stops the campaign's other operations.

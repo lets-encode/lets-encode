@@ -369,16 +369,17 @@ export async function downscaleImage(
 
 /**
  * Convert an uploaded encoding to MEI. MEI files pass through as text; MusicXML
- * is converted by verovio, which takes compressed .mxl as base64.
+ * is converted by verovio, which takes compressed .mxl as a zip buffer.
  */
 async function encodingToMei(file: File): Promise<string> {
   if (/\.mei$/i.test(file.name)) return file.text();
   const [{ default: createVerovioModule }, { VerovioToolkit }] =
     await Promise.all([import("verovio/wasm"), import("verovio/esm")]);
   const toolkit = new VerovioToolkit(await createVerovioModule());
-  const compressed = /\.mxl$/i.test(file.name);
-  const data = compressed ? await blobToBase64(file) : await file.text();
-  if (!toolkit.loadData(data)) {
+  const loaded = /\.mxl$/i.test(file.name)
+    ? toolkit.loadZipDataBuffer(await file.arrayBuffer())
+    : toolkit.loadData(await file.text());
+  if (!loaded) {
     throw new Error(`Could not read ${file.name} as MusicXML.`);
   }
   return toolkit.getMEI();
