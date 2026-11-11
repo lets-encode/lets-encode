@@ -71,9 +71,10 @@ type PrProcessingResult =
 
 // What the campaign workflow requires of a pull request before it runs at all
 // (the job-level guard in campaign.yml); a pull request outside these gets a
-// skipped run instead of a verdict.
+// skipped run instead of a verdict. The file limit is the one of the workflow
+// version the campaign calls, which the app does not read.
 export const RUN_REQUIREMENTS =
-  "a submission must change at most 50 files, must not be a draft, and must come from a user account";
+  "the campaign's workflow runs only a submission that stays within its file limit, is not a draft and comes from a user account";
 
 // Polls of the PR, and ticks of its run watch, that may fail in a row before
 // the wait, or the watching, ends.
@@ -407,7 +408,7 @@ function verdictResult(
   }
   if (result.state === "run_skipped") {
     return {
-      error: `The campaign automation did not run for submission #${prNumber}: ${RUN_REQUIREMENTS}. The submission was closed; correct it and submit again.`,
+      error: `The campaign automation did not run for submission #${prNumber}: ${RUN_REQUIREMENTS}. The submission was closed.`,
       prUrl,
     };
   }

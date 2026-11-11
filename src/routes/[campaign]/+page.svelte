@@ -1,193 +1,78 @@
 <script lang="ts">
-  import Icon from "$lib/components/Icon.svelte";
   import { page } from "$app/state";
-  import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { goto } from "$app/navigation";
-  import { tick } from "svelte";
-  import { dev } from "$app/environment";
-  import { auth, login, forge } from "$lib/auth.svelte.ts";
+  import { auth, login } from "$lib/auth.svelte.ts";
   import {
     CommandRunner,
     readForge,
     viewerId,
-    openMeiFriend,
-    takeHandOff,
   } from "$lib/command-runner.svelte.ts";
   import type { ForgeClient } from "$lib/forge/types.ts";
-  import {
-    lookupSlug,
-    resolveCampaign,
-    campaignLoadFailure,
-  } from "$lib/campaign-resolve.ts";
-  import type { ResolvedCampaign, SlugInfo } from "$lib/campaign-resolve.ts";
-  import {
-    findRow,
-    pieceNamesOf,
-    piecePreparationsOf,
-    commentAnchor,
-    type MeasureAnchor,
-    pieceLabel,
-    pieceZone,
-    clipTitle,
-  } from "$lib/campaign-tables.ts";
-  import type {
-    TaskRow,
-    StateRow,
-    LockRow,
-    HistoryRow,
-    CommentRow,
-    PieceRef,
-  } from "$lib/campaign-tables.ts";
-  import { commands, invoke, commentInput } from "$lib/commands.ts";
-  import type {
-    CommandContext,
-    CommentAnchorInput,
-    Result,
-  } from "$lib/commands.ts";
-  import {
-    handle,
-    pageOfLocator,
-    reviewHref,
-    taskAction,
-    taskActionHref,
-    taskHref,
-  } from "$lib/campaign-graph.ts";
-  import { encodingClaimOf } from "$lib/campaign-claim.ts";
-  import {
-    buildBoard,
-    cardSummary,
-    doneLabel,
-    timeAgo,
-    expiresIn,
-    initialOf,
-    reviewWaitLabel,
-    stageOf,
-  } from "$lib/campaign-board.ts";
-  import type { BoardCard, ColumnKey } from "$lib/campaign-board.ts";
-  import { liveLocks } from "$lib/campaign-reaper.ts";
-  import { parseMeiHeader } from "$lib/mei-header.ts";
-  import type { MeiHeader } from "$lib/mei-header.ts";
+  import type { CommandContext } from "$lib/commands.ts";
+  import type { BoardCard } from "$lib/campaign-board.ts";
   import {
     DOCKED_QUERY,
     clampPanelWidth,
     readSidePanel,
-    readLastTask,
-    writeLastTask,
   } from "$lib/side-panels.ts";
   import { MediaQuery } from "svelte/reactivity";
-  import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
-  import type { PiecePreview } from "$lib/piece-previews.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import Notice from "$lib/components/Notice.svelte";
-  import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
   import PieceRail from "$lib/components/PieceRail.svelte";
-  import SlotMark from "$lib/components/SlotMark.svelte";
   import PageState from "$lib/components/PageState.svelte";
-  import ProgressBar from "$lib/components/ProgressBar.svelte";
   import PlanEditor from "$lib/components/PlanEditor.svelte";
   import ScoreView from "$lib/components/ScoreView.svelte";
-  import TaskRunState from "$lib/components/TaskRunState.svelte";
   import SidePanel from "$lib/components/SidePanel.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
   import VolunteerView from "$lib/components/VolunteerView.svelte";
-  import PreviewFailed from "$lib/components/PreviewFailed.svelte";
+  import BoardLanes from "$lib/components/board/BoardLanes.svelte";
+  import BoardHero from "$lib/components/board/BoardHero.svelte";
+  import BranchNotice from "$lib/components/board/BranchNotice.svelte";
+  import CampaignInfo from "$lib/components/board/CampaignInfo.svelte";
+  import ManageBar from "$lib/components/board/ManageBar.svelte";
+  import PieceStrip from "$lib/components/board/PieceStrip.svelte";
+  import ScopeToggle from "$lib/components/board/ScopeToggle.svelte";
+  import VolunteerHeader from "$lib/components/board/VolunteerHeader.svelte";
+  import { CampaignAddress } from "$lib/campaign-page/campaign-address.svelte.ts";
+  import { BranchHint } from "$lib/campaign-page/branch-hint.svelte.ts";
+  import {
+    CampaignData,
+    TableSync,
+  } from "$lib/campaign-page/campaign-data.svelte.ts";
+  import { ScoreHead } from "$lib/campaign-page/score-head.svelte.ts";
+  import { BoardModel } from "$lib/campaign-page/board-model.svelte.ts";
+  import { StripPreview } from "$lib/campaign-page/strip-preview.svelte.ts";
+  import { PageChecks } from "$lib/campaign-page/page-checks.svelte.ts";
+  import { TaskSelection } from "$lib/campaign-page/task-selection.svelte.ts";
+  import { ScoreNav } from "$lib/campaign-page/score-nav.svelte.ts";
+  import { EditorReturn } from "$lib/campaign-page/editor-return.svelte.ts";
+  import { CampaignActions } from "$lib/campaign-page/campaign-actions.ts";
+  import { DeepLink } from "$lib/campaign-page/deep-link.svelte.ts";
 
   // The URL carries only the campaign name; the repo it addresses is resolved
-  // from it (name → stable repo id → current owner/name) — see resolveCampaign.
+  // from it (campaign-address.svelte.ts).
   const campaign = $derived(page.params.campaign!);
-  let resolved = $state<ResolvedCampaign | null>(null);
-  let resolving = $state(false);
-  let notFound = $state(false);
-  // The forge lookup of the registry's repo id failed (e.g. rate limit) — the
-  // campaign exists but could not be loaded, which is not a "not found".
-  let resolveError = $state<string | null>(null);
-  // A name that is not (yet) a campaign: held by a setup in progress, reserved
-  // for the app's own routes, or blocked. A free name never renders here — it
-  // forwards to the wizard.
-  let slugState = $state<"pending" | "reserved" | "tombstoned" | null>(null);
-  const owner = $derived(resolved?.owner ?? "");
-  const repo = $derived(resolved?.repo ?? "");
-  const repoId = $derived(resolved?.repoId ?? 0);
+  const address = new CampaignAddress(() => campaign);
+  const owner = $derived(address.owner);
+  const repo = $derived(address.repo);
+  const repoId = $derived(address.repoId);
   // The acting user's stable numeric id (written to the tables); login is display-only.
   const viewer = $derived(viewerId());
 
-  // On the dev server: a campaign whose coordinator runs from a branch other
-  // than an instance's, while its caller.yml still calls campaign.yml at
-  // another ref (main for every campaign the app creates), gets the command
-  // that points both at the branch (scripts/use-branch.ts). The app cannot
-  // change workflow files itself.
-  const INSTANCE_REFS = ["main", "staging", "testing", "develop"];
-  let branchHint = $state<{ ref: string; called: string } | null>(null);
-  $effect(() => {
-    branchHint = null;
-    const f = dev && owner && repo ? forge() : null;
-    if (!f) return;
-    const at = { owner, repo };
-    Promise.all([
-      f.getRepoFile(at.owner, at.repo, "config.yaml"),
-      f.getRepoFile(at.owner, at.repo, ".github/workflows/caller.yml"),
-    ])
-      .then(([config, caller]) => {
-        const ref =
-          /^automation:\n(?:[ \t].*\n)*?[ \t]+ref:\s*"?([^"\s]+)/m.exec(
-            config ?? "",
-          )?.[1];
-        const called = /campaign\.yml@(\S+)/.exec(caller ?? "")?.[1];
-        if (at.owner !== owner || at.repo !== repo) return;
-        branchHint =
-          ref && called && ref !== called && !INSTANCE_REFS.includes(ref)
-            ? { ref, called }
-            : null;
-      })
-      .catch(() => {});
-  });
-  const branchCommand = $derived(
-    `GH_TOKEN=$(gh auth token -u ${auth.user?.login ?? "<account>"}) node scripts/use-branch.ts ${owner}/${repo}`,
+  const branch = new BranchHint(
+    () => owner,
+    () => repo,
   );
-  // The same hint as a dialog, once per campaign and browser session: a
-  // campaign just created on a branch opens with it.
-  let branchDialog = $state<HTMLDialogElement | null>(null);
-  let branchCopied = $state(false);
-  $effect(() => {
-    if (!branchHint || !branchDialog || branchDialog.open) return;
-    const key = `branch-hint-shown:${owner}/${repo}`;
-    try {
-      if (sessionStorage.getItem(key)) return;
-      sessionStorage.setItem(key, "1");
-    } catch {
-      /* without storage the dialog opens on every visit */
-    }
-    branchCopied = false;
-    branchDialog.showModal();
-  });
-
-  let loading = $state(false);
-  let loaded = $state(false);
-  let loadError = $state<string | null>(null);
-  let notInitialised = $state(false);
-  let isPrivate = $state(false);
-  let canPush = $state(false);
-  // The login the tables were last read as; null when read logged out.
-  let readAs: string | null = null;
-  let taskDefs = $state<TaskRow[]>([]);
-  let rows = $state<StateRow[]>([]);
-  let validationColumns = $state<string[]>([]);
-  let tableLocks = $state<LockRow[]>([]);
-  let history = $state<HistoryRow[]>([]);
-  let comments = $state<CommentRow[]>([]);
-  let pieces = $state<PieceRef[]>([]);
-  // Numeric user id → login, for displaying the people the tables reference.
-  let logins = $state<Record<string, string>>({});
-  let title = $state("");
-  let description = $state("");
-  let license = $state("");
-  let passThreshold = $state(1);
-  let allowSelfValidation = $state(false);
 
   const runner = new CommandRunner();
+
+  // The context every command runs against; progress updates feed the busy
+  // overlay's step log.
+  const ctx = (f: ForgeClient): CommandContext =>
+    runner.context(f, { repoId, owner, repo, campaign });
+
+  const data = new CampaignData(() => campaign, ctx);
 
   // UI-only state — the board, with the owner's manage takeover and the score
   // view (?score=) over it, and the side panel showing the ?task= task or the
@@ -222,995 +107,68 @@
   const railChips = $derived(
     instrowWidth > 0 && rowBesidePanel < RAIL_WIDE + ROW_GAP + LANES_WIDTH,
   );
-  // The scores a viewer can read end to end: the pieces the tasks address,
-  // named from the campaign's config where it names them.
-  const previewPieces = $derived.by(() => {
-    const paths = [
-      ...new Set(
-        taskDefs
-          .filter((t) => t.subtask_id === "" && t.fragment)
-          .map((t) => t.fragment),
-      ),
-    ];
-    return paths.map((path) => {
-      const piece = pieces.find((p) => p.path === path);
-      return { id: piece?.id ?? path, path, title: piece?.title ?? "" };
-    });
-  });
-  // The stats bar's board filter: every task, or only those someone can act
-  // on right now — claimable encodings and validations with a free slot.
-  let boardScope = $state<"all" | "open">("all");
-  const actionable = (c: BoardCard) =>
-    c.column === "ready" ||
-    (c.column === "validation" && c.slots.some((s) => s.key === "open"));
 
-  // The score's <meiHead> fields, for the campaign details in the owner's
-  // side panel.
-  let scoreHead = $state<MeiHeader | null>(null);
-  let scoreHeadState = $state<"idle" | "loading" | "done" | "error">("idle");
-  async function loadScoreHead() {
-    if (scoreHeadState !== "idle") return;
-    scoreHeadState = "loading";
-    try {
-      const f = readForge();
-      // The first task's fragment is the piece the campaign opens on.
-      const mei = taskDefs[0]?.fragment
-        ? await f.getRepoFile(owner, repo, taskDefs[0].fragment)
-        : null;
-      scoreHead = mei ? parseMeiHeader(mei) : null;
-      scoreHeadState = mei ? "done" : "error";
-    } catch {
-      scoreHeadState = "error";
-    }
-  }
-
-  $effect(() => {
-    if (loaded && canPush) loadScoreHead();
-  });
-
-  // Everyone the campaign history records as having acted on the score.
-  const workedOn = $derived(
-    [...new Set(history.map((h) => h.user_id))].filter(Boolean),
+  const scoreHead = new ScoreHead(
+    data,
+    () => owner,
+    () => repo,
   );
-
-  // The clock the board's claim expiries count against, a minute at a time.
-  let now = $state(Date.now());
-  $effect(() => {
-    const timer = setInterval(() => (now = Date.now()), 60_000);
-    return () => clearInterval(timer);
-  });
-  // A lock past its `expires` stops holding its task on the next tick.
-  const locks = $derived(liveLocks(tableLocks, now));
-  const graphData = $derived({
-    taskDefs,
-    rows,
-    validationColumns,
-    locks,
-    passThreshold,
-    allowSelfValidation,
-  });
-  const pieceNames = $derived(pieceNamesOf(pieces));
-  const piecePreparations = $derived(piecePreparationsOf(pieces));
-  /** When the claim on a held review slot expires. */
-  const reviewExpiry = (task: string, sub: string, user: string) => {
-    const lock = locks.find(
-      (l) =>
-        l.task_id === task &&
-        l.subtask_id === sub &&
-        l.kind === "validation" &&
-        l.user_id === user,
-    );
-    return lock ? expiresIn(lock.expires, now) : "";
-  };
-  const board = $derived(
-    buildBoard(
-      graphData,
-      comments,
-      history,
-      viewer,
-      logins,
-      pieceNames,
-      now,
-      piecePreparations,
-    ),
+  const model = new BoardModel(
+    data,
+    () => viewer,
+    () => repoId,
   );
-  const allCards = $derived(board.columns.flatMap((c) => c.cards));
-  // Per-piece task progress, for the piece tiles.
-  const pieceProgress = $derived.by(() => {
-    const by = new Map<string, { done: number; total: number }>();
-    for (const card of allCards) {
-      const fragment = findRow(taskDefs, card.task, "")?.fragment ?? "";
-      if (!fragment) continue;
-      const p = by.get(fragment) ?? { done: 0, total: 0 };
-      p.total++;
-      if (card.column === "done") p.done++;
-      by.set(fragment, p);
-    }
-    return by;
-  });
-  // Task id → index into previewPieces, for grouping and tinting by piece.
-  const pieceIndexByTask = $derived.by(() => {
-    const index = new Map(previewPieces.map((p, i) => [p.path, i]));
-    const by = new Map<string, number>();
-    for (const t of taskDefs)
-      if (t.subtask_id === "") by.set(t.task_id, index.get(t.fragment) ?? 0);
-    return by;
-  });
-  // Tasks with unresolved fails or open comments, behind the hero's
-  // attention count.
-  const attentionCards = $derived(
-    allCards.filter(
-      (c) => c.column !== "done" && c.counts.fails + c.counts.comments > 0,
-    ),
+  const strip = new StripPreview(
+    data,
+    model,
+    () => owner,
+    () => repo,
   );
-  let showAttention = $state(false);
-  // ---------------------------------------------- the instigator piece rail
-  // The piece the board is scoped to, or "all" for the full board.
-  let selectedPiece = $state<"all" | string>("all");
-  const attentionByPiece = $derived.by(() => {
-    const by = new Map<string, number>();
-    for (const c of attentionCards) {
-      const path = previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path;
-      if (!path) continue;
-      by.set(path, (by.get(path) ?? 0) + c.counts.fails + c.counts.comments);
-    }
-    return by;
-  });
-  // Tasks per board category for each piece, shown on its rail row. Ready and
-  // blocked share the board's Open column.
-  const railCounts = $derived.by(() => {
-    const by = new Map<
-      string,
-      { open: number; encoding: number; validation: number }
-    >();
-    for (const c of allCards) {
-      if (c.column === "done") continue;
-      // The Claimable filter counts what the board then shows.
-      if (boardScope === "open" && !actionable(c)) continue;
-      const path = previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path;
-      if (!path) continue;
-      const n = by.get(path) ?? { open: 0, encoding: 0, validation: 0 };
-      if (c.column === "encoding") n.encoding++;
-      else if (c.column === "validation") n.validation++;
-      else n.open++;
-      by.set(path, n);
-    }
-    return by;
-  });
-  // Cards name their piece only while the board shows several pieces.
-  const piecesListed = $derived(
-    previewPieces.length > 1 && selectedPiece === "all",
+  const pageChecks = new PageChecks(
+    data,
+    model,
+    () => selection.detailCard,
+    () => owner,
+    () => repo,
   );
-  const railPiece = $derived.by(() => {
-    const index = previewPieces.findIndex((p) => p.path === selectedPiece);
-    return index >= 0 ? { piece: previewPieces[index], index } : null;
+  const selection = new TaskSelection(model, () => campaign);
+  const nav = new ScoreNav(model, selection, () => campaign);
+  const sync = new TableSync(data, runner, {
+    owner: () => owner,
+    repo: () => repo,
+    repoId: () => repoId,
+    // The plan editor holds polling while it is open, not under the score view.
+    held: () => manage && !nav.scoreView,
+    viewerChanged: () => (manage = false),
+    settled: (entry) => editorReturn.settled(entry),
   });
-  // The scoped piece's preview, for the context strip over the columns.
-  let stripPreview = $state<PiecePreview | null>(null);
-  const stripVersion = $derived(
-    railPiece ? scoreVersion(history, taskDefs, railPiece.piece.path) : "",
-  );
-  // Raised by "Try again" to load a failed strip preview anew.
-  let stripAttempt = $state(0);
-  $effect(() => {
-    const piece = railPiece?.piece;
-    void stripAttempt;
-    stripPreview = null;
-    if (!piece || !owner) return;
-    const path = piece.path;
-    piecePreview(readForge(), owner, repo, path, true, stripVersion).then(
-      (preview) => {
-        if (railPiece?.piece.path === path) stripPreview = preview;
-      },
-    );
+  const editorReturn: EditorReturn = new EditorReturn({
+    campaign: () => campaign,
+    locks: () => data.locks,
+    viewer: () => viewer,
+    repoId: () => repoId,
+    submit: (task) => actions.submitpr(task),
+    abandon: (task) => actions.abandon(task, ""),
   });
-  // Tasks the viewer's accepted submissions just moved on this campaign's
-  // board, highlighted in their new column for a short while.
-  const recentlyFinished = $derived(
-    new Set(
-      pendingVerdicts.recentlyFinished
-        .filter((m) => m.repoId === repoId)
-        .map((m) => m.task),
-    ),
-  );
-  const nextCard = $derived(
-    board.nextUp
-      ? (allCards.find((c) => c.task === board.nextUp) ?? null)
-      : null,
-  );
-
-  // ------------------------------------------------ the volunteer's header
-  // The viewer's own standing in this campaign: tasks they encoded that are
-  // done, tasks they hold a claim on, and reviews they hold a slot in.
-  const volStanding = $derived.by(() => {
-    if (viewer === "") return "";
-    const encoded = new Set(
-      history
-        .filter(
-          (h) =>
-            h.user_id === viewer &&
-            h.action === "submit_encoding" &&
-            h.outcome === "accepted",
-        )
-        .map((h) => h.task_id),
-    );
-    const done = allCards.filter(
-      (c) => c.column === "done" && encoded.has(c.task),
-    ).length;
-    const claimed = locks.filter(
-      (l) => l.user_id === viewer && l.kind !== "validation",
-    ).length;
-    const reviewing = locks.filter(
-      (l) => l.user_id === viewer && l.kind === "validation",
-    ).length;
-    // A newcomer has nothing to count yet; the line appears with the first.
-    if (!done && !claimed && !reviewing) return "";
-    const parts = [`${done} done`, `${claimed} claimed`];
-    if (reviewing) parts.push(`${reviewing} reviewing`);
-    return `You: ${parts.join(" · ")}`;
+  const actions: CampaignActions = new CampaignActions(runner, {
+    campaign: () => campaign,
+    repoId: () => repoId,
+    taskDefs: () => data.taskDefs,
+    ctx,
+    load: () => data.load(),
+    actedOn: editorReturn.actedOn,
+    openTask: selection.openTask,
+    planSaved: () => (manage = false),
   });
-
-  // --------------------------------------------------------- the task detail
-  // A task's detail opens in the preview panel; the URL carries it as ?task=
-  // so the row stays addressable (deep links, post-login resume).
-  let detailTask = $state<string | null>(null);
-  const detailCard = $derived(
-    detailTask ? (allCards.find((c) => c.task === detailTask) ?? null) : null,
-  );
-  // Why each page of the selected task's piece is to be checked against the
-  // scan (omr-page-checks.ts), read once per piece whose layout task names
-  // its instruments; keyed by campaign repo and piece.
-  // Per score: its page checks, null while they load, "failed" when they could
-  // not be read (tried again on the next load of the page).
-  let pageChecksBy = $state<Record<string, string[][] | null | "failed">>({});
-  const checksKey = (fragment: string) => `${owner}/${repo}/${fragment}`;
-  $effect(() => {
-    const fragment = detailCard
-      ? (findRow(taskDefs, detailCard.task, "")?.fragment ?? "")
-      : "";
-    const key = checksKey(fragment);
-    if (
-      !detailCard?.omr ||
-      piecePreparations[fragment] !== "omr-instruments" ||
-      key in pageChecksBy
-    )
-      return;
-    pageChecksBy[key] = null;
-    const at = { owner, repo };
-    import("$lib/omr-page-checks.ts")
-      .then((m) => m.loadPageChecks(readForge(), at.owner, at.repo, fragment))
-      .then((checks) => (pageChecksBy[key] = checks))
-      .catch(() => (pageChecksBy[key] = "failed"));
+  new DeepLink(data, selection, editorReturn, {
+    campaign: () => campaign,
+    viewer: () => viewer,
+    scoreView: () => !!nav.scoreView,
   });
-  const checksFor = (card: BoardCard) =>
-    pageChecksBy[checksKey(findRow(taskDefs, card.task, "")?.fragment ?? "")];
-  const checksOf = (card: BoardCard): string[] => {
-    const checks = checksFor(card);
-    const n = pageOfLocator(card.locator);
-    return (n && checks !== "failed" && checks?.[n - 1]) || [];
-  };
-  // The selected task's card is scrolled into the board's visible part, in
-  // its lane and above a docked panel.
-  $effect(() => {
-    if (!detailTask) return;
-    void tick().then(() =>
-      document
-        .querySelector<HTMLElement>('.card[aria-current="true"]')
-        ?.scrollIntoView({ block: "nearest" }),
-    );
-  });
-  // The lane the narrow board shows (lane tabs): the one picked, else the
-  // selected task's, else the next task's.
-  let pickedLane = $state<ColumnKey | null>(null);
-  const laneOf = (c: BoardCard | null): ColumnKey | null =>
-    !c ? null : c.column === "blocked" ? "ready" : c.column;
-  // Without a pick, a task or a next task, the first lane holding cards:
-  // review, then encoding, then open, then done.
-  const firstFilledLane = $derived<ColumnKey>(
-    (["validation", "encoding", "ready", "done"] as ColumnKey[]).find((key) =>
-      scopedColumns.some((c) => c.key === key && c.cards.length > 0),
-    ) ?? "ready",
-  );
-  const laneTab = $derived<ColumnKey>(
-    pickedLane ?? laneOf(detailCard) ?? laneOf(nextCard) ?? firstFilledLane,
-  );
-  function openTask(task: string) {
-    detailTask = task;
-    // The lane tabs follow the opened task again.
-    pickedLane = null;
-    writeLastTask(campaign, task);
-    goto(taskHref(campaign, task), {
-      replaceState: true,
-      noScroll: true,
-      keepFocus: true,
-    });
-  }
-  // Deselect the task: the side panel shows the campaign. The score view's
-  // parameters stay.
-  function closeTask() {
-    detailTask = null;
-    writeLastTask(campaign, null);
-    const query = new URLSearchParams(page.url.searchParams);
-    query.delete("task");
-    const rest = query.toString();
-    goto(`/${campaign}${rest ? `?${rest}` : ""}`, {
-      replaceState: true,
-      noScroll: true,
-      keepFocus: true,
-    });
-  }
-
-  // -------------------------------------------------------- the score view
-  // The full-page score view is addressed by ?score=<piece path> (and an
-  // optional 1-based ?page=), read reactively so back/forward navigate it.
-  const scoreView = $derived.by(() => {
-    const path = page.url.searchParams.get("score");
-    if (!path) return null;
-    const index = previewPieces.findIndex((p) => p.path === path);
-    return index >= 0 ? { piece: previewPieces[index], index } : null;
-  });
-  const scoreStartPage = $derived(
-    Math.max(0, (Number(page.url.searchParams.get("page")) || 1) - 1),
-  );
-  // The measure range the score view opens highlighted (from a comment
-  // anchor); within the view, anchors work without navigation.
-  let anchor = $state<MeasureAnchor | null>(null);
-  let scoreViewRef = $state<ReturnType<typeof ScoreView>>();
-  // The open task's ?task= survives entering and leaving the score view.
-  function openScoreView(
-    path: string,
-    startPage?: number,
-    a: MeasureAnchor | null = null,
-  ) {
-    anchor = a;
-    if (!scoreView)
-      scoreReturnFocus =
-        document.activeElement instanceof HTMLElement &&
-        document.activeElement !== document.body
-          ? document.activeElement
-          : null;
-    const query = new URLSearchParams();
-    if (detailTask) query.set("task", detailTask);
-    query.set("score", path);
-    if (startPage) query.set("page", String(startPage + 1));
-    // The score already open turns in place; the URL follows without a new
-    // history entry.
-    const same = scoreView?.piece.path === path;
-    if (same) scoreViewRef?.show(startPage, a);
-    goto(`/${campaign}?${query}`, {
-      noScroll: true,
-      keepFocus: true,
-      replaceState: same,
-    });
-  }
-  // Focus follows the score view: to its heading when it opens or shows
-  // another piece, and on close back to the element it was opened from, or
-  // to the View score button when that element is gone.
-  let scoreReturnFocus: HTMLElement | null = null;
-  let viewScoreButton = $state<HTMLButtonElement>();
-  let focusedScore: string | null = null;
-  $effect(() => {
-    const path = scoreView?.piece.path ?? null;
-    if (path === focusedScore) return;
-    focusedScore = path;
-    void tick().then(() => {
-      if (path) {
-        scoreViewRef?.focusHeading();
-        return;
-      }
-      const target = scoreReturnFocus?.isConnected
-        ? scoreReturnFocus
-        : viewScoreButton;
-      scoreReturnFocus = null;
-      target?.focus();
-    });
-  });
-  function closeScoreView() {
-    goto(taskHref(campaign, detailTask), { noScroll: true, keepFocus: true });
-  }
-  function viewScorePiece(index: number, startPage?: number) {
-    const path = previewPieces[index]?.path;
-    if (path) openScoreView(path, startPage);
-  }
-  // A task's score view opens at its page when the task covers one surface.
-  const cardPage = (card: BoardCard) =>
-    String(pageOfLocator(card.locator) ?? "");
-  function viewCardScore(card: BoardCard) {
-    const page = cardPage(card);
-    viewScorePiece(
-      pieceIndexByTask.get(card.task) ?? 0,
-      page ? Number(page) - 1 : undefined,
-    );
-  }
-  // The header's score button opens the score where the view's attention is:
-  // the selected task's pages, else the piece the board is scoped to, else
-  // the next task's pages, else the first piece.
-  const scoreTarget = $derived(
-    detailCard ??
-      (railPiece ? null : nextCard) ??
-      railPiece?.piece ??
-      previewPieces[0] ??
-      null,
-  );
-  const scoreHint = $derived(
-    !scoreTarget
-      ? ""
-      : "task" in scoreTarget
-        ? `Opens the score at ${scoreTarget.title}.`
-        : `Opens the score of ${pieceLabel(scoreTarget)}.`,
-  );
-  const canViewScore = $derived(previewPieces.length > 0 && !!scoreTarget);
-  function viewContextScore() {
-    if (!scoreTarget) return;
-    if ("task" in scoreTarget) viewCardScore(scoreTarget);
-    else viewScorePiece(previewPieces.indexOf(scoreTarget));
-  }
-  // A comment anchor outside the score view: open it on the comment's piece,
-  // at the anchored page, with the range highlighted.
-  function showCommentInScore(c: CommentRow) {
-    const path = c.task_id
-      ? previewPieces[pieceIndexByTask.get(c.task_id) ?? -1]?.path
-      : c.fragment;
-    if (!path) return;
-    openScoreView(
-      path,
-      c.page ? Number(c.page) - 1 : undefined,
-      commentAnchor(c),
-    );
-  }
-
-  // The context every command runs against; progress updates feed the busy
-  // overlay's step log.
-  const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo, campaign });
-
-  // A table read again replaces the shown one only when its content differs,
-  // so an unchanged table keeps its identity and nothing derived from it
-  // recomputes.
-  const changed = <T,>(shown: T, read: T): T =>
-    JSON.stringify(shown) === JSON.stringify(read) ? shown : read;
-
-  // The default branch's head commit the shown tables were read at; null when
-  // it could not be read.
-  let headSha: string | null = null;
-
-  // Read the tracking tables (and privacy/config) for the campaign page. Only the
-  // first read shows the loading state; refreshes update the tables in place.
-  // A background poll's failed read keeps the shown tables and throws. Of
-  // reads that overlap, only the latest one started is shown.
-  let loadSeq = 0;
-  async function load(background = false) {
-    const f = readForge();
-    // The title is recorded under the name it was read for.
-    const name = campaign;
-    const seq = ++loadSeq;
-    readAs = auth.user?.login ?? null;
-    if (!loaded) loading = true;
-    if (!background) loadError = null;
-    try {
-      const tables = await invoke(commands.readTables, {}, ctx(f));
-      if (seq !== loadSeq) return;
-      headSha = tables.headSha;
-      notInitialised = tables.notInitialised;
-      isPrivate = tables.isPrivate;
-      canPush = tables.canPush;
-      taskDefs = changed(taskDefs, tables.taskDefs);
-      rows = changed(rows, tables.rows);
-      validationColumns = changed(validationColumns, tables.validationColumns);
-      tableLocks = changed(tableLocks, tables.locks);
-      history = changed(history, tables.history);
-      comments = changed(comments, tables.comments);
-      pieces = changed(pieces, tables.pieces);
-      logins = changed(logins, tables.logins);
-      title = tables.title;
-      recordCampaignTitle(name, tables.title);
-      description = tables.description;
-      license = tables.license;
-      passThreshold = tables.passThreshold;
-      allowSelfValidation = tables.allowSelfValidation;
-      if (!notInitialised) {
-        console.log(
-          "[load] tables loaded:",
-          taskDefs.length,
-          "task(s),",
-          rows.length,
-          "state row(s),",
-          locks.length,
-          "lock(s),",
-          comments.length,
-          "comment(s)",
-        );
-      }
-      loaded = true;
-    } catch (e) {
-      if (seq !== loadSeq) return;
-      if (background) throw e;
-      loadError = campaignLoadFailure(e);
-    } finally {
-      if (seq === loadSeq) loading = false;
-    }
-  }
-
-  // Other people's claims, submissions, verdicts and comments: the tables are
-  // read again whenever the default branch has moved since the last read.
-  // Logged out, every request counts against the shared per-address limit.
-  let refreshStatus = $state(REFRESH_OK);
-  $effect(() => {
-    refreshStatus = REFRESH_OK;
-    if (!owner || !repo) return;
-    return startAutoRefresh({
-      interval: () => (auth.user ? 10_000 : 300_000),
-      // The plan editor holds polling while it is open, not under the score view.
-      held: () => !loaded || loading || runner.busy || (manage && !scoreView),
-      poll: async () => {
-        const { sha } = await readForge().getRepoHead(owner, repo);
-        if (sha !== headSha) await load(true);
-      },
-      onStatus: (status) => (refreshStatus = status),
-    });
-  });
-
-  // Resolve the campaign name to its repo before anything reads the tables. The
-  // load effect below is gated on `owner`/`repo`, so it waits for this.
-  // The URL is the campaign's address (/<name>), so the name's registry state
-  // decides what the page is: a live campaign renders, a free name forwards to
-  // the wizard with the name prefilled, and a name that is held, reserved or
-  // blocked explains itself.
-  $effect(() => {
-    if (
-      auth.status === "loading" ||
-      resolved ||
-      notFound ||
-      resolveError ||
-      slugState ||
-      resolving
-    )
-      return;
-    resolving = true;
-    resolve().finally(() => (resolving = false));
-  });
-
-  async function resolve() {
-    const name = campaign;
-    let info: SlugInfo | null;
-    try {
-      info = await lookupSlug(name);
-    } catch (e) {
-      resolveError = campaignLoadFailure(e);
-      return;
-    }
-    // A free name opens the setup for it, unless the page was left meanwhile.
-    if (name !== campaign) return;
-    if (info?.status === "free") {
-      await goto(`/new?slug=${encodeURIComponent(name)}`, {
-        replaceState: true,
-      });
-      return;
-    }
-    if (
-      info?.status === "pending" ||
-      info?.status === "reserved" ||
-      info?.status === "tombstoned"
-    ) {
-      slugState = info.status;
-      return;
-    }
-    // Active — or the name malformed, which resolveCampaign reports as null
-    // (notFound). A thrown forge error (e.g. rate limit) is a failed lookup,
-    // not a missing campaign. The lookup above
-    // is passed through so the name is not fetched from the registry twice.
-    let r: ResolvedCampaign | null = null;
-    try {
-      r = await resolveCampaign(readForge(), name, info);
-    } catch (e) {
-      resolveError = campaignLoadFailure(e);
-      return;
-    }
-    if (r) resolved = r;
-    else notFound = true;
-  }
-
-  $effect(() => {
-    if (auth.status !== "loading" && owner && repo && !loaded) load();
-  });
-
-  // The push permission and the owner's views belong to the viewer the tables
-  // were read as. When the viewer changes (a logout or an expired session),
-  // they are dropped at once and the tables are read again as the new viewer.
-  $effect(() => {
-    if (loaded && (auth.user?.login ?? null) !== readAs) {
-      canPush = false;
-      manage = false;
-      loaded = false;
-    }
-  });
-
-  // Background verdicts on this campaign refresh the tables when they land —
-  // unless a command overlay is up, whose own after-refresh will catch the
-  // change, or the campaign isn't resolved (nothing to refresh).
-  $effect(() =>
-    pendingVerdicts.onSettled((entry) => {
-      // A rejected submission ends the task's "Just completed" highlight; a
-      // failed run is followed on until the submission is decided.
-      if (
-        entry.repoId === repoId &&
-        entry.state === "rejected" &&
-        !entry.runFailed &&
-        entry.key.kind === "encode" &&
-        entry.key.task === completed?.task
-      )
-        completed = null;
-      if (entry.repoId === repoId && !runner.busy && owner && repo) load();
-    }),
-  );
-
-  // Run a command: show the busy overlay, capture its result banner, then
-  // refresh the tables.
-  async function run(
-    command: (c: CommandContext) => Promise<Result>,
-    refresh = true,
-  ) {
-    const f = forge();
-    if (!f) return null;
-    return runner.run(
-      () => command(ctx(f)),
-      async (result) => {
-        // A background command changed nothing yet — the settle listener
-        // refreshes when its verdict lands.
-        if (refresh && !result.background) {
-          runner.log.step("Refreshing tables…");
-          await load();
-        }
-      },
-    );
-  }
-
-  // Claiming a validation slot opens the place the review happens — a
-  // pre-task's own editor, or the review view for encoding tasks — but only
-  // on a clean claim, so a rejected claim leaves you on the campaign page.
-  const claimValidate = async (task_id: string, subtask_id: string) => {
-    actedOn(task_id);
-    const result = await run((c) =>
-      invoke(commands.claimValidation, { task_id, subtask_id }, c),
-    );
-    if (!result?.ok || result.outcome === "pending") return;
-    const locator = taskDefs.find(
-      (t) => t.task_id === task_id && t.subtask_id === "",
-    )?.locator;
-    await goto(reviewHref(campaign, locator ?? "", task_id));
-  };
-
-  // Open the task's score in mei-friend (claiming it if needed). The page
-  // navigates only after the claim has gone through — never on a rejected or
-  // still-pending claim — so it waits until the busy overlay is gone.
-  const editor = async (task_id: string) => {
-    // A claim still being processed holds the editor until its verdict lands.
-    if (pendingVerdicts.isProcessing({ kind: "claim", task: task_id }, repoId))
-      return;
-    actedOn(task_id);
-    const result = await run((c) =>
-      invoke(
-        commands.openEditor,
-        { task_id, campaign, base: location.origin },
-        c,
-      ),
-    );
-    openMeiFriend(result);
-  };
-
-  const submitpr = (task_id: string) =>
-    run((c) => invoke(commands.submitEncoding, { task_id }, c));
-
-  const abandon = (task_id: string, subtask_id: string) => {
-    actedOn(task_id);
-    return run((c) => invoke(commands.abandon, { task_id, subtask_id }, c));
-  };
-
-  // ------------------------------------------------ the return from mei-friend
-  // mei-friend returns the volunteer to /<campaign>?task=<id>&mf_status=
-  // complete|failed|abandoned (with an optional mf_msg). `complete` submits the
-  // encoding, `abandoned` abandons the claim, `failed` shows mei-friend's
-  // message in the side panel.
-  /** An error from the return from mei-friend, shown in the task's panel;
-      `label` names mei-friend when the text is its own message. */
-  let editorError = $state<{
-    task: string;
-    label: string;
-    text: string;
-    confirm?: { label: string; run: () => void };
-  } | null>(null);
-  // A task mei-friend returned from that the plan no longer has.
-  let returnedGone = $state<string | null>(null);
-  // The longest message from mei-friend the panel shows.
-  const MAX_EDITOR_MESSAGE = 500;
-  /** The task mei-friend just reported complete, highlighted until `until`. */
-  let completed = $state<{ task: string; until: number } | null>(null);
-  const COMPLETED_HIGHLIGHT_MS = 5 * 60_000;
-  const completedTask = $derived(completed?.task ?? null);
-
-  $effect(() => {
-    if (!completed) return;
-    const timer = setTimeout(
-      () => (completed = null),
-      completed.until - Date.now(),
-    );
-    return () => clearTimeout(timer);
-  });
-  // Acting on another task ends the highlight and the reported error.
-  function actedOn(task: string) {
-    if (completed && completed.task !== task) completed = null;
-    if (editorError && editorError.task !== task) editorError = null;
-  }
-  const holdsEncoding = (task: string) =>
-    encodingClaimOf(locks, task, viewer) !== undefined;
-  function handleEditorReturn(task: string, status: string, msg: string) {
-    console.log("[editor-return]", task, status, {
-      holds: holdsEncoding(task),
-      msg,
-    });
-    // A status other than mei-friend's three is shown and keeps this
-    // browser's record of the hand-off; any of the three uses it up.
-    if (!["complete", "failed", "abandoned"].includes(status)) {
-      editorError = {
-        task,
-        label: "",
-        text: `mei-friend returned an unknown status (${status.slice(0, 40)}); nothing was recorded.`,
-      };
-      return;
-    }
-    const handedOff = takeHandOff(campaign, task);
-    if (status === "failed") {
-      // mei-friend's own message only for a hand-off this browser made: the
-      // return URL is a link anyone can build.
-      editorError =
-        msg && handedOff
-          ? {
-              task,
-              label: "Message from mei-friend",
-              text: msg.slice(0, MAX_EDITOR_MESSAGE),
-            }
-          : {
-              task,
-              label: "",
-              text: "mei-friend reported that the task could not be completed.",
-            };
-      return;
-    }
-    if (!holdsEncoding(task)) {
-      editorError = {
-        task,
-        label: "",
-        text:
-          status === "complete"
-            ? "mei-friend reported the task complete, but you do not hold its claim, so nothing was submitted."
-            : "mei-friend reported the task abandoned, but you do not hold its claim.",
-      };
-      return;
-    }
-    // A return this browser did not hand off may come from a link someone
-    // else built, so it waits for the volunteer.
-    if (!handedOff) {
-      editorError =
-        status === "complete"
-          ? {
-              task,
-              label: "",
-              text: "mei-friend reported the task complete, but it was not opened from this browser, so nothing was submitted yet.",
-              confirm: {
-                label: "Submit for review",
-                run: () => submitCompleted(task),
-              },
-            }
-          : {
-              task,
-              label: "",
-              text: "mei-friend reported the task abandoned, but it was not opened from this browser, so the claim was kept.",
-            };
-      return;
-    }
-    if (status === "complete") submitCompleted(task);
-    else abandon(task, "");
-  }
-  async function submitCompleted(task: string) {
-    editorError = null;
-    completed = { task, until: Date.now() + COMPLETED_HIGHLIGHT_MS };
-    // A submission that could not be opened is not completed.
-    const result = await submitpr(task);
-    if (!result?.ok && completed?.task === task) completed = null;
-  }
-
-  const postComment = (
-    task_id: string,
-    kind: string,
-    body: string,
-    parent_id: string,
-    at?: CommentAnchorInput,
-  ) =>
-    run((c) =>
-      invoke(
-        commands.submitComment,
-        commentInput(task_id, kind, body, parent_id, at),
-        c,
-      ),
-    );
-
-  const resolveCommentRow = (comment_id: string) =>
-    run((c) => invoke(commands.resolveComment, { comment_id }, c));
-
-  const reaper = () => run((c) => invoke(commands.runReaper, {}, c));
-
-  // Save the edited plan; a clean save leaves the manage takeover (run() has
-  // already refreshed the tables, so the board reflects the new plan).
-  async function savePlan(tasks: TaskRow[], base: TaskRow[]) {
-    const result = await run((c) =>
-      invoke(commands.savePlan, { tasks, base }, c),
-    );
-    if (result?.ok) manage = false;
-  }
-
-  // Deep links, read once after the first load: ?task= opens that task's
-  // detail. On the owner's board the side panel reopens the task chosen last
-  // time, if any; the score view shows a task only from ?task=.
-  let deepLinked = false;
-  $effect(() => {
-    if (!loaded || deepLinked) return;
-    deepLinked = true;
-    const task = page.url.searchParams.get("task");
-    if (task && findRow(taskDefs, task, "")) {
-      detailTask = task;
-      const status = page.url.searchParams.get("mf_status");
-      if (status) {
-        // Logged out, the outcome waits in the URL; logging in returns here
-        // with it.
-        if (!auth.user) {
-          editorError = {
-            task,
-            label: "",
-            text: "Log in with GitHub to record the outcome from mei-friend.",
-          };
-          return;
-        }
-        const msg = page.url.searchParams.get("mf_msg") ?? "";
-        // The outcome is handled once; a reload must not repeat it.
-        goto(taskHref(campaign, task), {
-          replaceState: true,
-          noScroll: true,
-          keepFocus: true,
-        });
-        handleEditorReturn(task, status, msg);
-      }
-      return;
-    }
-    // A return from mei-friend for a task the plan no longer has records
-    // nothing; it is said so, and the outcome is cleared from the URL.
-    if (task && page.url.searchParams.has("mf_status")) {
-      // The id comes from a link anyone can build; it is shown cut short.
-      returnedGone = task.slice(0, 40);
-      goto(`/${campaign}`, { replaceState: true, noScroll: true });
-      return;
-    }
-    // The owner's board reopens the task chosen last time only while it is
-    // the owner's own claimed work; otherwise it opens on the campaign.
-    if (!canPush || scoreView) return;
-    const last = readLastTask(campaign);
-    if (last && locks.some((l) => l.task_id === last && l.user_id === viewer))
-      detailTask = last;
-  });
-
-  // After the first load, a change of ?task= (a link, back or forward) opens
-  // that task, or the campaign when it is gone.
-  let urlTask = page.url.searchParams.get("task");
-  $effect(() => {
-    const task = page.url.searchParams.get("task");
-    if (task === urlTask) return;
-    urlTask = task;
-    if (!deepLinked) return;
-    const found = task && findRow(taskDefs, task, "") ? task : null;
-    if (found === detailTask) return;
-    detailTask = found;
-    pickedLane = null;
-    writeLastTask(campaign, found);
-  });
-
-  // Claim an open task where taskAction sends it: a page in the app, else
-  // mei-friend through the editor command.
-  function claimCard(card: BoardCard) {
-    actedOn(card.task);
-    const href = taskActionHref(campaign, card, taskAction(card, "claim"));
-    if (href) goto(href);
-    else editor(card.task);
-  }
-  // Act on a card the viewer can work on: claim it when it is open, claim its
-  // free validation slot when it awaits review, otherwise open its detail
-  // (their claimed work lives there).
-  function actOnCard(card: BoardCard) {
-    if (card.column === "ready") {
-      claimCard(card);
-      return;
-    }
-    const sub = card.slots.find((s) => s.claimable)?.sub;
-    if (card.column === "validation" && sub !== undefined) {
-      actedOn(card.task);
-      claimValidate(card.task, sub);
-    } else openTask(card.task);
-  }
-
-  // The side panel names its piece and carries its colour.
-  const pieceNameOf = (task: string) => {
-    const p = previewPieces[pieceIndexByTask.get(task) ?? 0];
-    return p ? pieceLabel(p) : "";
-  };
-  const zoneOf = (task: string) => pieceZone(pieceIndexByTask.get(task) ?? 0);
-
-  // The board rendered as four columns: queued-but-blocked tasks share the
-  // Open column (dimmed, with what they wait for) instead of a fifth column.
-  const displayColumns = $derived.by(() => {
-    const by = new Map(board.columns.map((c) => [c.key, c]));
-    const ready = by.get("ready");
-    const blocked = by.get("blocked");
-    const encoding = by.get("encoding");
-    const validation = by.get("validation");
-    const done = by.get("done");
-    return [
-      {
-        key: "ready" as ColumnKey,
-        label: "Open",
-        cards: [...(ready?.cards ?? []), ...(blocked?.cards ?? [])],
-      },
-      {
-        key: "encoding" as ColumnKey,
-        label: "Encoding",
-        cards: encoding?.cards ?? [],
-      },
-      {
-        key: "validation" as ColumnKey,
-        label: "Review",
-        cards: validation?.cards ?? [],
-      },
-      {
-        key: "done" as ColumnKey,
-        label: "Done",
-        cards: done?.cards ?? [],
-      },
-    ];
-  });
-  // The rail's selection filters the rendered columns to one piece; the
-  // stats-bar toggle keeps only the claimable cards. Every column stays in
-  // view, however empty the filters leave it.
-  const scopedColumns = $derived.by(() => {
-    let cols = displayColumns;
-    if (selectedPiece !== "all")
-      cols = cols.map((col) => ({
-        ...col,
-        cards: col.cards.filter(
-          (c) =>
-            previewPieces[pieceIndexByTask.get(c.task) ?? 0]?.path ===
-            selectedPiece,
-        ),
-      }));
-    if (boardScope === "open")
-      cols = cols.map((col) => ({
-        ...col,
-        cards: col.cards.filter(actionable),
-      }));
-    return cols;
-  });
-  // The Open column across every piece, under the board filter, for the
-  // rail's "All pieces" count.
-  const railOpenCount = $derived(
-    boardScope === "open"
-      ? displayColumns[0].cards.filter(actionable).length
-      : displayColumns[0].cards.length,
-  );
-
-  // The reaper's last trace in the history, for the manage header.
-  const lastReap = $derived(
-    history.findLast((h) => h.action === "reap") ?? null,
-  );
 </script>
 
 <svelte:head>
-  <title>{title || campaign} · Let's Encode!</title>
+  <title>{data.title || campaign} · Let's Encode!</title>
 </svelte:head>
 
 <svelte:window
@@ -1221,8 +179,8 @@
     // discard what was typed.
     const target = e.target as HTMLElement | null;
     if (target?.closest("input, textarea, select, [contenteditable]")) return;
-    if (scoreView) closeScoreView();
-    else if (detailTask) closeTask();
+    if (nav.scoreView) nav.closeScoreView();
+    else if (selection.detailTask) selection.closeTask();
   }}
 />
 
@@ -1240,36 +198,38 @@
 <!-- The last command's result: in the task box of a selected task, else at
      the top of the side panel; above the plan editor, which has no panel. -->
 {#snippet resultBanner()}
-  <RunnerBanner {runner} {isPrivate} />
+  <RunnerBanner {runner} isPrivate={data.isPrivate} />
 {/snippet}
 {#snippet resultNote()}
-  <RunnerBanner {runner} surface="inline" {isPrivate} />
+  <RunnerBanner {runner} surface="inline" isPrivate={data.isPrivate} />
 {/snippet}
 {#snippet panelResult()}
-  <RunnerBanner {runner} surface="strip" {isPrivate} />
+  <RunnerBanner {runner} surface="strip" isPrivate={data.isPrivate} />
 {/snippet}
 
 {#snippet boardTaskBox(card: BoardCard)}
   <TaskBox
     {repoId}
     {card}
-    pieceName={pieceNameOf(card.task)}
-    zone={zoneOf(card.task)}
+    pieceName={model.pieceNameOf(card.task)}
+    zone={model.zoneOf(card.task)}
     {campaign}
-    {locks}
-    {rows}
-    {logins}
+    locks={data.locks}
+    rows={data.rows}
+    logins={data.logins}
     {viewer}
-    {canPush}
+    canPush={data.canPush}
     {runner}
     tools={resultNote}
-    checks={checksOf(card)}
-    checksFailed={checksFor(card) === "failed"}
-    onclaim={claimValidate}
-    editorError={editorError?.task === card.task ? editorError : null}
+    checks={pageChecks.checksOf(card)}
+    checksFailed={pageChecks.checksFor(card) === "failed"}
+    onclaim={actions.claimValidate}
+    editorError={editorReturn.editorError?.task === card.task
+      ? editorReturn.editorError
+      : null}
     changeRequestUrl={(n) => readForge().changeRequestWebUrl(owner, repo, n)}
-    oneditor={editor}
-    onabandon={abandon}
+    oneditor={actions.editor}
+    onabandon={actions.abandon}
   />
 {/snippet}
 
@@ -1280,20 +240,20 @@
     <SidePanel
       {repoId}
       task={card.task}
-      zone={zoneOf(card.task)}
+      zone={model.zoneOf(card.task)}
       review={card.column === "validation"}
       done={card.column === "done"}
-      {comments}
-      {logins}
+      comments={data.comments}
+      logins={data.logins}
       {viewer}
-      {canPush}
+      canPush={data.canPush}
       {runner}
       bind:panel={sidePanel}
-      ondeselect={closeTask}
-      onanchor={showCommentInScore}
+      ondeselect={selection.closeTask}
+      onanchor={nav.showCommentInScore}
       oncomment={(kind, body, parent_id) =>
-        postComment(card.task, kind, body, parent_id)}
-      onresolve={resolveCommentRow}
+        actions.postComment(card.task, kind, body, parent_id)}
+      onresolve={actions.resolveCommentRow}
     >
       {#snippet taskBox()}{@render boardTaskBox(card)}{/snippet}
     </SidePanel>
@@ -1302,116 +262,36 @@
       {repoId}
       task=""
       {emptyLine}
-      info={canPush ? campaignInfo : undefined}
-      {comments}
-      {logins}
+      info={data.canPush ? campaignInfo : undefined}
+      comments={data.comments}
+      logins={data.logins}
       {viewer}
-      {canPush}
+      canPush={data.canPush}
       {runner}
       bind:panel={sidePanel}
       banner={panelResult}
-      onanchor={showCommentInScore}
+      onanchor={nav.showCommentInScore}
       oncomment={(kind, body, parent_id) =>
-        postComment("", kind, body, parent_id)}
-      onresolve={resolveCommentRow}
+        actions.postComment("", kind, body, parent_id)}
+      onresolve={actions.resolveCommentRow}
     />
   {/if}
-{/snippet}
-
-<!-- The board filter: every task, or only the claimable ones. -->
-{#snippet scopeSeg()}
-  <div class="seg" role="group" aria-label="Board filter">
-    <button
-      type="button"
-      class:on={boardScope === "all"}
-      aria-pressed={boardScope === "all"}
-      onclick={() => (boardScope = "all")}>All tasks</button
-    >
-    <button
-      type="button"
-      class:on={boardScope === "open"}
-      aria-pressed={boardScope === "open"}
-      onclick={() => (boardScope = "open")}
-      title="Only tasks with something to do right now: open encodings and free review slots."
-      >Claimable</button
-    >
-  </div>
 {/snippet}
 
 <!-- The campaign's details in the owner's side panel, above the campaign
      comments. -->
 {#snippet campaignInfo()}
-  <div class="cinfo">
-    <div class="isec">
-      <span class="seclabel">Score</span>
-      {#if scoreHeadState === "loading"}
-        <span class="muted inote">Loading the score header…</span>
-      {:else if scoreHeadState === "error"}
-        <span class="muted inote">Could not read the score.</span>
-      {:else if scoreHeadState === "done" && !scoreHead}
-        <span class="muted inote">The score has no MEI header.</span>
-      {:else if scoreHead}
-        <div class="irow">
-          <span>Title</span>
-          <span>{scoreHead.title || "—"}</span>
-        </div>
-        <div class="irow">
-          <span>Composer</span>
-          <span>{scoreHead.composer || "—"}</span>
-        </div>
-      {/if}
-      <div
-        class="irow"
-        title="Everyone the campaign history records: claims, submissions and reviews."
-      >
-        <span>Worked on this</span>
-        <span>
-          {#if workedOn.length}
-            {#each workedOn as u, i (u)}{i > 0 ? ", " : ""}<a
-                class="mono"
-                href={readForge().userWebUrl(handle(logins, u))}
-                target="_blank"
-                rel="noreferrer">@{handle(logins, u)}</a
-              >{/each}
-          {:else}—{/if}
-        </span>
-      </div>
-    </div>
-    <div class="isec">
-      <span class="seclabel">Campaign</span>
-      <div class="irow">
-        <span>Repository</span>
-        <a
-          class="mono"
-          href={readForge().repoWebUrl(owner, repo)}
-          target="_blank"
-          rel="noreferrer">{owner}/{repo}</a
-        >
-      </div>
-      <div class="irow">
-        <span>About</span>
-        <span>{description || "—"}</span>
-      </div>
-      <div class="irow">
-        <span>Visibility</span>
-        <span>{isPrivate ? "Private" : "Public"}</span>
-      </div>
-      <div
-        class="irow"
-        title="Contributions to this campaign are published under this licence."
-      >
-        <span>Licence</span>
-        <span>{license || "—"}</span>
-      </div>
-      <div
-        class="irow"
-        title="Approving reviews each task needs before it counts as done."
-      >
-        <span>Reviews required</span>
-        <span>{passThreshold}</span>
-      </div>
-    </div>
-  </div>
+  <CampaignInfo
+    {scoreHead}
+    history={data.history}
+    logins={data.logins}
+    {owner}
+    {repo}
+    description={data.description}
+    isPrivate={data.isPrivate}
+    license={data.license}
+    passThreshold={data.passThreshold}
+  />
 {/snippet}
 
 <div class="console">
@@ -1428,220 +308,141 @@
         action={{ label: "Log in with GitHub", run: () => login() }}
       />
     {/if}
-    {#if manage && canPush && !scoreView}
+    {#if manage && data.canPush && !nav.scoreView}
       {@render resultBanner()}
     {/if}
-    {#if returnedGone}
+    {#if editorReturn.returnedGone}
       <Notice
         tone="err"
         surface="strip"
-        title={`${returnedGone} no longer exists in this campaign`}
+        title={`${editorReturn.returnedGone} no longer exists in this campaign`}
         detail="The outcome from mei-friend was not recorded."
-        ondismiss={() => (returnedGone = null)}
+        ondismiss={() => (editorReturn.returnedGone = null)}
       />
     {/if}
-    {#if branchHint}
-      <Notice
-        tone="warn"
-        surface="strip"
-        title="This campaign runs a different branch"
-      >
-        <span>
-          Dev server: the campaign runs the coordinator from <code
-            >{branchHint.ref}</code
-          >
-          but <code>campaign.yml</code> from <code>{branchHint.called}</code>,
-          so submissions can be skipped or rejected. In
-          <code>lets-encode/</code>
-          on <code>{branchHint.ref}</code>, run
-          <code>{branchCommand}</code>, then reload.
-        </span>
-      </Notice>
-      <dialog
-        bind:this={branchDialog}
-        class="branch-dialog"
-        aria-labelledby="branch-dialog-title"
-        onclick={(e) => {
-          if (e.target === branchDialog) branchDialog?.close();
-        }}
-      >
-        <h2 id="branch-dialog-title">Point the campaign at its branch</h2>
-        <p>
-          Dev server: this campaign runs the coordinator from <code
-            >{branchHint.ref}</code
-          >
-          but <code>campaign.yml</code> from <code>{branchHint.called}</code>,
-          so submissions can be skipped or rejected. In
-          <code>lets-encode/</code> on <code>{branchHint.ref}</code>, run:
-        </p>
-        <pre><code>{branchCommand}</code></pre>
-        <div class="branch-actions">
-          <button
-            type="button"
-            class="btn btn-secondary"
-            onclick={() =>
-              navigator.clipboard
-                .writeText(branchCommand)
-                .then(() => (branchCopied = true))
-                .catch(() => {})}
-            >{branchCopied ? "Copied" : "Copy command"}</button
-          >
-          <button
-            type="button"
-            class="btn btn-primary"
-            onclick={() => branchDialog?.close()}>Close</button
-          >
-        </div>
-      </dialog>
+    {#if branch.hint}
+      <BranchNotice {branch} hint={branch.hint} />
     {/if}
 
-    {#if resolveError}
-      <PageState error={resolveError} onretry={() => (resolveError = null)} />
-    {:else if notFound}
+    {#if address.resolveError}
+      <PageState
+        error={address.resolveError}
+        onretry={() => (address.resolveError = null)}
+      />
+    {:else if address.notFound}
       <PageState missingCampaign={campaign} />
-    {:else if slugState}
+    {:else if address.slugState}
       <PageState
         nameState={{
           name: campaign,
-          state: slugState === "tombstoned" ? "blocked" : slugState,
+          state:
+            address.slugState === "tombstoned" ? "blocked" : address.slugState,
         }}
       />
     {:else}
       <div class="viewcol">
-        <RefreshNotice status={refreshStatus} />
-        {#if !resolved || loading}
+        <RefreshNotice status={sync.refreshStatus} />
+        {#if !address.resolved || data.loading}
           <PageState loading="the campaign" />
-        {:else if loadError}
-          <PageState error={loadError} onretry={() => load()} />
-        {:else if notInitialised}
+        {:else if data.loadError}
+          <PageState error={data.loadError} onretry={() => data.load()} />
+        {:else if data.notInitialised}
           <PageState noTables />
-        {:else if scoreView}
-          {#key scoreView.piece.path}
+        {:else if nav.scoreView}
+          {#key nav.scoreView.piece.path}
             <ScoreView
               {repoId}
-              bind:this={scoreViewRef}
-              piece={scoreView.piece}
-              campaignTitle={title || repo}
+              bind:this={nav.scoreViewRef}
+              piece={nav.scoreView.piece}
+              campaignTitle={data.title || repo}
               {owner}
               {repo}
-              startPage={scoreStartPage}
-              {anchor}
-              card={detailCard}
-              cardOnPiece={!!detailCard &&
-                (pieceIndexByTask.get(detailCard.task) ?? 0) ===
-                  scoreView.index}
-              cardZone={detailCard ? zoneOf(detailCard.task) : 0}
-              banner={detailCard ? undefined : panelResult}
-              {comments}
-              {logins}
+              startPage={nav.startPage}
+              anchor={nav.anchor}
+              card={selection.detailCard}
+              cardOnPiece={!!selection.detailCard &&
+                (model.pieceIndexByTask.get(selection.detailCard.task) ?? 0) ===
+                  nav.scoreView.index}
+              cardZone={selection.detailCard
+                ? model.zoneOf(selection.detailCard.task)
+                : 0}
+              banner={selection.detailCard ? undefined : panelResult}
+              comments={data.comments}
+              logins={data.logins}
               {viewer}
-              {canPush}
+              canPush={data.canPush}
               {runner}
               bind:panel={sidePanel}
-              ondeselect={closeTask}
-              onopenanchor={showCommentInScore}
-              oncomment={postComment}
-              onresolve={resolveCommentRow}
+              ondeselect={selection.closeTask}
+              onopenanchor={nav.showCommentInScore}
+              oncomment={actions.postComment}
+              onresolve={actions.resolveCommentRow}
             >
-              {#snippet taskBox()}{#if detailCard}{@render boardTaskBox(
-                    detailCard,
+              {#snippet taskBox()}{#if selection.detailCard}{@render boardTaskBox(
+                    selection.detailCard,
                   )}{/if}{/snippet}
             </ScoreView>
           {/key}
-        {:else if manage && canPush}
-          <h1 class="vh">{title || repo} · Manage</h1>
-          <div class="crumbrow">
-            <button
-              type="button"
-              class="btn backlink"
-              title="Back to the board"
-              onclick={() =>
-                planEditor ? planEditor.close() : (manage = false)}
-              ><Icon name="arrow-left" /> Board</button
-            >
-            <span class="bcsep">/</span>
-            <span class="crumbtitle">{title || repo}</span>
-            <span class="crumbsub">· Manage</span>
-            <span class="ownerpill">owner</span>
-            <span class="cspacer"></span>
-            <span class="reapline">
-              {#if lastReap}
-                Expired claims were last released {timeAgo(lastReap.timestamp)}
-              {:else}
-                No expired claims have been released yet
-              {/if}
-            </span>
-            <button
-              type="button"
-              class="btn"
-              onclick={() => reaper()}
-              disabled={runner.busy}
-              title="Releases the claims whose lock has expired"
-              >Release expired claims now</button
-            >
-          </div>
+        {:else if manage && data.canPush}
+          <ManageBar
+            name={data.title || repo}
+            history={data.history}
+            busy={runner.busy}
+            onback={() => (planEditor ? planEditor.close() : (manage = false))}
+            onreap={() => actions.reaper()}
+          />
           <PlanEditor
             bind:this={planEditor}
-            {taskDefs}
-            {rows}
-            {validationColumns}
-            {locks}
-            {history}
-            {logins}
-            {pieceNames}
+            taskDefs={data.taskDefs}
+            rows={data.rows}
+            validationColumns={data.validationColumns}
+            locks={data.locks}
+            history={data.history}
+            logins={data.logins}
+            pieceNames={model.pieceNames}
             busy={runner.busy}
-            onsave={savePlan}
+            onsave={actions.savePlan}
             oncancel={() => (manage = false)}
           />
-        {:else if !canPush}
+        {:else if !data.canPush}
           <!-- Split (panelOut): the list scrolls above or beside the panel. -->
           <div class="volsplit" class:split={panelOut}>
             <div class="volwrap">
               <div class="volcenter">
-                <div class="volhead">
-                  <div class="voltitle">
-                    <h1 title={title || repo}>{title || repo}</h1>
-                    {#if volStanding}
-                      <span class="volstanding">{volStanding}</span>
-                    {/if}
-                  </div>
-                  <span class="volprogress">
-                    <ProgressBar done={board.done} total={board.total} />
-                  </span>
-                  {#if canViewScore}
-                    <button
-                      type="button"
-                      class="btn scorebtn on-tint"
-                      bind:this={viewScoreButton}
-                      onclick={viewContextScore}
-                      title={scoreHint}>View score</button
-                    >
-                  {/if}
-                </div>
+                <VolunteerHeader
+                  name={data.title || repo}
+                  standing={model.volStanding}
+                  done={model.board.done}
+                  total={model.board.total}
+                  canViewScore={nav.canViewScore}
+                  scoreHint={nav.scoreHint}
+                  bind:viewScoreButton={nav.viewScoreButton}
+                  onviewscore={nav.viewContextScore}
+                />
                 <div class="volrow sidehost">
                   <VolunteerView
                     {repoId}
                     {owner}
                     {repo}
-                    cards={allCards}
-                    {nextCard}
-                    {completedTask}
-                    {taskDefs}
-                    {history}
-                    {locks}
+                    cards={model.allCards}
+                    nextCard={model.nextCard}
+                    completedTask={editorReturn.completedTask}
+                    taskDefs={data.taskDefs}
+                    history={data.history}
+                    locks={data.locks}
                     {viewer}
-                    pieces={previewPieces}
-                    progress={pieceProgress}
-                    pieceIndex={pieceIndexByTask}
+                    pieces={model.previewPieces}
+                    progress={model.pieceProgress}
+                    pieceIndex={model.pieceIndexByTask}
                     busy={runner.busy}
-                    shownTask={detailTask}
-                    onact={actOnCard}
-                    onopen={openTask}
+                    shownTask={selection.detailTask}
+                    onact={actions.actOnCard}
+                    onopen={selection.openTask}
                   />
                   {#if !panelOut}
                     <div class="sideslot">
                       {@render sidePanelFor(
-                        detailCard,
+                        selection.detailCard,
                         "Select a task to show it here.",
                       )}
                     </div>
@@ -1652,7 +453,7 @@
             {#if panelOut}
               <div class="panelslot">
                 {@render sidePanelFor(
-                  detailCard,
+                  selection.detailCard,
                   "Select a task to show it here.",
                 )}
               </div>
@@ -1662,124 +463,36 @@
           <!-- Split (panelOut): the board scrolls above or beside the panel. -->
           <div class="boardview" class:split={panelOut}>
             <div class="boardscroll">
-              <div class="hero">
-                <div class="hero-line">
-                  <h1 title={title || repo}>{title || repo}</h1>
-                  <a
-                    class="mono slug"
-                    href={readForge().repoWebUrl(owner, repo)}
-                    target="_blank"
-                    rel="noreferrer"
-                    >{owner}/{repo} <Icon name="external" size={12} /></a
-                  >
-                  <div class="hero-acts">
-                    {#if auth.user && canPush}
-                      <button
-                        type="button"
-                        class="btn managechip"
-                        onclick={() => (manage = true)}
-                        disabled={runner.busy}
-                        aria-label="Manage"
-                        title="Owner only: plan editor and expired-claim release"
-                        ><Icon name="gear" /><span class="managelabel"
-                          >Manage</span
-                        ></button
-                      >
-                    {/if}
-                    {#if canViewScore}
-                      <button
-                        type="button"
-                        class="btn scorebtn on-tint"
-                        bind:this={viewScoreButton}
-                        onclick={viewContextScore}
-                        title={scoreHint}>View score</button
-                      >
-                    {/if}
-                  </div>
-                </div>
-                <!-- One line: the progress first; the other counts give way
-                     as the column narrows, the attention count last. -->
-                <div class="hero-stats" class:quiet={board.attention === 0}>
-                  <span class="heroprogress">
-                    <ProgressBar done={board.done} total={board.total} />
-                  </span>
-                  <span class="sep m2">·</span>
-                  <span class="stat m2"
-                    ><b class="c-info">{board.inFlight}</b> in progress</span
-                  >
-                  {#if board.attention > 0}
-                    <span class="sep m2">·</span>
-                    <button
-                      type="button"
-                      class="stat statbtn"
-                      onclick={() => (showAttention = !showAttention)}
-                      title="Show the tasks with unresolved change requests or comments."
-                      ><b>{board.attention}</b> need{board.attention === 1
-                        ? "s"
-                        : ""} attention <Icon
-                        name={showAttention ? "chevron-down" : "chevron-right"}
-                        size={12}
-                      /></button
-                    >
-                  {:else}
-                    <span class="sep m2">·</span>
-                    <span class="stat m2"><b>0</b> need attention</span>
-                  {/if}
-                  <span class="sep m1">·</span>
-                  <span class="stat m1"
-                    ><b>{board.contributorsWeek}</b>
-                    contributor{board.contributorsWeek === 1 ? "" : "s"} this week</span
-                  >
-                  {@render scopeSeg()}
-                </div>
-                {#if showAttention && attentionCards.length > 0}
-                  <div class="attnbox">
-                    {#each attentionCards as card (card.task)}
-                      <button
-                        type="button"
-                        class="attnrow"
-                        onclick={() => openTask(card.task)}
-                        title="Open this task"
-                      >
-                        <span class="attntitle">{card.title}</span>
-                        <span class="attnspacer"></span>
-                        {#if card.counts.fails > 0 && card.column !== "done"}
-                          <span class="chip chip-fail"
-                            >{card.counts.fails} change request{card.counts
-                              .fails === 1
-                              ? ""
-                              : "s"}</span
-                          >
-                        {/if}
-                        {#if card.counts.comments > 0}
-                          <span class="chip chip-note"
-                            >{card.counts.comments} comment{card.counts
-                              .comments === 1
-                              ? ""
-                              : "s"}</span
-                          >
-                        {/if}
-                        <span class="attnchev"
-                          ><Icon name="chevron-right" /></span
-                        >
-                      </button>
-                    {/each}
-                  </div>
-                {/if}
-              </div>
+              <BoardHero
+                name={data.title || repo}
+                repoLabel={`${owner}/${repo}`}
+                repoUrl={readForge().repoWebUrl(owner, repo)}
+                canManage={!!auth.user && data.canPush}
+                busy={runner.busy}
+                canViewScore={nav.canViewScore}
+                scoreHint={nav.scoreHint}
+                bind:viewScoreButton={nav.viewScoreButton}
+                board={model.board}
+                attentionCards={model.attentionCards}
+                bind:showAttention={model.showAttention}
+                bind:scope={model.boardScope}
+                onmanage={() => (manage = true)}
+                onviewscore={nav.viewContextScore}
+                onopen={selection.openTask}
+              />
 
               <div class="instrow sidehost" bind:contentRect={instrowBox}>
-                {#if previewPieces.length > 0 && !railChips}
+                {#if model.previewPieces.length > 0 && !railChips}
                   <div class="railslot">
                     <PieceRail
-                      pieces={previewPieces}
+                      pieces={model.previewPieces}
                       chips={false}
-                      progress={pieceProgress}
-                      counts={railCounts}
-                      attention={attentionByPiece}
-                      openCount={railOpenCount}
-                      selected={selectedPiece}
-                      onselect={(sel) => (selectedPiece = sel)}
+                      progress={model.pieceProgress}
+                      counts={model.railCounts}
+                      attention={model.attentionByPiece}
+                      openCount={model.railOpenCount}
+                      selected={model.selectedPiece}
+                      onselect={(sel) => (model.selectedPiece = sel)}
                     />
                   </div>
                 {/if}
@@ -1788,263 +501,52 @@
                     <!-- On a phone the board filter joins the piece dots;
                          the header keeps it elsewhere. -->
                     <div class="boardtools">
-                      {#if previewPieces.length > 0}
+                      {#if model.previewPieces.length > 0}
                         <PieceRail
-                          pieces={previewPieces}
+                          pieces={model.previewPieces}
                           chips
-                          progress={pieceProgress}
-                          counts={railCounts}
-                          attention={attentionByPiece}
-                          openCount={railOpenCount}
-                          selected={selectedPiece}
-                          onselect={(sel) => (selectedPiece = sel)}
+                          progress={model.pieceProgress}
+                          counts={model.railCounts}
+                          attention={model.attentionByPiece}
+                          openCount={model.railOpenCount}
+                          selected={model.selectedPiece}
+                          onselect={(sel) => (model.selectedPiece = sel)}
                         />
                       {/if}
-                      {@render scopeSeg()}
+                      <ScopeToggle bind:scope={model.boardScope} />
                     </div>
                   {/if}
-                  {#if railPiece}
-                    {@const p = pieceProgress.get(railPiece.piece.path)}
-                    <div
-                      class="ctxstrip"
-                      style="--zone: var(--zone-{pieceZone(railPiece.index)})"
-                    >
-                      <span class="ctxpaper">
-                        {#if stripPreview?.thumb}
-                          <img src={stripPreview.thumb} alt="" loading="lazy" />
-                        {/if}
-                      </span>
-                      <div class="ctxinfo">
-                        <span
-                          class="ctxname"
-                          title={pieceLabel(railPiece.piece)}
-                          >{clipTitle(pieceLabel(railPiece.piece))}</span
-                        >
-                        <span class="ctxmeta"
-                          >{stripPreview?.pageMeasures.length
-                            ? `${stripPreview.pageMeasures.length} page${stripPreview.pageMeasures.length === 1 ? "" : "s"} · ${stripPreview.pageMeasures.reduce((a, b) => a + b, 0)} measures · `
-                            : ""}{p?.done ?? 0} of {p?.total ?? 0} done</span
-                        >
-                      </div>
-                      <div class="ctxincipit">
-                        {#if stripPreview?.incipit}
-                          {@html stripPreview.incipit}
-                        {:else if stripPreview?.failed}
-                          <PreviewFailed onretry={() => stripAttempt++} />
-                        {:else if stripPreview?.incipitPending}
-                          <span class="ctxincnote"
-                            >incipit appears after the setup tasks</span
-                          >
-                        {/if}
-                      </div>
-                    </div>
+                  {#if model.railPiece}
+                    <PieceStrip
+                      piece={model.railPiece.piece}
+                      index={model.railPiece.index}
+                      progress={model.pieceProgress.get(
+                        model.railPiece.piece.path,
+                      )}
+                      preview={strip.preview}
+                      onretry={() => strip.attempt++}
+                    />
                   {/if}
-                  <!-- A toggle group: the pressed lane is the one shown. -->
-                  <div class="lanetabs" role="group" aria-label="Lanes">
-                    {#each scopedColumns as col (col.key)}
-                      <button
-                        type="button"
-                        class="lanetab c-{col.key}"
-                        class:on={laneTab === col.key}
-                        aria-pressed={laneTab === col.key}
-                        onclick={() => (pickedLane = col.key)}
-                        >{col.label}
-                        <span class="lanetab-count">{col.cards.length}</span
-                        ></button
-                      >
-                    {/each}
-                  </div>
-                  {#if boardScope === "open" && scopedColumns.every((c) => c.cards.length === 0)}
-                    <p class="boardnote">
-                      No tasks are open right now: every task is claimed, in
-                      review, waiting for an earlier task, or done.
-                    </p>
-                  {/if}
-                  <div class="board">
-                    {#each scopedColumns as col (col.key)}
-                      <div
-                        class="bcol c-{col.key}"
-                        class:tabsel={laneTab === col.key}
-                        class:empty={col.cards.length === 0}
-                      >
-                        <div class="bcol-head">
-                          <h2 class="bcol-name">{col.label}</h2>
-                          <span class="countpill">{col.cards.length}</span>
-                        </div>
-                        <div class="well">
-                          {#if col.cards.length === 0}
-                            <p class="laneempty">No tasks</p>
-                          {/if}
-                          {#each col.cards as card (card.task)}
-                            <!-- A focusable div, not a <button>: the run state inside
-                         it can render a PR link, which HTML does not allow
-                         nested in a button. -->
-                            <div
-                              class="card col-{card.column}"
-                              class:justmoved={recentlyFinished.has(
-                                card.task,
-                              ) || card.task === completedTask}
-                              class:paneled={detailTask === card.task}
-                              aria-current={detailTask === card.task
-                                ? "true"
-                                : undefined}
-                              class:failtint={card.counts.fails > 0 &&
-                                card.column !== "done"}
-                              role="button"
-                              tabindex="0"
-                              onclick={() => openTask(card.task)}
-                              onkeydown={(e) => {
-                                if (e.target !== e.currentTarget) return;
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  openTask(card.task);
-                                }
-                              }}
-                              title="Open this task"
-                              data-stage={stageOf(card)}
-                            >
-                              {#if card.nextUp && !completedTask && !pendingVerdicts.taskProcessing(card.task, repoId)}
-                                <span class="taskbadge edge"
-                                  >your next task</span
-                                >
-                              {/if}
-                              {#if card.task === completedTask}
-                                <span class="taskbadge done edge right"
-                                  >just completed</span
-                                >
-                              {:else if recentlyFinished.has(card.task)}
-                                <span class="taskbadge done edge right"
-                                  >just submitted</span
-                                >
-                              {/if}
-                              <div class="card-title">
-                                {card.description}{#if card.scope}<span
-                                    class="card-scope"
-                                    >{` · ${card.scope}`}</span
-                                  >{/if}
-                              </div>
-                              {#if cardSummary(card)}
-                                <p class="card-what">{cardSummary(card)}</p>
-                              {/if}
-                              {#if piecesListed}
-                                <div
-                                  class="card-piece"
-                                  style="--zone: var(--zone-{zoneOf(
-                                    card.task,
-                                  )})"
-                                >
-                                  <span class="piece-dot"></span>
-                                  <span class="card-pname" title={card.piece}
-                                    >{clipTitle(card.piece)}</span
-                                  >
-                                </div>
-                              {/if}
-                              <!-- A submission's run state takes the review
-                                   count's place while it shows. -->
-                              {#if card.column === "validation" && !pendingVerdicts.forTask(card.task, repoId)}
-                                <div class="card-type">
-                                  {reviewWaitLabel(
-                                    card.passes,
-                                    card.threshold,
-                                    card.slots.filter(
-                                      (s) =>
-                                        s.key === "review" &&
-                                        viewer !== "" &&
-                                        s.user === viewer,
-                                    ).length,
-                                    card.slots.filter(
-                                      (s) =>
-                                        s.key === "review" &&
-                                        !(viewer !== "" && s.user === viewer),
-                                    ).length,
-                                    card.slots.some((s) => s.needsAnother),
-                                  )}
-                                  <span class="card-dots">
-                                    {#each card.slots as slot (slot.label)}
-                                      <SlotMark key={slot.key} who={slot.who} />
-                                    {/each}
-                                  </span>
-                                </div>
-                              {/if}
-                              <TaskRunState
-                                task={card.task}
-                                {repoId}
-                                pill
-                                short
-                              />
-                              {#if card.column === "blocked"}
-                                <div class="card-foot">
-                                  waits for <strong>{card.waitsFor}</strong>
-                                </div>
-                              {:else if card.column === "encoding" && card.worker}
-                                <div class="card-worker">
-                                  <span class="avatar"
-                                    >{initialOf(card.worker.login)}</span
-                                  >
-                                  <span class="worker-line"
-                                    >{card.worker.login} · {card.worker
-                                      .expires}</span
-                                  >
-                                </div>
-                              {:else if card.column === "validation"}
-                                <!-- Who holds each review slot, as the
-                                     encoding lane shows its worker. -->
-                                {#each card.slots.filter((s) => s.key === "review" && s.user) as slot (slot.label)}
-                                  <div class="card-worker">
-                                    <span class="avatar review"
-                                      >{initialOf(
-                                        handle(logins, slot.user),
-                                      )}</span
-                                    >
-                                    <span class="worker-line review"
-                                      >{handle(logins, slot.user)} · {reviewExpiry(
-                                        card.task,
-                                        slot.sub,
-                                        slot.user,
-                                      )}</span
-                                    >
-                                  </div>
-                                {/each}
-                              {:else if card.column === "done"}
-                                <div class="card-done">
-                                  <img
-                                    class="hand-done"
-                                    src="/green-hand.svg"
-                                    alt=""
-                                  />
-                                  {doneLabel(card)}
-                                </div>
-                              {/if}
-                              {#if card.column !== "done" && card.counts.fails + card.counts.comments > 0}
-                                <div class="card-chips">
-                                  {#if card.counts.fails > 0}
-                                    <span class="chip chip-fail"
-                                      >{card.counts.fails} change request{card
-                                        .counts.fails === 1
-                                        ? ""
-                                        : "s"}</span
-                                    >
-                                  {/if}
-                                  {#if card.counts.comments > 0}
-                                    <span class="chip chip-note"
-                                      >{card.counts.comments} comment{card
-                                        .counts.comments === 1
-                                        ? ""
-                                        : "s"}</span
-                                    >
-                                  {/if}
-                                </div>
-                              {/if}
-                            </div>
-                          {/each}
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
+                  <BoardLanes
+                    columns={model.scopedColumns}
+                    laneTab={selection.laneTab}
+                    boardScope={model.boardScope}
+                    {repoId}
+                    {viewer}
+                    logins={data.logins}
+                    detailTask={selection.detailTask}
+                    completedTask={editorReturn.completedTask}
+                    recentlyFinished={model.recentlyFinished}
+                    piecesListed={model.piecesListed}
+                    zoneOf={model.zoneOf}
+                    reviewExpiry={model.reviewExpiry}
+                    onpicklane={(lane) => (selection.pickedLane = lane)}
+                    onopen={selection.openTask}
+                  />
                 </div>
                 {#if !panelOut}
                   {@render sidePanelFor(
-                    detailCard,
+                    selection.detailCard,
                     "Select a task on the board to show it here.",
                   )}
                 {/if}
@@ -2053,7 +555,7 @@
             {#if panelOut}
               <div class="panelslot">
                 {@render sidePanelFor(
-                  detailCard,
+                  selection.detailCard,
                   "Select a task on the board to show it here.",
                 )}
               </div>
@@ -2084,12 +586,6 @@
     --track: var(--bg-tint);
     --hairline: var(--line);
   }
-  .mono {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-  }
-  .muted {
-    color: var(--ink-faint);
-  }
 
   /* Banner styles are shared app-wide in ui.css. */
 
@@ -2117,7 +613,8 @@
      the side panel share the window, the panel docked below in portrait
      (DOCKED_QUERY) and beside in a short window. The content scrolls as one
      region, its sections at their content's height; a gap separates it from
-     the panel beside it, none from the panel docked below. */
+     the panel beside it, none from the panel docked below. The board's own
+     part of this is in BoardLanes.svelte. */
   .volsplit,
   .boardview,
   .boardscroll {
@@ -2160,25 +657,14 @@
   }
   .split .volcenter,
   .split .volrow,
-  .split .instrow,
-  .split .board {
+  .split .instrow {
     flex: none;
     min-height: 0;
-  }
-  .split .board {
-    overflow-y: visible;
   }
   .split :global(.volunteer) {
     overflow-y: visible;
     padding-right: 0;
     scrollbar-gutter: auto;
-  }
-  .split .bcol {
-    min-height: auto;
-  }
-  .split .well {
-    overflow-y: visible;
-    contain: none;
   }
 
   /* The volunteer view: the header row, the task column and the side panel
@@ -2203,38 +689,6 @@
     flex-direction: column;
     gap: 14px;
   }
-  .volhead {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    /* The header follows the row's width instead of contributing its own —
-       a long title wraps rather than widening the group. */
-    width: 0;
-    min-width: 100%;
-    box-sizing: border-box;
-  }
-  .volhead h1 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--ink);
-  }
-  .voltitle {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-  }
-  .volstanding {
-    font-size: 12px;
-    color: var(--ink-soft);
-  }
-  /* The campaign's progress: a bar beside the count. */
-  .volprogress {
-    flex: none;
-    --track-w: 140px;
-  }
   .volrow {
     flex: 1;
     min-height: 0;
@@ -2250,259 +704,14 @@
     padding-top: 9px;
     box-sizing: border-box;
   }
-  /* Narrow column: the header wraps its title over the count. */
+  /* Narrow column: the header wraps its title over the count
+     (VolunteerHeader.svelte). */
   @container (max-width: 700px) {
     .volwrap {
       padding: 12px 16px 14px;
     }
-    /* Two lines: the title beside the score button, the viewer's standing
-       beside the progress. */
-    .volhead {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: 6px 12px;
-    }
-    .voltitle {
-      display: contents;
-    }
-    .volhead h1 {
-      grid-area: 1 / 1;
-      align-self: center;
-      font-size: 20px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-    .scorebtn {
-      grid-area: 1 / 2;
-    }
-    .volstanding {
-      grid-area: 2 / 1;
-      align-self: center;
-    }
-    .volprogress {
-      grid-area: 2 / 2;
-      justify-self: end;
-    }
-    .volprogress {
-      --track-w: 72px;
-    }
   }
 
-  /* ---------------------------------------------------- campaign details */
-  /* The owner's side panel, above the campaign comments. */
-  .cinfo {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-    padding: 2px 2px 12px;
-    border-bottom: 1px solid var(--line);
-  }
-  .isec {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    min-width: 0;
-  }
-  .inote {
-    font-size: 11px;
-  }
-  /* A fixed label column with the value directly after it, left-aligned. */
-  .irow {
-    display: grid;
-    grid-template-columns: 120px minmax(0, 1fr);
-    gap: 10px;
-    font-size: 12px;
-  }
-  /* On the recessed panel, labels take the soft ink (faint ink is for the
-     canvas and cards). */
-  .irow > span:first-child {
-    color: var(--ink-soft);
-  }
-  .irow > :last-child {
-    overflow-wrap: anywhere;
-  }
-  .irow a {
-    color: var(--link);
-    text-decoration: none;
-  }
-  @media (hover: hover) {
-    .irow a:hover {
-      text-decoration: underline;
-    }
-  }
-  .seclabel {
-    font-weight: 600;
-    font-size: 12px;
-    color: var(--ink-soft);
-  }
-
-  /* ---------------------------------------------------------------- hero */
-  .hero {
-    flex: none;
-    padding: 18px 32px 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  /* The title, its repository link and the actions share one line. A title
-     longer than the room left is cut short; the full title is its tooltip. */
-  .hero-line {
-    display: flex;
-    align-items: center;
-    gap: 10px 14px;
-    min-width: 0;
-  }
-  .hero-line h1 {
-    margin: 0;
-    min-width: 0;
-    font-size: 26px;
-    line-height: 1.2;
-    font-weight: 600;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Below desktop width the repository link gives way; it is in the campaign
-     details in the side panel. */
-  @container (max-width: 1100px) {
-    .slug {
-      display: none;
-    }
-  }
-  .hero-acts {
-    flex: none;
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .slug {
-    font-size: 13px;
-    color: var(--ink-faint);
-    text-decoration: none;
-    flex: none;
-    /* A 24px pointer target without moving the text. */
-    padding: 5px 0;
-    margin: -5px 0;
-  }
-  @media (hover: hover) {
-    .slug:hover {
-      text-decoration: underline;
-    }
-  }
-  .cspacer {
-    flex: 1;
-  }
-  .hero-acts .btn,
-  .hero-line .btn {
-    padding-block: 4px;
-  }
-  .managechip {
-    color: var(--owner);
-    background: var(--owner-bg);
-    border-color: var(--owner-line);
-  }
-  @media (hover: hover) {
-    .managechip:hover:not(:disabled) {
-      color: var(--owner);
-      border-color: var(--owner);
-    }
-  }
-  .managechip {
-    gap: 6px;
-  }
-  .hero-stats {
-    display: flex;
-    gap: 10px;
-    align-items: center;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 5px 6px 5px 16px;
-    box-shadow: var(--shadow-sm);
-  }
-  .hero-stats > * {
-    white-space: nowrap;
-  }
-  .hero-stats .seg {
-    margin-left: auto;
-  }
-  @container (max-width: 1100px) {
-    .hero-stats .m1 {
-      display: none;
-    }
-  }
-  .heroprogress {
-    flex: 0 1 auto;
-    min-width: 0;
-    --track-w: 420px;
-  }
-  .stat {
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
-  .stat b {
-    font-weight: 600;
-  }
-  .stat b.c-info {
-    color: var(--info);
-  }
-  .sep {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-  }
-  .statbtn {
-    font: inherit;
-    font-size: 13px;
-    color: var(--danger);
-    background: none;
-    border: 0;
-    padding: 5px 0;
-    margin: -5px 0;
-    cursor: pointer;
-    text-decoration: underline;
-  }
-  /* The tasks behind the attention count, unfolded from the stat. */
-  .attnbox {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    background: var(--danger-wash);
-    border: 1px solid var(--danger-line);
-    border-radius: 12px;
-    padding: 10px 14px;
-  }
-  .attnrow {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-family: inherit;
-    font-size: 13px;
-    text-align: left;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 14px;
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .attnrow:hover {
-      border-color: var(--accent);
-    }
-  }
-  .attntitle {
-    font-weight: 600;
-  }
-  .attnspacer {
-    flex: 1;
-  }
-  .attnchev {
-    font-size: 15px;
-    color: var(--ink-faint);
-  }
-  /* -------------------------------------------------------------- pieces */
   /* ---------------------------------------- rail · board · side panel row */
   .instrow {
     flex: 1;
@@ -2535,75 +744,10 @@
        the side panel narrow independently of the window. */
     container-type: inline-size;
   }
-  /* The scoped piece's preview over the columns. */
-  .ctxstrip {
-    flex: none;
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    background: color-mix(in srgb, var(--zone) 8%, var(--card));
-    border: 1px solid color-mix(in srgb, var(--zone) 45%, var(--line));
-    border-radius: 12px;
-    padding: 10px 16px;
-    box-shadow: var(--shadow-sm);
-  }
-  .ctxpaper {
-    flex: none;
-    width: 36px;
-    height: 47px;
-    background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .ctxpaper img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
-  }
-  .ctxinfo {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-  .ctxname {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--ink);
-  }
-  .ctxmeta {
-    font-size: 11.5px;
-    color: var(--ink-faint);
-  }
-  .ctxincipit {
-    flex: 1;
-    min-width: 0;
-    height: 34px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    padding: 4px 10px;
-    display: flex;
-    align-items: center;
-    overflow: hidden;
-  }
-  .ctxincipit :global(svg) {
-    height: 100%;
-    width: auto;
-    max-width: 100%;
-  }
-  /* A phone-width view: the strip is the piece's name and counts. */
-  @container view (max-width: 700px) {
-    .ctxpaper,
-    .ctxincipit {
-      display: none;
-    }
-  }
   /* The piece dots and, in a phone-width view, the board filter beside them
      (the header's own filter then hides); with many pieces the filter moves
-     to its own line and the dots take the full width. */
+     to its own line and the dots take the full width. The board filter is
+     ScopeToggle's root. */
   .boardtools {
     display: flex;
     flex-wrap: wrap;
@@ -2611,537 +755,24 @@
     gap: 8px;
     min-width: 0;
   }
-  .boardtools > .seg {
+  .boardtools > :global(.seg) {
     display: none;
     margin-left: auto;
     flex: none;
   }
   @container view (max-width: 700px) {
-    .boardtools > .seg {
+    .boardtools > :global(.seg) {
       display: inline-flex;
-    }
-    .hero-stats > .seg,
-    .hero-stats.quiet {
-      display: none;
     }
     /* The Open lane tab below carries the open count. */
     .boardtools :global(.dotlabel) {
       display: none;
     }
   }
-  .ctxincnote {
-    font-size: 11px;
-    color: var(--ink-faint);
-  }
-  /* --------------------------------------------------------------- board */
-  .board {
-    flex: 1;
-    /* Roughly a column head and one card row — the least the board is ever
-       shown with, so the dock panels stop growing before crushing it. */
-    min-height: 170px;
-    display: flex;
-    gap: 12px;
-  }
-  /* Lanes keep a readable width; the board never scrolls sideways, the
-     stack below takes over as soon as four lanes no longer fit. */
-  .board > .bcol {
-    min-width: 200px;
-  }
-  /* A lane is the stage's colour: a solid header bar with white lettering
-     over a body in the stage's wash. The three lane tokens are set per
-     column key below. */
-  /* Lane lettering: the theme's inverted ink on the neutral lane, white on the
-     stage colours' deep tones in both themes (as on solid buttons). */
-  .bcol {
-    --lane-solid: var(--ink-soft);
-    --lane-ink: var(--invert-ink);
-    --lane-text: var(--ink-soft);
-    --lane-bg: var(--bg-tint);
-    --lane-line: var(--line);
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    background: var(--lane-bg);
-    border: 1px solid var(--lane-line);
-    border-radius: 12px;
-    overflow: hidden;
-  }
-  .bcol-head {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 7px 12px;
-    background: var(--lane-solid);
-    color: var(--lane-ink);
-  }
-  /* An empty lane: its header in the stage's text colour on the lane's wash,
-     and a line saying so. */
-  .bcol.empty .bcol-head {
-    background: none;
-    color: var(--lane-text);
-    border-bottom: 1px solid var(--lane-line);
-  }
-  .laneempty {
-    margin: 0;
-    font-size: 12px;
-    color: var(--ink-soft);
-  }
-  /* The neutral Open lane in dark: a mid slate bar, not the light ink. */
-  :global([data-theme="dark"]) .bcol:not(.c-encoding, .c-validation, .c-done),
-  :global([data-theme="dark"])
-    .lanetab:not(.c-encoding, .c-validation, .c-done) {
-    --lane-solid: var(--line-strong);
-    --lane-ink: var(--ink);
-  }
-  .bcol-name {
-    margin: 0;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: 0.02em;
-  }
-  .bcol.c-blocked {
-    --lane-solid: var(--ink-faint);
-    --lane-bg: var(--bg-inset);
-  }
-  .bcol.c-encoding,
-  .lanetab.c-encoding {
-    --lane-solid: var(--info-solid);
-    --lane-ink: #fff;
-    --lane-text: var(--info);
-    --lane-bg: var(--info-bg);
-    --lane-line: var(--info-line);
-  }
-  .bcol.c-validation,
-  .lanetab.c-validation {
-    --lane-solid: var(--warn-solid);
-    --lane-ink: #fff;
-    --lane-text: var(--warn);
-    --lane-bg: var(--warn-bg);
-    --lane-line: var(--warn-line);
-  }
-  .bcol.c-done,
-  .lanetab.c-done {
-    --lane-solid: var(--ok-solid);
-    --lane-ink: #fff;
-    --lane-text: var(--ok);
-    --lane-bg: var(--ok-bg);
-    --lane-line: var(--ok-line);
-  }
-  .well {
-    padding: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    /* Sized by its column, never by its cards: a long card list scrolls in
-       here instead of growing the board — and the board's own minimum stays
-       one card row, however many tasks there are. */
-    contain: size;
-  }
-  .card {
-    position: relative;
-    /* A flex column at its content's height. */
-    display: flex;
-    flex-direction: column;
-    text-align: left;
-    font-family: inherit;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    padding: 10px 12px;
-    box-shadow: var(--shadow-sm);
-    cursor: pointer;
-    flex: none;
-    box-sizing: border-box;
-  }
-  /* The card the side panel shows. */
-  .card.paneled {
-    background: var(--info-bg);
-    border-color: var(--info-line);
-  }
-  @media (hover: hover) {
-    .card:hover {
-      border-color: var(--accent);
-    }
-  }
-  .card.col-blocked {
-    opacity: 0.8;
-    box-shadow: none;
-  }
-  .card.col-encoding {
-    border: 1.5px solid var(--info-line);
-  }
-  .card.col-validation {
-    border: 1.5px solid var(--warn-line);
-  }
-  .card.col-done {
-    box-shadow: none;
-  }
-  /* Before .card.failtint: a recorded fail outweighs the finished highlight. */
-  .card.justmoved {
-    border-color: var(--ok-line);
-    background: var(--ok-wash);
-  }
-  .card.failtint {
-    background:
-      linear-gradient(var(--danger-wash), var(--danger-wash)), var(--card);
-    border-color: var(--danger-line);
-  }
-  /* The card the side panel shows: an outline the stage and fail tints
-     cannot override. */
-  .card.paneled {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  /* The next task is marked by its badge (.taskbadge, ui.css) only, on
-     the card's top edge: the next task on the left, a finished one on the
-     right. */
-  .edge {
-    position: absolute;
-    top: -9px;
-    left: 12px;
-  }
-  .edge.right {
-    left: auto;
-    right: 12px;
-  }
-  .card-title {
-    font-size: 14px;
-    line-height: 1.25;
-    font-weight: 600;
-    overflow-wrap: anywhere;
-  }
-  .card-scope {
-    color: var(--ink-soft);
-  }
-  .card-what {
-    margin: 3px 0 0;
-    font-size: 12.5px;
-    line-height: 1.35;
-    color: var(--ink-soft);
-  }
-  /* On a touch screen the cards are larger targets with larger type. */
-  @media (pointer: coarse) {
-    .well {
-      gap: 10px;
-    }
-    .card {
-      padding: 12px 14px;
-    }
-    .card-title {
-      font-size: 15px;
-    }
-    .card-what {
-      font-size: 13.5px;
-    }
-  }
-  /* The piece line, shown where several pieces share the board. A long
-     title is cut to one line; the full title is its tooltip. */
-  .card-piece {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-    margin-top: 2px;
-    font-size: 11.5px;
-    color: var(--ink-soft);
-  }
-  .card-pname {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* The piece's colour, as on its dot in the piece rail. */
-  .piece-dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--zone);
-  }
-  .card.col-blocked .card-title,
-  .card.col-done .card-title {
-    color: var(--ink-soft);
-  }
-  /* The review count with one dot per review slot. */
-  .card > :global(.live) {
-    margin-top: 5px;
-  }
-  .card-type {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 11.5px;
-    color: var(--ink-faint);
-    margin-top: 2px;
-  }
-  .boardnote {
-    margin: 0;
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
-  .card-foot {
-    font-size: 11.5px;
-    color: var(--ink-faint);
-    margin-top: 5px;
-    border-top: 1px solid var(--hairline);
-    padding-top: 5px;
-  }
-  .card-worker {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    padding-top: 4px;
-  }
-  .avatar {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-btn);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-  }
-  .worker-line {
-    font-size: 11.5px;
-    color: var(--info);
-    font-weight: 600;
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* A held review slot, in the review stage's colour. */
-  .avatar.review {
-    background: var(--warn-solid);
-  }
-  .worker-line.review {
-    color: var(--warn);
-  }
-  .card-dots {
-    display: flex;
-    gap: 4px;
-  }
-  .card-chips {
-    display: flex;
-    gap: 6px;
-    margin-top: 5px;
-    border-top: 1px solid var(--hairline);
-    padding-top: 5px;
-    flex-wrap: wrap;
-  }
-  .card-done {
-    font-size: 11.5px;
-    color: var(--ok);
-    font-weight: 600;
-    padding-top: 4px;
-    display: flex;
-    align-items: center;
-    gap: 5px;
-  }
-  .hand-done {
-    height: 12px;
-    flex: none;
-  }
-  /* ----------------------------------------------- manage takeover chrome */
-  .crumbrow {
-    flex: none;
-    padding: 14px 32px 0;
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    min-width: 0;
-  }
-  .backlink {
-    flex: none;
-  }
-  .bcsep {
-    color: var(--line-input);
-  }
-  .crumbtitle {
-    font-size: 15px;
-    font-weight: 600;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .crumbsub {
-    font-size: 15px;
-    color: var(--ink-faint);
-    flex: none;
-  }
-  .ownerpill {
-    flex: none;
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--owner);
-    background: var(--owner-bg);
-    border: 1px solid var(--owner-line);
-    border-radius: 999px;
-    line-height: 1;
-    padding: 3px 10px;
-  }
-  .reapline {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  /* --------------------------------------------------------- responsive */
-  /* Measured on the board column, which the rail and the side panel narrow
-     independently of the window. Four lanes need four 200px lanes with their
-     borders and three 12px gaps (LANES_WIDTH); below that the lanes stack in
-     one column, each as tall as its cards, and the board scrolls as a whole;
-     below 420px one lane shows at a time, chosen by the lane tabs, and the
-     tab replaces its head. */
-  .lanetabs {
-    display: none;
-  }
-  @container (max-width: 843px) {
-    .board {
-      flex-direction: column;
-      min-height: 240px;
-      overflow-y: auto;
-    }
-    .board > .bcol {
-      flex: none;
-      min-width: 0;
-      min-height: auto;
-    }
-    .well {
-      flex: none;
-      overflow-y: visible;
-      contain: none;
-    }
-  }
-  @container (max-width: 419px) {
-    .lanetabs {
-      flex: none;
-      display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
-      gap: 6px;
-    }
-    .board {
-      display: flex;
-      flex-direction: column;
-      min-height: 170px;
-    }
-    .bcol:not(.tabsel),
-    .bcol-head {
-      display: none;
-    }
-  }
-  .lanetab {
-    --lane-solid: var(--ink-soft);
-    --lane-ink: var(--invert-ink);
-    --lane-text: var(--ink-soft);
-    --lane-bg: var(--bg-tint);
-    --lane-line: var(--line);
-    min-height: 32px;
-    padding: 2px 4px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 2px 6px;
-    font: 700 12px var(--font);
-    line-height: 1.15;
-    text-align: center;
-    color: var(--lane-text);
-    background: var(--lane-bg);
-    border: 1px solid var(--lane-line);
-    border-radius: 10px;
-    cursor: pointer;
-  }
-  .lanetab.on {
-    color: var(--lane-ink);
-    background: var(--lane-solid);
-    border-color: var(--lane-solid);
-  }
-  .lanetab-count {
-    font-size: 11px;
-  }
-  /* A narrow view column (a phone): the title is smaller, the side margins
-     shrink, and Manage is its gear only. */
+  /* A narrow view column (a phone): the side margins shrink. */
   @container (max-width: 700px) {
-    .hero {
-      padding: 10px 16px 8px;
-      gap: 8px;
-    }
-    .hero-line {
-      gap: 8px 10px;
-    }
-    .hero-line h1 {
-      font-size: 20px;
-    }
-    .managechip {
-      width: 32px;
-      padding: 0;
-      justify-content: center;
-    }
-    .managelabel {
-      display: none;
-    }
-    /* The stats reduce to the attention count when there is one and the
-       filter, on one plain line without the card. */
-    .hero-stats {
-      flex-wrap: wrap;
-      gap: 6px 10px;
-      padding: 0;
-      background: none;
-      border: 0;
-      box-shadow: none;
-    }
-    .hero-stats .m2,
-    .heroprogress {
-      display: none;
-    }
     .instrow {
       padding: 0 16px 14px;
     }
-  }
-  /* The dev server's branch hint as a dialog after the campaign opens. */
-  .branch-dialog {
-    width: 640px;
-    max-width: calc(100vw - 32px);
-    padding: 20px 24px;
-    border: none;
-    border-radius: 16px;
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: var(--shadow);
-  }
-  .branch-dialog::backdrop {
-    background: rgba(35, 40, 56, 0.48);
-  }
-  .branch-dialog h2 {
-    margin: 0 0 8px;
-    font-size: 1.1rem;
-  }
-  .branch-dialog pre {
-    margin: 12px 0;
-    padding: 10px 12px;
-    border-radius: 8px;
-    background: var(--bg-inset);
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .branch-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
   }
 </style>

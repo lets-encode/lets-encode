@@ -140,7 +140,7 @@ test("pull request runs are gated on the event payload before a runner is assign
   assert.match(guard, /pull_request\.draft == false/);
   assert.match(guard, /pull_request\.user\.type == 'User'/);
   // The app names the same requirements when a run was skipped.
-  assert.match(RUN_REQUIREMENTS, /50 files/);
+  assert.match(RUN_REQUIREMENTS, /file limit/);
   assert.match(RUN_REQUIREMENTS, /draft/);
   assert.match(RUN_REQUIREMENTS, /user account/);
 });

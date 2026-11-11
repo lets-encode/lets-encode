@@ -677,7 +677,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
     closePullRequest: async (_owner, _repo, number, comment) => {
       assert.equal(number, 22);
       // The closed PR says why on GitHub too, as the app's, not a verdict.
-      assert.match(comment ?? "", /^Not processed: .*at most 50 files/);
+      assert.match(comment ?? "", /^Not processed: .*within its file limit/);
       closed++;
     },
   });
@@ -688,7 +688,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
 
   assert.match(
     result.error ?? "",
-    /did not run for submission #22: a submission must change at most 50 files/,
+    /did not run for submission #22: the campaign's workflow runs only a submission/,
   );
   assert.match(result.error ?? "", /was closed/);
   assert.equal(closed, 1);
