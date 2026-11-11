@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-11
+
+- The commands, the GitHub client and the broker are split into modules by concern, and the coordinator's decisions are in unit-tested modules.
+
 ## 2026-11-10
 
 - A submission rejected for a fault in the campaign's own score or files is recorded as a failed join, not as an invalid encoding.

@@ -1,6 +1,7 @@
-"""SQLite data layer for the relays in app.py: what each login has used per
-UTC day, and which login created each Musibot page and started each execution
-on it. Connections are opened per operation, as in slug_db.py.
+"""SQLite data layer for the relays (iiif_relay.py, omr_relay.py): what each
+login has used per UTC day, and which login created each Musibot page and
+started each execution on it. Connections are opened per operation, as in
+slug_db.py.
 """
 
 from __future__ import annotations
