@@ -1276,7 +1276,7 @@ class BrokerTest(unittest.TestCase):
         public = "lets-encode.example"
         response = self.client.post(
             "/logout",
-            base_url="http://127.0.0.1:7777",
+            base_url="http://127.0.0.1",
             headers={
                 "Origin": f"https://{public}",
                 "X-Forwarded-Host": public,

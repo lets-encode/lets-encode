@@ -497,7 +497,3 @@ app.register_blueprint(auth)
 app.register_blueprint(iiif_relay)
 app.register_blueprint(omr_relay)
 app.register_blueprint(github_proxy)
-
-
-if __name__ == "__main__":
-    app.run(port=7777)

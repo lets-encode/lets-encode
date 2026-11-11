@@ -177,7 +177,8 @@ broker (section 4), with its own OAuth App whose callback is
 - **Server layout:** one git checkout of this repository per instance, kept on
   that instance's branch. The web server's document root for the instance is
   the checkout's `website/` directory. Each checkout runs its own broker
-  (`PORT=<port> gunicorn -c gunicorn_config.py wsgi:app` in `broker/`), so
+  (`gunicorn -c gunicorn_config.py wsgi:app` in `broker/`, on the
+  `BROKER_PORT` of the branch's `instances-config/.env.<mode>`), so
   sessions and the slug DB (`broker/instance/`) are naturally separate.
 - **Coordinator per instance:** each `.env.<mode>` sets
   `PUBLIC_AUTOMATION_REF` to its branch, so a campaign created on an instance
