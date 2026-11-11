@@ -174,11 +174,10 @@
         <div>
           <p class="omr-title">Optical music recognition (OMR)</p>
           <p class="omr-credit">
-            Turns the pages into a draft that encoding starts from. Page images
-            are sent to Musibot for recognition. OMR is powered by the Musibot
-            AI. Musibot is developed at the Prague Music Computing Group, part
-            of UFAL (Faculty of Mathematics and Physics, Charles University), as
-            part of the project OmniOMR.
+            Recognises the notes on the pages, so encoding starts from a draft.
+            Page images are sent to the Musibot AI. Musibot is developed at the
+            Prague Music Computing Group, part of UFAL (Faculty of Mathematics
+            and Physics, Charles University), as part of the project OmniOMR.
           </p>
         </div>
         <div class="omr-logos">
