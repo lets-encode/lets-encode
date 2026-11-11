@@ -41,20 +41,18 @@
     },
     {
       id: "omr",
-      name: "Optical music recognition with a score setup task",
+      name: "With a score setup task",
       info:
         "Staves and measures are detected and corrected in a measure correction task. The staves are then " +
-        "transcribed in the score setup, and each page's encoding starts from that draft. " +
-        "Page images are sent to the Musibot service (Charles University) for recognition.",
+        "transcribed in the score setup, and each page's encoding starts from that draft.",
     },
     {
       id: "omr-instruments",
-      name: "Optical music recognition with instruments named during measure correction",
+      name: "With instruments named during measure correction",
       info:
         "Staves and measures are detected and corrected in a measure correction task, which also names the " +
         "instrument of every staff and transcribes the staves. The first page's encoding task starts with a " +
-        "check of the clefs, key and meter, and each page's encoding starts from the draft. " +
-        "Page images are sent to the Musibot service (Charles University) for recognition.",
+        "check of the clefs, key and meter, and each page's encoding starts from the draft.",
     },
   ];
 
@@ -73,8 +71,7 @@
       info:
         "Suits a file with passages or staves missing. Staves and measures are recognised and corrected in a " +
         "measure-correction task; the file's measures are then placed in them, and each page's encoding starts " +
-        "from a recognised draft in measures and staves that are empty in the file and in measures missing from it. " +
-        "Page images are sent to the Musibot service (Charles University) for recognition.",
+        "from a recognised draft in measures and staves that are empty in the file and in measures missing from it.",
     },
   ];
 
@@ -113,6 +110,32 @@
   onDestroy(() => finisher.cancel());
 </script>
 
+{#snippet choice(option: { id: Preparation; name: string; info: string })}
+  <label
+    class="option"
+    class:on={wizard.preparation === option.id}
+    title={fromFiles ? option.info : undefined}
+  >
+    <input
+      type="radio"
+      name="preparation"
+      value={option.id}
+      bind:group={wizard.preparation}
+      onchange={() => {
+        wizard.preparationPicked = true;
+        finisher.reset();
+      }}
+      disabled={finisher.busy}
+    />
+    <span class="option-text">
+      <span class="option-name">{option.name}</span>
+      {#if !fromFiles}
+        <span class="option-info">{option.info}</span>
+      {/if}
+    </span>
+  </label>
+{/snippet}
+
 {#snippet material()}
   <FacsimilePages pages={wizard.images} />
 {/snippet}
@@ -122,7 +145,7 @@
   heading="Prepare the scores"
   intro={fromFiles
     ? "The pieces start from your uploaded encodings. Choose what goes where a measure is empty or missing in the file: this cannot be changed once the campaign is created."
-    : "Optical music recognition turns the pages into a draft that encoding starts from. Choose now whether to use it: this cannot be changed once the campaign is created."}
+    : "Choose how the pages are prepared for encoding: this cannot be changed once the campaign is created."}
   status="choosing the preparation"
   {material}
   panes={{
@@ -143,31 +166,40 @@
   finish={!finisher.error}
 >
   <div class="options" role="radiogroup" aria-label="Preparation">
-    {#each options as option (option.id)}
-      <label
-        class="option"
-        class:on={wizard.preparation === option.id}
-        title={fromFiles ? option.info : undefined}
-      >
-        <input
-          type="radio"
-          name="preparation"
-          value={option.id}
-          bind:group={wizard.preparation}
-          onchange={() => {
-            wizard.preparationPicked = true;
-            finisher.reset();
-          }}
-          disabled={finisher.busy}
-        />
-        <span class="option-text">
-          <span class="option-name">{option.name}</span>
-          {#if !fromFiles}
-            <span class="option-info">{option.info}</span>
-          {/if}
-        </span>
-      </label>
+    {#each options.filter((o) => !o.id.startsWith("omr")) as option (option.id)}
+      {@render choice(option)}
     {/each}
+    <div class="omr-group">
+      <div class="omr-head">
+        <div>
+          <p class="omr-title">Optical music recognition (OMR)</p>
+          <p class="omr-credit">
+            Turns the pages into a draft that encoding starts from. Page images
+            are sent to Musibot for recognition. OMR is powered by the Musibot
+            AI. Musibot is developed at the Prague Music Computing Group, part
+            of UFAL (Faculty of Mathematics and Physics, Charles University), as
+            part of the project OmniOMR.
+          </p>
+        </div>
+        <div class="omr-logos">
+          <img
+            src="/assets/logos/pmcg.png"
+            alt="Prague Music Computing Group"
+            width="600"
+            height="140"
+          />
+          <img
+            src="/assets/logos/omniomr.png"
+            alt="OmniOMR"
+            width="400"
+            height="305"
+          />
+        </div>
+      </div>
+      {#each options.filter( (o) => o.id.startsWith("omr"), ) as option (option.id)}
+        {@render choice(option)}
+      {/each}
+    </div>
   </div>
   {#each files as file (file.name)}
     <p class="hint">
@@ -179,7 +211,6 @@
           : file.withEmptyStaff} with an empty staff.
     </p>
   {/each}
-
   {#snippet pinned()}
     {#if finisher.error}
       <p class="msg-error" role="alert">{finisher.error}</p>
@@ -189,3 +220,62 @@
     <ProgressSteps log={finisher.log} />
   {/snippet}
 </WizardCard>
+
+<style>
+  /* The optical music recognition options in one box under a shared heading. */
+  .omr-group {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px 16px 16px;
+    background: var(--bg-inset);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+  .omr-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 1.25rem;
+    margin-bottom: 4px;
+  }
+  .omr-title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .omr-credit {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  .omr-logos {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.6rem;
+  }
+  .omr-logos img {
+    display: block;
+    width: auto;
+    height: 1.75rem;
+  }
+  .omr-logos img + img {
+    height: 2.5rem;
+  }
+  /* The logos carry fixed colours, black lettering included; on the dark
+     theme each is flattened to a cream silhouette. */
+  :global([data-theme="dark"]) .omr-logos img {
+    filter: brightness(0) invert(93%) sepia(11%) saturate(360%) hue-rotate(1deg)
+      brightness(97%);
+  }
+  @media (max-width: 480px) {
+    .omr-head {
+      flex-direction: column;
+    }
+    .omr-logos {
+      flex-direction: row;
+    }
+  }
+</style>
