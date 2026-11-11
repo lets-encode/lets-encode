@@ -75,10 +75,7 @@ export function nextPieceId(pieces: Piece[]): string {
   return `piece-${pad2(n)}`;
 }
 
-export function createPiece(
-  pieces: Piece[],
-  kind: PieceKind = "facsimile",
-): Piece {
+export function createPiece(pieces: Piece[], kind: PieceKind): Piece {
   return {
     id: nextPieceId(pieces),
     kind,

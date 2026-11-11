@@ -8,6 +8,7 @@
 <script lang="ts">
   import { taskAction, taskActionHref } from "$lib/campaign-graph.ts";
   import Icon from "$lib/components/Icon.svelte";
+  import PreviewFailed from "./PreviewFailed.svelte";
   import ProgressBar from "./ProgressBar.svelte";
   import { timeAgo } from "$lib/campaign-board.ts";
   import {
@@ -131,13 +132,7 @@
           aria-hidden="true"><img src={thumb.url} alt="" /></a
         >
       {:else if preview?.failed || (hasSystem && thumbDone)}
-        <button
-          type="button"
-          class="nopreview failed"
-          title="Load the preview again"
-          onclick={retryPreview}
-          >Preview failed<span class="retry">Try again</span></button
-        >
+        <PreviewFailed onretry={retryPreview} />
       {:else if (preview && !hasSystem) || !piecePath}
         <span class="nopreview">No preview</span>
       {/if}
@@ -267,29 +262,6 @@
     text-align: center;
     padding: 0 6px;
     color: var(--ink-soft);
-  }
-  button.nopreview {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-height: 24px;
-    font: inherit;
-    font-size: 12px;
-    background: none;
-    border: 0;
-    cursor: pointer;
-  }
-  .nopreview.failed {
-    font-weight: 600;
-    color: var(--danger);
-  }
-  .retry {
-    color: var(--link);
-  }
-  @media (hover: hover) {
-    button.nopreview:hover .retry {
-      text-decoration: underline;
-    }
   }
   .rowlink {
     flex: 1;

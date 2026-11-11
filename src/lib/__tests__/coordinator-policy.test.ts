@@ -223,7 +223,7 @@ test("a resolve patch flips resolved on one top-level comment (replies may ride 
   assert.deepEqual(resolvedCommentFromPatch(`@@\n-${c1}\n+${c1Resolved}`), {
     comment_id: "c1",
   });
-  // The console flips the root and its replies together — the root is the intent.
+  // The app flips the root and its replies together — the root is the intent.
   assert.deepEqual(
     resolvedCommentFromPatch(
       `@@\n-${c1}\n-${reply}\n+${c1Resolved}\n+${replyResolved}`,

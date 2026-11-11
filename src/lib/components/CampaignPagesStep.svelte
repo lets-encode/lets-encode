@@ -532,7 +532,7 @@
                 >
               {/if}
             </button>
-            <span class="page-caption">p. {i + 1}</span>
+            <span class="page-caption">Page {i + 1} · Facsimile</span>
           </li>
         {/each}
       </ol>

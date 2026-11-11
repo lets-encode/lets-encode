@@ -655,7 +655,7 @@
     <div class="pages-col">
       {#each strips as { page: p, systems } (p)}
         <section class="npage" aria-label={`Page ${p + 1}`}>
-          <p class="page-label">Page {p + 1}</p>
+          <p class="page-label">Page {p + 1} · Facsimile</p>
           {#if !systems.length}
             <p class="muted">No staves on this page.</p>
           {/if}

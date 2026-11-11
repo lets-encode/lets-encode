@@ -1,16 +1,18 @@
-"""SQLite data layer for the relays in app.py: what each login has used per
-UTC day, and which login created each Musibot page and started each execution
-on it. Connections are opened per operation, as in slug_db.py.
+"""SQLite data layer for the relays (iiif_relay.py, omr_relay.py): what each
+login has used per UTC day, and which login created each Musibot page and
+started each execution on it. Connections are opened per operation, as in
+slug_db.py.
 """
 
 from __future__ import annotations
 
-import sqlite3
-import time
-from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from typing import Iterator
+
+try:
+    from .sqlite_store import SqliteStore
+except ImportError:
+    # Run as a top-level module (flask --app app run, gunicorn app:app).
+    from sqlite_store import SqliteStore
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS relay_use (
@@ -50,34 +52,11 @@ def seconds_to_next_day() -> int:
     return max(1, int((midnight - now).total_seconds()))
 
 
-class RelayStore:
+class RelayStore(SqliteStore):
     def __init__(self, db_path: str):
-        self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        # WAL mode stays with the file. Setting it on a new file needs a lock
-        # that a worker opening the file at the same moment can hold, and the
-        # busy timeout does not wait for it, so the change is tried again.
-        for attempt in range(50):
-            try:
-                with closing(sqlite3.connect(db_path)) as conn:
-                    conn.execute("PRAGMA journal_mode=WAL")
-                break
-            except sqlite3.OperationalError:
-                if attempt == 49:
-                    raise
-                time.sleep(0.1)
+        super().__init__(db_path)
         with self._connect() as conn:
             conn.executescript(SCHEMA)
-
-    @contextmanager
-    def _connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA busy_timeout=5000")
-        try:
-            with conn:  # one transaction per operation
-                yield conn
-        finally:
-            conn.close()
 
     def used(self, login: str, kind: str) -> int:
         """What `login` has used of `kind` today."""

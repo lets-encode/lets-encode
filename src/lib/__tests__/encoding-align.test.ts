@@ -2,15 +2,22 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  addFileMeasure,
   alignMeasures,
   alignmentRecord,
+  chooseScoreStaff,
+  editedFileIds,
   pinsOf,
+  placeFileStaff,
+  unusedFileStaves,
+  withoutAddedMeasure,
   encodingSize,
   labelRanges,
   mapStaves,
   readMeasures,
   staffKey,
   summariseAlignment,
+  type FileEdits,
 } from "../encoding-align.ts";
 import { measure, skeleton, staff, upload } from "./encoding-fixture.ts";
 
@@ -397,4 +404,76 @@ test("encodingSize counts the measures that leave a staff empty", () => {
     ),
     { measures: 3, staves: 2, withEmptyStaff: 2 },
   );
+});
+
+test("addFileMeasure adds an empty measure directly before or after a file measure", () => {
+  const ids = ["a", "b", "c"];
+  const none: FileEdits = { removed: [], added: [] };
+  const step = (edits: FileEdits, index: number, side: "before" | "after") =>
+    addFileMeasure(edits, editedFileIds(ids, edits), index, side);
+  const first = step(none, 1, "before");
+  assert.deepEqual(editedFileIds(ids, first), [
+    "a",
+    "added-measure-1",
+    "b",
+    "c",
+  ]);
+  // Before an added measure, and after a measure that already has one.
+  const second = step(first, 1, "before");
+  assert.deepEqual(editedFileIds(ids, second), [
+    "a",
+    "added-measure-2",
+    "added-measure-1",
+    "b",
+    "c",
+  ]);
+  const third = step(second, 0, "after");
+  assert.deepEqual(editedFileIds(ids, third).slice(0, 3), [
+    "a",
+    "added-measure-3",
+    "added-measure-2",
+  ]);
+  assert.deepEqual(editedFileIds(ids, step(none, 0, "before")), [
+    "added-measure-1",
+    "a",
+    "b",
+    "c",
+  ]);
+  // Next to a removed measure.
+  const removed: FileEdits = { removed: ["b"], added: [] };
+  assert.deepEqual(editedFileIds(ids, step(removed, 1, "before")), [
+    "a",
+    "added-measure-1",
+    "c",
+  ]);
+});
+
+test("withoutAddedMeasure takes an added measure out and keeps those added after it in place", () => {
+  const ids = ["a", "b"];
+  const edits: FileEdits = {
+    removed: [],
+    added: [
+      { after: "a", id: "n1" },
+      { after: "n1", id: "n2" },
+      { after: "a", id: "n3" },
+    ],
+  };
+  assert.deepEqual(editedFileIds(ids, edits), ["a", "n1", "n2", "n3", "b"]);
+  const without = withoutAddedMeasure(edits, "n1");
+  assert.deepEqual(editedFileIds(ids, without), ["a", "n2", "n3", "b"]);
+  assert.deepEqual(without.added, [
+    { after: "a", id: "n2" },
+    { after: "a", id: "n3" },
+  ]);
+  assert.equal(withoutAddedMeasure(edits, "x"), edits);
+});
+
+test("chooseScoreStaff, placeFileStaff and unusedFileStaves edit the score staves", () => {
+  assert.deepEqual(chooseScoreStaff([1, 2, null], 0, 2), [2, 1, null]);
+  assert.deepEqual(chooseScoreStaff([1, 2, null], 2, 1), [null, 2, 1]);
+  assert.deepEqual(chooseScoreStaff([1, 2, null], 1, null), [1, null, null]);
+  assert.deepEqual(unusedFileStaves([3, null, 1], 4), [2, 4]);
+  assert.deepEqual(placeFileStaff([1, null, null], 3, false), [1, 3, null]);
+  assert.deepEqual(placeFileStaff([1, 2], 3, true), [1, 2, 3]);
+  assert.equal(placeFileStaff([1, 2], 3, false), null);
 });

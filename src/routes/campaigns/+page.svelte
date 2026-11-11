@@ -1,5 +1,5 @@
 <!--
-  The main screen — the app's only dashboard. Top to bottom, for a logged-in
+  The main screen — the campaign list. Top to bottom, for a logged-in
   viewer: what needs their attention (unresolved comments on their work),
   their open work, every campaign as a searchable list of
   full-width rows (each carrying its suggested next task, claimable in
@@ -8,6 +8,10 @@
   the list; narrower, the work folds behind a one-line summary bar.
   Campaign creation lives behind the top bar's New campaign button. One stats
   load serves the whole screen.
+
+  The listing's state is in campaign-list/campaign-list.svelte.ts; this page
+  decides when it loads and polls, runs the commands, and lays out the
+  sections (components/campaign-list/).
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
@@ -22,111 +26,43 @@
     viewerId,
     openMeiFriend,
   } from "$lib/command-runner.svelte.ts";
-  import { provider } from "$lib/forge/config.ts";
-  import { RateLimitError } from "$lib/forge/github-rest.ts";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
-  import { expiresIn, reviewWaitLabel, timeAgo } from "$lib/campaign-board.ts";
   import {
-    handle,
     reviewHref,
     taskAction,
     taskActionHref,
-    taskHref,
   } from "$lib/campaign-graph.ts";
-  import {
-    changeRequestTasks,
-    commentsOnMyWork,
-    invalidateStats,
-    loadAllCampaignStats,
-    loadCampaignStats,
-    myTasksIn,
-    nextTask,
-    nextTaskMode,
-  } from "$lib/campaign-stats.ts";
-  import type {
-    CampaignListing,
-    CampaignStats,
-    FeedComment,
-    MyTask,
-    NextTask,
-  } from "$lib/campaign-stats.ts";
+  import { nextTaskMode } from "$lib/campaign-stats.ts";
+  import type { CampaignStats, MyTask, NextTask } from "$lib/campaign-stats.ts";
   import CampaignRow from "$lib/components/CampaignRow.svelte";
   import CampaignDrafts from "$lib/components/CampaignDrafts.svelte";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
-  import { registeredAs } from "$lib/campaign-resolve.ts";
   import { REFRESH_OK, startAutoRefresh } from "$lib/auto-refresh.ts";
   import RefreshNotice from "$lib/components/RefreshNotice.svelte";
-
-  const PER_PAGE = 12;
+  import CampaignAttention from "$lib/components/campaign-list/CampaignAttention.svelte";
+  import CampaignOpenWork from "$lib/components/campaign-list/CampaignOpenWork.svelte";
+  import CampaignListToolbar from "$lib/components/campaign-list/CampaignListToolbar.svelte";
+  import {
+    CampaignList,
+    ListView,
+  } from "$lib/campaign-list/campaign-list.svelte.ts";
+  import {
+    PER_PAGE,
+    isOwned,
+    queryString,
+  } from "$lib/campaign-list/list-query.ts";
 
   const viewer = $derived(viewerId());
 
-  let stats = $state<CampaignStats[]>([]);
-  let listLoading = $state(false);
-  let listError = $state<Error | null>(null);
-  let listLoaded = $state(false);
-  // Repositories the search found but whose tables could not be read.
-  let listFailed = $state(0);
-  let listFailure = $state<Error | null>(null);
-  // GitHub's search stopped before it was done: campaigns may be missing.
-  let listIncomplete = $state(false);
+  const list = new CampaignList();
 
   $effect(() => {
-    if (auth.status === "loading" || listLoaded || listLoading) return;
-    listLoading = true;
-    loadAll().finally(() => {
-      listLoading = false;
-      listLoaded = true;
-    });
+    if (auth.status === "loading" || list.loaded || list.loading) return;
+    list.load();
   });
-
-  // Stats arrive one campaign at a time; each resolves into the grid as it
-  // lands rather than waiting for the slowest repository.
-  // A listed repository is shown only under the name the registry holds for
-  // it, so its links and commands reach that repository.
-  const registered = (s: CampaignStats) => registeredAs(s.repoId, s.name);
-  const placeRow = (s: CampaignStats) =>
-    (stats = [...stats.filter((x) => x.repoId !== s.repoId), s]);
-
-  // What a listing reports beyond its rows.
-  function noteListing(listing: CampaignListing) {
-    listFailed = listing.failed;
-    listFailure = listing.failure;
-    listIncomplete = listing.incomplete;
-  }
-
-  async function loadAll() {
-    try {
-      noteListing(
-        await loadAllCampaignStats(readForge(), provider.repoTopic, {
-          onEach: placeRow,
-          registered,
-        }),
-      );
-      listError = null;
-    } catch (err) {
-      listError = err as Error;
-    }
-  }
-
-  // Loads the listing again; campaigns that already loaded keep their rows.
-  function retryList() {
-    listError = null;
-    listFailed = 0;
-    listFailure = null;
-    listIncomplete = false;
-    listLoaded = false;
-  }
-
-  const listRateLimit = $derived(
-    listError instanceof RateLimitError ? listError : null,
-  );
-  const partialRateLimit = $derived(
-    !listError && listFailure instanceof RateLimitError ? listFailure : null,
-  );
 
   // ----------------------------------------------------- the viewer's work
   // The clock claim expiries count against, a minute at a time.
@@ -134,61 +70,6 @@
   $effect(() => {
     const timer = setInterval(() => (now = Date.now()), 60_000);
     return () => clearInterval(timer);
-  });
-  // A claim past its expiry is no longer the viewer's work.
-  const tasks = $derived(
-    viewer
-      ? stats
-          .flatMap((s) => myTasksIn(s, viewer))
-          .filter((t) => !t.expiresAt || Date.parse(t.expiresAt) > now)
-      : ([] as MyTask[]),
-  );
-  const encoding = $derived(tasks.filter((t) => t.group === "encoding"));
-  const validating = $derived(tasks.filter((t) => t.group === "validating"));
-  const awaiting = $derived(tasks.filter((t) => t.group === "awaiting"));
-  const done = $derived(
-    tasks
-      .filter((t) => t.group === "done")
-      .sort(
-        (a, b) =>
-          Date.parse(b.submittedAt || "0") - Date.parse(a.submittedAt || "0"),
-      ),
-  );
-  let showCompleted = $state(false);
-
-  // Unresolved discussion comments on the viewer's work.
-  const openComments = $derived(
-    viewer
-      ? stats
-          .flatMap((s) => commentsOnMyWork(s, viewer))
-          .filter(
-            (f) =>
-              f.comment.kind === "comment" && f.comment.resolved !== "true",
-          )
-          .sort(
-            (a, b) =>
-              Date.parse(b.comment.timestamp || "0") -
-              Date.parse(a.comment.timestamp || "0"),
-          )
-      : ([] as FeedComment[]),
-  );
-
-  // The viewer's first recorded action anywhere, for "contributing since".
-  const since = $derived.by(() => {
-    let first = Infinity;
-    for (const s of stats) {
-      for (const h of s.history) {
-        if (h.user_id !== viewer) continue;
-        const t = Date.parse(h.timestamp);
-        if (Number.isFinite(t)) first = Math.min(first, t);
-      }
-    }
-    return Number.isFinite(first) && first !== Infinity
-      ? new Date(first).toLocaleDateString(undefined, {
-          month: "long",
-          year: "numeric",
-        })
-      : "";
   });
 
   // ------------------------------------------------------------ commands
@@ -202,38 +83,9 @@
     });
 
   const ctxFor = (t: MyTask): CommandContext | null => {
-    const s = stats.find((x) => x.name === t.campaignSlug);
+    const s = list.stats.find((x) => x.name === t.campaignSlug);
     return s ? ctxOf(s) : null;
   };
-
-  // Re-read one campaign's stats and swap its grid row in place, leaving the
-  // rest of the listing as it is.
-  // Of a campaign's reads that overlap, only the latest one started is shown.
-  const refreshSeq = new Map<number, number>();
-  // `rethrow`: a failed read is the caller's to report (the poll's notice).
-  async function refreshStats(s: CampaignStats, rethrow = false) {
-    invalidateStats(s.repoId);
-    const seq = (refreshSeq.get(s.repoId) ?? 0) + 1;
-    refreshSeq.set(s.repoId, seq);
-    try {
-      const fresh = await loadCampaignStats(readForge(), {
-        id: s.repoId,
-        owner: s.owner,
-        name: s.repo,
-        full_name: `${s.owner}/${s.repo}`,
-        html_url: readForge().repoWebUrl(s.owner, s.repo),
-        private: s.isPrivate,
-        description: null,
-        updated_at: "",
-        created_at: s.createdAt,
-      });
-      if (refreshSeq.get(s.repoId) !== seq) return;
-      stats = stats.map((x) => (x.repoId === fresh.repoId ? fresh : x));
-    } catch (e) {
-      // The stale row stays; the next full listing load replaces it.
-      if (rethrow) throw e;
-    }
-  }
 
   // A campaign whose default branch has moved since its row was read is read
   // again. The topic search, which finds new campaigns, runs again only when
@@ -242,41 +94,12 @@
   let refreshStatus = $state(REFRESH_OK);
   $effect(() => {
     refreshStatus = REFRESH_OK;
-    if (!listLoaded) return;
+    if (!list.loaded) return;
     return startAutoRefresh({
       interval: () => (auth.user ? 10_000 : null),
-      held: () => listLoading || runner.busy,
+      held: () => list.loading || runner.busy,
       onStatus: (status) => (refreshStatus = status),
-      poll: async (resumed) => {
-        const f = readForge();
-        if (resumed)
-          noteListing(
-            await loadAllCampaignStats(f, provider.repoTopic, {
-              onEach: placeRow,
-              registered,
-            }),
-          );
-        // All heads in one batch read where the client can; else one each.
-        const polled = stats;
-        const heads = await f
-          .getRepoFilesBatch(
-            polled.map((s) => ({ owner: s.owner, repo: s.repo })),
-            [],
-          )
-          .catch((err) => {
-            if (err instanceof RateLimitError) throw err;
-            return null;
-          });
-        await Promise.all(
-          polled.map(async (s, i) => {
-            const sha = heads
-              ? heads[i]?.headSha
-              : (await f.getRepoHead(s.owner, s.repo)).sha;
-            if (sha !== undefined && sha !== s.headSha)
-              await refreshStats(s, true);
-          }),
-        );
-      },
+      poll: (resumed) => list.poll(resumed),
     });
   });
 
@@ -290,8 +113,8 @@
       () => command(c),
       async () => {
         runner.log.step("Refreshing…");
-        const s = stats.find((x) => x.repoId === c.repoId);
-        if (s) await refreshStats(s);
+        const s = list.stats.find((x) => x.repoId === c.repoId);
+        if (s) await list.refresh(s);
       },
     );
   }
@@ -301,8 +124,8 @@
   $effect(() =>
     pendingVerdicts.onSettled((entry) => {
       if (runner.busy) return;
-      const s = stats.find((x) => x.repoId === entry.repoId);
-      if (s) refreshStats(s);
+      const s = list.stats.find((x) => x.repoId === entry.repoId);
+      if (s) list.refresh(s);
     }),
   );
 
@@ -313,7 +136,7 @@
     base: location.origin,
   });
   const openEditor = async (t: MyTask) => {
-    const s = stats.find((x) => x.name === t.campaignSlug);
+    const s = list.stats.find((x) => x.name === t.campaignSlug);
     if (
       s &&
       pendingVerdicts.isProcessing({ kind: "claim", task: t.task }, s.repoId)
@@ -326,7 +149,7 @@
   };
   // A submission on the task still being processed holds its row's actions.
   const processing = (t: MyTask) => {
-    const s = stats.find((x) => x.name === t.campaignSlug);
+    const s = list.stats.find((x) => x.name === t.campaignSlug);
     return s ? pendingVerdicts.taskProcessing(t.task, s.repoId) : false;
   };
   // Claim a campaign row's suggested next task, or continue the one held:
@@ -345,7 +168,7 @@
     const c = ctxOf(s);
     const refresh = async () => {
       runner.log.step("Refreshing…");
-      await refreshStats(s);
+      await list.refresh(s);
     };
     if (
       next.action === "encode" ||
@@ -372,118 +195,37 @@
     }
   }
 
-  const claimExpiry = (t: MyTask): string => {
-    const e = expiresIn(t.expiresAt, now);
-    return e && `claim ${e}`;
-  };
-  const claimMeta = (t: MyTask) =>
-    [`claimed ${timeAgo(t.claimedAt, now)}`.trim(), claimExpiry(t)]
-      .filter(Boolean)
-      .join(" · ");
-  const reviewMeta = (t: MyTask) =>
-    `${timeAgo(t.submittedAt, now) ? `submitted ${timeAgo(t.submittedAt, now)} · ` : ""}${reviewWaitLabel(t.passes, t.threshold, t.myReviews, t.otherReviews, t.needsAnother)}`;
-
   // Wide screens show the viewer's work in a side column; narrower ones fold
   // it behind a one-line summary bar.
   const wide = new MediaQuery("min-width: 1280px", false);
   let workOpen = $state(false);
-  // Counts only work the viewer can act on; submissions waiting on other
-  // reviewers appear in the summary text.
-  const openCount = $derived(encoding.length + validating.length);
-  const workSummary = $derived(
-    [
-      // First, so a cut-off summary still shows it.
-      listFailed > 0 || listIncomplete ? "Incomplete" : "",
-      encoding.length ? `${encoding.length} encoding` : "",
-      validating.length ? `${validating.length} reviewing` : "",
-      awaiting.length ? `${awaiting.length} awaiting review` : "",
-      `${done.length} done`,
-    ]
-      .filter(Boolean)
-      .join(" · "),
-  );
-  // Each side section lists at most SIDE_MAX items until the viewer asks for
-  // all of them, so a long list cannot push the campaigns out of reach.
-  const SIDE_MAX = 5;
-  // Phones list fewer attention items, so the campaigns stay near the top.
-  const phone = new MediaQuery("max-width: 560px", false);
-  const attentionMax = $derived(phone.current ? 2 : SIDE_MAX);
+  let showCompleted = $state(false);
   let allAttention = $state(false);
   let allWork = $state(false);
-  // Newest first within each group, so the order does not follow load timing.
-  const newestFirst = (key: (t: MyTask) => string) => (a: MyTask, b: MyTask) =>
-    Date.parse(key(b) || "0") - Date.parse(key(a) || "0") ||
-    a.campaignSlug.localeCompare(b.campaignSlug) ||
-    a.task.localeCompare(b.task);
-  const openWork = $derived([
-    ...[...encoding].sort(newestFirst((t) => t.claimedAt)),
-    ...[...validating].sort(newestFirst((t) => t.claimedAt)),
-    ...[...awaiting].sort(newestFirst((t) => t.submittedAt)),
-  ]);
-  const shownWork = $derived(allWork ? openWork : openWork.slice(0, SIDE_MAX));
-  const isOwned = (s: CampaignStats) =>
-    Boolean(auth.user) && s.owner === auth.user!.login;
-  // Open change requests on the viewer's own campaigns, by campaign title
-  // and task so the order does not follow load timing, then unresolved
-  // comments on the viewer's work.
-  type Attention =
-    | {
-        kind: "change";
-        key: string;
-        campaignSlug: string;
-        campaign: string;
-        task: string;
-        title: string;
-      }
-    | { kind: "comment"; key: string; feed: FeedComment };
-  const attention = $derived<Attention[]>([
-    ...stats
-      .filter(isOwned)
-      .flatMap((s) =>
-        changeRequestTasks(s).map((c) => ({
-          kind: "change" as const,
-          key: `change:${s.repoId}:${c.task}`,
-          campaignSlug: s.name,
-          campaign: s.title,
-          task: c.task,
-          title: c.title,
-        })),
-      )
-      .sort(
-        (a, b) =>
-          a.campaign.localeCompare(b.campaign) || a.task.localeCompare(b.task),
-      ),
-    ...openComments.map((f) => ({
-      kind: "comment" as const,
-      key: `comment:${f.comment.comment_id || f.comment.timestamp + f.task}`,
-      feed: f,
-    })),
-  ]);
-  const shownAttention = $derived(
-    allAttention ? attention : attention.slice(0, attentionMax),
-  );
 
   // ------------------------------------------------------------- the list
-  const FILTERS = ["all", "open", "nearly", "yours"] as const;
-  const SORTS = ["active", "newest", "progress"] as const;
-  const oneOf = <T extends string>(
-    value: string | null,
-    allowed: readonly T[],
-    fallback: T,
-  ): T => (allowed.includes(value as T) ? (value as T) : fallback);
-  const initial = page.url.searchParams;
-  let search = $state(initial.get("q") ?? "");
+  const view = new ListView(page.url.searchParams, {
+    get stats() {
+      return list.stats;
+    },
+    get viewer() {
+      return viewer;
+    },
+    get user() {
+      return auth.user;
+    },
+  });
   let searchInput = $state<HTMLInputElement>();
-  let filter = $state(oneOf(initial.get("filter"), FILTERS, "all"));
-  let sort = $state(oneOf(initial.get("sort"), SORTS, "active"));
+  // "Yours" has no button without a login; a link with it shows every
+  // campaign.
+  $effect(() => {
+    if (auth.status === "anonymous" && view.filter === "yours")
+      view.filter = "all";
+  });
   // Search, filter and sort live in the URL, so Back and a shared link
   // restore them; the defaults stay out of it.
   $effect(() => {
-    const query = new URLSearchParams();
-    if (search) query.set("q", search);
-    if (filter !== "all") query.set("filter", filter);
-    if (sort !== "active") query.set("sort", sort);
-    const next = query.toString();
+    const next = queryString(view);
     if (next === page.url.searchParams.toString()) return;
     goto(`/campaigns${next ? `?${next}` : ""}`, {
       replaceState: true,
@@ -491,60 +233,13 @@
       keepFocus: true,
     });
   });
-  const sortLabels = {
-    active: "Recently active",
-    newest: "Newest",
-    progress: "Most progress",
-  };
-  let visibleCount = $state(PER_PAGE);
   // A changed search, filter or sort starts the listing over.
   $effect(() => {
-    void search;
-    void filter;
-    void sort;
-    visibleCount = PER_PAGE;
+    void view.search;
+    void view.filter;
+    void view.sort;
+    view.visibleCount = PER_PAGE;
   });
-
-  const matchesSearch = (s: CampaignStats) => {
-    const q = search.trim().toLowerCase();
-    if (!q) return true;
-    return [s.name, s.title, s.composer, ...Object.values(s.pieceNames)].some(
-      (v) => v.toLowerCase().includes(q),
-    );
-  };
-  // A logged-in viewer sees only campaigns whose next task they can claim;
-  // logged out, every campaign with an open task.
-  const openToClaim = (s: CampaignStats) => {
-    if (!viewer) return s.ready > 0 || s.toValidate > 0;
-    const next = nextTask(s, viewer);
-    return next?.action === "encode" || next?.action === "review";
-  };
-  const matchesFilter = (s: CampaignStats) =>
-    filter === "open"
-      ? openToClaim(s)
-      : filter === "nearly"
-        ? s.nearlyDone
-        : filter === "yours"
-          ? isOwned(s)
-          : true;
-  const filtered = $derived.by(() => {
-    const list = stats.filter(matchesSearch).filter(matchesFilter);
-    const ts = (v: string) => Date.parse(v || "0") || 0;
-    if (sort === "newest")
-      list.sort((a, b) => ts(b.createdAt) - ts(a.createdAt));
-    else if (sort === "progress")
-      list.sort(
-        (a, b) =>
-          (b.total ? b.done / b.total : 0) - (a.total ? a.done / a.total : 0),
-      );
-    else {
-      const active = (s: CampaignStats) => ts(s.lastActivity || s.createdAt);
-      list.sort((a, b) => active(b) - active(a));
-    }
-    return list;
-  });
-  const shown = $derived(filtered.slice(0, visibleCount));
-  const more = $derived(filtered.length - shown.length);
 </script>
 
 <svelte:head>
@@ -570,340 +265,111 @@
   <div class="layout" class:split={auth.user && wide.current}>
     {#if auth.user}
       <aside class="side">
-        {#if attention.length > 0}
-          <section class="panel">
-            <h2 class="stitle danger">
-              <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs
-              your attention
-            </h2>
-            <div class="items">
-              {#each shownAttention as a (a.key)}
-                {#if a.kind === "change"}
-                  <a class="item" href={taskHref(a.campaignSlug, a.task)}>
-                    <span class="itext">
-                      <span class="ititle" title={a.title}>{a.title}</span>
-                      <span class="isub">{a.campaign}</span>
-                    </span>
-                    <span
-                      class="chip chip-fail"
-                      title="A review asked for changes; the task is back with its encoder."
-                      >Change request</span
-                    >
-                  </a>
-                {:else}
-                  <a
-                    class="item"
-                    href={taskHref(a.feed.campaignSlug, a.feed.task)}
-                  >
-                    <span class="itext">
-                      <span class="ititle" title={a.feed.taskTitle}
-                        >{a.feed.taskTitle}</span
-                      >
-                      <span class="isub" title={a.feed.comment.body}
-                        >@{handle(a.feed.logins, a.feed.comment.author_id)}: “{a
-                          .feed.comment.body}”</span
-                      >
-                    </span>
-                    <span class="chip chip-note">Comment</span>
-                  </a>
-                {/if}
-              {/each}
-              {#if attention.length > attentionMax}
-                <button
-                  type="button"
-                  class="btn moretoggle"
-                  aria-expanded={allAttention}
-                  onclick={() => (allAttention = !allAttention)}
-                  >{allAttention
-                    ? "Show fewer"
-                    : `Show all ${attention.length}`}<Icon
-                    name={allAttention ? "chevron-up" : "chevron-down"}
-                  /></button
-                >
-              {/if}
-            </div>
-          </section>
-        {/if}
-
-        <!-- Narrow screens drop the work bar for a volunteer with no work. -->
-        {#if wide.current || tasks.length > 0 || listLoading}
-          <section class="panel" class:fold={!wide.current}>
-            {#if wide.current}
-              <div class="phead">
-                <h2 class="stitle">Your open work</h2>
-                <span class="countpill">{openCount} to do</span>
-              </div>
-            {:else}
-              <h2 class="barh">
-                <button
-                  type="button"
-                  class="workbar"
-                  aria-label={`Your open work: ${openCount} to do, ${listLoading && tasks.length === 0 ? "loading" : workSummary}`}
-                  aria-expanded={workOpen}
-                  aria-controls="worklist"
-                  onclick={() => (workOpen = !workOpen)}
-                >
-                  <span class="phead"
-                    ><span class="btitle">Your open work</span><span
-                      class="countpill">{openCount} to do</span
-                    ></span
-                  >
-                  <span class="wsum"
-                    >{listLoading && tasks.length === 0
-                      ? "Loading…"
-                      : workSummary}</span
-                  >
-                  <Icon name={workOpen ? "chevron-up" : "chevron-down"} />
-                </button>
-              </h2>
-            {/if}
-            {#if wide.current || workOpen}
-              <div class="items" id="worklist">
-                {#if listLoading && tasks.length === 0}
-                  <p class="note">Loading your claimed tasks…</p>
-                {:else if openWork.length === 0}
-                  <p class="note">
-                    No open work. Claim a task from a campaign.
-                  </p>
-                {/if}
-                {#each shownWork as t (`${t.group}:${t.campaignSlug}:${t.task}:${t.subtask}`)}
-                  {#if t.group === "awaiting"}
-                    <a
-                      class="item"
-                      href={taskHref(t.campaignSlug, t.task)}
-                      title={reviewMeta(t)}
-                    >
-                      <span class="itext">
-                        <span class="ititle" title={t.title}>{t.title}</span>
-                        <span class="isub">{t.campaign}</span>
-                        <span class="imeta">{reviewMeta(t)}</span>
-                      </span>
-                      <span class="chip">review</span>
-                    </a>
-                  {:else}
-                    <div class="item">
-                      <a
-                        class="itext"
-                        href={t.group === "validating"
-                          ? reviewHref(t.campaignSlug, t.locator, t.task)
-                          : taskHref(t.campaignSlug, t.task)}
-                        title={claimMeta(t)}
-                      >
-                        <span class="ititle" title={t.title}>{t.title}</span>
-                        <span class="isub">{t.campaign}</span>
-                        <span class="imeta">{claimMeta(t)}</span>
-                      </a>
-                      {#if t.group === "encoding"}
-                        <span class="chip">encoding</span>
-                      {:else}
-                        <span class="chip">review · reviewing</span>
-                      {/if}
-                      {#if t.group === "encoding"}
-                        {@const act = taskAction(t, "continue")}
-                        <div class="iacts">
-                          {#if act.target === "mei-friend"}
-                            <button
-                              type="button"
-                              class="btn"
-                              disabled={runner.busy || processing(t)}
-                              onclick={() => openEditor(t)}
-                              title={act.title}
-                              >{act.label} <Icon name="external" /></button
-                            >
-                          {:else}
-                            <a
-                              class="btn"
-                              href={processing(t)
-                                ? undefined
-                                : (taskActionHref(t.campaignSlug, t, act) ??
-                                  undefined)}
-                              aria-disabled={processing(t)}
-                              title={act.title}>{act.label}</a
-                            >
-                          {/if}
-                        </div>
-                      {/if}
-                    </div>
-                  {/if}
-                {/each}
-                {#if openWork.length > SIDE_MAX}
-                  <button
-                    type="button"
-                    class="btn moretoggle"
-                    aria-expanded={allWork}
-                    onclick={() => (allWork = !allWork)}
-                    >{allWork
-                      ? "Show fewer"
-                      : `Show all ${openWork.length}`}<Icon
-                      name={allWork ? "chevron-up" : "chevron-down"}
-                    /></button
-                  >
-                {/if}
-                {#if done.length > 0}
-                  <button
-                    type="button"
-                    class="donetoggle"
-                    aria-expanded={showCompleted}
-                    title={since ? `Contributing since ${since}` : undefined}
-                    onclick={() => (showCompleted = !showCompleted)}
-                    >{done.length} done <Icon
-                      name={showCompleted ? "chevron-up" : "chevron-down"}
-                      size={12}
-                    /></button
-                  >
-                  {#if showCompleted}
-                    {#each done.slice(0, 10) as t (`${t.campaignSlug}:${t.task}:${t.subtask}`)}
-                      <a
-                        class="item donerow"
-                        href={taskHref(t.campaignSlug, t.task)}
-                        title={reviewMeta(t)}
-                      >
-                        <span class="itext">
-                          <span class="ititle" title={t.title}>{t.title}</span>
-                          <span class="isub">{t.campaign}</span>
-                        </span>
-                        <span class="check"><Icon name="check" /></span>
-                      </a>
-                    {/each}
-                    {#if done.length > 10}
-                      <p class="note small">
-                        Showing the latest 10 of {done.length}
-                      </p>
-                    {/if}
-                  {/if}
-                {/if}
-              </div>
-            {/if}
-          </section>
-        {/if}
+        <CampaignAttention
+          stats={list.stats}
+          {viewer}
+          user={auth.user}
+          bind:showAll={allAttention}
+        />
+        <CampaignOpenWork
+          stats={list.stats}
+          {viewer}
+          {now}
+          wide={wide.current}
+          loading={list.loading}
+          incomplete={list.failed > 0 || list.incomplete}
+          busy={runner.busy}
+          {processing}
+          onOpenEditor={openEditor}
+          bind:open={workOpen}
+          bind:showAll={allWork}
+          bind:showCompleted
+        />
       </aside>
     {/if}
 
     <section class="list">
-      <div class="tools">
-        <label class="search">
-          <Icon name="search" />
-          <input
-            type="search"
-            bind:value={search}
-            bind:this={searchInput}
-            placeholder="Title, composer or piece"
-            aria-label="Search campaigns"
-          />
-        </label>
-        <label class="sort" title={`Sort campaigns: ${sortLabels[sort]}`}>
-          <Icon name="sort" />
-          <span class="sortlabel">{sortLabels[sort]}</span>
-          <span class="sortchev"><Icon name="chevron-down" size={12} /></span>
-          {#if sort !== "active"}<span class="sortdot"></span>{/if}
-          <select bind:value={sort} aria-label="Sort campaigns">
-            <option value="active">{sortLabels.active}</option>
-            <option value="newest">{sortLabels.newest}</option>
-            <option value="progress">{sortLabels.progress}</option>
-          </select>
-        </label>
-      </div>
-      <div class="shead">
-        <div class="phead">
-          <h2 class="stitle">All campaigns</h2>
-          <span
-            class="countpill"
-            title={listFailed > 0
-              ? `${listFailed} more could not be loaded`
-              : undefined}>{listLoaded ? filtered.length : "…"}</span
-          >
-        </div>
-        <div class="seg" role="group" aria-label="Filter campaigns">
-          <button
-            type="button"
-            class:on={filter === "all"}
-            aria-pressed={filter === "all"}
-            onclick={() => (filter = "all")}>All</button
-          >
-          <button
-            type="button"
-            class:on={filter === "open"}
-            aria-pressed={filter === "open"}
-            onclick={() => (filter = "open")}>Open to claim</button
-          >
-          <button
-            type="button"
-            class:on={filter === "nearly"}
-            aria-pressed={filter === "nearly"}
-            title="Campaigns with at least 80% of their tasks done"
-            onclick={() => (filter = "nearly")}>Nearly done</button
-          >
-          {#if auth.user}
-            <button
-              type="button"
-              class="yoursopt"
-              class:on={filter === "yours"}
-              aria-pressed={filter === "yours"}
-              onclick={() => (filter = "yours")}>Yours</button
-            >
-          {/if}
-        </div>
-      </div>
-      {#if !listError && listIncomplete}
+      <CampaignListToolbar
+        bind:search={view.search}
+        bind:sort={view.sort}
+        bind:filter={view.filter}
+        bind:searchInput
+        count={list.loaded ? view.filtered.length : "…"}
+        failed={list.failed}
+        showYours={!!auth.user}
+      />
+      {#if !list.error && list.incomplete}
         <Notice
           tone="warn"
           title="Some campaigns may be missing"
           detail="GitHub's search stopped before it was done."
-          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+          action={{
+            label: "Try again",
+            run: list.retry,
+            disabled: list.loading,
+          }}
         />
       {/if}
-      {#if !listError && listFailed > 0}
+      {#if !list.error && list.failed > 0}
         <Notice
           tone="err"
-          title={`${listFailed} campaign${listFailed === 1 ? "" : "s"} couldn't be loaded`}
-          detail={`${partialRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${listFailure?.message ?? ""}`}
-          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+          title={`${list.failed} campaign${list.failed === 1 ? "" : "s"} couldn't be loaded`}
+          detail={`${list.partialRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${list.failure?.message ?? ""}`}
+          action={{
+            label: "Try again",
+            run: list.retry,
+            disabled: list.loading,
+          }}
         />
       {/if}
-      {#if listError}
+      {#if list.error}
         <Notice
           tone="err"
           title="Couldn't load the campaigns"
-          detail={`${listRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${listError.message}`}
-          action={{ label: "Try again", run: retryList, disabled: listLoading }}
+          detail={`${list.rateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${list.error.message}`}
+          action={{
+            label: "Try again",
+            run: list.retry,
+            disabled: list.loading,
+          }}
         />
-      {:else if listLoaded && stats.length === 0}
+      {:else if list.loaded && list.stats.length === 0}
         <p class="note">No campaigns yet. Create one with New campaign.</p>
-      {:else if (listLoading || auth.status === "loading") && stats.length === 0}
+      {:else if (list.loading || auth.status === "loading") && list.stats.length === 0}
         <p class="note">Loading campaigns…</p>
-      {:else if shown.length === 0}
+      {:else if view.shown.length === 0}
         <p class="note noteline">
           <span>No campaign matches this search or filter.</span>
           <button
             type="button"
             class="btn"
             onclick={() => {
-              search = "";
-              filter = "all";
+              view.search = "";
+              view.filter = "all";
               searchInput?.focus();
             }}>Show all campaigns</button
           >
         </p>
       {:else}
         <div class="shelf">
-          {#each shown as s (s.repoId)}
+          {#each view.shown as s (s.repoId)}
             <CampaignRow
               stats={s}
-              owned={isOwned(s)}
+              owned={isOwned(s, auth.user)}
               viewer={viewer ?? ""}
               busy={runner.busy}
               onact={claimNext}
             />
           {/each}
         </div>
-        {#if more > 0}
+        {#if view.more > 0}
           <button
             type="button"
             class="btn showmore"
-            onclick={() => (visibleCount += PER_PAGE)}
-            >Show {Math.min(PER_PAGE, more)} more campaign{Math.min(
+            onclick={() => (view.visibleCount += PER_PAGE)}
+            >Show {Math.min(PER_PAGE, view.more)} more campaign{Math.min(
               PER_PAGE,
-              more,
+              view.more,
             ) === 1
               ? ""
               : "s"}
@@ -911,7 +377,7 @@
           >
         {/if}
       {/if}
-      {#if !auth.user && auth.status === "anonymous" && !listRateLimit && !partialRateLimit}
+      {#if !auth.user && auth.status === "anonymous" && !list.rateLimit && !list.partialRateLimit}
         <p class="note login-hint noteline">
           <span
             >{#if auth.expired}Your GitHub login has expired.{/if}
@@ -959,11 +425,6 @@
     font-size: 13px;
     color: var(--ink-soft);
   }
-  .note.small {
-    padding: 4px 0;
-    font-size: 12.5px;
-    color: var(--ink-faint);
-  }
   /* Wide screens: the viewer's work in a side column beside the list. */
   .layout {
     flex: 1;
@@ -987,324 +448,12 @@
     position: sticky;
     top: 0;
   }
-  .panel {
-    padding: 14px 16px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
-  }
-  .panel.fold {
-    padding: 0;
-  }
-  .fold .items {
-    padding: 0 16px 10px;
-  }
-  .phead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .panel > .phead,
-  .panel > .stitle {
-    margin-bottom: 6px;
-  }
-  .stitle {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
-  }
-  .stitle.danger {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  /* The orange finger-up hand leads the attention section. */
-  .hand-attn {
-    height: 22px;
-    flex: none;
-  }
-  /* The folded work panel's header: one line that opens the list. */
-  .barh {
-    margin: 0;
-  }
-  .workbar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    width: 100%;
-    min-height: 40px;
-    padding: 4px 12px 4px 16px;
-    font: inherit;
-    color: var(--ink-soft);
-    text-align: left;
-    background: none;
-    border: 0;
-    border-radius: 14px;
-    cursor: pointer;
-  }
-  .btitle {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--ink);
-    white-space: nowrap;
-  }
-  .wsum {
-    flex: 1;
-    min-width: 0;
-    text-align: right;
-    font-size: 13px;
-    font-weight: 400;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .items {
-    display: flex;
-    flex-direction: column;
-  }
-  .item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px 10px;
-    margin: 0 -10px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    color: inherit;
-    text-decoration: none;
-  }
-  @media (hover: hover) {
-    a.item:hover {
-      background: var(--bg-tint);
-    }
-  }
-  .itext {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    color: inherit;
-    text-decoration: none;
-  }
-  /* In the narrow side column titles wrap to at most two lines, so their end
-     still tells similar tasks apart; full width, they keep to one line. */
-  .ititle {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--ink);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-  }
-  .layout:not(.split) .ititle {
-    display: block;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  @media (hover: hover) {
-    a.itext:hover .ititle {
-      color: var(--link);
-    }
-  }
-  .isub {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* The claim or review details: a tooltip where a pointer can hover,
-     a visible line on phones. */
-  .imeta {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-  @media (max-width: 560px) {
-    .imeta {
-      position: static;
-      width: auto;
-      height: auto;
-      clip-path: none;
-      white-space: normal;
-      font-size: 12.5px;
-      color: var(--ink-faint);
-    }
-  }
-  .iacts {
-    grid-column: 1 / -1;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 8px;
-  }
-  .donetoggle {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 32px;
-    margin-top: 4px;
-    padding: 6px 0 0;
-    font: 600 12.5px var(--font);
-    color: var(--ink-soft);
-    background: none;
-    border: 0;
-    border-top: 1px solid var(--line);
-    cursor: pointer;
-  }
-  @media (hover: hover) {
-    .donetoggle:hover {
-      color: var(--accent);
-    }
-  }
-  .moretoggle {
-    align-self: flex-start;
-  }
-  .donerow .ititle {
-    font-weight: 400;
-    color: var(--ink-soft);
-  }
-  .check {
-    display: flex;
-    color: var(--ok);
-  }
-  /* The campaign list: search and sort, then the heading with the filter. */
+  /* The campaign list: the toolbar, then the rows. */
   .list {
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
-  }
-  .tools {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .search {
-    flex: 1;
-    min-width: 0;
-    max-width: 520px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    padding: 0 12px;
-    box-sizing: border-box;
-    color: var(--ink-faint);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-  }
-  /* The input has no outline of its own; the field shows the focus. */
-  .search:focus-within {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    min-height: 32px;
-    padding: 0;
-    font: 400 14px var(--font);
-    color: var(--ink);
-    background: transparent;
-    border: 0;
-    outline: none;
-  }
-  .search input::placeholder {
-    color: var(--ink-faint);
-  }
-  /* The sort control is a native select laid transparently over a button
-     face, so the platform's own menu opens. */
-  .sort {
-    position: relative;
-    flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 32px;
-    padding: 6px 14px;
-    box-sizing: border-box;
-    font: 600 12.5px var(--font);
-    color: var(--ink-soft);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 999px;
-    cursor: pointer;
-  }
-  .sort:focus-within {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
-  @media (hover: hover) {
-    .sort:hover {
-      color: var(--accent);
-      border-color: var(--accent);
-    }
-  }
-  .sortchev {
-    display: flex;
-  }
-  /* Phones show the sort as an icon; a dot marks a sort other than the
-     default. */
-  .sortdot {
-    display: none;
-  }
-  .sort select {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    opacity: 0;
-    cursor: pointer;
-  }
-  @media (max-width: 560px) {
-    .sort {
-      width: 32px;
-      padding: 0;
-      justify-content: center;
-    }
-    .sortlabel,
-    .sortchev {
-      display: none;
-    }
-    .sortdot {
-      display: block;
-      position: absolute;
-      top: 3px;
-      right: 3px;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--accent);
-    }
-  }
-  .shead {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px 12px;
-  }
-  .shead .seg {
-    max-width: 100%;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  /* The owner orange reaches 4.5:1 on the grey track only in its deeper
-     tone; the dark theme's light orange already does. */
-  .seg > button.yoursopt {
-    color: var(--warn-btn-hover);
-  }
-  :global([data-theme="dark"]) .seg > button.yoursopt {
-    color: var(--owner);
   }
   .shelf {
     container: shelf / inline-size;

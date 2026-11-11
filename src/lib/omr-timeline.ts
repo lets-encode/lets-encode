@@ -14,9 +14,9 @@ import { staffKeysig } from "./mei-facsimile.ts";
 import type { MeasureBox, ParsedFacsimile } from "./mei-facsimile.ts";
 import { pageSystems } from "./omr-layout.ts";
 import {
-  clefToken,
   correctClef,
   fifthsFor,
+  plainClef,
   staffClefToken,
   type ClefCorrectionState,
 } from "./omr-musicxml.ts";
@@ -24,7 +24,6 @@ import { sameBox } from "./omr-record.ts";
 import type { OmrRecord, OmrStaffEntry } from "./omr-record.ts";
 import { suggestStaffAssignment, type ScoreStaff } from "./omr-staff-assign.ts";
 import {
-  clefTokenOf,
   stitchPage,
   type PageSignatures,
   type StitchChange,
@@ -49,16 +48,9 @@ export const scoreStaves = (
   parsed: Pick<ParsedFacsimile, "scoreDef">,
 ): ScoreStaff[] =>
   parsed.scoreDef.staves.map((s) => ({
-    clef:
-      s.clefShape === "perc" || s.clefShape === "TAB"
-        ? s.clefShape
-        : `${s.clefShape}${s.clefLine}`,
+    clef: plainClef(staffClefToken(s)),
     label: s.label,
   }));
-
-/** A clef token without its octave, as the staff assignment compares clefs. */
-const plainClef = (token: string | null): string | null =>
-  token?.replace(/[+-]\d$/, "") ?? null;
 
 /**
  * Every page's staves, in page order. `parts` are the score staves the boxes
@@ -106,7 +98,7 @@ export function pieceStaves(
         : suggestStaffAssignment(
             system.map((box, i) => ({
               box,
-              clef: clefToken(entries[s][i]?.musicxml ?? null),
+              clef: plainClef(staffClefToken(entries[s][i]?.musicxml ?? null)),
               label: entries[s][i]?.label ?? "",
             })),
             parts,
@@ -140,7 +132,7 @@ export function pieceStaves(
           // The last clef the staff holds is in force on its score staff.
           const last = xml?.match(/<clef\b[^>]*>[\s\S]*?<\/clef>/g)?.pop();
           if (last && placed[i] > 0)
-            clefs[placed[i] - 1] = plainClef(clefTokenOf(last));
+            clefs[placed[i] - 1] = plainClef(staffClefToken(last));
           return xml;
         }),
       );
@@ -189,7 +181,7 @@ function scoreStart(
 ): { clefs: string[] } & PageSignatures {
   const { keysig, meterCount, meterUnit, meterSym } = parsed.scoreDef;
   return {
-    clefs: parsed.scoreDef.staves.map(staffClefToken),
+    clefs: parsed.scoreDef.staves.map((s) => staffClefToken(s)),
     fifths: fifthsFor(keysig),
     keys: parsed.scoreDef.staves.map((staff) =>
       fifthsFor(staffKeysig(keysig, staff)),
@@ -245,7 +237,7 @@ export function openingClefs(
           ? /<clef\b[^>]*>[\s\S]*?<\/clef>/.exec(entry.musicxml)?.[0]
           : undefined;
         if (n > 0 && n <= staffCount && clefs[n - 1] === null && clef)
-          clefs[n - 1] = clefTokenOf(clef);
+          clefs[n - 1] = staffClefToken(clef);
       }),
     );
   }

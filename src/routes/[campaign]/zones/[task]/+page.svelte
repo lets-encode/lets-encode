@@ -1,254 +1,88 @@
 <script lang="ts">
-  import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import { onDestroy, tick, untrack, type Snippet } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { auth, forge } from "$lib/auth.svelte.ts";
-  import type { ForgeClient } from "$lib/forge/types.ts";
+  import { auth } from "$lib/auth.svelte.ts";
   import { commands, invoke } from "$lib/commands.ts";
-  import type {
-    CommandContext,
-    CommentAnchorInput,
-    FacsimileTaskData,
-    Result,
-  } from "$lib/commands.ts";
-  import {
-    readingOrderRows,
-    measureLabels,
-    MEASURE_SIGNS,
-    SIGN_TEXT,
-    type MeasureSign,
-  } from "$lib/mei-facsimile.ts";
+  import type { CommandContext, Result } from "$lib/commands.ts";
   import { taskDescription } from "$lib/campaign-graph.ts";
-  import type { CommentRow } from "$lib/campaign-tables.ts";
-  import { anchorCell, MAX_ANCHOR_LENGTH } from "$lib/campaign-submit.ts";
-  import {
-    DOCKED_QUERY,
-    PANEL_MIN_REVIEW,
-    readSidePanel,
-  } from "$lib/side-panels.ts";
-  import type { PageModel, MeasureBox } from "$lib/mei-facsimile.ts";
-  import {
-    buildSpreads,
-    defaultSpreadView,
-    shownPagesLabel,
-  } from "$lib/page-spreads.ts";
-  import {
-    applyAnchor,
-    pagingRow,
-    readAnchor,
-    rowView,
-    scrollToRow,
-  } from "$lib/page-scroll.ts";
+  import { PANEL_MIN_REVIEW, readSidePanel } from "$lib/side-panels.ts";
+  import type { MeasureBox } from "$lib/mei-facsimile.ts";
   import LoadingOverlay from "$lib/components/LoadingOverlay.svelte";
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
-  import Notice from "$lib/components/Notice.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
-  import { zoomGestures } from "$lib/zoom-gestures.ts";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import PreTaskBox from "$lib/components/PreTaskBox.svelte";
   import ReviewActions from "$lib/components/ReviewActions.svelte";
-  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
-  import BoxHandles, { HANDLES } from "$lib/components/BoxHandles.svelte";
-  import BoxModeToggles from "$lib/components/BoxModeToggles.svelte";
-  import SelectionPanel from "$lib/components/SelectionPanel.svelte";
-  import PageNav from "$lib/components/PageNav.svelte";
-  import PageSpreadControls from "$lib/components/PageSpreadControls.svelte";
-  import ViewerToolbar from "$lib/components/ViewerToolbar.svelte";
-  import ZoomLevel, {
-    ZOOM_MAX as ZOOM_MAX_PERCENT,
-    ZOOM_MIN as ZOOM_MIN_PERCENT,
-  } from "$lib/components/ZoomLevel.svelte";
-  import StepGlyph from "$lib/components/StepGlyph.svelte";
-  import InstrumentNaming from "$lib/components/InstrumentNaming.svelte";
-  import {
-    assignUnit,
-    mergeInstrument,
-    firstNamingSystem,
-    dropParts,
-    inSystem,
-    nameUnit,
-    namingProblem,
-    namingUnits,
-    NO_INSTRUMENTS,
-    pruneInstruments,
-    suggestFirstSystem,
-    suggestFromList,
-    unitBoxes,
-    unitName,
-    type DoubleNaming,
-    type NamingUnit,
-  } from "$lib/instrument-naming.ts";
-  import { readStaffLabels } from "$lib/ocr.ts";
   import { createOmrClient } from "$lib/omr-client.ts";
-  import {
-    recognisePiece,
-    type PieceRecognition,
-  } from "$lib/omr-piece-recognition.ts";
-  import {
-    omrRecordPath,
-    parseOmrRecord,
-    serializeOmrRecord,
-  } from "$lib/omr-record.ts";
-  import {
-    layoutBoxes,
-    layoutRecord,
-    LAYOUT_PARAMETERS,
-    type CocoLayout,
-    type LayoutGroup,
-    type LayoutInstruments,
-  } from "$lib/omr-layout.ts";
   import { provider, omr as omrModels } from "$lib/forge/config.ts";
-  import {
-    clearCachedLayouts,
-    readCachedLayouts,
-    writeCachedLayout,
-  } from "$lib/omr-layout-cache.ts";
-  import { resolveRepoRelativeTarget } from "$lib/facsimile-images.ts";
-  import {
-    centreInRegions,
-    drawnBox,
-    movedBox,
-    regionsView,
-  } from "$lib/box-geometry.ts";
   import { BoxEditor } from "$lib/box-editor.svelte.ts";
+  import {
+    boxNameOf,
+    STEP_LAYERS,
+    STEP_NAMES,
+    toPageModels,
+    type Layer,
+  } from "$lib/zones/edit-pages.ts";
+  import {
+    draftInput,
+    layoutSubmission,
+    submitBlock as submitBlockOf,
+    type SubmitState,
+    type ZoneWork,
+  } from "$lib/zones/submission.ts";
+  import {
+    ZonePages,
+    type ZoneEditor,
+    type ZoneSnapshot,
+  } from "$lib/zones/zone-pages.svelte.ts";
+  import {
+    LayoutSteps,
+    type LayoutStep,
+  } from "$lib/zones/layout-steps.svelte.ts";
+  import { NARROW_TOOL, PageView } from "$lib/zones/page-view.svelte.ts";
+  import { BoxSelection } from "$lib/zones/box-selection.svelte.ts";
+  import { InstrumentStep } from "$lib/zones/instrument-step.svelte.ts";
+  import { StaffTranscription } from "$lib/zones/staff-transcription.svelte.ts";
+  import { LayoutDetection } from "$lib/zones/layout-detection.svelte.ts";
+  import ZoneToolbar from "$lib/components/zones/ZoneToolbar.svelte";
+  import ZoneViewerToolbar from "$lib/components/zones/ZoneViewerToolbar.svelte";
+  import ZoneDesk from "$lib/components/zones/ZoneDesk.svelte";
+  import ZoneSteps from "$lib/components/zones/ZoneSteps.svelte";
+  import ZoneSelection from "$lib/components/zones/ZoneSelection.svelte";
+  import ZoneFooter from "$lib/components/zones/ZoneFooter.svelte";
+  import ZoneLoupe from "$lib/components/zones/ZoneLoupe.svelte";
 
   // The URL carries the campaign name and task; the repo is resolved from the
   // name (name → stable repo id → current owner/name) — see resolveCampaign.
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
 
-  // Editor-side zone: the box, the label override (null = automatic), the
-  // computed label, the break flags and the pickup flag. The page break is
-  // derived from position (each page's first measure), not stored per-zone.
-  // `sb` follows the reading-order rows (a row's first box starts a system)
-  // unless `sbOverride` holds a value set by hand.
-  type EditZone = {
-    box: MeasureBox;
-    override: string | null;
-    label: string;
-    sb: boolean;
-    sbOverride: boolean | null;
-    mdiv: boolean;
-    pickup: boolean;
-    // Repeat barlines, the ending and the navigation signs (ZoneModel).
-    rptStart?: boolean;
-    rptEnd?: boolean;
-    rptBoth?: boolean;
-    ending?: string;
-    signs?: MeasureSign[];
-  };
-  // A staff or grand-staff box of an OMR-prepared piece. A staff box of an
-  // 'omr-instruments' piece carries the score staff (staffDef xml:id) the
-  // instruments step named for it.
-  type EditStaff = { box: MeasureBox; staff?: string };
-  type EditPage = {
-    image: string;
-    width: number;
-    height: number;
-    url: string;
-    // The background facsimile failed to load (empty download URL, or the
-    // browser refused the request — e.g. a CSP img-src that omits the raw host).
-    failed: boolean;
-    zones: EditZone[];
-    staves: EditStaff[];
-    grandstaves: EditStaff[];
-    // The piece's regions on the page; empty when it covers the whole page.
-    regions: MeasureBox[];
-  };
-  // The box layers. A measure-correction task edits measures with their
-  // numbers and breaks; a layout task (OMR) edits the staff boxes first, then
-  // the grand-staff boxes, then the measures, one layer at a time.
-  type Layer = "measures" | "staves" | "grandstaves";
-
-  const session = new PreTaskSession(
+  const session: PreTaskSession = new PreTaskSession(
     () => campaign,
     () => taskId,
     {
       loaded(d) {
         ed.clear();
-        anchor = { page: 0, frac: 0 };
-        rawLayouts = {};
-        seen = { staves: [], grandstaves: [], measures: [] };
-        named = d.instruments ?? NO_INSTRUMENTS;
-        // Boxes outside the piece's regions on a page are dropped.
-        let droppedMeasures = false;
-        pages = d.model.pages.map((pg, i) => {
-          const regions = d.regions[i] ?? [];
-          const inPiece = (box: MeasureBox) => centreInRegions(box, regions);
-          const zones = pg.zones.filter((z) => inPiece(z.box));
-          if (zones.length < pg.zones.length) droppedMeasures = true;
-          return {
-            image: pg.image,
-            width: pg.width,
-            height: pg.height,
-            url: d.imageUrls[i],
-            failed: !d.imageUrls[i],
-            zones: zones.map((z) => ({
-              box: { ...z.box },
-              override: null,
-              label: z.label,
-              sb: z.sb,
-              sbOverride: null,
-              mdiv: z.mdiv,
-              pickup: z.pickup ?? false,
-              rptStart: z.rptStart,
-              rptEnd: z.rptEnd,
-              rptBoth: z.rptBoth,
-              ending: z.ending,
-              signs: z.signs ? [...z.signs] : undefined,
-            })),
-            staves: (pg.staves ?? [])
-              .filter(inPiece)
-              .map(({ staff, ...box }) => (staff ? { box, staff } : { box })),
-            grandstaves: (pg.grandstaves ?? [])
-              .filter(inPiece)
-              .map((box) => ({ box: { ...box } })),
-            regions,
-          };
-        });
-        // A score of one or two pages is shown whole: one page, or both side
-        // by side. Longer scores keep the two-up view with page 1 as a recto.
-        if (pages.length <= 2)
-          ({ view, firstOnRight } = defaultSpreadView(pages.length));
-        // A label that differs from what automatic numbering would produce is
-        // an override (e.g. 10a/10b) — keep it through renumbering. The
-        // measure after each one is included, since a pickup changes the
-        // label of the measure before it. With measures dropped, the labels
-        // left are numbered automatically.
-        if (droppedMeasures) renumber();
-        else {
-          const measures = numbering();
-          measures.forEach((m, i) => {
-            const auto = measureLabels(measures.slice(0, i + 2))[i];
-            if (m.zone.label !== auto) m.override = m.zone.label;
-          });
-          for (const m of measures) m.zone.override = m.override;
-        }
-        // Likewise a system beginning that differs from what the rows give.
-        pages.forEach((pg, p) => {
-          const starts = rowStarts(p);
-          for (const zone of pg.zones) {
-            if (zone.sb !== starts.has(zone.box)) zone.sbOverride = zone.sb;
-          }
-        });
+        view.anchor = { page: 0, frac: 0 };
+        model.load(d);
         // An edit switched to from a review continues at the step that was
         // in view: the steps before it count as checked. At the instruments
         // step it starts at the first system.
-        const from = editFrom;
-        editFrom = null;
+        const from = steps.editFrom;
+        steps.editFrom = null;
         if (from && d.holdsLock && d.status === "encoding_required") {
           for (const layer of STEP_LAYERS.slice(0, from - 1))
-            seen[layer] = pages.map((_, p) => p);
+            model.seen[layer] = model.pages.map((_, p) => p);
           if (from === 4) {
-            named = { ...named, fixed: false };
-            step4Pages = false;
-            step4Top.names = step4Top.pages = 0;
-            tick().then(() => desk?.scrollTo({ top: 0 }));
+            model.named = { ...model.named, fixed: false };
+            view.step4Pages = false;
+            view.step4Top.names = view.step4Top.pages = 0;
+            tick().then(() => view.desk?.scrollTo({ top: 0 }));
           }
         }
         ed.resetHistory();
@@ -256,9 +90,9 @@
       // A claim of an OMR layout task whose score carries no zones yet
       // continues into layout detection in the same overlay.
       afterClaim(f, d) {
-        if (!needsDetection()) return null;
-        detectedFor = taskId;
-        return detectSteps(f, d.fragment);
+        if (!detection.needsDetection()) return null;
+        detection.detectedFor = taskId;
+        return detection.detectSteps(f, d.fragment);
       },
     },
   );
@@ -274,7 +108,7 @@
     if (tables) recordCampaignTitle(campaign, tables.title);
   });
   const holds = $derived(session.holds);
-  const canEdit = $derived(session.canEdit);
+  const canEdit: boolean = $derived(session.canEdit);
   const busy = $derived(session.busy);
   const owner = $derived(session.campaign.owner);
   const repo = $derived(session.campaign.repo);
@@ -287,80 +121,17 @@
   // A layout task of an 'omr-instruments' piece also names the instruments,
   // in a fourth step.
   const naming = $derived(omr && data?.preparation === "omr-instruments");
-  // A layout task's steps: the staff boxes, the grand-staff boxes, the
-  // measures, and for naming the instruments.
-  type LayoutStep = 1 | 2 | 3 | 4;
-  let layoutStep = $state<LayoutStep>(1);
-  const STEP_LAYERS: Layer[] = ["staves", "grandstaves", "measures"];
-  // The layer the pointer edits; in a layout task the others are not drawn.
-  // The instruments step edits no boxes and shows its own view of the staves.
-  const tool = $derived<Layer>(
-    omr ? (STEP_LAYERS[layoutStep - 1] ?? "staves") : "measures",
-  );
-  const step4 = $derived(naming && layoutStep === 4);
-  const lastStep = $derived<LayoutStep>(naming ? 4 : 3);
-  // A layout task's review is approved once every step has been opened.
-  const STEP_NAMES = ["staff boxes", "grand staves", "measures", "instruments"];
-  // The step in view when the viewer switched their review to editing.
-  let editFrom: LayoutStep | null = null;
-  let stepsSeen = $state<number[]>([1]);
-  $effect(() => {
-    const step = layoutStep;
-    untrack(() => {
-      if (!stepsSeen.includes(step)) stepsSeen = [...stepsSeen, step];
-    });
+  const steps: LayoutSteps = new LayoutSteps({
+    omr: () => omr,
+    naming: () => naming,
   });
-  // The steps not opened yet; the next of them after the one in view.
-  const stepsMissing = $derived(
-    omr
-      ? Array.from({ length: lastStep }, (_, i) => i + 1).filter(
-          (n) => !stepsSeen.includes(n),
-        )
-      : [],
-  );
-  const nextMissing = $derived(
-    stepsMissing.find((n) => n > layoutStep) ?? stepsMissing[0],
-  );
-  const approveBlock = $derived(
-    stepsMissing.length
-      ? `Open ${stepsMissing.map((n) => `step ${n} (${STEP_NAMES[n - 1]})`).join(", ")} before approving.`
-      : null,
-  );
-  // The instruments step shows the name fields beside each system's
-  // opening or beside the whole pages (InstrumentNaming's `whole`), not the
-  // page view of the other steps; its controls (pages, zoom, page count)
-  // stay out of the toolbar. Each view keeps its scroll position.
-  let step4Pages = $state(false);
-  const step4Top = { names: 0, pages: 0 };
-  async function showStep4Pages(on: boolean) {
-    if (on === step4Pages || !desk) return;
-    step4Top[step4Pages ? "pages" : "names"] = desk.scrollTop;
-    step4Pages = on;
-    await tick();
-    desk.scrollTo({ top: step4Top[on ? "pages" : "names"] });
-  }
-  // Each step starts at the top of the first page.
-  function setLayoutStep(step: LayoutStep) {
-    layoutStep = step;
-    step4Pages = false;
-    step4Top.names = step4Top.pages = 0;
-    ed.setDrawMode(false);
-    showPage(0);
-  }
-  // A page's boxes in a layer, for the geometry code shared by all.
-  const items = (p: number, layer: Layer = tool): { box: MeasureBox }[] =>
-    layer === "staves"
-      ? pages[p].staves
-      : layer === "grandstaves"
-        ? pages[p].grandstaves
-        : pages[p].zones;
-  let pages = $state<EditPage[]>([]);
-  // The instruments the instruments step named, in score order; each staff
-  // box names its score staff (EditStaff.staff).
-  let named = $state<LayoutInstruments>(NO_INSTRUMENTS);
-  // The layout model's raw output per page index, kept from a detection run
-  // in this session for the submission; outside the edit history.
-  let rawLayouts = $state<Record<number, CocoLayout>>({});
+  const model: ZonePages = new ZonePages({
+    canEdit: () => canEdit,
+    commit: () => ed.commit(),
+  });
+  // A page's boxes in a layer, the active one by default.
+  const items = (p: number, layer: Layer = steps.tool) => model.items(p, layer);
+
   // The selection, the gestures and the undo history of the active layer's
   // boxes. In page pixels: a box is at least MIN_BOX each way, a drawn box
   // under DROP_BELOW was a click on the page, and an arrow key moves NUDGE
@@ -369,21 +140,18 @@
   const DROP_BELOW = 8;
   const NUDGE = 2;
   const NUDGE_FAR = 10;
-  const ed = new BoxEditor<
-    { box: MeasureBox },
-    { pages: EditPage[]; named: LayoutInstruments }
-  >({
-    items: (p) => (pages[p] ? items(p) : []),
+  const ed: ZoneEditor = new BoxEditor<{ box: MeasureBox }, ZoneSnapshot>({
+    items: (p) => (model.pages[p] ? items(p) : []),
     box: (item) => item.box,
-    page: (p) => pages[p],
-    surface: (p) => svgEls[p],
-    screenWidth: (p) => canvasW[p] || pages[p]?.width || 0,
+    page: (p) => model.pages[p],
+    surface: (p) => view.svgEls[p],
+    screenWidth: (p) => view.canvasW[p] || model.pages[p]?.width || 0,
     canEdit: () => canEdit,
-    canDraw: () => canEdit && showBoxes,
-    shown: () => showBoxes,
+    canDraw: () => canEdit && view.showBoxes,
+    shown: () => view.showBoxes,
     touch: () => coarse,
-    scope: () => tool,
-    add: (p, box) => items(p)[addBox(p, tool, box)],
+    scope: () => steps.tool,
+    add: (p, box) => items(p)[model.addBox(p, steps.tool, box)],
     remove: (p, item) => {
       const list = items(p);
       const z = list.indexOf(item);
@@ -393,41 +161,17 @@
     dropBelow: () => DROP_BELOW,
     nudge: { near: NUDGE, far: NUDGE_FAR },
     changed: settle,
-    // The instruments' names are undone with the boxes they name.
-    snapshot: () => ({
-      pages: clonePages(pages),
-      named: $state.snapshot(named),
-    }),
-    restore: (s) => {
-      pages = clonePages(s.pages);
-      named = structuredClone(s.named);
-    },
+    snapshot: () => model.snapshot(),
+    restore: (s) => model.restore(s),
   });
   $effect(() => ed.listen());
-  const selected = $derived(ed.selected);
-  /** The selected measure's number, prefilling a change request; '' for none. */
-  const selectedLabel = $derived.by(() => {
-    const zone =
-      selected && tool === "measures"
-        ? pages[selected.p]?.zones[selected.z]
-        : undefined;
-    return zone ? String(zone.override ?? zone.label) : "";
-  });
-  // The anchor a change request opens with: the selected box's page and
-  // measure, else the page in view. Spreads and the row in view are declared
-  // further down; the function runs only on a click.
-  const reviewPrefill = () => ({
-    page: String((selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0) + 1),
-    m1: anchorCell(selectedLabel),
-    m2: anchorCell(selectedLabel),
-  });
-  // Several boxes of one page and the active layer selected together (by
-  // Shift+click, Shift+drag or Select several), as their indices on the
-  // selected box's page; empty while one box or none is selected.
-  const groupZs = $derived(
-    selected ? ed.group.map((i) => items(selected.p).indexOf(i)) : [],
-  );
-  const inSelection = (p: number, z: number) => ed.inSelection(items(p)[z]);
+
+  // The cursor class for a resize handle: a corner gets the diagonal arrows,
+  // a side the axis arrows.
+
+  // The selected box's handles: the four edges, then the four corners.
+
+  // Arrow keys on a focused resize handle move that handle's edges.
 
   // On a touch screen a finger drag on the page scrolls it: a tap selects a
   // box, the selected box and its handles drag, and new boxes are drawn only
@@ -439,293 +183,158 @@
   // A comment button counts up to open the panel's comment field.
   let compose = $state(0);
 
-  // Page zoom: the fraction of the canvas width one page occupies. 1 = fit the
-  // canvas; above 1 the pages overflow and the desk scrolls horizontally.
-  const ZOOM_MIN = ZOOM_MIN_PERCENT / 100;
-  const ZOOM_MAX = ZOOM_MAX_PERCENT / 100;
-  let zoom = $state(1);
-  /** Below this tool-column width (a phone) the desk shows one page per row
-      and the toolbar keeps only undo, redo, the page navigation, fit width
-      and the ⋯ menu (the 559px container rule in the styles). */
-  const NARROW_TOOL = 560;
-  /** Below this tool-column width (a tablet) the page-count switch and
-      "Page 1 right" move into the ⋯ menu and zoom steps by buttons, so the
-      toolbar stays one row (the 959px container rule in the styles). */
-  const MEDIUM_TOOL = 960;
-
-  // The desk's inner size, for the whole-page fit.
-  let deskW = $state(0);
-  let deskH = $state(0);
-
-  // Where the piece covers only part of a page, the page shows that part:
-  // its regions widened by REGION_MARGIN of the page width, unless the whole
-  // page is asked for.
-  const REGION_MARGIN = 0.02;
-  let wholePage = $state(false);
-  const partOf = (pg: EditPage): MeasureBox =>
-    regionsView(pg.regions, pg, REGION_MARGIN);
-  const isWhole = (v: MeasureBox, pg: EditPage) =>
-    v.ulx <= 0 && v.uly <= 0 && v.lrx >= pg.width && v.lry >= pg.height;
-  const hasPartPages = $derived(pages.some((pg) => !isWhole(partOf(pg), pg)));
-  const shownArea = (pg: EditPage): MeasureBox =>
-    wholePage ? { ulx: 0, uly: 0, lrx: pg.width, lry: pg.height } : partOf(pg);
-
-  // The zoom at which a whole page fits in the desk: bounded by the height
-  // (using the tallest page), capped at 1 (the width fit). 76 covers the
-  // desk padding, the page heading above each sheet and the sheet's bottom
-  // margin. A page cropped to the piece fits its shown part.
-  function fitZoom(): number {
-    if (!pages.length || !deskW || !deskH) return 1;
-    const aspect = Math.max(
-      ...pages.map((pg) => {
-        const v = shownArea(pg);
-        return (v.lry - v.uly) / (v.lrx - v.ulx);
-      }),
-    );
-    const pagesW = deskW - 48;
-    const colW = shownView === "double" ? (pagesW - 4) / 2 : pagesW;
-    const usableH = deskH - 76;
-    if (colW <= 0 || usableH <= 0) return 1;
-    const z = usableH / (colW * aspect);
-    return Math.min(1, Math.max(ZOOM_MIN, Math.floor(z * 1000) / 1000));
-  }
-
-  // The fit in force, if any: it keeps the zoom at the fit as the desk
-  // resizes or the view changes, until the slider is moved. Each freshly
-  // loaded task opens at two pages per row and the whole-page fit; on a
-  // touch screen (a tablet) at one page per row and the page width, and in
-  // an upright window (docked), where a two-page row leaves the desk's
-  // lower part empty, or with a single page, at one page per row.
-  let fit = $state<"width" | "page" | null>("page");
-  let zoomInitFor = $state<FacsimileTaskData | null>(null);
-  $effect(() => {
-    if (!data || zoomInitFor === data) return;
-    zoomInitFor = data;
-    const touch = untrack(() => coarse);
-    fit = touch ? "width" : "page";
-    view =
-      touch || untrack(() => docked) || data.model.pages.length === 1
-        ? "single"
-        : "double";
+  const view: PageView = new PageView({
+    pages: () => model.pages,
+    data: () => data,
+    coarse: () => coarse,
+    step4: () => steps.step4,
+    deselect: () => ed.select(0, null),
+    boxesToggled: () => ed.clear(),
   });
-  // A narrow tool column has no whole-page fit: it shows the page width.
-  $effect(() => {
-    if (narrow && fit === "page") fit = "width";
+  const sel = new BoxSelection({
+    editor: ed,
+    model,
+    view,
+    tool: () => steps.tool,
+    canEdit: () => canEdit,
+    settle,
   });
-  $effect(() => {
-    if (fit === "width") zoom = 1;
-    else if (fit === "page") zoom = fitZoom();
-  });
-
-  // The pages scroll as rows of one or two pages. `view` is one or two pages
-  // per row; `firstOnRight` places page 1 as a right-hand page (recto), so a
-  // two-up view pairs 2|3, 4|5, … the way a score opens — the printed page
-  // number's side can't be read without OCR, so this convention (with the
-  // toggle) stands in for it.
-  let view = $state<"single" | "double">("double");
-  let firstOnRight = $state(true);
-  // A narrow tool column (a phone) shows one page per row and hides the
-  // switch; the chosen view returns when the column widens. The width is the
-  // toolbar's, the content box the container rules in the styles measure.
-  let toolW = $state(0);
-  const narrow = $derived(toolW > 0 && toolW < NARROW_TOOL);
-  const medium = $derived(toolW > 0 && toolW < MEDIUM_TOOL);
-  // A phone in portrait: the side panel is a sheet below the pages, and the
-  // page toolbar sits at its top.
-  const dockedQuery = new MediaQuery(DOCKED_QUERY, false);
-  const docked = $derived(dockedQuery.current);
-  const inSheet = $derived(narrow && docked);
-  const shownView = $derived(narrow ? "single" : view);
-  const spreads = $derived(buildSpreads(pages.length, shownView, firstOnRight));
-
-  // The desk scrolls through the rows, one per spread.
-  let desk = $state<HTMLElement | null>(null);
-  let rowEls = $state<HTMLElement[]>([]);
-  // What the desk shows, read from the scroll position.
-  let rowIndex = $state(0);
-  let shownRows = $state<number[]>([]);
-  let nearPages = $state<number[]>([]);
-  let atTop = $state(true);
-  let atEnd = $state(true);
-  // The position the desk returns to when the rows change size, kept by page
-  // so it survives the rows being re-sliced.
-  let anchor: { page: number; frac: number; x?: number } = {
-    page: 0,
-    frac: 0,
-  };
-  const shownPages = $derived(
-    shownRows.flatMap((r) => spreads[r]?.pages ?? []),
-  );
-  const spreadLabel = $derived(
-    shownPagesLabel(
-      spreads,
-      shownRows.length ? shownRows : [rowIndex],
-      pages.length,
-    ),
-  );
-
-  // Scroll events are read once per frame.
-  let scrollFrame = 0;
-  function deskScrollEvent() {
-    if (!scrollFrame)
-      scrollFrame = requestAnimationFrame(() => {
-        scrollFrame = 0;
-        deskScrolled();
-      });
-  }
-  function deskScrolled() {
-    if (!desk) return;
-    const rows = rowEls.slice(0, spreads.length);
-    const v = rowView(desk, rows);
-    rowIndex = v.current;
-    if (v.shown.join() !== shownRows.join()) shownRows = v.shown;
-    atTop = v.atTop;
-    atEnd = v.atEnd;
-    const near = v.near.flatMap((r) => spreads[r]?.pages ?? []);
-    if (near.join() !== nearPages.join()) nearPages = near;
-    const a = readAnchor(desk, rows);
-    if (a)
-      anchor = { page: spreads[a.row]?.pages[0] ?? 0, frac: a.frac, x: a.x };
-  }
-  // Zoom, the view, the desk size and a newly loaded task move every row; once
-  // the rows are laid out anew, the desk returns to the remembered position.
-  $effect(() => {
-    void [zoom, spreads, deskW, deskH, pages];
-    tick().then(() => {
-      const row = spreads.findIndex((s) => s.pages.includes(anchor.page));
-      if (!desk || row < 0) return;
-      applyAnchor(desk, rowEls.slice(0, spreads.length), { ...anchor, row });
-      deskScrolled();
-    });
-  });
-  /** Scroll a page's row (0-based page) to the top of the desk. */
-  function showPage(p: number) {
-    const row = spreads.findIndex((s) => s.pages.includes(p));
-    if (!desk || row < 0) return;
-    anchor = { page: spreads[row].pages[0], frac: 0 };
-    scrollToRow(desk, rowEls.slice(0, spreads.length), row);
-    deskScrolled();
-  }
-  // The whole-page fit also scrolls the row being read to the top, so its
-  // pages are in view from top to bottom.
-  function fitWholePage() {
-    const p = spreads[rowIndex]?.pages[0] ?? 0;
-    fit = "page";
-    tick().then(() => showPage(p));
-  }
 
   // The pages shown in each step. Submission waits until every page with
-  // boxes in a step has been on screen in that step: a page without any
-  // (no music, no braces) is a valid result that needs no look.
-  let seen = $state<Record<Layer, number[]>>({
-    staves: [],
-    grandstaves: [],
-    measures: [],
-  });
+  // boxes in a step has been on screen in that step.
   $effect(() => {
-    const shown = shownPages;
-    const layer = tool;
-    if (step4) return;
-    untrack(() => {
-      const added = shown.filter((p) => !seen[layer].includes(p));
-      if (added.length) seen[layer] = [...seen[layer], ...added];
-    });
+    const shown = view.shownPages;
+    const layer = steps.tool;
+    if (steps.step4) return;
+    untrack(() => model.markSeen(layer, shown));
   });
-  const pageList = (ps: number[]) => ps.map((p) => p + 1).join(", ");
-  const pagesWord = (ps: number[]) =>
-    `${ps.length === 1 ? "page" : "pages"} ${pageList(ps)}`;
+
+  const instruments = new InstrumentStep({
+    model,
+    runner,
+    omr: () => omr,
+    naming: () => naming,
+    layoutStep: () => steps.layoutStep,
+    canEdit: () => canEdit,
+    taskId: () => taskId,
+    data: () => data,
+    owner: () => owner,
+    repo: () => repo,
+    commit: () => ed.commit(),
+  });
+  const transcriber = new StaffTranscription({
+    omr: () => omr,
+    naming: () => naming,
+    step4: () => steps.step4,
+    canEdit: () => canEdit,
+    data: () => data,
+    pages: () => model.pages,
+    owner: () => owner,
+    repo: () => repo,
+    repoId: () => repoId,
+    omrClient,
+  });
+
+  // The work as the draft, the submission and its checks read it.
+  const work: ZoneWork & SubmitState = {
+    get omr() {
+      return omr;
+    },
+    get naming() {
+      return naming;
+    },
+    get pages() {
+      return model.pages;
+    },
+    get rawLayouts() {
+      return model.rawLayouts;
+    },
+    get named() {
+      return model.named;
+    },
+    get recognition() {
+      return transcriber.recognition;
+    },
+    get seen() {
+      return model.seen;
+    },
+    get shownNamed() {
+      return instruments.shownNamed;
+    },
+    get namingModels() {
+      return instruments.namingModels;
+    },
+    get runningKey() {
+      return transcriber.runningKey;
+    },
+    get recognisedKey() {
+      return transcriber.recognisedKey;
+    },
+    get staffKey() {
+      return transcriber.staffKey;
+    },
+  };
   // Why the task cannot be submitted yet, or null when it can.
-  const submitBlock = $derived.by(() => {
-    const unseen = (layer: Layer) =>
-      pages.flatMap((_, p) =>
-        seen[layer].includes(p) || !items(p, layer).length ? [] : [p],
-      );
-    if (!omr) {
-      const pending = unseen("measures");
-      return pending.length
-        ? `Show ${pagesWord(pending)} before submitting.`
-        : null;
-    }
-    for (const [i, layer] of STEP_LAYERS.entries()) {
-      const pending = unseen(layer);
-      if (pending.length) {
-        return `Show ${pagesWord(pending)} in step ${i + 1} before submitting.`;
-      }
-    }
-    const noMeasures = pages.flatMap((pg, p) =>
-      pg.staves.length && !pg.zones.length ? [p] : [],
-    );
-    if (noMeasures.length) {
-      return `${noMeasures.length === 1 ? "Page" : "Pages"} ${pageList(noMeasures)} ${noMeasures.length === 1 ? "has" : "have"} staff boxes but no measures.`;
-    }
-    if (!naming) return null;
-    if (!named.fixed)
-      return "Name the other systems in step 4 (Other systems) before submitting.";
-    const problem = namingProblem(shownNamed, namingModels);
-    if (problem) return problem;
-    if (runningKey !== null)
-      return "Wait until the staves are transcribed before submitting.";
-    if (recognisedKey !== staffKey)
-      return "The staves have to be transcribed before submitting.";
-    return null;
+  const submitBlock = $derived(submitBlockOf(work));
+
+  // While the task is held, its boxes are saved as a draft after each pause
+  // in editing. A drag in progress (ed.dragging) defers it to the drag's end,
+  // so the score is not serialised on every pointer move.
+  $effect(() => {
+    if (ed.dragging || !session.canEdit || model.pages.length === 0) return;
+    session.draft(draftInput(work, omrModels.layoutModel));
   });
 
-  // One row on. Back from partway down a row returns to that row's top first.
-  function go(delta: number) {
-    if (!desk) return;
-    const rows = rowEls.slice(0, spreads.length);
-    const next = spreads[pagingRow(desk, rows, rowIndex, delta)];
-    if (!next) return;
-    showPage(next.pages[0]);
-    ed.select(0, null);
-  }
-
-  // Every measure in reading order with what its label is computed from.
-  const numbering = () =>
-    pages.flatMap((pg, p) =>
-      pg.zones.map((zone, z) => ({
-        zone,
-        override: zone.override,
-        pickup: zone.pickup,
-        sectionStart: startsMovement(p, z),
-      })),
+  const submit = () =>
+    run(
+      (c) =>
+        omr
+          ? invoke(
+              commands.submitOmrLayout,
+              {
+                task_id: taskId,
+                ...layoutSubmission(work, omrModels.layoutModel),
+              },
+              c,
+            )
+          : invoke(
+              commands.submitZones,
+              { task_id: taskId, pages: toPageModels(model.pages, omr) },
+              c,
+            ),
+      { overviewOnSuccess: true },
     );
 
-  // Recompute every label from reading order, sections, pickups and
-  // overrides ("10a" continues as 11).
-  function renumber() {
-    const measures = numbering();
-    const labels = measureLabels(measures);
-    measures.forEach((m, i) => (m.zone.label = labels[i]));
+  const detection: LayoutDetection = new LayoutDetection({
+    model,
+    runner,
+    omr: () => omr,
+    canEdit: () => canEdit,
+    data: () => data,
+    taskId: () => taskId,
+    repoId: () => repoId,
+    owner: () => owner,
+    repo: () => repo,
+    omrClient,
+    detected: () => {
+      setLayoutStep(1);
+      ed.resetHistory();
+    },
+  });
+
+  // Each step starts at the top of the first page.
+  function setLayoutStep(step: LayoutStep) {
+    steps.layoutStep = step;
+    view.step4Pages = false;
+    view.step4Top.names = view.step4Top.pages = 0;
+    ed.setDrawMode(false);
+    view.showPage(0);
   }
 
-  // The first box of every reading-order row of a page but its first row,
-  // whose first box carries the page break.
-  function rowStarts(p: number): Set<MeasureBox> {
-    const rows = readingOrderRows(pages[p].zones.map((z) => z.box));
-    return new Set(rows.slice(1).map((row) => row[0]));
-  }
-
-  // Re-sort a page's zones into reading order (after geometry changed), set
-  // its system beginnings from the rows where none was set by hand, then
-  // renumber everything.
-  function resort(p: number) {
-    const zones = pages[p].zones;
-    const byBox = new Map(zones.map((z) => [z.box, z]));
-    const rows = readingOrderRows(zones.map((z) => z.box));
-    pages[p].zones = rows.flat().map((box) => byBox.get(box)!);
-    const starts = new Set(rows.slice(1).map((row) => row[0]));
-    for (const zone of pages[p].zones) {
-      zone.sb = zone.sbOverride ?? starts.has(zone.box);
-    }
-    renumber();
-  }
-
-  // Staff and grand-staff boxes are kept top to bottom, then left to right.
-  function resortStaves(p: number, layer: "staves" | "grandstaves" = "staves") {
-    pages[p][layer].sort(
-      (a, b) => a.box.uly - b.box.uly || a.box.ulx - b.box.ulx,
-    );
+  // Page p's boxes changed: re-sort the active layer and record the step.
+  function settle(p: number) {
+    model.resortLayer(p, steps.tool);
+    ed.commit();
   }
 
   const run = (
@@ -750,910 +359,9 @@
     ...keptPanel,
     width: Math.max(PANEL_MIN_TOOLS, Math.min(keptPanel.width, besideMax)),
   });
-  // A comment anchor scrolls the desk to its page and selects the measure with
-  // the anchored number where the page has one.
-  function showAnchorFor(c: CommentRow) {
-    const p = Number(c.page) - 1;
-    if (!Number.isInteger(p) || p < 0 || p >= pages.length) return;
-    showPage(p);
-    const z = pages[p].zones.findIndex(
-      (zone) => (zone.override ?? zone.label) === c.measure_start,
-    );
-    ed.select(p, z >= 0 ? pages[p].zones[z] : null);
-  }
-  // A new comment carries the selected measure as its anchor.
-  const commentAnchor = (): CommentAnchorInput | undefined =>
-    selected && selectedLabel
-      ? {
-          page: String(selected.p + 1),
-          measure_start: selectedLabel,
-          measure_end: selectedLabel,
-        }
-      : undefined;
 
-  /** Scroll a box into view, centred, when it is outside the view. */
-  async function revealBox(p: number, z: number) {
-    const box = items(p)[z]?.box;
-    if (!box) return;
-    const pg = pages[p];
-    await tick();
-    const svg = svgEls[p];
-    if (!desk || !svg) return;
-    const r = svg.getBoundingClientRect();
-    const d = desk.getBoundingClientRect();
-    const left = r.left + (box.ulx / pg.width) * r.width;
-    const right = r.left + (box.lrx / pg.width) * r.width;
-    const top = r.top + (box.uly / pg.height) * r.height;
-    const bottom = r.top + (box.lry / pg.height) * r.height;
-    if (
-      left >= d.left &&
-      right <= d.right &&
-      top >= d.top &&
-      bottom <= d.bottom
-    )
-      return;
-    desk.scrollLeft += (left + right) / 2 - (d.left + d.width / 2);
-    desk.scrollTop += (top + bottom) / 2 - (d.top + d.height / 2);
-    deskScrolled();
-  }
-  // The pending scroll frame ends with the page.
-  $effect(() => () => cancelAnimationFrame(scrollFrame));
-  /** Select the box before (-1) or after (1) the selected one in reading
-      order, across pages; `reveal` scrolls it into view. Keyboard focus on
-      a box moves with the selection. */
-  async function stepSelection(delta: 1 | -1, reveal = true) {
-    if (!pages.length) return;
-    let p = selected?.p ?? spreads[rowIndex]?.pages[0] ?? 0;
-    let z = selected ? selected.z + delta : delta > 0 ? 0 : -1;
-    if (!selected && delta < 0) z = items(p).length - 1;
-    while (p >= 0 && p < pages.length && (z < 0 || z >= items(p).length)) {
-      p += delta;
-      if (p < 0 || p >= pages.length) return;
-      z = delta > 0 ? 0 : items(p).length - 1;
-    }
-    if (p < 0 || p >= pages.length) return;
-    const focused = (document.activeElement as Element | null)?.closest(
-      ".zone, .staff",
-    );
-    ed.selectItems(p, [items(p)[z]]);
-    if (reveal) revealBox(p, z);
-    if (focused) focusBox(p, z);
-  }
-  /** Focus a page's box once the DOM has caught up. Selecting a box moves
-      it to the end of its page's paint order, and the move drops the
-      keyboard focus it had. */
-  async function focusBox(p: number, z: number) {
-    await tick();
-    svgEls[p]
-      ?.querySelector<SVGElement>(`[data-box="${z}"]`)
-      ?.focus({ preventScroll: true });
-  }
-  // Each page is one tab stop: its selected box, else its first box. A and
-  // D move from box to box (stepSelection).
-  const tabStop = (p: number, z: number) =>
-    z === (selected?.p === p ? selected.z : 0) ? 0 : -1;
-  const hasPrev = $derived(
-    !!selected &&
-      (selected.z > 0 ||
-        pages.slice(0, selected.p).some((_, q) => items(q).length > 0)),
-  );
-  const hasNext = $derived(
-    !!selected &&
-      (selected.z < items(selected.p).length - 1 ||
-        pages
-          .slice(selected.p + 1)
-          .some((_, q) => items(selected!.p + 1 + q).length > 0)),
-  );
-
-  function toPageModels(): PageModel[] {
-    return pages.map((pg) => ({
-      image: pg.image,
-      width: pg.width,
-      height: pg.height,
-      // The page break sits on each page's first measure; a page break implies
-      // the system break, so its explicit sb flag is not carried.
-      zones: pg.zones.map((z, i) => ({
-        box: { ...z.box },
-        label: z.label,
-        pb: i === 0,
-        sb: z.sb,
-        mdiv: z.mdiv,
-        pickup: z.pickup,
-        rptStart: z.rptStart || undefined,
-        rptEnd: z.rptEnd || undefined,
-        rptBoth: z.rptBoth || undefined,
-        ending: z.ending || undefined,
-        signs: z.signs?.length ? [...z.signs] : undefined,
-      })),
-      ...(omr
-        ? {
-            staves: pg.staves.map((s) =>
-              s.staff ? { ...s.box, staff: s.staff } : { ...s.box },
-            ),
-            grandstaves: pg.grandstaves.map((g) => ({ ...g.box })),
-          }
-        : {}),
-    }));
-  }
-
-  // The pages as the instruments step reads them; empty outside it.
-  const namingModels = $derived(naming ? toPageModels() : []);
-  // The instruments with only those some staff box shows. `named` keeps
-  // every instrument named in the session, so an undo can return to one.
-  const shownInstruments = (): LayoutInstruments =>
-    pruneInstruments(named, toPageModels());
-  const shownNamed = $derived(
-    naming ? pruneInstruments(named, namingModels) : named,
-  );
-
-  // The first system with staves, where the instruments are defined.
-  const firstSystem = $derived(naming ? firstNamingSystem(namingModels) : null);
-  // Why the first system's instruments cannot be confirmed yet.
-  const firstBlock = $derived(
-    naming
-      ? namingProblem(shownNamed, namingModels, (u) => inSystem(firstSystem, u))
-      : null,
-  );
-
-  // Give a unit's boxes the score staves a naming returned.
-  function setStaves(unit: NamingUnit, staves: (string | undefined)[]) {
-    unit.staves.forEach((k, j) => {
-      const staff = pages[unit.page].staves[k];
-      if (staves[j]) staff.staff = staves[j];
-      else delete staff.staff;
-    });
-  }
-
-  // Name a unit by instrument name and parts; an instrument added after the
-  // first system's instruments were confirmed carries its page. A unit of
-  // the first system named without parts takes the parts away from an
-  // instrument no other unit there shows (dropParts).
-  function applyName(
-    unit: NamingUnit,
-    name: string,
-    parts: string,
-    added?: number,
-  ) {
-    if (!parts.trim() && inSystem(firstSystem, unit)) {
-      const d = dropParts(named, namingModels, unit, name, (u) =>
-        inSystem(firstSystem, u),
-      );
-      if (d) {
-        for (const pg of pages)
-          for (const box of pg.staves) {
-            const to = box.staff ? d.staves.get(box.staff) : undefined;
-            if (to) box.staff = to;
-          }
-        named = d.named;
-      }
-    }
-    const r = nameUnit(named, unit.staves.length, name, parts, added);
-    setStaves(unit, r.staves);
-    named = r.named;
-  }
-
-  // Show an instrument of the list on a unit.
-  function applyAssign(unit: NamingUnit, instrument: string, parts: number[]) {
-    const r = assignUnit(named, unit.staves.length, instrument, parts);
-    setStaves(unit, r.staves);
-    named = r.named;
-  }
-
-  // The printed labels OCR read in this session, by page (unitBoxes order).
-  let printedLabels = $state<string[][][]>([]);
-
-  // Name the staves nobody named in the systems after the first from the
-  // instruments named so far and the systems before them (suggestFromList),
-  // once the first system's instruments are confirmed; with `below`, only in
-  // the systems after that unit's. Returns how many units were named.
-  function followSystems(below?: NamingUnit): number {
-    if (!named.fixed) return 0;
-    const models = toPageModels();
-    const after = (u: NamingUnit) =>
-      !below ||
-      u.page > below.page ||
-      (u.page === below.page && u.system > below.system);
-    const suggestions = suggestFromList(models, named, printedLabels).filter(
-      (s) => after(s.unit),
-    );
-    for (const s of suggestions) applyAssign(s.unit, s.instrument, s.parts);
-    return suggestions.length;
-  }
-
-  // The instruments step's edits, each recorded as one step with the staves
-  // it lets the systems below follow.
-  const naming4 = {
-    define(unit: NamingUnit, name: string, parts: string, added?: number) {
-      applyName(unit, name, parts, added);
-      followSystems(unit);
-      ed.commit();
-    },
-    assign(unit: NamingUnit, instrument: string, parts: number[]) {
-      applyAssign(unit, instrument, parts);
-      followSystems(unit);
-      ed.commit();
-    },
-    abbr(id: string, abbr: string) {
-      named = {
-        ...named,
-        instruments: named.instruments.map((i) =>
-          i.id === id ? { ...i, abbr: abbr.trim() } : i,
-        ),
-      };
-      ed.commit();
-    },
-    groups(groups: LayoutGroup[]) {
-      named = { ...named, groups };
-      ed.commit();
-    },
-    fix(fixed: boolean) {
-      named = { ...named, fixed };
-      ed.commit();
-    },
-    // An instrument named a second time becomes a part of the one it looks
-    // like: every box showing one of its staves shows the staff that
-    // replaces it. One undoable step.
-    merge(double: DoubleNaming) {
-      const r = mergeInstrument(named, double);
-      if (!r) return;
-      for (const pg of pages)
-        for (const box of pg.staves) {
-          const to = box.staff ? r.staves.get(box.staff) : undefined;
-          if (to) box.staff = to;
-        }
-      named = r.named;
-      ed.commit();
-    },
-  };
-
-  // When a part of the instruments step first opens for the claim holder, its
-  // staves nobody has named yet are named from what is printed in front of
-  // them (OCR, in the browser): in the first system as new instruments with
-  // their parts (suggestFirstSystem), in the other systems from the
-  // instruments so far and the systems before them (followSystems). One
-  // undoable step.
-  let prefilledFor = $state<string | null>(null);
-  $effect(() => {
-    const key = `${taskId}:${named.fixed}`;
-    if (
-      naming &&
-      layoutStep === 4 &&
-      canEdit &&
-      !runner.busy &&
-      prefilledFor !== key
-    ) {
-      prefilledFor = key;
-      prefillNames();
-    }
-  });
-  async function prefillNames() {
-    const f = forge();
-    if (!f || !data) return;
-    const fragment = data.fragment;
-    const models = toPageModels();
-    const first = firstNamingSystem(models);
-    const open = [
-      ...new Set(
-        namingUnits(models)
-          .filter((u) => named.fixed !== inSystem(first, u))
-          .filter((u) => !unitName(named, models[u.page], u))
-          .map((u) => u.page),
-      ),
-    ];
-    if (!open.length) return;
-    await runner.run(async () => {
-      try {
-        const labels: string[][][] = models.map(() => []);
-        // Pages whose image could not be read, 1-based.
-        const unread: number[] = [];
-        for (const p of open) {
-          runner.log.step(
-            `Reading the instrument names on page ${p + 1} of ${pages.length}`,
-          );
-          const path = resolveRepoRelativeTarget(fragment, pages[p].image);
-          const image = path
-            ? await f.getRepoFileBytes(owner, repo, path)
-            : null;
-          if (!image) {
-            runner.log.detail("The page image could not be read.");
-            unread.push(p + 1);
-            continue;
-          }
-          labels[p] = await readStaffLabels(image, unitBoxes(models)[p]);
-        }
-        printedLabels = models.map((_, p) =>
-          labels[p].length ? labels[p] : (printedLabels[p] ?? []),
-        );
-        if (unread.length === open.length)
-          return {
-            error:
-              "Reading the instrument names failed: the page images could not be read.",
-          };
-        let count = 0;
-        if (!named.fixed) {
-          for (const s of suggestFirstSystem(models, named, printedLabels)) {
-            applyName(s.unit, s.name, s.parts);
-            count++;
-          }
-        }
-        count += followSystems();
-        if (count) ed.commit();
-        const summary = `${count} of the unnamed staves and grand staves were named from the printed names and the systems before them. Check every name.`;
-        return unread.length
-          ? {
-              ok: true,
-              outcome: "partial" as const,
-              message:
-                unread.length === 1
-                  ? `${summary} The image of page ${unread[0]} could not be read.`
-                  : `${summary} The images of pages ${unread.join(", ")} could not be read.`,
-            }
-          : { ok: true, message: summary };
-      } catch (e) {
-        return {
-          error: `Reading the instrument names failed: ${(e as Error).message}`,
-        };
-      }
-    });
-  }
-
-  // ------------------------------------------------------------------------
-  // Transcription (pieces whose layout task names the instruments)
-  //
-  // While the claim holder is in the instruments step, every staff box is
-  // transcribed in the background (recognisePiece, without reading labels:
-  // the step reads them for the names). The record goes with the draft and
-  // the submission as `omr.xml`, which the page drafts are made from. A staff
-  // that the saved work's record, this session's record or this browser
-  // already holds for the same box is not transcribed again, so a later run
-  // transcribes only the boxes changed since. Submission waits for a record
-  // of the current boxes.
-  let recognition = $state.raw<PieceRecognition | null>(null);
-  // The staff boxes, page by page in order, as one string: the boxes the
-  // record describes, those a run was last started for, and those of a run
-  // in progress.
-  const staffKey = $derived(
-    naming
-      ? JSON.stringify(
-          pages.map((pg) =>
-            pg.staves.map((s) => [s.box.ulx, s.box.uly, s.box.lrx, s.box.lry]),
-          ),
-        )
-      : "",
-  );
-  let recognisedKey = $state("");
-  let triedKey = $state("");
-  let runningKey = $state<string | null>(null);
-  let transcription = $state<{ text: string; error: boolean } | null>(null);
-  // A run starts once per set of boxes; after a failure, on request.
-  $effect(() => {
-    if (
-      step4 &&
-      canEdit &&
-      data &&
-      runningKey === null &&
-      staffKey !== recognisedKey &&
-      staffKey !== triedKey
-    )
-      untrack(() => transcribe());
-  });
-  async function transcribe() {
-    const f = forge();
-    const d = data;
-    if (!f || !d || runningKey !== null) return;
-    const key = staffKey;
-    triedKey = key;
-    runningKey = key;
-    transcription = { text: "Starting the transcription", error: false };
-    try {
-      // A record saved with the work, or kept from an expired claim, comes
-      // before the campaign's.
-      const from = d.workSource ?? { owner, repo, ref: undefined };
-      const existing =
-        recognition?.record ??
-        parseOmrRecord(
-          await f.getRepoFile(
-            from.owner,
-            from.repo,
-            omrRecordPath(d.fragment),
-            from.ref,
-          ),
-        );
-      const result = await recognisePiece({
-        forge: f,
-        client: omrClient(),
-        owner,
-        repo,
-        repoId,
-        fragment: d.fragment,
-        pages: toPageModels(),
-        existing,
-        pipeline: omrModels.staffPipeline,
-        progress: (step) => {
-          transcription = { text: step, error: false };
-        },
-        readLabels: false,
-      });
-      recognition = result;
-      recognisedKey = key;
-      const total = result.record.pages.reduce(
-        (n, pg) => n + pg.staves.length,
-        0,
-      );
-      transcription = result.failed.length
-        ? {
-            text: `${result.failed.length} of ${total} staves could not be transcribed (${result.failed
-              .map((s) => `page ${s.page}, staff ${s.staff}`)
-              .join(
-                "; ",
-              )})${result.runErrors.length ? `; the staff pipeline reported: ${result.runErrors.join("; ")}` : ""}.`,
-            error: true,
-          }
-        : { text: `All ${total} staves are transcribed.`, error: false };
-    } catch (e) {
-      transcription = {
-        text: `The transcription failed: ${(e as Error).message}`,
-        error: true,
-      };
-    } finally {
-      runningKey = null;
-    }
-  }
-
-  // The raw layouts go with the submission when this session detected every page.
-  const rawLayoutRecord = () =>
-    pages.every((_, p) => rawLayouts[p])
-      ? layoutRecord(
-          omrModels.layoutModel,
-          pages.map((pg, p) => ({ image: pg.image, layout: rawLayouts[p] })),
-        )
-      : undefined;
-
-  // While the task is held, its boxes are saved as a draft after each pause
-  // in editing. A drag in progress (ed.dragging) defers it to the drag's end,
-  // so the score is not serialised on every pointer move.
-  $effect(() => {
-    if (ed.dragging || !session.canEdit || pages.length === 0) return;
-    session.draft(
-      omr
-        ? {
-            pages: toPageModels(),
-            layout: true,
-            rawLayout: rawLayoutRecord(),
-            ...(naming ? { instruments: shownInstruments() } : {}),
-            ...(naming && recognition
-              ? { omr: serializeOmrRecord(recognition.record) }
-              : {}),
-          }
-        : { pages: toPageModels() },
-    );
-  });
-
-  const submit = () =>
-    run(
-      (c) =>
-        omr
-          ? invoke(
-              commands.submitOmrLayout,
-              {
-                task_id: taskId,
-                pages: toPageModels(),
-                layout: rawLayoutRecord(),
-                ...(naming ? { instruments: shownInstruments() } : {}),
-                ...(naming && recognition
-                  ? { omr: serializeOmrRecord(recognition.record) }
-                  : {}),
-              },
-              c,
-            )
-          : invoke(
-              commands.submitZones,
-              { task_id: taskId, pages: toPageModels() },
-              c,
-            ),
-      { overviewOnSuccess: true },
-    );
-
-  // ------------------------------------------------------------------------
-  // Layout detection (OMR-prepared pieces)
-  //
-  // A layout task's boxes come from the Musibot layout model, run through
-  // the broker's relay when the claim holder opens a task whose score carries
-  // no boxes yet. Page bytes are read through the
-  // forge API; the result is seeded like measure detection's: reading order,
-  // continuous numbering, a system start on every row but the page's first.
-  // Each page's model output is stored in the browser as it arrives and read
-  // back by the next detection, until the loaded score carries boxes.
-  let detectedFor = $state<string | null>(null);
-  const needsDetection = () =>
-    omr &&
-    canEdit &&
-    pages.length > 0 &&
-    pages.every((pg) => pg.zones.length === 0 && pg.staves.length === 0);
-  $effect(() => {
-    const boxed = data?.model.pages.some(
-      (pg) => pg.zones.length > 0 || (pg.staves?.length ?? 0) > 0,
-    );
-    if (omr && boxed) {
-      clearCachedLayouts(repoId, taskId);
-    }
-  });
-  $effect(() => {
-    if (data && !runner.busy && detectedFor !== taskId && needsDetection()) {
-      detectedFor = taskId;
-      detectLayout();
-    }
-  });
-  function seedLayout() {
-    pages.forEach((_, p) => resort(p));
-  }
-
-  async function detectLayout() {
-    const f = forge();
-    if (!f || !data) return;
-    const fragment = data.fragment;
-    await runner.run(() => detectSteps(f, fragment));
-  }
-
-  // The detection steps, logged to the running command's overlay.
-  async function detectSteps(
-    f: ForgeClient,
-    fragment: string,
-  ): Promise<Result> {
-    const client = omrClient();
-    const cached = readCachedLayouts(repoId, taskId, omrModels.layoutModel);
-    try {
-      if (!pages.every((pg) => cached[pg.image])) {
-        runner.log.step("Checking the recognition service");
-        await client.requirePipelines([omrModels.layoutModel]);
-      }
-      let measures = 0;
-      let staves = 0;
-      let grandstaves = 0;
-      for (const [p, pg] of pages.entries()) {
-        runner.log.step(
-          `Detecting the layout of page ${p + 1} of ${pages.length}`,
-        );
-        let layout = cached[pg.image];
-        if (layout) {
-          runner.log.detail(
-            "Result stored in this browser from an earlier detection",
-          );
-        } else {
-          layout = await detectPage(f, client, fragment, p, pg);
-          writeCachedLayout(
-            repoId,
-            taskId,
-            omrModels.layoutModel,
-            pg.image,
-            layout,
-          );
-        }
-        rawLayouts[p] = layout;
-        // The model reads the whole page; the piece keeps the boxes in its
-        // regions.
-        const all = layoutBoxes(layout, pg);
-        const inPiece = (box: MeasureBox) => centreInRegions(box, pg.regions);
-        const boxes = {
-          measures: all.measures.filter(inPiece),
-          staves: all.staves.filter(inPiece),
-          grandstaves: all.grandstaves.filter(inPiece),
-        };
-        pages[p].zones = boxes.measures.map((box) => ({
-          box,
-          override: null,
-          label: "",
-          sb: false,
-          sbOverride: null,
-          mdiv: false,
-          pickup: false,
-        }));
-        pages[p].staves = boxes.staves.map((box) => ({ box }));
-        pages[p].grandstaves = boxes.grandstaves.map((box) => ({ box }));
-        resortStaves(p);
-        resortStaves(p, "grandstaves");
-        measures += boxes.measures.length;
-        staves += boxes.staves.length;
-        grandstaves += boxes.grandstaves.length;
-        runner.log.detail(
-          `${boxes.staves.length} staves, ${boxes.grandstaves.length} grand staves, ${boxes.measures.length} measures`,
-        );
-      }
-      seedLayout();
-      setLayoutStep(1);
-      ed.resetHistory();
-      return {
-        ok: true,
-        message: `Layout detected: ${staves} staves, ${grandstaves} grand staves and ${measures} measures on ${pages.length} page(s).`,
-      };
-    } catch (e) {
-      return {
-        error: `Layout detection failed: ${(e as Error).message}`,
-        retry: detectLayout,
-      };
-    }
-  }
-
-  // One page's layout from the model.
-  async function detectPage(
-    f: ForgeClient,
-    client: ReturnType<typeof createOmrClient>,
-    fragment: string,
-    p: number,
-    pg: EditPage,
-  ): Promise<CocoLayout> {
-    const path = resolveRepoRelativeTarget(fragment, pg.image);
-    const image = path ? await f.getRepoFileBytes(owner, repo, path) : null;
-    if (!image)
-      throw new Error(
-        `the image of page ${p + 1} (${pg.image}) could not be read.`,
-      );
-    return client.withPage(async (pageId) => {
-      await client.upload(pageId, { "image.jpg": image });
-      const execution = await client.run(
-        pageId,
-        omrModels.layoutModel,
-        ["image.jpg"],
-        LAYOUT_PARAMETERS,
-      );
-      if (execution.state !== "completed") {
-        throw new Error(
-          `the layout model failed on page ${p + 1}: ${execution.error ?? execution.state}.`,
-        );
-      }
-      const files = await client.download(pageId, ["layout.json"]);
-      return JSON.parse(await files["layout.json"].text()) as CocoLayout;
-    });
-  }
-
-  // ------------------------------------------------------------------------
-  // Undo / redo
-  //
-  // The editor's history (ed) holds full copies of the pages. `selected` is
-  // not part of one, so it is cleared on restore.
-  function clonePages(src: EditPage[]): EditPage[] {
-    return src.map((pg) => ({
-      ...pg,
-      zones: pg.zones.map((z) => ({ ...z, box: { ...z.box } })),
-      staves: pg.staves.map((s) => ({ ...s, box: { ...s.box } })),
-      grandstaves: pg.grandstaves.map((g) => ({ box: { ...g.box } })),
-    }));
-  }
-
-  // ------------------------------------------------------------------------
-  // Break flags
-  //
-  // The page break is derived from position (each page's first measure). A page
-  // break implies a system break, so on a page's first measure the system flag
-  // is fixed on and the button is disabled. The score's first measure always
-  // opens the first movement, so its section flag is fixed on too.
-  const pbAt = (z: number) => z === 0;
-  const sbActive = (p: number, z: number) => pbAt(z) || pages[p].zones[z].sb;
-  const sectionLocked = (p: number, z: number) => p === 0 && z === 0;
-
-  // A flag set to what the rows give follows the rows again.
-  function toggleSb(p: number, z: number) {
-    if (!canEdit || pbAt(z)) return;
-    const zone = pages[p].zones[z];
-    const next = !zone.sb;
-    zone.sbOverride = next === rowStarts(p).has(zone.box) ? null : next;
-    zone.sb = next;
-    ed.commit();
-  }
-  // Each section counts its measures from 1.
-  function toggleSection(p: number, z: number) {
-    if (!canEdit || sectionLocked(p, z)) return;
-    pages[p].zones[z].mdiv = !pages[p].zones[z].mdiv;
-    renumber();
-    ed.commit();
-  }
-  function togglePickup(p: number, z: number) {
-    if (!canEdit) return;
-    pages[p].zones[z].pickup = !pages[p].zones[z].pickup;
-    renumber();
-    ed.commit();
-  }
-
-  // Repeat barlines at the measure's start or end, the ending it belongs to
-  // ('' for none) and its navigation signs.
-  function toggleRepeat(p: number, z: number, side: "start" | "end" | "both") {
-    if (!canEdit) return;
-    const zone = pages[p].zones[z];
-    // The measure's end carries a repeat end or a double repeat, not both.
-    if (side === "start") zone.rptStart = !zone.rptStart;
-    else if (side === "end") {
-      zone.rptEnd = !zone.rptEnd;
-      if (zone.rptEnd) zone.rptBoth = false;
-    } else {
-      zone.rptBoth = !zone.rptBoth;
-      if (zone.rptBoth) zone.rptEnd = false;
-    }
-    ed.commit();
-  }
-  function setEnding(p: number, z: number, ending: string) {
-    if (!canEdit) return;
-    pages[p].zones[z].ending = ending || undefined;
-    ed.commit();
-  }
-  function toggleSign(p: number, z: number, sign: MeasureSign) {
-    if (!canEdit) return;
-    const zone = pages[p].zones[z];
-    const on = zone.signs?.includes(sign);
-    zone.signs = MEASURE_SIGNS.filter((s) =>
-      s === sign ? !on : zone.signs?.includes(s),
-    );
-    ed.commit();
-  }
-  const SIGN_NAME: Record<MeasureSign, string> = {
-    segno: "Segno",
-    coda: "Coda",
-    daCapo: SIGN_TEXT.daCapo,
-    dalSegno: SIGN_TEXT.dalSegno,
-    fine: SIGN_TEXT.fine,
-    toCoda: SIGN_TEXT.toCoda,
-  };
-  const SIGN_TITLE: Record<MeasureSign, string> = {
-    segno: "The segno sign at the start of this measure",
-    coda: "The coda sign at the start of this measure",
-    daCapo: "Da capo at the end of this measure: back to the beginning",
-    dalSegno: "Dal segno at the end of this measure: back to the segno",
-    fine: "Fine at the end of this measure: the end of the piece after a repeat",
-    toCoda: "To Coda at the end of this measure: on to the coda",
-  };
-  // The repeats, ending and signs of a measure, for its title and the
-  // read-only panel.
-  const markNames = (p: number, z: number) => {
-    const zone = pages[p].zones[z];
-    return [
-      zone.rptStart ? "Repeat start" : "",
-      zone.rptEnd ? "Repeat end" : "",
-      zone.rptBoth ? "Double repeat" : "",
-      zone.ending ? `Ending ${zone.ending}` : "",
-      ...(zone.signs ?? []).map((s) => SIGN_NAME[s]),
-    ].filter(Boolean);
-  };
-
-  function setLabel(p: number, z: number, value: string) {
-    pages[p].zones[z].override = value.trim() === "" ? null : value.trim();
-    renumber();
-  }
-
-  // ------------------------------------------------------------------------
-  // Pointer interactions (box move / resize / draw)
-
-  let svgEls = $state<SVGSVGElement[]>([]);
-  // Each visible page's rendered canvas width (px), so the SVG number labels can
-  // be sized to a near-constant on-screen size across zoom and 1-/2-page view.
-  let canvasW = $state<number[]>([]);
-  // Labels and box borders grow a little with zoom (damped) so they do not
-  // feel oversized zoomed out or small zoomed in.
-  const damp = $derived(Math.min(1.7, Math.max(0.8, 0.7 + 0.3 * zoom)));
-  // On-screen height (px) for the number label at 100%.
-  const LABEL_PX = 11;
-  const labelFont = (p: number, pageW: number) => {
-    const target = LABEL_PX * damp;
-    return canvasW[p] ? (target * pageW) / canvasW[p] : target;
-  };
-  // A measure's label is smaller in a narrow or low box: with its inset it
-  // takes at most LABEL_FIT_W of the box's width and LABEL_FIT_H of its
-  // height, and no less than LABEL_MIN_PX on screen, or the full size where
-  // that is smaller. The factors are the label's inset, background and
-  // double-bar proportions in the markup.
-  const LABEL_FIT_W = 0.75;
-  const LABEL_FIT_H = 0.35;
-  const LABEL_MIN_PX = 10;
-  const zoneLabelFont = (
-    p: number,
-    pageW: number,
-    box: MeasureBox,
-    chars: number,
-    bar: boolean,
-  ) => {
-    const full = labelFont(p, pageW);
-    const byW =
-      ((box.lrx - box.ulx) * LABEL_FIT_W) /
-      (0.6 + chars * 0.62 + 0.9 + (bar ? 0.7 : 0));
-    const byH = ((box.lry - box.uly) * LABEL_FIT_H) / (0.6 + 1.55);
-    const least = full * Math.min(1, LABEL_MIN_PX / (LABEL_PX * damp));
-    return Math.max(least, Math.min(full, byW, byH));
-  };
-
-  // The cursor class for a resize handle: a corner gets the diagonal arrows,
-  // a side the axis arrows.
-
-  // The selected box's handles: the four edges, then the four corners.
-  // The free space above and below a staff or grand-staff box, in page
-  // pixels, up to the nearest box of its layer beside it; Infinity where
-  // there is none. Its handles reach no further, so they never cover a
-  // neighbouring box.
-  function staffRoom(p: number, z: number) {
-    const b = items(p)[z].box;
-    let top = Infinity;
-    let bottom = Infinity;
-    items(p).forEach(({ box: o }, i) => {
-      if (i === z || o.lrx <= b.ulx || o.ulx >= b.lrx) return;
-      if (o.lry <= b.uly) top = Math.min(top, b.uly - o.lry);
-      else if (o.uly >= b.lry) bottom = Math.min(bottom, o.uly - b.lry);
-    });
-    return { top, bottom };
-  }
-
-  // A key on a focused box (ed.boxKeydown). A move can re-sort the page's
-  // boxes; the keyboard focus stays on the box.
-  function zoneKeydown(e: KeyboardEvent, p: number, z: number) {
-    const item = items(p)[z];
-    if (!ed.boxKeydown(e, p, item)) return;
-    e.stopPropagation();
-    const at = items(p).indexOf(item);
-    if (at >= 0) focusBox(p, at);
-  }
-
-  // Arrow keys on a focused resize handle move that handle's edges.
-
-  // Add a box to a page's layer; returns its index.
-  function addBox(p: number, layer: Layer, box: MeasureBox): number {
-    if (layer !== "measures") pages[p][layer].push({ box });
-    else
-      pages[p].zones.push({
-        box,
-        override: null,
-        label: "",
-        sb: false,
-        sbOverride: null,
-        mdiv: false,
-        pickup: false,
-      });
-    return items(p, layer).length - 1;
-  }
-
-  // Page p's boxes changed: re-sort the active layer and record the step.
-  function settle(p: number) {
-    if (tool === "measures") resort(p);
-    else resortStaves(p, tool);
-    ed.commit();
-  }
-
-  // While a finger (or any pointer on a touch screen) holds a resize handle
-  // or draws a box, a magnifier above it (ed.loupe) shows the edge or corner
-  // under the finger.
-  const LOUPE_PX = 120;
-  const LOUPE_ZOOM = 2;
-
-  // A new box of the active layer without drawing it: the selected box's
-  // size beside it (a staff below it, a measure to its right), or without a
-  // selection a box in the middle of the first page in view. It is selected
-  // and keeps the keyboard focus, for the arrow keys and handles to adjust.
-  function newBox() {
-    if (!canEdit || !pages.length) return;
-    const p = selectedItem?.p ?? spreads[rowIndex]?.pages[0] ?? 0;
-    const pg = pages[p];
-    let box: MeasureBox;
-    if (selectedItem) {
-      const b = items(p)[selectedItem.z].box;
-      box =
-        tool === "measures"
-          ? movedBox(b, b.lrx - b.ulx, 0, pg)
-          : movedBox(b, 0, (b.lry - b.uly) * 1.5, pg);
-    } else {
-      // Centred in the page's shown part, no taller than it.
-      const v = shownArea(pg);
-      const w = (v.lrx - v.ulx) * (tool === "measures" ? 0.1 : 0.8);
-      const h = Math.min(
-        v.lry - v.uly,
-        pg.height * (tool === "measures" ? 0.15 : 0.03),
-      );
-      box = {
-        ulx: (v.ulx + v.lrx - w) / 2,
-        uly: (v.uly + v.lry - h) / 2,
-        lrx: (v.ulx + v.lrx + w) / 2,
-        lry: (v.uly + v.lry + h) / 2,
-      };
-    }
-    const hadFocus = !!document.activeElement?.closest(".zone, .staff");
-    ed.select(p, items(p)[addBox(p, tool, box)]);
-    settle(p);
-    if (hadFocus && selected) focusBox(selected.p, selected.z);
-  }
+  // What one box of the active layer is called.
+  const boxName = $derived(boxNameOf(steps.tool));
 
   // The page's keys. Text fields keep their own keys; undo, redo and Esc
   // work from any other control; the editing keys (A, D, N, Delete, the
@@ -1665,14 +373,14 @@
     const target = e.target as HTMLElement;
     if (target.closest("input, textarea, select, [contenteditable]")) return;
     if (ed.keydown(e)) return;
-    if (e.key === "Escape" && (helpOpen || viewOpen || selected)) {
+    if (e.key === "Escape" && (helpOpen || viewOpen || sel.selected)) {
       if (helpOpen) helpOpen = false;
       else if (viewOpen) viewOpen = false;
       else ed.select(0, null);
       return;
     }
     if (target !== document.body && !target.closest(".desk")) return;
-    if ((e.key === "Delete" || e.key === "Backspace") && selected) {
+    if ((e.key === "Delete" || e.key === "Backspace") && sel.selected) {
       e.preventDefault();
       ed.deleteSelection();
     } else if (
@@ -1683,7 +391,7 @@
     ) {
       e.preventDefault();
       // The keys leave the view where it is.
-      stepSelection(e.key === "a" || e.key === "A" ? -1 : 1, false);
+      sel.stepSelection(e.key === "a" || e.key === "A" ? -1 : 1, false);
     } else if (
       (e.key === "n" || e.key === "N") &&
       !e.ctrlKey &&
@@ -1691,318 +399,19 @@
       !e.altKey
     ) {
       e.preventDefault();
-      newBox();
-    } else if (e.key.startsWith("Arrow") && canEdit && selectedItem) {
+      sel.newBox();
+    } else if (e.key.startsWith("Arrow") && canEdit && sel.selectedItem) {
       // A selected box takes the arrow keys; without one, ← → turn pages.
-      ed.nudge(e, selectedItem.p, selectedItem.item);
+      ed.nudge(e, sel.selectedItem.p, sel.selectedItem.item);
     } else if (e.key === "ArrowRight") {
-      go(1);
+      view.go(1);
     } else if (e.key === "ArrowLeft") {
-      go(-1);
+      view.go(-1);
     }
   }
 
-  // Paint order for a page's zones: the selected zone is moved to the end so it
-  // renders on top. SVG has no z-index, so an earlier zone would otherwise sit
-  // under a later overlapping one and steal its pointer events.
-  function paintOrder(
-    pg: EditPage,
-    p: number,
-  ): { zone: EditZone; z: number }[] {
-    const entries = pg.zones.map((zone, z) => ({ zone, z }));
-    if (tool === "measures" && selected?.p === p) {
-      const i = entries.findIndex((e) => e.z === selected!.z);
-      if (i >= 0) entries.push(entries.splice(i, 1)[0]);
-    }
-    return entries;
-  }
-
-  // Same for the staff and grand-staff layers: the selected box paints last.
-  function staffPaintOrder(
-    pg: EditPage,
-    p: number,
-  ): { staff: EditStaff; s: number }[] {
-    const entries = (tool === "grandstaves" ? pg.grandstaves : pg.staves).map(
-      (staff, s) => ({ staff, s }),
-    );
-    if (tool !== "measures" && selected?.p === p) {
-      const i = entries.findIndex((e) => e.s === selected!.z);
-      if (i >= 0) entries.push(entries.splice(i, 1)[0]);
-    }
-    return entries;
-  }
-
-  let showOverlaps = $state(true);
-  // Hidden, the layer's boxes are not drawn, cannot be selected and no new
-  // box is drawn; a finger on the page scrolls it. The instruments step's
-  // pages show no boxes.
-  let boxesOn = $state(true);
-  const showBoxes = $derived(boxesOn && !step4);
-  function toggleBoxes() {
-    boxesOn = !boxesOn;
-    ed.clear();
-  }
-
-  // Intersections of every pair of boxes on the layer the current tool edits.
-  function overlaps(pg: EditPage): MeasureBox[] {
-    const boxes = (
-      tool === "measures"
-        ? pg.zones
-        : tool === "grandstaves"
-          ? pg.grandstaves
-          : pg.staves
-    ).map((b) => b.box);
-    const out: MeasureBox[] = [];
-    for (let i = 0; i < boxes.length; i++) {
-      for (let j = i + 1; j < boxes.length; j++) {
-        const a = boxes[i];
-        const b = boxes[j];
-        const ulx = Math.max(a.ulx, b.ulx);
-        const uly = Math.max(a.uly, b.uly);
-        const lrx = Math.min(a.lrx, b.lrx);
-        const lry = Math.min(a.lry, b.lry);
-        if (lrx > ulx && lry > uly) out.push({ ulx, uly, lrx, lry });
-      }
-    }
-    return out;
-  }
-
-  const measureCount = $derived(pages.reduce((n, p) => n + p.zones.length, 0));
-  const staffCount = $derived(pages.reduce((n, p) => n + p.staves.length, 0));
-  const grandstaffCount = $derived(
-    pages.reduce((n, p) => n + p.grandstaves.length, 0),
-  );
-  const movementCount = $derived(
-    1 +
-      pages.reduce(
-        (n, pg, p) =>
-          n + pg.zones.filter((z, i) => z.mdiv && (p > 0 || i > 0)).length,
-        0,
-      ),
-  );
-  // Whether a zone starts a movement in the emitted MEI (the very first
-  // measure always opens the first one).
-  const startsMovement = (p: number, z: number) =>
-    sectionLocked(p, z) || (pages[p].zones[z].mdiv && (p > 0 || z > 0));
-
-  // Hover tooltip naming a measure's breaks and pickup flag, if it has any.
-  // On the page a system start shows as a blue bracket in the label, a
-  // section start as a double bar there, repeats as their signs in the
-  // label or a label at the top right, an ending as a bracket over its
-  // measures and the signs as tags at the bottom right.
-  const zoneTitle = (p: number, z: number) =>
-    [
-      startsMovement(p, z) ? "Starts a section" : "",
-      pages[p].zones[z].pickup ? "Pickup" : "",
-      pbAt(z)
-        ? "First measure on the page: starts a system"
-        : pages[p].zones[z].sb
-          ? "Starts a system"
-          : "",
-      ...markNames(p, z),
-    ]
-      .filter(Boolean)
-      .join(" · ");
-
-  // A page's endings as runs of consecutive measures with the same ending in
-  // one system: their extent, number, and whether the bracket closes at the
-  // end (it stays open on an ending no other ending follows).
-  function endingRuns(p: number) {
-    const zones = pages[p].zones;
-    const runs: {
-      ulx: number;
-      uly: number;
-      lrx: number;
-      n: string;
-      closed: boolean;
-    }[] = [];
-    zones.forEach((zone, z) => {
-      if (!zone.ending) return;
-      const prev = runs[runs.length - 1];
-      const joins =
-        prev && z > 0 && zones[z - 1].ending === zone.ending && !sbActive(p, z);
-      if (joins) {
-        prev.lrx = zone.box.lrx;
-        prev.uly = Math.min(prev.uly, zone.box.uly);
-      } else
-        runs.push({
-          ulx: zone.box.ulx,
-          uly: zone.box.uly,
-          lrx: zone.box.lrx,
-          n: zone.ending,
-          closed: true,
-        });
-      // Another ending after this one closes it; the same ending going on in
-      // the next system leaves it open there.
-      const next = zones[z + 1] ?? pages[p + 1]?.zones[0];
-      runs[runs.length - 1].closed =
-        !!next?.ending && next.ending !== zone.ending;
-    });
-    return runs;
-  }
-
-  // The selected box's name in the side panel and in its handles' labels.
-  const itemName = (p: number, z: number) =>
-    tool === "measures"
-      ? `Measure ${pages[p].zones[z].label}`
-      : `${tool === "grandstaves" ? "Grand staff" : "Staff"} ${z + 1}`;
-  const selectedItem = $derived(
-    selected && items(selected.p)[selected.z] ? selected : null,
-  );
-
-  const boxName = $derived(
-    tool === "staves"
-      ? "staff"
-      : tool === "grandstaves"
-        ? "grand staff"
-        : "measure",
-  );
-  const boxNames = $derived(
-    tool === "staves"
-      ? "staves"
-      : tool === "grandstaves"
-        ? "grand staves"
-        : "measures",
-  );
-  // The active layer's glyph in the side panel's heading.
-  const toolGlyph = $derived(
-    tool === "staves"
-      ? { kind: "staff" as const, tone: "var(--ink-staff)" }
-      : tool === "grandstaves"
-        ? { kind: "grand" as const, tone: "var(--ink-grand)" }
-        : { kind: "measure" as const, tone: "var(--ink-measure)" },
-  );
-
-  // The editing hints and outline legend, shown by the toolbar's help icon.
-  // Shortcut names as the viewer's keyboard labels them.
-  const mac =
-    typeof navigator !== "undefined" &&
-    /Mac|iPhone|iPad/.test(navigator.userAgent);
-  const MOD = mac ? "⌘" : "Ctrl+";
-  const SHIFT = mac ? "⇧" : "Shift+";
-  // A help line is text with colour words, each set in the colour it names.
-  type HelpPart = string | { text: string; tone: string };
-  // The instruments step edits no boxes. The side panel says in short why
-  // it is done and how; the help (?) says it in full.
-  const NAMING_WHY =
-    "The automatic recognition reads each staff on its own and cannot tell which instrument the staff belongs to. The names put every staff on the right staff of the score.";
-  const namingSteps = $derived<string[]>(
-    canEdit
-      ? [
-          "First system: check or enter the name of each staff as printed, with its short name and its parts.",
-          "One instrument on several staves gets one name with different parts: Flöte, parts I and II, not Flöte I and Flöte II.",
-          "Other systems: choose each staff's instrument and parts from the list.",
-          "If one instrument ends up with two names, such as Flöte and Flöte I, a warning appears. Its button “Make it Flöte, part I” joins them.",
-        ]
-      : [
-          "Check that every staff has the right instrument and part.",
-          "If a warning says an instrument is possibly named twice, such as Flöte and Flöte I, request changes: Flöte I should be Flöte with the part I.",
-        ],
-  );
-  const namingHelp = $derived<HelpPart[][]>([
-    [
-      `${NAMING_WHY} Later systems often leave instruments out or print only short names, so the first system defines the instruments and the others choose from them. The names also make the score's list of instruments, with its brackets, braces and groups.`,
-    ],
-    ...(canEdit
-      ? [
-          [
-            "First system: for every staff the instrument's full and short name and the parts it carries as printed (I, II; 1.2.3 for three players on one staff). The same name on several staves makes one instrument. A grand staff gets a part only where several players have one each (Harfe 1, Harfe 2: Harfe, parts 1 and 2). Groups join instruments printed together, such as the woodwinds.",
-          ],
-          [
-            "Parts, not instruments: Fl. I and Fl. II on two staves are Flöte with the parts I and II, a staff both play is I.II. Named Flöte I and Flöte II they become two instruments in the score.",
-          ],
-          [
-            "Other systems opens once the first system is named. Each staff gets an instrument of the list and its parts; New instrument… adds one (marked for the reviewer). The first system can still be changed; the other systems keep their choices.",
-          ],
-          [
-            "“Possibly named twice”: an instrument named like another with more after it (Flöte I beside Flöte), the same, or like a part of another (Kontrabass beside Violoncello und Kontrabass). Also when there are more instruments than staves in the first system. “Make it Flöte, part I” fixes it on every page; undo restores it.",
-          ],
-          [
-            "The names are filled in from the printed names and the systems before; check every one. The staves are transcribed meanwhile; Submit waits for it.",
-          ],
-        ]
-      : [
-          [
-            "Beside every staff its instrument and, in grey, its parts; the column beside each system shows the brackets, braces and groups the names make (hover for the name).",
-          ],
-          [
-            "“Possibly named twice” marks instruments that look like parts of another named on their own (Flöte I beside Flöte).",
-          ],
-        ]),
-    [
-      `The page button shows the whole pages instead of each system's beginning.${canEdit && !coarse ? ` ${MOD}Z undo, ${MOD}${SHIFT}Z redo.` : ""}`,
-    ],
-  ]);
-  const helpLines = $derived<HelpPart[][]>(
-    step4
-      ? namingHelp
-      : [
-          ...(canEdit && coarse
-            ? [
-                [
-                  `With draw mode on (the box with a finger in the toolbar) tap a box to select it, then drag it or its edges and corners, or drag on the page to draw a ${boxName}. With draw mode off a finger drag scrolls the pages, and a double tap on a box selects it and turns draw mode on; in draw mode a double tap on a box or on the page outside a box turns it off. Pinch to zoom.`,
-                ],
-                [
-                  "To resize without dragging, tap a corner dot of the selected box, then tap where the corner should go.",
-                ],
-                [
-                  `To select several boxes, choose Select several (the squares with a tick) in draw mode and tap them; tap a selected box to take it out. Drag one of them to move them all; Duplicate copies them below or beside them.`,
-                ],
-              ]
-            : canEdit
-              ? [
-                  [
-                    `Drag on the page to draw a ${boxName}. Or click one corner, which leaves a cross, then the opposite corner. Drag a box to move it; its edges and corners resize it, or click a corner and then where it should go. ${MOD}drag a box to copy it.`,
-                  ],
-                  [
-                    `Arrow keys move the selected box (${SHIFT}arrow moves 5 times as far). Esc removes the cross, then deselects the box.`,
-                  ],
-                  [
-                    `${SHIFT}click a box to add it to the selection or take it out, or ${SHIFT}drag on the page to select every box the rectangle touches. Drag one of the selected boxes to move them all, ${MOD}drag to copy them all.`,
-                  ],
-                ]
-              : []),
-          ...(coarse
-            ? []
-            : [
-                [
-                  `${canEdit ? `${MOD}Z undo · ${MOD}${SHIFT}Z redo · ${mac ? "⌫" : "Delete"} removes the selected box · N adds a box beside it · ` : ""}Tab reaches a page's boxes, A D the previous and next box · ← → change pages${canEdit ? " when no box is selected" : ""} · ${MOD}scroll or a pinch zooms`,
-                ],
-              ]),
-          [
-            ...(omr
-              ? [
-                  { text: "Wine red", tone: "staff" },
-                  ": staff · ",
-                  { text: "dark green", tone: "grand" },
-                  ": grand staff (staves one performer plays together, often joined by a brace) · ",
-                ]
-              : []),
-            { text: "teal", tone: "measure" },
-            ": measure · ",
-            { text: "thick purple", tone: "movement" },
-            ": section start · ",
-            { text: "blue bracket before the number", tone: "system" },
-            ": system start",
-          ],
-          [
-            "Measure labels: the measure number, after a double bar where the measure starts a section.",
-          ],
-          [
-            "A repeat start shows in the measure's label, a repeat end or double repeat in a label at the box's top right, an ending as a bracket with its number over its measures, and segno, coda, D.C., D.S., Fine and To Coda as tags at the box's bottom right.",
-          ],
-        ],
-  );
+  // The editor help and the View options behind the toolbar's ⋯ button.
   let helpOpen = $state(false);
-  // The View options behind the toolbar's ⋯ button: the page-count switch
-  // below MEDIUM_TOOL, and on a phone sheet (inSheet) the help.
-  // Below VIEW_COMPACT pixels of tool column the boxes, overlaps and
-  // whole-page buttons move from the toolbar into the ⋯ menu.
-  const VIEW_COMPACT = 720;
-  const viewCompact = $derived(toolW > 0 && toolW < VIEW_COMPACT);
-  const viewMenu = $derived(inSheet || medium);
-  // Draw mode on a touch screen, which the toolbar shows.
-  const drawing = $derived(canEdit && coarse && ed.drawMode);
   let viewOpen = $state(false);
   // A press outside the View options closes them.
   function closeViewOutside(e: PointerEvent) {
@@ -2062,1063 +471,100 @@
   {:else if data}
     <div class="main">
       <h1 class="vh">{taskTitle} · {session.pieceName || campaign}</h1>
-      <div
-        class="tbar"
-        class:bare={inSheet}
-        bind:clientWidth={toolW}
-        style={`--desk-h:${deskH}px`}
-      >
-        {#if !inSheet}
-          <ViewerToolbar
-            class={drawing ? "drawing" : ""}
-            {narrow}
-            children={toolbarItems}
-            end={toolbarEnd}
-          />
-        {/if}
-        {#if helpOpen}
-          <div
-            id="zone-help"
-            class="helppanel"
-            role="region"
-            aria-label="Editor help"
-          >
-            <ul>
-              {#each helpLines as line, i (i)}
-                <li>
-                  {#each line as part, j (j)}{#if typeof part === "string"}{part}{:else}<b
-                        class="tone-{part.tone}">{part.text}</b
-                      >{/if}{/each}
-                </li>
-              {/each}
-            </ul>
-            <button
-              type="button"
-              class="btn btn-icon"
-              aria-label="Close the editor help"
-              onclick={() => (helpOpen = false)}><Icon name="close" /></button
-            >
-          </div>
-        {/if}
-        {#if viewOpen && viewMenu}
-          <div
-            id="zone-view"
-            class="viewmenu"
-            role="group"
-            aria-label={inSheet ? "View options and help" : "View options"}
-          >
-            {#if !narrow && !step4}<PageSpreadControls
-                {view}
-                {firstOnRight}
-                onview={(v) => (view = v)}
-                onfirstonright={(on) => (firstOnRight = on)}
-              />{/if}
-            {#if viewCompact && !step4}
-              <button
-                type="button"
-                class="tbtn"
-                class:on={showBoxes}
-                aria-pressed={showBoxes}
-                title="Show or hide the boxes on the page"
-                onclick={toggleBoxes}>Show the boxes</button
-              >
-              <button
-                type="button"
-                class="tbtn"
-                class:on={showOverlaps}
-                aria-pressed={showOverlaps}
-                disabled={!showBoxes}
-                title="Show or hide the colour on areas where two boxes overlap"
-                onclick={() => (showOverlaps = !showOverlaps)}
-                >Show overlaps</button
-              >
-              {#if hasPartPages}
-                <button
-                  type="button"
-                  class="tbtn"
-                  class:on={wholePage}
-                  aria-pressed={wholePage}
-                  title="Show the whole page, not only the part this piece covers"
-                  onclick={() => (wholePage = !wholePage)}
-                  >Show the whole page</button
-                >
-              {/if}
-            {/if}
-            {#if inSheet}
-              <button
-                type="button"
-                class="btn"
-                aria-controls="zone-help"
-                onclick={() => {
-                  helpOpen = true;
-                  viewOpen = false;
-                }}><Icon name="help" size={16} /> Help</button
-              >
-            {/if}
-          </div>
-        {/if}
-      </div>
+      <ZoneToolbar
+        {view}
+        bar={toolbar}
+        step4={steps.step4}
+        {canEdit}
+        {coarse}
+        {boxName}
+        {omr}
+        bind:helpOpen
+        bind:viewOpen
+      />
       <div class="runrow"><TaskRunState task={taskId} {repoId} pill /></div>
 
-      <div
-        class="desk"
-        bind:this={desk}
-        bind:clientWidth={deskW}
-        bind:clientHeight={deskH}
-        onscroll={deskScrollEvent}
-        {@attach zoomGestures({
-          get: () => zoom,
-          set: (z) => {
-            zoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
-            fit = null;
-          },
-          onpinchstart: () => ed.hold(),
-        })}
-      >
-        {#if step4}
-          <InstrumentNaming
-            whole={step4Pages}
-            pages={namingModels}
-            urls={pages.map((pg) => (pg.failed ? "" : pg.url))}
-            named={shownNamed}
-            {canEdit}
-            ondefine={naming4.define}
-            onassign={naming4.assign}
-            onabbr={naming4.abbr}
-            ongroups={naming4.groups}
-            onfix={naming4.fix}
-            onmerge={naming4.merge}
-            fixBlock={firstBlock}
-          />
-        {/if}
-        <div
-          class="pages"
-          style:display={step4 ? "none" : undefined}
-          class:double={shownView === "double"}
-          style={`--zoom:${zoom}; --stroke-scale:${damp}`}
-        >
-          {#each spreads as sp, r (r)}
-            <div class="row" bind:this={rowEls[r]}>
-              {#if sp.lonelySide === "right"}<div
-                  class="page-spacer"
-                ></div>{/if}
-              {#each sp.pages as p (p)}
-                {@const pg = pages[p]}
-                <!-- Cropped to the piece's part of the page, the frame shows
-                     that part of the full-size canvas, shifted by its
-                     offset; percentage margins are of the frame's width. -->
-                {@const v = shownArea(pg)}
-                {@const vw = v.lrx - v.ulx}
-                <div class="page">
-                  <p class="page-label pagehead">Page {p + 1} · Facsimile</p>
-                  {#if pg.failed}
-                    <Notice
-                      tone="err"
-                      title={`The facsimile of page ${p + 1} could not be loaded`}
-                      detail="The zones are shown without their reference image."
-                    />
-                  {/if}
-                  <div
-                    class="frame"
-                    class:cropped={!isWhole(v, pg)}
-                    style:aspect-ratio={isWhole(v, pg)
-                      ? undefined
-                      : `${vw} / ${v.lry - v.uly}`}
-                  >
-                    <div
-                      class="canvas"
-                      bind:clientWidth={canvasW[p]}
-                      onpointerdowncapture={(e) => ed.placeArmed(e, p)}
-                      style:width={isWhole(v, pg)
-                        ? undefined
-                        : `${(pg.width / vw) * 100}%`}
-                      style:margin-left={isWhole(v, pg)
-                        ? undefined
-                        : `${(-v.ulx / vw) * 100}%`}
-                      style:margin-top={isWhole(v, pg)
-                        ? undefined
-                        : `${(-v.uly / vw) * 100}%`}
-                    >
-                      <svg
-                        bind:this={svgEls[p]}
-                        viewBox={`0 0 ${pg.width} ${pg.height}`}
-                        class:staves={tool === "staves"}
-                        class:grandstaves={tool === "grandstaves"}
-                        class:pan={coarse && (!ed.drawMode || !showBoxes)}
-                        role="application"
-                        aria-label={`Page ${p + 1}, ${tool === "staves" ? "staff boxes" : tool === "grandstaves" ? "grand staves" : "measures"}`}
-                        onpointerdown={(e) => ed.pageDown(e, p)}
-                      >
-                        <!-- Pages far from the view keep their size but draw nothing. -->
-                        {#if nearPages.includes(p)}
-                          {#if pg.url}
-                            <image
-                              href={pg.url}
-                              width={pg.width}
-                              height={pg.height}
-                              onerror={() => (pages[p].failed = true)}
-                            />
-                          {/if}
-                          {#each showBoxes && tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
-                            <rect
-                              class="staff"
-                              class:grand={tool === "grandstaves"}
-                              class:selected={inSelection(p, s)}
-                              vector-effect="non-scaling-stroke"
-                              role="button"
-                              tabindex={tabStop(p, s)}
-                              data-box={s}
-                              aria-current={selected?.p === p &&
-                              selected?.z === s
-                                ? "true"
-                                : undefined}
-                              aria-label={`${tool === "grandstaves" ? "Grand staff" : "Staff"} ${s + 1}, page ${p + 1}${canEdit ? ": select, drag or resize" : ""}`}
-                              x={staff.box.ulx}
-                              y={staff.box.uly}
-                              width={staff.box.lrx - staff.box.ulx}
-                              height={staff.box.lry - staff.box.uly}
-                              onpointerdown={(e) => ed.boxDown(e, p, staff)}
-                              onkeydown={(e) => zoneKeydown(e, p, s)}
-                            />
-                          {/each}
-                          {#each showBoxes && tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
-                            <rect
-                              class="zone"
-                              class:selected={inSelection(p, z)}
-                              class:mdivstart={startsMovement(p, z)}
-                              vector-effect="non-scaling-stroke"
-                              role="button"
-                              tabindex={tabStop(p, z)}
-                              data-box={z}
-                              aria-current={selected?.p === p &&
-                              selected?.z === z
-                                ? "true"
-                                : undefined}
-                              aria-label={`Measure ${zone.override ?? zone.label}, page ${p + 1}${sbActive(p, z) ? ", starts a system" : ""}${startsMovement(p, z) ? ", starts a section" : ""}${zone.pickup ? ", pickup" : ""}${markNames(
-                                p,
-                                z,
-                              )
-                                .map((m) => `, ${m.toLowerCase()}`)
-                                .join(
-                                  "",
-                                )}${canEdit ? ": select, drag, or edit its number, breaks and repeats" : ""}`}
-                              x={zone.box.ulx}
-                              y={zone.box.uly}
-                              width={zone.box.lrx - zone.box.ulx}
-                              height={zone.box.lry - zone.box.uly}
-                              onpointerdown={(e) => ed.boxDown(e, p, zone)}
-                              onkeydown={(e) => zoneKeydown(e, p, z)}
-                            >
-                              {#if zoneTitle(p, z)}
-                                <title>{zoneTitle(p, z)}</title>
-                              {/if}
-                            </rect>
-                            {@const lbl = zone.label}
-                            {@const fs = zoneLabelFont(
-                              p,
-                              pg.width,
-                              zone.box,
-                              lbl.length,
-                              startsMovement(p, z),
-                            )}
-                            {@const inset = fs * 0.6}
-                            <!-- Before the number: a system start's bracket, a
-                                 section start's double bar, a repeat start's
-                                 sign. -->
-                            {@const sy = sbActive(p, z) ? fs * 0.6 : 0}
-                            {@const bar = startsMovement(p, z) ? fs * 0.7 : 0}
-                            {@const rs = zone.rptStart ? fs * 1.15 : 0}
-                            {@const pre = sy + bar + rs}
-                            {@const lblW =
-                              lbl.length * fs * 0.62 + fs * 0.9 + pre}
-                            {@const on = inSelection(p, z)}
-                            <!-- The label repeats the box's name for the eye. -->
-                            <rect
-                              aria-hidden="true"
-                              class="labelbg"
-                              class:on
-                              x={zone.box.ulx + inset}
-                              y={zone.box.uly + inset}
-                              width={lblW}
-                              height={fs * 1.55}
-                              rx={fs * 0.28}
-                            />
-                            {#if sy}
-                              {@const sx = zone.box.ulx + inset + fs * 0.45}
-                              {@const sy0 = zone.box.uly + inset + fs * 0.3}
-                              <path
-                                aria-hidden="true"
-                                class="sysmark"
-                                class:on
-                                vector-effect="non-scaling-stroke"
-                                d={`M${sx + fs * 0.3} ${sy0}h${-fs * 0.3}v${fs * 0.95}h${fs * 0.3}`}
-                              />
-                            {/if}
-                            {#if bar}
-                              {@const bx =
-                                zone.box.ulx + inset + sy + fs * 0.45}
-                              {@const by = zone.box.uly + inset + fs * 0.3}
-                              <rect
-                                aria-hidden="true"
-                                class="dbar"
-                                class:on
-                                x={bx}
-                                y={by}
-                                width={fs * 0.1}
-                                height={fs * 0.95}
-                              />
-                              <rect
-                                aria-hidden="true"
-                                class="dbar"
-                                class:on
-                                x={bx + fs * 0.24}
-                                y={by}
-                                width={fs * 0.22}
-                                height={fs * 0.95}
-                              />
-                            {/if}
-                            <text
-                              aria-hidden="true"
-                              class="zonelabel"
-                              class:on
-                              x={zone.box.ulx + inset + pre + (lblW - pre) / 2}
-                              y={zone.box.uly + inset + fs * 1.12}
-                              text-anchor="middle"
-                              font-size={fs}>{lbl}</text
-                            >
-                            {@const b = zone.box}
-                            <!-- Repeat signs as icons on the label's paper: a
-                                 start in the number's label, an end or a double
-                                 repeat in a label at the box's top right, at
-                                 the barline it stands on. -->
-                            {#if rs}
-                              <g
-                                aria-hidden="true"
-                                class="repicon"
-                                class:on
-                                transform={`translate(${b.ulx + inset + sy + bar + fs * 0.4} ${b.uly + inset + fs * 0.27}) scale(${fs / 24})`}
-                              >
-                                <Icon name="repeat-start" size={24} />
-                              </g>
-                            {/if}
-                            {#if zone.rptEnd || zone.rptBoth}
-                              {@const rw = fs * 1.7}
-                              {@const rx = b.lrx - inset - rw}
-                              <rect
-                                aria-hidden="true"
-                                class="labelbg"
-                                class:on
-                                x={rx}
-                                y={b.uly + inset}
-                                width={rw}
-                                height={fs * 1.55}
-                                rx={fs * 0.28}
-                              />
-                              <g
-                                aria-hidden="true"
-                                class="repicon"
-                                class:on
-                                transform={`translate(${rx + rw / 2 - fs * 0.5} ${b.uly + inset + fs * 0.27}) scale(${fs / 24})`}
-                              >
-                                <Icon
-                                  name={zone.rptBoth
-                                    ? "repeat-both"
-                                    : "repeat-end"}
-                                  size={24}
-                                />
-                              </g>
-                            {/if}
-                            <!-- The signs, as tags along the box's bottom
-                                 edge from the right: a symbol or its text. -->
-                            {#if zone.signs?.length}
-                              {@const tagH = fs * 1.55}
-                              {@const tagY = b.lry - inset - tagH}
-                              {#each zone.signs
-                                .map( (sign) => ({ sign, w: SIGN_TEXT[sign] ? SIGN_TEXT[sign].length * fs * 0.58 + fs * 0.9 : tagH * 1.2 }), )
-                                .map( (t, i, all) => ({ ...t, x: b.lrx - inset - all
-                                        .slice(i)
-                                        .reduce((sum, u) => sum + u.w + fs * 0.25, 0) + fs * 0.25 }), ) as t (t.sign)}
-                                <g aria-hidden="true" class="signtag">
-                                  <rect
-                                    x={t.x}
-                                    y={tagY}
-                                    width={t.w}
-                                    height={tagH}
-                                    rx={tagH / 2}
-                                  />
-                                  {#if SIGN_TEXT[t.sign]}
-                                    <text
-                                      x={t.x + t.w / 2}
-                                      y={tagY + tagH * 0.7}
-                                      text-anchor="middle"
-                                      font-size={fs * 0.9}
-                                      >{SIGN_TEXT[t.sign]}</text
-                                    >
-                                  {:else}
-                                    <g
-                                      transform={`translate(${t.x + t.w / 2 - fs * 0.6} ${tagY + tagH / 2 - fs * 0.6}) scale(${(fs * 1.2) / 24})`}
-                                    >
-                                      <Icon
-                                        name={t.sign as "segno" | "coda"}
-                                        size={24}
-                                      />
-                                    </g>
-                                  {/if}
-                                </g>
-                              {/each}
-                            {/if}
-                          {/each}
-                          <!-- Endings: a bracket over each run of measures of
-                               one ending in a system, with its number; closed
-                               at the end unless it is the run's last ending. -->
-                          {#if showBoxes && tool === "measures"}
-                            {#each endingRuns(p) as run, i (i)}
-                              {@const fs = labelFont(p, pg.width)}
-                              {@const y = run.uly - fs * 0.6}
-                              <g aria-hidden="true" class="volta">
-                                <path
-                                  vector-effect="non-scaling-stroke"
-                                  d={`M${run.ulx + fs * 0.2} ${run.uly}V${y}H${run.lrx - fs * 0.2}${run.closed ? `V${run.uly}` : ""}`}
-                                />
-                                <rect
-                                  x={run.ulx + fs * 0.45}
-                                  y={y - fs * 0.75}
-                                  width={fs * (run.n.length * 0.62 + 1.3)}
-                                  height={fs * 1.5}
-                                  rx={fs * 0.28}
-                                />
-                                <text
-                                  x={run.ulx + fs * 0.75}
-                                  y={y + fs * 0.4}
-                                  font-size={fs}>{run.n}.</text
-                                >
-                              </g>
-                            {/each}
-                          {/if}
-                          {#each showBoxes && showOverlaps ? overlaps(pg) : [] as o, i (i)}
-                            <rect
-                              class="overlap"
-                              x={o.ulx}
-                              y={o.uly}
-                              width={o.lrx - o.ulx}
-                              height={o.lry - o.uly}
-                            />
-                          {/each}
-                          {#if ed.corner?.p === p && ed.corner.scope === tool}
-                            {@const corner = ed.corner}
-                            {@const r = labelFont(p, pg.width) * 0.9}
-                            <path
-                              class="corner"
-                              vector-effect="non-scaling-stroke"
-                              d={`M${corner.x - r} ${corner.y}H${corner.x + r}M${corner.x} ${corner.y - r}V${corner.y + r}`}
-                            />
-                          {/if}
-                          {#if ed.marquee?.p === p && ed.marquee.moved}
-                            {@const marquee = ed.marquee}
-                            {@const m = drawnBox(
-                              marquee.sx,
-                              marquee.sy,
-                              marquee.x,
-                              marquee.y,
-                              0,
-                            )}
-                            <rect
-                              class="marquee"
-                              vector-effect="non-scaling-stroke"
-                              x={m.ulx}
-                              y={m.uly}
-                              width={m.lrx - m.ulx}
-                              height={m.lry - m.uly}
-                            />
-                          {/if}
-                        {/if}
-                      </svg>
-
-                      {#if canEdit && showBoxes && selectedItem?.p === p && !groupZs.length}
-                        {@render handles(p, selectedItem.z)}
-                      {/if}
-                    </div>
-                  </div>
-                </div>
-              {/each}
-              {#if sp.lonelySide === "left"}<div class="page-spacer"></div>{/if}
-            </div>
-          {/each}
-        </div>
-      </div>
+      <ZoneDesk
+        editor={ed}
+        {model}
+        {view}
+        {sel}
+        {instruments}
+        tool={steps.tool}
+        step4={steps.step4}
+        {canEdit}
+        {coarse}
+      />
       <DraftBubble {session} />
     </div>
 
-    <!-- The page toolbar's controls: above or below the pages, or at the
-         top of the side panel docked as a sheet on a phone (inSheet). -->
-    <!-- How many pages a row shows: in the toolbar, or in the ⋯ menu below
-         MEDIUM_TOOL. -->
-    <!-- One order at every width: undo and redo, the view options, the zoom;
-         at the right end (toolbarEnd) the paging, the help and the ⋯ menu.
-         Where the toolbar narrows, groups move into the ⋯ menu; none changes
-         place. -->
-    {#snippet toolbarItems()}
-      {#if canEdit}
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          onclick={() => ed.undo()}
-          disabled={!ed.canUndo}
-          aria-label="Undo"
-          title="Undo the last change (Ctrl/Cmd+Z)"><Icon name="undo" /></button
-        >
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          onclick={() => ed.redo()}
-          disabled={!ed.canRedo}
-          aria-label="Redo"
-          title="Redo (Ctrl/Cmd+Shift+Z)"><Icon name="redo" /></button
-        >
-      {/if}
-      {#if canEdit && coarse}<BoxModeToggles editor={ed} noun={boxName} />{/if}
-      {#if canEdit}<span class="vline"></span>{/if}
-      {#if step4}
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={step4Pages}
-          aria-pressed={step4Pages}
-          aria-label="Show the whole pages"
-          title={step4Pages
-            ? "Show only the beginning of each system"
-            : "Show the whole pages beside the names"}
-          onclick={() => showStep4Pages(!step4Pages)}
-          ><Icon name="page-whole" size={16} /></button
-        >
-        <span class="vline"></span>
-      {/if}
-      {#if !medium && !step4}<PageSpreadControls
-          {view}
-          {firstOnRight}
-          onview={(v) => (view = v)}
-          onfirstonright={(on) => (firstOnRight = on)}
-        />{/if}
-      {#if !viewCompact && !step4}{@render boxesButton()}{@render overlapButton()}{@render wholePageButton()}<span
-          class="vline viewline"
-        ></span>{/if}
-      {#if !step4}<ZoomLevel
-          bind:value={() => Math.round(zoom * 100), (v) => (zoom = v / 100)}
-          bind:fit
-          fitPage={narrow ? undefined : fitZoom() * 100}
-          layout={narrow && coarse ? "pinch" : medium ? "steps" : "slider"}
-          onfitpage={fitWholePage}
-        />{/if}
-      <span class="vh" role="status"
-        >{ed.armed
-          ? `The ${HANDLES.find((h) => h.edges === ed.armed?.edges)?.side} is picked up. ${coarse ? "Tap" : "Click"} where it should go.`
-          : ed.corner
-            ? `First corner set on page ${ed.corner.p + 1}. Click the opposite corner to draw the ${boxName}.`
-            : ed.drawHint
-              ? `Turn on Draw, or tap the ${boxName} twice, to select it.`
-              : ""}</span
-      >
-    {/snippet}
-
-    <!-- Last in the toolbar, next to the side panel on the right. -->
-    {#snippet toolbarEnd()}
-      {#if !step4}<!-- A phone or tablet row has room for the numbers only ("1–2 of 4"). --><PageNav
-          label={spreadLabel}
-          total={pages.length}
-          compact={medium}
-          atStart={atTop}
-          {atEnd}
-          ongo={go}
-        />
-        <span class="vline helpline" class:hidden={inSheet && !viewMenu}
-        ></span>{/if}
-      <button
-        type="button"
-        class="tbtn tbtn-icon helpbtn"
-        class:hidden={inSheet}
-        class:on={helpOpen}
-        aria-label="Editor help"
-        aria-expanded={helpOpen}
-        aria-controls="zone-help"
-        onclick={() => {
-          helpOpen = !helpOpen;
-          viewOpen = false;
-        }}><Icon name="help" size={18} /></button
-      >
-      {#if viewMenu && (inSheet || !step4)}
-        <button
-          type="button"
-          class="tbtn tbtn-icon viewbtn"
-          class:on={viewOpen}
-          aria-label={inSheet ? "View options and help" : "View options"}
-          aria-expanded={viewOpen}
-          aria-controls="zone-view"
-          onclick={() => {
-            viewOpen = !viewOpen;
-            helpOpen = false;
-          }}><Icon name="more" size={18} /></button
-        >
-      {/if}
+    <!-- The page toolbar: above or below the pages, or at the top of the
+         side panel docked as a sheet on a phone (inSheet). -->
+    {#snippet toolbar(narrow: boolean)}
+      <ZoneViewerToolbar
+        {narrow}
+        editor={ed}
+        {view}
+        total={model.pages.length}
+        {canEdit}
+        {coarse}
+        {boxName}
+        step4={steps.step4}
+        bind:helpOpen
+        bind:viewOpen
+      />
     {/snippet}
 
     {#snippet sheetBar()}
       <div class="sheetbar">
-        <ViewerToolbar
-          class={drawing ? "drawing" : ""}
-          narrow
-          children={toolbarItems}
-          end={toolbarEnd}
-        />
+        {@render toolbar(true)}
       </div>
-    {/snippet}
-    <!-- The selected box's body and its resize handles, over the page in
-         screen pixels: a body that drags the box, round corner dots, and
-         edge handles without a mark of their own, at touch size on a touch
-         screen. Their percentages place them on the box at any zoom; --w
-         and --h, the box's size on screen, keep the handles' reach into the
-         box to a quarter of it. -->
-    {#snippet handles(p: number, z: number)}
-      <BoxHandles
-        editor={ed}
-        {p}
-        item={items(p)[z]}
-        box={items(p)[z].box}
-        page={pages[p]}
-        scale={(canvasW[p] || pages[p].width) / pages[p].width}
-        name={itemName(p, z)}
-        color={tool === "staves"
-          ? "rgb(var(--layer-staff))"
-          : tool === "grandstaves"
-            ? "rgb(var(--layer-grand))"
-            : "rgb(var(--layer-measure))"}
-        touch={coarse}
-        room={tool === "measures" ? undefined : staffRoom(p, z)}
-      />
     {/snippet}
 
     <!-- The task tools in the side panel: the layout steps (an OMR-prepared
          piece) or the counts. -->
     {#snippet tools()}
-      <div class="wtools">
-        {#if omr}
-          <div
-            class="steps"
-            role="group"
-            aria-label="Steps"
-            title={`The ${naming ? "four" : "three"} steps of the measure correction. Each step shows only its own boxes.`}
-          >
-            {#each [{ step: 1, glyph: "staff", tone: "var(--ink-staff)", long: "Staff boxes", short: "Staves", count: `${staffCount}`, n: staffCount }, { step: 2, glyph: "grand", tone: "var(--ink-grand)", long: "Grand staves", short: "Grand", count: `${grandstaffCount}`, n: grandstaffCount }, { step: 3, glyph: "measure", tone: "var(--ink-measure)", long: "Measures", short: "Measures", count: `${measureCount} · ${movementCount} section${movementCount === 1 ? "" : "s"}`, n: measureCount }, ...(naming ? [{ step: 4, glyph: "names", tone: "var(--ink)", long: "Instruments", short: "Instr.", count: `${shownNamed.instruments.length}`, n: shownNamed.instruments.length }] : [])] as s (s.step)}
-              <button
-                type="button"
-                class="step"
-                class:on={layoutStep === s.step}
-                aria-pressed={layoutStep === s.step}
-                onclick={() => setLayoutStep(s.step as LayoutStep)}
-                aria-label={`${s.step} · ${s.long}, ${s.count}`}
-                ><span class="stepno">{s.step}</span><StepGlyph
-                  kind={s.glyph as "staff" | "grand" | "measure" | "names"}
-                  tone={s.tone}
-                /><span class="steplong">{s.long}</span><span class="stepshort"
-                  >{s.short}</span
-                ><span class="stepn">{s.n}</span><span class="stepcount"
-                  >{s.count}</span
-                ></button
-              >
-            {/each}
-          </div>
-        {:else}
-          <span class="abcount"
-            >{measureCount} measure{measureCount === 1 ? "" : "s"} · {movementCount}
-            section{movementCount === 1 ? "" : "s"}</span
-          >
-        {/if}
-      </div>
-    {/snippet}
-
-    <!-- Draw mode, on a touch screen: on, a finger drag draws and a tap
-         selects; off, a drag scrolls the pages and a tap deselects. -->
-    {#snippet boxesButton()}
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        class:on={showBoxes}
-        aria-pressed={showBoxes}
-        aria-label="Show the boxes"
-        title="Show or hide the boxes on the page"
-        onclick={toggleBoxes}><Icon name="eye" size={16} /></button
-      >
-    {/snippet}
-
-    <!-- Shown where the piece covers only part of a page. -->
-    {#snippet wholePageButton()}
-      {#if hasPartPages}
-        <button
-          type="button"
-          class="tbtn tbtn-icon"
-          class:on={wholePage}
-          aria-pressed={wholePage}
-          aria-label="Show the whole page"
-          title="Show the whole page, not only the part this piece covers"
-          onclick={() => (wholePage = !wholePage)}
-          ><Icon name="page-whole" size={16} /></button
-        >
-      {/if}
-    {/snippet}
-
-    {#snippet overlapButton()}
-      <button
-        type="button"
-        class="tbtn tbtn-icon"
-        class:on={showOverlaps}
-        aria-pressed={showOverlaps}
-        disabled={!showBoxes}
-        aria-label="Show overlaps"
-        title="Show or hide the colour on areas where two boxes overlap"
-        onclick={() => (showOverlaps = !showOverlaps)}
-        ><Icon name="overlap" size={16} /></button
-      >
-    {/snippet}
-
-    <!-- A measure's number field: typing overrides the automatic number. -->
-    {#snippet numberInput(p: number, z: number)}
-      {@const zone = pages[p].zones[z]}
-      <input
-        class="selnum"
-        maxlength={MAX_ANCHOR_LENGTH}
-        value={zone.override ?? zone.label}
-        oninput={(e) => setLabel(p, z, (e.target as HTMLInputElement).value)}
-        onchange={() => ed.commit()}
-        title="Type to override the automatic number, e.g. 10a. The following measures count on from it."
+      <ZoneSteps
+        {model}
+        {omr}
+        {naming}
+        layoutStep={steps.layoutStep}
+        instrumentCount={instruments.shownNamed.instruments.length}
+        onstep={setLayoutStep}
       />
     {/snippet}
 
-    <!-- The selected box's controls: the box as the heading (for a measure
-         with its number field), where it is and previous and next; for a
-         measure, below its actions, its breaks, repeats and signs. -->
-    <!-- Select several, on a touch screen: a tap on a box adds it to the
-         selection or takes it out. With a mouse Shift+click and Shift+drag
-         do this. -->
-    <!-- The edit actions on one selected box. -->
-    {#snippet editActions()}
-      <button
-        type="button"
-        class="btn"
-        onclick={newBox}
-        title={`New ${boxName} beside this one (N)`}
-        ><Icon name="plus" />New {boxName}</button
-      >
-      <button
-        type="button"
-        class="btn btn-danger"
-        onclick={() => ed.deleteSelection()}
-        aria-label={`Delete the ${boxName}`}
-        title={`Delete the ${boxName}`}><Icon name="trash" />Delete</button
-      >
-    {/snippet}
-
     {#snippet selection()}
-      {#if selectedItem && groupZs.length}
-        <SelectionPanel
-          glyph={toolGlyph.kind}
-          tone={toolGlyph.tone}
-          page={selectedItem.p}
-          ondeselect={coarse && !(docked && canEdit)
-            ? () => ed.select(0, null)
-            : undefined}
-          deselectTitle={`Deselect the ${boxNames}`}
-        >
-          {#snippet name()}{groupZs.length} {boxNames}{/snippet}
-          {#snippet actions()}
-            <button
-              type="button"
-              class="btn"
-              onclick={() => ed.duplicate()}
-              title={`Copy the ${groupZs.length} ${boxNames} below or beside them (${MOD}drag one of them copies them to where you drop it)`}
-              ><Icon name="copy" />Duplicate</button
-            >
-            <button
-              type="button"
-              class="btn btn-danger"
-              onclick={() => ed.deleteSelection()}
-              aria-label={`Delete the ${groupZs.length} ${boxNames}`}
-              title={`Delete the ${groupZs.length} ${boxNames}`}
-              ><Icon name="trash" />Delete</button
-            >
-          {/snippet}
-        </SelectionPanel>
-      {:else if selectedItem}
-        {@const { p, z } = selectedItem}
-        <SelectionPanel
-          glyph={toolGlyph.kind}
-          tone={toolGlyph.tone}
-          page={p}
-          item={boxName}
-          onstep={(dir) => stepSelection(dir)}
-          canStep={(dir) => (dir < 0 ? hasPrev : hasNext)}
-          keys={["A", "D"]}
-          actions={canEdit ? editActions : undefined}
-          oncomment={selectedLabel && auth.user ? () => compose++ : undefined}
-          commentTitle={`Comment on measure ${selectedLabel}`}
-          ondeselect={coarse && !(docked && canEdit)
-            ? () => ed.select(0, null)
-            : undefined}
-          deselectTitle={`Deselect the ${boxName}`}
-        >
-          {#snippet name()}
-            {#if tool === "measures" && canEdit}
-              <label class="selnumlabel"
-                >Measure {@render numberInput(p, z)}</label
-              >
-            {:else}
-              {itemName(p, z)}
-            {/if}
-          {/snippet}
-          {#snippet details()}
-            {#if tool === "measures"}
-              {#if canEdit}
-                <div class="selprops">
-                  <p class="selgroup">Breaks</p>
-                  <div class="selflags" role="group" aria-label="Breaks">
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={sbActive(p, z)}
-                      aria-pressed={sbActive(p, z)}
-                      onclick={() => toggleSb(p, z)}
-                      disabled={pbAt(z)}
-                      title={pbAt(z)
-                        ? "The first measure on a page always starts a system"
-                        : "This measure starts a new system (line) of the score"}
-                      ><span class="sellong">Starts a system</span><span
-                        class="selshort">System</span
-                      ></button
-                    >
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={startsMovement(p, z)}
-                      aria-pressed={startsMovement(p, z)}
-                      onclick={() => toggleSection(p, z)}
-                      disabled={sectionLocked(p, z)}
-                      title={sectionLocked(p, z)
-                        ? "The first measure always starts the first section"
-                        : "This measure starts a new movement or section"}
-                      ><span class="sellong">Starts a section</span><span
-                        class="selshort">Section</span
-                      ></button
-                    >
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={pages[p].zones[z].pickup}
-                      aria-pressed={pages[p].zones[z].pickup}
-                      onclick={() => togglePickup(p, z)}
-                      title="An incomplete measure that is not counted: numbered 0 at the start of a section, otherwise it and the measure before it are numbered as halves, e.g. 12a and 12b"
-                      >Pickup</button
-                    >
-                  </div>
-                  <p class="selgroup">Repeats</p>
-                  <div class="selflags" role="group" aria-label="Repeats">
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={!!pages[p].zones[z].rptStart}
-                      aria-pressed={!!pages[p].zones[z].rptStart}
-                      onclick={() => toggleRepeat(p, z, "start")}
-                      aria-label="Repeat start"
-                      title="A repeat barline at the start of this measure"
-                      ><Icon name="repeat-start" /><span class="sellong"
-                        >Repeat start</span
-                      ></button
-                    >
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={!!pages[p].zones[z].rptEnd}
-                      aria-pressed={!!pages[p].zones[z].rptEnd}
-                      onclick={() => toggleRepeat(p, z, "end")}
-                      aria-label="Repeat end"
-                      title="A repeat barline at the end of this measure"
-                      ><Icon name="repeat-end" /><span class="sellong"
-                        >Repeat end</span
-                      ></button
-                    >
-                    <button
-                      type="button"
-                      class="chip-switch"
-                      class:on={!!pages[p].zones[z].rptBoth}
-                      aria-pressed={!!pages[p].zones[z].rptBoth}
-                      onclick={() => toggleRepeat(p, z, "both")}
-                      title="A double repeat barline at the end of this measure: the end of one repeat and the start of the next"
-                      aria-label="Double repeat"
-                      ><Icon name="repeat-both" /><span class="sellong"
-                        >Double repeat</span
-                      ></button
-                    >
-                    <div
-                      class="seg"
-                      role="group"
-                      aria-label="Ending"
-                      title="The ending (volta) this measure belongs to; neighbouring measures with the same ending share one bracket"
-                    >
-                      {#each ["", "1", "2", "3"] as n (n)}
-                        <button
-                          type="button"
-                          class:on={(pages[p].zones[z].ending ?? "") === n}
-                          aria-pressed={(pages[p].zones[z].ending ?? "") === n}
-                          onclick={() => setEnding(p, z, n)}
-                          >{#if n}{n}.{:else}<span class="sellong"
-                              >No ending</span
-                            ><span class="selshort">No</span>{/if}</button
-                        >
-                      {/each}
-                    </div>
-                  </div>
-                  <p class="selgroup">Signs</p>
-                  <div class="selflags" role="group" aria-label="Signs">
-                    {#each MEASURE_SIGNS as sign (sign)}
-                      <button
-                        type="button"
-                        class="chip-switch"
-                        class:on={!!pages[p].zones[z].signs?.includes(sign)}
-                        aria-pressed={!!pages[p].zones[z].signs?.includes(sign)}
-                        onclick={() => toggleSign(p, z, sign)}
-                        aria-label={SIGN_NAME[sign]}
-                        title={SIGN_TITLE[sign]}
-                        >{#if sign === "segno" || sign === "coda"}<Icon
-                            name={sign}
-                          /><span class="sellong">{SIGN_NAME[sign]}</span
-                          >{:else}{SIGN_NAME[sign]}{/if}</button
-                      >
-                    {/each}
-                  </div>
-                </div>
-              {:else}
-                <!-- Read-only, the toggles give way to the breaks that apply. -->
-                {@const flags = [
-                  sbActive(p, z) ? "Starts a system" : "",
-                  startsMovement(p, z) ? "Starts a section" : "",
-                  pages[p].zones[z].pickup ? "Pickup" : "",
-                  ...markNames(p, z),
-                ].filter(Boolean)}
-                {#if flags.length}
-                  <p class="selflagtext">{flags.join(" · ")}</p>
-                {/if}
-              {/if}
-            {/if}
-          {/snippet}
-        </SelectionPanel>
-      {:else if step4}
-        <!-- The instruments step selects no boxes: why and how in short;
-             the help (?) has the full text. -->
-        <div class="namehelp">
-          <p class="namewhy">{NAMING_WHY}</p>
-          <ol>
-            {#each namingSteps as line, i (i)}
-              <li>{line}</li>
-            {/each}
-          </ol>
-        </div>
-      {:else}
-        <p class="selnone">
-          {#if coarse && canEdit && ed.pickMode}
-            Tap boxes to select them.
-          {:else if coarse && canEdit && !ed.drawMode}
-            <!-- One inline run: the flex .selnone drops the spaces around a
-                 bare icon. -->
-            <span
-              >Tap a box twice, or turn on Draw <Icon
-                name="touch-box"
-                size={16}
-              />, to edit it.</span
-            >
-          {:else}
-            {coarse ? "Tap" : "Click"} a box on the page to {canEdit
-              ? "edit it"
-              : "select it"}.
-          {/if}
-        </p>
-      {/if}
+      <ZoneSelection
+        editor={ed}
+        {model}
+        {sel}
+        tool={steps.tool}
+        step4={steps.step4}
+        {canEdit}
+        {coarse}
+        docked={view.docked}
+        oncompose={() => compose++}
+      />
     {/snippet}
 
     <!-- The task's action at the panel's bottom: the claim or the draft
          state and give back, then the next step or the submission. -->
     {#snippet footer()}
-      <div class="wfoot">
-        <!-- Why Submit is not available yet, while it is the step's button. -->
-        {#if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
-          <p class="blockline">{submitBlock}</p>
-        {/if}
-        {#if step4 && canEdit && transcription}
-          <p
-            class="blockline retryline"
-            class:err={transcription.error}
-            role="status"
-            title="The staves are transcribed while the instruments are named. The transcription is submitted with the corrections."
-          >
-            <span>{transcription.text}</span>
-            {#if transcription.error && runningKey === null}
-              <button type="button" class="btn" onclick={() => transcribe()}
-                >{recognisedKey === staffKey
-                  ? "Transcribe the failed staves again"
-                  : "Try again"}</button
-              >
-            {/if}
-          </p>
-        {/if}
-        <PreTaskStatus {session} />
-        {#if omr && layoutStep < lastStep}
-          {@render nextStep()}
-        {:else}
-          <button
-            type="button"
-            class="btn btn-primary btn-pre"
-            onclick={() => submit()}
-            disabled={busy || !canEdit || submitBlock !== null}
-            title={submitBlock ??
-              (naming
-                ? "Submit the corrected staves, grand staves, measures, breaks, sections and instruments for review"
-                : omr
-                  ? "Submit the corrected staves, grand staves, measures, breaks and sections for review"
-                  : "Submit the corrected measures, breaks and sections for review")}
-          >
-            Submit corrections
-          </button>
-        {/if}
-      </div>
-    {/snippet}
-
-    <!-- The button to the next step of a layout task, for the editor and the
-         reviewer. -->
-    {#snippet nextStep()}
-      {#if layoutStep === 1}
-        <button
-          type="button"
-          class="btn btn-secondary"
-          onclick={() => setLayoutStep(2)}
-          title={`Go on to step 2: the grand staves, one box around the staves one performer plays together.${canEdit ? ` Submission is in step ${lastStep}.` : ""}`}
-        >
-          Next: grand staves
-        </button>
-      {:else if layoutStep === 2}
-        <button
-          type="button"
-          class="btn btn-secondary"
-          onclick={() => setLayoutStep(3)}
-          title={`Go on to step 3: the measures, their numbers and breaks.${canEdit ? ` Submission is in step ${lastStep}.` : ""}`}
-        >
-          Next: measures
-        </button>
-      {:else if naming && layoutStep === 3}
-        <button
-          type="button"
-          class="btn btn-secondary"
-          onclick={() => setLayoutStep(4)}
-          title={`Go on to step 4: the instrument of every staff.${canEdit ? " Submission is in step 4." : ""}`}
-        >
-          Next: instruments
-        </button>
-      {/if}
+      <ZoneFooter
+        {session}
+        {transcriber}
+        {omr}
+        {naming}
+        layoutStep={steps.layoutStep}
+        lastStep={steps.lastStep}
+        step4={steps.step4}
+        {canEdit}
+        {busy}
+        {submitBlock}
+        onstep={setLayoutStep}
+        onsubmit={submit}
+      />
     {/snippet}
 
     <!-- In a layout review, Approve's place until every step was opened: the
@@ -3127,10 +573,10 @@
       <button
         type="button"
         class="btn btn-secondary"
-        onclick={() => setLayoutStep(nextMissing as LayoutStep)}
-        title={`Go on to step ${nextMissing}. Approve is available once every step has been opened.`}
+        onclick={() => setLayoutStep(steps.nextMissing as LayoutStep)}
+        title={`Go on to step ${steps.nextMissing}. Approve is available once every step has been opened.`}
       >
-        Next: {STEP_NAMES[nextMissing - 1]}
+        Next: {STEP_NAMES[steps.nextMissing - 1]}
       </button>
     {/snippet}
 
@@ -3139,18 +585,18 @@
       {#if session.card && session.reviewSub !== undefined}
         <ReviewActions
           {repoId}
-          {approveBlock}
+          approveBlock={steps.approveBlock}
           instead={reviewNext}
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
-          prefill={reviewPrefill}
+          prefill={sel.reviewPrefill}
           onvalidate={(sub, verdict, comment) =>
             session.validate(sub, verdict, comment)}
           onreviewedit={async (sub, comment) => {
-            editFrom = layoutStep;
+            steps.editFrom = steps.layoutStep;
             const result = await session.reviewEdit(sub, comment);
-            if (!result || result.error) editFrom = null;
+            if (!result || result.error) steps.editFrom = null;
             return result;
           }}
           onabandon={(sub) => session.abandon(sub)}
@@ -3162,7 +608,11 @@
          offered again only while the score has no boxes, which it would
          replace. -->
     {#snippet resultNote()}
-      <RunnerBanner {runner} surface="inline" retryable={needsDetection()} />
+      <RunnerBanner
+        {runner}
+        surface="inline"
+        retryable={detection.needsDetection()}
+      />
     {/snippet}
 
     {#snippet taskBox(headAction: Snippet | undefined)}
@@ -3194,8 +644,8 @@
         {tools}
         {selection}
         selectionLabel="Selection"
-        selectionActive={!!selectedItem}
-        {selected}
+        selectionActive={!!sel.selectedItem}
+        selected={sel.selected}
         bind:tab={panelTab}
         {compose}
         footer={session.footerMode === "edit"
@@ -3203,67 +653,24 @@
           : session.footerMode === "review"
             ? reviewFooter
             : undefined}
-        bar={inSheet ? sheetBar : undefined}
-        composerHint={selectedLabel
-          ? `Comment on measure ${selectedLabel}…`
+        bar={view.inSheet ? sheetBar : undefined}
+        composerHint={sel.selectedLabel
+          ? `Comment on measure ${sel.selectedLabel}…`
           : ""}
-        onanchor={showAnchorFor}
+        onanchor={sel.showAnchorFor}
         oncomment={(task, kind, body, parent_id) =>
           session.postComment(
             task,
             kind,
             body,
             parent_id,
-            kind === "comment" ? commentAnchor() : undefined,
+            kind === "comment" ? sel.commentAnchor() : undefined,
           )}
         onresolve={(id) => session.resolveComment(id)}
       />
     {/if}
 
-    {#if ed.loupe && pages[ed.loupe.p]}
-      {@const loupe = ed.loupe}
-      {@const pg = pages[loupe.p]}
-      {@const scale = canvasW[loupe.p] ? canvasW[loupe.p] / pg.width : 1}
-      {@const span = LOUPE_PX / (LOUPE_ZOOM * scale)}
-      {@const lx =
-        loupe.cx - LOUPE_PX - 24 < 8 ? loupe.cx + 24 : loupe.cx - LOUPE_PX - 24}
-      {@const ly = Math.max(8, loupe.cy - LOUPE_PX - 48)}
-      <div
-        class="loupe"
-        aria-hidden="true"
-        style:left={`${lx}px`}
-        style:top={`${ly}px`}
-        style:width={`${LOUPE_PX}px`}
-        style:height={`${LOUPE_PX}px`}
-      >
-        <svg
-          viewBox={`${loupe.x - span / 2} ${loupe.y - span / 2} ${span} ${span}`}
-          class:staves={tool === "staves"}
-          class:grandstaves={tool === "grandstaves"}
-        >
-          {#if pg.url}
-            <image href={pg.url} width={pg.width} height={pg.height} />
-          {/if}
-          <!-- Only the boxes inside the magnified square. -->
-          {#each items(loupe.p).filter((it) => it.box.lrx > loupe!.x - span / 2 && it.box.ulx < loupe!.x + span / 2 && it.box.lry > loupe!.y - span / 2 && it.box.uly < loupe!.y + span / 2) as it, i (i)}
-            <rect
-              class={tool === "measures" ? "zone" : "staff"}
-              class:grand={tool === "grandstaves"}
-              vector-effect="non-scaling-stroke"
-              x={it.box.ulx}
-              y={it.box.uly}
-              width={it.box.lrx - it.box.ulx}
-              height={it.box.lry - it.box.uly}
-            />
-          {/each}
-          <path
-            class="cross"
-            vector-effect="non-scaling-stroke"
-            d={`M${loupe.x - span / 6} ${loupe.y}H${loupe.x + span / 6}M${loupe.x} ${loupe.y - span / 6}V${loupe.y + span / 6}`}
-          />
-        </svg>
-      </div>
-    {/if}
+    <ZoneLoupe editor={ed} {model} canvasW={view.canvasW} tool={steps.tool} />
   {/if}
 </div>
 
@@ -3284,43 +691,6 @@
   .corrector > :global(.spwrap:not(.docked)) {
     margin: 12px 16px 4px 0;
   }
-
-  /* ------------------------------------------------------------ side panel
-     The task tools, the selected box's controls and the footer action, in
-     the side panel's sections (SidePanel.svelte). */
-  .wtools {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-  .abcount {
-    font-size: 12.5px;
-    color: var(--ink-soft);
-    font-variant-numeric: tabular-nums;
-  }
-  @media (orientation: portrait) and (max-width: 1100px) {
-    /* The steps fill one row. */
-    .wtools {
-      flex-direction: row;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 6px;
-    }
-    .steps {
-      flex: 1 1 200px;
-    }
-    .viewmenu :global(.tbtn),
-    .viewmenu .btn {
-      position: relative;
-      min-height: 32px;
-    }
-    .viewmenu :global(.tbtn)::after,
-    .viewmenu .btn::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
-  }
   /* A phone sheet: less space around the steps and the selection's heading. */
   @media (orientation: portrait) and (max-width: 559px) {
     .corrector :global(.sptools) {
@@ -3329,106 +699,6 @@
     .corrector :global(.spsel) {
       padding-block: 8px 10px;
     }
-  }
-  /* "Measure" and the number field read as the heading's one name. */
-  .selnumlabel {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  /* Give back task and the step's button at the two ends of one row; the draft
-     state shows over the pages (DraftBubble). */
-  .wfoot {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .wfoot > .btn {
-    margin-left: auto;
-  }
-  .namehelp {
-    padding: 12px 16px;
-    font-size: 12.5px;
-    line-height: 1.45;
-    color: var(--ink-soft);
-  }
-  .namewhy {
-    margin: 0 0 8px;
-    color: var(--ink);
-  }
-  .namehelp ol {
-    margin: 0;
-    padding-left: 18px;
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-  }
-  .blockline {
-    flex-basis: 100%;
-    margin: 0;
-    font-size: 12px;
-    line-height: 1.4;
-    color: var(--ink-soft);
-  }
-  .blockline.err {
-    color: var(--danger);
-  }
-  /* A failed transcription's line, with its retry at the right end. */
-  .retryline {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-  .wfoot :global(.btn) {
-    white-space: nowrap;
-  }
-  /* Docked as a sheet the buttons take a 44px press. */
-  @media (orientation: portrait) and (max-width: 1100px) {
-    .wfoot :global(.btn) {
-      position: relative;
-    }
-    .wfoot :global(.btn)::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
-  }
-
-  /* The toolbar and the editor help below it. */
-  .tbar {
-    flex: none;
-    position: relative;
-  }
-  /* The editor help, opened from the toolbar, over the top of the pages, so
-     the desk keeps its size and its fit. */
-  .helppanel {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    z-index: 5;
-    max-height: calc(var(--desk-h) - 16px);
-    box-sizing: border-box;
-    overflow: auto;
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    margin-top: 8px;
-    padding: 10px 14px;
-    font-size: 12.5px;
-    line-height: 1.5;
-    color: var(--ink-soft);
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-md);
-  }
-  .helppanel ul {
-    flex: 1;
-    margin: 0;
-    padding-left: 18px;
   }
   /* The layers' hues, as "r, g, b" for rgba(): on the paper they stay the
      same in both themes. The --ink-* colours for text and glyphs beside the
@@ -3440,26 +710,6 @@
     --layer-movement: 139, 95, 191;
     --layer-system: 36, 82, 178;
   }
-  /* Colour words in the help, in the colours they name. */
-  .helppanel b {
-    font-weight: 600;
-  }
-  .tone-staff {
-    color: var(--ink-staff);
-  }
-  .tone-grand {
-    color: var(--ink-grand);
-  }
-  .tone-measure {
-    color: var(--ink-measure);
-  }
-  .tone-movement {
-    color: var(--ink-movement);
-  }
-  .tone-system {
-    color: var(--ink-system);
-  }
-
   /* Banner styles are shared app-wide in ui.css. */
   /* The desk column beside the sidebar: the paging and zoom toolbar on top,
      result banners over the desk. */
@@ -3482,50 +732,6 @@
   .runrow:has(:global(.runstate)) {
     padding: 8px 0 0;
   }
-  /* On a narrow touch screen the toolbar moves below the pages, within
-     thumb reach; the help and the ⋯ menu open above it, over the pages, so
-     the desk keeps its height. A pinch zooms: no zoom buttons or readout. */
-  @media (pointer: coarse) {
-    @container (max-width: 559px) {
-      .tbar {
-        order: 2;
-        padding: 6px 0 max(6px, env(safe-area-inset-bottom));
-      }
-      .tbar .helppanel,
-      .tbar .viewmenu {
-        top: auto;
-        bottom: 100%;
-        margin: 0 0 8px;
-      }
-    }
-  }
-  /* At the top of the phone sheet (inSheet) the toolbar is a plain row, and
-     the page column keeps only the help, which opens over the pages. */
-  .tbar.bare {
-    padding: 0;
-  }
-  /* The View options open over the pages, below the ⋯ button, or above it
-     where the toolbar sits under the pages (the 559px rule). */
-  .viewmenu {
-    position: absolute;
-    top: 100%;
-    right: 0;
-    z-index: 5;
-    margin: 8px 0 0;
-    padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 12px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-md);
-  }
-  .helpbtn.hidden,
-  .helpline.hidden {
-    display: none;
-  }
   /* Its padding holds the buttons' 44px press areas; the negative margin
      keeps the row 32px in the layout. */
   .sheetbar :global(.vtoolbar.narrow) {
@@ -3537,324 +743,9 @@
     background: transparent;
     box-shadow: none;
   }
-  /* In draw mode the toolbar takes the stage's wash and line, so the mode
-     shows over the pages. */
-  .tbar :global(.vtoolbar.drawing) {
-    background: var(--st-wash);
-    border-color: var(--st);
-  }
   .sheetbar :global(.vtoolbar.narrow.drawing) {
     background: var(--st-wash);
     border: 1px solid var(--st);
     border-radius: 12px;
-  }
-  /* The scroll position is kept by page (see `anchor`), not by the browser. */
-  .desk {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    overflow-anchor: none;
-    /* A pinch zooms the pages (zoomGestures), not the window. */
-    touch-action: pan-x pan-y;
-    padding: 16px 24px;
-    box-sizing: border-box;
-  }
-  /* A narrow tool column gives the page most of its width. */
-  @container (max-width: 559px) {
-    .desk {
-      padding-inline: 8px;
-    }
-  }
-  .pages {
-    min-width: 0;
-  }
-  /* A row's width is the zoom level: above 100% every row overflows the desk
-     by the same amount, so the one desk scrollbar moves all pages together.
-     Centred, so zoomed out the pages stay in the middle of the desk. */
-  .row {
-    width: calc(100% * var(--zoom, 1));
-    margin-inline: auto;
-  }
-  /* Two-up view: the spread's pages (and any empty-half spacer) share the
-     row, a few pixels apart at the spine, so they meet in the middle. */
-  .pages.double .row {
-    display: flex;
-    align-items: flex-start;
-    gap: 4px;
-  }
-  .pages.double .page,
-  .page-spacer {
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .page {
-    margin-bottom: 1.5rem;
-  }
-  .pagehead {
-    margin-bottom: 4px;
-  }
-  /* Positioning context for the per-zone controls overlay: its width is the
-     svg's, so percentage-placed controls line up with the boxes. */
-  .canvas {
-    position: relative;
-  }
-  /* A page cropped to the piece's part: the frame clips the canvas and
-     carries the sheet's outline and shadow. */
-  .frame.cropped {
-    overflow: hidden;
-    background: var(--facsimile-paper);
-    box-shadow:
-      0 0 0 1px var(--line-input),
-      var(--shadow-paper);
-  }
-  .frame.cropped svg {
-    border: 0;
-    box-shadow: none;
-  }
-  /* Each page renders as a sheet floating on the desk. */
-  svg {
-    display: block;
-    /* border-box so the 1px border stays within 100% and the page doesn't
-       overflow its container by a couple of pixels at 100% zoom. */
-    box-sizing: border-box;
-    width: 100%;
-    max-width: none;
-    height: auto;
-    background: var(--facsimile-paper);
-    border: 1px solid var(--line-input);
-    box-shadow: var(--shadow-paper);
-    touch-action: none;
-    user-select: none;
-  }
-  /* Teal for measures, purple for movement starts: both hues sit outside the
-     piece-region palette (--zone-1…8), so a colour never carries two meanings. */
-  /* Strokes are screen pixels — the markup sets
-     vector-effect="non-scaling-stroke" — scaled by the damped zoom factor
-     --stroke-scale. */
-  .zone {
-    fill: rgba(var(--layer-measure), 0.2);
-    stroke: rgba(var(--layer-measure), 0.85);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    cursor: pointer;
-  }
-  /* A selected box: a fill twice as dark and a solid outline. */
-  .zone.selected {
-    fill: rgba(var(--layer-measure), 0.4);
-    stroke: rgb(var(--layer-measure));
-    stroke-width: calc(3px * var(--stroke-scale, 1));
-  }
-  .zone.mdivstart {
-    stroke: rgba(var(--layer-movement), 0.9);
-    fill: rgba(var(--layer-movement), 0.22);
-    stroke-width: calc(4px * var(--stroke-scale, 1));
-  }
-  .zone.mdivstart.selected {
-    fill: rgba(var(--layer-movement), 0.42);
-    stroke: rgb(var(--layer-movement));
-  }
-  /* A system start: a blue bracket in the measure's label, before the
-     number; white on a selected box's label. */
-  .sysmark {
-    fill: none;
-    stroke: rgb(var(--layer-system));
-    stroke-width: 2px;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    pointer-events: none;
-  }
-  .sysmark.on {
-    stroke: #fff;
-  }
-  /* A repeat sign on its label: the label's ink, white on a selected box. */
-  .repicon {
-    color: #1a1a1a;
-    pointer-events: none;
-  }
-  .repicon.on {
-    color: #fff;
-  }
-  /* A sign's tag: paper with the measure's colour as its edge. */
-  .signtag {
-    pointer-events: none;
-    color: #1a1a1a;
-  }
-  .signtag rect {
-    fill: rgba(255, 255, 255, 0.94);
-    stroke: rgba(var(--layer-measure), 0.85);
-    stroke-width: 1px;
-    vector-effect: non-scaling-stroke;
-  }
-  .signtag text {
-    font-family: var(--font);
-    font-weight: 600;
-    fill: #1a1a1a;
-  }
-  /* An ending's bracket over its measures, its number on paper. */
-  .volta {
-    pointer-events: none;
-  }
-  .volta path {
-    fill: none;
-    stroke: rgb(var(--layer-measure));
-    stroke-width: calc(2.5px * var(--stroke-scale, 1));
-  }
-  .volta rect {
-    fill: rgba(255, 255, 255, 0.92);
-  }
-  .volta text {
-    font-family: var(--font);
-    font-weight: 600;
-    fill: #1a1a1a;
-  }
-  /* Wine red for staff boxes, dark green for grand staves, teal for measures:
-     hues outside the region palette, darker than the red and green that mean
-     fail and done. Only one layer is shown at a time. */
-  .staff {
-    fill: rgba(var(--layer-staff), 0.16);
-    stroke: rgba(var(--layer-staff), 0.9);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    cursor: pointer;
-  }
-  .staff.selected {
-    fill: rgba(var(--layer-staff), 0.4);
-    stroke: rgb(var(--layer-staff));
-    stroke-width: calc(3px * var(--stroke-scale, 1));
-  }
-  /* A box focused by a tap or click shows no browser outline; keyboard
-     focus keeps it. */
-  .zone:focus:not(:focus-visible),
-  .staff:focus:not(:focus-visible) {
-    outline: none;
-  }
-  /* Keyboard focus: a dashed accent border, drawn as the box's stroke so it
-     shows wherever SVG outlines do not. */
-  .zone:focus-visible,
-  .staff:focus-visible {
-    outline: none;
-    stroke: var(--accent);
-    stroke-width: calc(3px * var(--stroke-scale, 1));
-    stroke-dasharray: 6 3;
-  }
-  /* The first corner of a box drawn by two clicks, in its layer's colour. */
-  .corner {
-    stroke: rgba(var(--layer-measure), 0.95);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    pointer-events: none;
-  }
-  /* A Shift+drag's selection rectangle. */
-  .marquee {
-    fill: rgba(var(--layer-measure), 0.08);
-    stroke: rgba(var(--layer-measure), 0.95);
-    stroke-width: 1.5px;
-    stroke-dasharray: 5 4;
-    pointer-events: none;
-  }
-  .staves .marquee {
-    fill: rgba(var(--layer-staff), 0.08);
-    stroke: rgba(var(--layer-staff), 0.95);
-  }
-  .grandstaves .marquee {
-    fill: rgba(var(--layer-grand), 0.08);
-    stroke: rgba(var(--layer-grand), 0.95);
-  }
-  .staves .corner {
-    stroke: rgba(var(--layer-staff), 0.95);
-  }
-  .grandstaves .corner {
-    stroke: rgba(var(--layer-grand), 0.95);
-  }
-  /* The intersection of two boxes takes the inverse of the box colour. */
-  .overlap {
-    fill: rgba(255, 100, 70, 0.6);
-    pointer-events: none;
-  }
-  .staves .overlap,
-  .grandstaves .overlap {
-    fill: rgba(240, 180, 40, 0.6);
-  }
-  .labelbg {
-    fill: rgba(255, 255, 255, 0.88);
-    pointer-events: none;
-  }
-  .zonelabel {
-    font-family: ui-monospace, monospace;
-    font-weight: 600;
-    fill: #1a1a1a;
-    pointer-events: none;
-  }
-  /* The double bar of a section start, in the label's ink. */
-  .dbar {
-    fill: #1a1a1a;
-    pointer-events: none;
-  }
-  .dbar.on {
-    fill: #fff;
-  }
-  .staff.grand {
-    fill: rgba(var(--layer-grand), 0.16);
-    stroke: rgba(var(--layer-grand), 0.9);
-  }
-  .staff.grand.selected {
-    fill: rgba(var(--layer-grand), 0.4);
-    stroke: rgb(var(--layer-grand));
-  }
-  /* Each step carries the colour its boxes are drawn in. */
-  .swatch {
-    display: inline-block;
-    width: 10px;
-    height: 10px;
-    margin-right: 5px;
-    border-radius: 2px;
-    vertical-align: -1px;
-    border: 2px solid;
-    box-sizing: border-box;
-  }
-  .swatch.staff {
-    border-color: var(--ink-staff);
-    background: rgba(var(--layer-staff), 0.2);
-  }
-  .swatch.grand {
-    border-color: var(--ink-grand);
-    background: rgba(var(--layer-grand), 0.2);
-  }
-  .swatch.measure {
-    border-color: var(--ink-measure);
-    background: rgba(var(--layer-measure), 0.2);
-  }
-  /* The selected measure's number label in the measure colour. */
-  .labelbg.on {
-    fill: rgb(var(--layer-measure));
-  }
-  .zonelabel.on {
-    fill: #fff;
-  }
-  /* On a touch screen outside draw mode a finger drag scrolls the page. */
-  svg.pan {
-    touch-action: pan-x pan-y;
-  }
-  /* The magnifier above a finger resizing or drawing a box. */
-  .loupe {
-    position: fixed;
-    z-index: 60;
-    border-radius: 50%;
-    overflow: hidden;
-    pointer-events: none;
-    background: var(--facsimile-paper);
-    border: 3px solid var(--card);
-    box-shadow:
-      0 0 0 1px var(--line-strong),
-      0 6px 18px rgba(31, 36, 51, 0.3);
-  }
-  .loupe svg {
-    width: 100%;
-    height: 100%;
-    border: 0;
-    box-shadow: none;
-  }
-  .loupe .cross {
-    stroke: var(--accent);
-    stroke-width: 2px;
-    fill: none;
   }
 </style>

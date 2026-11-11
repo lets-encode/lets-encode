@@ -11,10 +11,17 @@
 // same. Where several alignments score the same, the stretch is reported as
 // ambiguous.
 //
-// Pure functions: MEI text in, plain data out. No DOM, forge or network access.
+// Pure functions: MEI text in, plain data (or, for the file measure edits, MEI
+// text) out. No DOM, forge or network access.
 
 import { parseScoreDef } from "./mei-facsimile.ts";
-import { elementsNamed, startTags, tagAttribute, tagsIn } from "./mei-xml.ts";
+import {
+  elementsNamed,
+  startTags,
+  tagAttribute,
+  tagsIn,
+  xmlEscape,
+} from "./mei-xml.ts";
 
 /** One measure of an MEI document, with the features the alignment compares. */
 export interface MeasureInfo {
@@ -304,6 +311,205 @@ export interface Pin {
 }
 
 /**
+ * Changes to the uploaded file's measure sequence before alignment, keyed by
+ * the xml:ids the file's measures carry once every element has one
+ * (addXmlIds with prefix "u-"): `removed` file measures are taken out; each
+ * `added` entry is an empty measure `id` inserted directly after the measure
+ * `after` (a file measure or another added one; null: before the first).
+ * Several additions after the same measure stand in list order.
+ */
+export interface FileEdits {
+  removed: string[];
+  added: { after: string | null; id: string }[];
+}
+
+/** An xml:id for a new added file measure, unused by the additions in `edits`. */
+export function addedFileMeasureId(edits: FileEdits): string {
+  const taken = new Set(edits.added.map((a) => a.id));
+  let k = 1;
+  while (taken.has(`added-measure-${k}`)) k++;
+  return `added-measure-${k}`;
+}
+
+/**
+ * The measures added after each file measure of `ids` (null: before the
+ * first), in order, each followed by those added after it. Additions naming
+ * no measure are left out.
+ */
+function addedRuns(
+  ids: string[],
+  edits: FileEdits,
+): Map<string | null, string[]> {
+  const written = new Set<string>();
+  const addedAfter = (id: string | null): string[] =>
+    edits.added.flatMap((a) => {
+      if (a.after !== id || written.has(a.id)) return [];
+      written.add(a.id);
+      return [a.id, ...addedAfter(a.id)];
+    });
+  return new Map([null, ...ids].map((id) => [id, addedAfter(id)]));
+}
+
+/**
+ * The file's measure xml:ids after `edits`, from `ids`, the measures' xml:ids
+ * before any edit. Edits naming no measure are left out.
+ */
+export function editedFileIds(ids: string[], edits: FileEdits): string[] {
+  const removed = new Set(edits.removed);
+  const runs = addedRuns(ids, edits);
+  return [
+    ...runs.get(null)!,
+    ...ids.flatMap((id) => [
+      ...(removed.has(id) ? [] : [id]),
+      ...runs.get(id)!,
+    ]),
+  ];
+}
+
+/**
+ * The uploaded file (with an xml:id on every element) after `edits`: each
+ * removed `<measure>` taken out, each added one written in its place as an
+ * empty measure without a label, holding one empty staff per staff of the
+ * file's score definition. Edits naming no measure are ignored.
+ */
+export function applyFileEdits(upload: string, edits: FileEdits): string {
+  if (!edits.removed.length && !edits.added.length) return upload;
+  const measures = readMeasures(upload);
+  const removed = new Set(edits.removed);
+  const runs = addedRuns(
+    measures.map((m) => m.id),
+    edits,
+  );
+  const staves = Array.from(
+    { length: Math.max(1, parseScoreDef(upload).staves.length) },
+    (_, k) => `<staff n="${k + 1}"><layer n="1"/></staff>`,
+  ).join("");
+  const empty = (ids: string[]) =>
+    ids
+      .map((id) => `<measure xml:id="${xmlEscape(id)}">${staves}</measure>`)
+      .join("");
+  let out = "";
+  let last = 0;
+  measures.forEach((measure, i) => {
+    out +=
+      upload.slice(last, measure.start) +
+      (i === 0 ? empty(runs.get(null)!) : "") +
+      (removed.has(measure.id)
+        ? ""
+        : upload.slice(measure.start, measure.end)) +
+      empty(runs.get(measure.id)!);
+    last = measure.end;
+  });
+  return out + upload.slice(last);
+}
+
+/**
+ * The pins with their file measures moved from the file edits `from` to
+ * `to`, `ids` being the file's measure xml:ids before any edit. A pin whose
+ * file measure is gone under `to` is dropped.
+ */
+export function shiftPins(
+  pins: Pin[],
+  ids: string[],
+  from: FileEdits,
+  to: FileEdits,
+): Pin[] {
+  const before = editedFileIds(ids, from);
+  const after = editedFileIds(ids, to);
+  return pins.flatMap((pin) => {
+    if (!pin.slot) return [pin];
+    const measure = after.indexOf(before[pin.slot.measure]);
+    return measure < 0
+      ? []
+      : [{ box: pin.box, slot: { ...pin.slot, measure } }];
+  });
+}
+
+/**
+ * The file edits with an empty measure added directly before or after the
+ * measure `index` of the edited file, `ids` being the edited file's measure
+ * xml:ids (editedFileIds).
+ */
+export function addFileMeasure(
+  edits: FileEdits,
+  ids: string[],
+  index: number,
+  side: "before" | "after",
+): FileEdits {
+  const after =
+    side === "after" ? ids[index] : index > 0 ? ids[index - 1] : null;
+  // The additions after `after` follow it directly; the new one goes first.
+  const added = [...edits.added];
+  const at = added.findIndex((a) => a.after === after);
+  added.splice(at < 0 ? added.length : at, 0, {
+    after,
+    id: addedFileMeasureId(edits),
+  });
+  return { removed: edits.removed, added };
+}
+
+/**
+ * The file edits without the added measure `id`; the measures added after
+ * it take its place.
+ */
+export function withoutAddedMeasure(edits: FileEdits, id: string): FileEdits {
+  const gone = edits.added.find((a) => a.id === id);
+  if (!gone) return edits;
+  return {
+    removed: edits.removed,
+    added: edits.added.flatMap((a) =>
+      a.id === id
+        ? edits.added
+            .filter((c) => c.after === id)
+            .map((c) => ({ after: gone.after, id: c.id }))
+        : a.after === id
+          ? []
+          : [a],
+    ),
+  };
+}
+
+/**
+ * The score staves (file staff per score staff, null for an empty staff)
+ * with file staff `staff`, or none, at score staff `row`; where that file
+ * staff stood at another score staff, the two swap their file staves.
+ */
+export function chooseScoreStaff(
+  list: (number | null)[],
+  row: number,
+  staff: number | null,
+): (number | null)[] {
+  const next = [...list];
+  const other = staff === null ? -1 : next.indexOf(staff);
+  if (other >= 0) next[other] = next[row];
+  next[row] = staff;
+  return next;
+}
+
+/** The file staves (1-based, of `count`) the score staves leave out. */
+export const unusedFileStaves = (
+  list: (number | null)[],
+  count: number,
+): number[] =>
+  Array.from({ length: count }, (_, s) => s + 1).filter(
+    (s) => !list.includes(s),
+  );
+
+/**
+ * The score staves with file staff `staff` in the first empty score staff,
+ * else, with `append`, as a new last one; null when it has no place.
+ */
+export function placeFileStaff(
+  list: (number | null)[],
+  staff: number,
+  append: boolean,
+): (number | null)[] | null {
+  const empty = list.indexOf(null);
+  if (empty >= 0) return chooseScoreStaff(list, empty, staff);
+  return append ? [...list, staff] : null;
+}
+
+/**
  * The optimal alignment of `boxes` (layout measure indices) with `slots`
  * (slot indices), both in order, under `score`: per box the slot index it
  * holds, traced twice, with gaps placed as late (`late`) and as early
@@ -456,13 +662,21 @@ export const alignmentPath = (fragment: string): string =>
   `${fragment.slice(0, fragment.lastIndexOf("/") + 1)}alignment.json`;
 
 export const ALIGNMENT_RECORD_NOTE =
-  "Where the uploaded encoding's measures were placed. Indices are 0-based: layout measures in score order, file measures in the uploaded file's order, part within a multi-measure rest. pins are the links fixed by hand; matches the resulting placement per layout measure; staves the layout staff per file staff.";
+  "Where the uploaded encoding's measures were placed. Indices are 0-based: layout measures in score order, file measures in the uploaded file's order after the file measure edits, part within a multi-measure rest. pins are the links fixed by hand; matches the resulting placement per layout measure; staves the score staff (1-based) per file staff. scoreStaves, where chosen by hand, is the file staff (1-based) per score staff, null for an empty staff. fileMeasures, where edited, lists by xml:id the file measures removed before alignment and the empty measures added, each after the file measure with that xml:id (null: before the first).";
+
+/** What the volunteer chose besides the pins, as the alignment record keeps it. */
+export interface AlignmentChoices {
+  /** The file staff per score staff, where chosen by hand. */
+  scoreStaves?: (number | null)[];
+  fileEdits?: FileEdits;
+}
 
 /** The alignment record as `alignment.json` is written. */
 export function alignmentRecord(
   pins: Pin[],
   alignment: Alignment,
   staffMap: (number | null)[],
+  { scoreStaves, fileEdits }: AlignmentChoices = {},
 ): string {
   const slot = (s: FileSlot | null) => (s ? [s.measure, s.part] : null);
   return (
@@ -472,11 +686,35 @@ export function alignmentRecord(
         pins: pins.map((pin) => [pin.box, slot(pin.slot)]),
         matches: alignment.matches.map(slot),
         staves: staffMap,
+        ...(scoreStaves ? { scoreStaves } : {}),
+        ...(fileEdits && (fileEdits.removed.length || fileEdits.added.length)
+          ? {
+              fileMeasures: {
+                removed: fileEdits.removed,
+                added: fileEdits.added,
+              },
+            }
+          : {}),
       },
       null,
       "\t",
     ) + "\n"
   );
+}
+
+/** An alignment record's fields, none unless it is an object; throws when it cannot be read. */
+function recordFields(record: string): Record<string, unknown> {
+  let fields: unknown;
+  try {
+    fields = JSON.parse(record);
+  } catch (e) {
+    throw new Error(
+      `the alignment record could not be read (${(e as Error).message})`,
+    );
+  }
+  return typeof fields === "object" && fields !== null
+    ? (fields as Record<string, unknown>)
+    : {};
 }
 
 /**
@@ -485,14 +723,7 @@ export function alignmentRecord(
  */
 export function pinsOf(record: string | null): Pin[] {
   if (record === null) return [];
-  let pins: unknown;
-  try {
-    pins = JSON.parse(record)?.pins;
-  } catch (e) {
-    throw new Error(
-      `the alignment record could not be read (${(e as Error).message})`,
-    );
-  }
+  const pins = recordFields(record).pins;
   if (!Array.isArray(pins))
     throw new Error("the alignment record holds no list of fixed links");
   return pins.flatMap((pin): Pin[] => {
@@ -505,6 +736,56 @@ export function pinsOf(record: string | null): Pin[] {
       ? [{ box: pin[0], slot: { measure: slot[0], part: slot[1] } }]
       : [];
   });
+}
+
+/**
+ * The score staves an alignment record keeps as chosen by hand; undefined
+ * when the record is absent or holds none. Throws when the record is there
+ * but it or its list cannot be read.
+ */
+export function scoreStavesOf(
+  record: string | null,
+): (number | null)[] | undefined {
+  if (record === null) return undefined;
+  const list = recordFields(record).scoreStaves;
+  if (list === undefined) return undefined;
+  if (
+    !Array.isArray(list) ||
+    !list.every((s) => s === null || Number.isInteger(s))
+  )
+    throw new Error("the alignment record's score staves cannot be read");
+  return list as (number | null)[];
+}
+
+/**
+ * The file measure edits an alignment record keeps; none when the record is
+ * absent or holds none. Throws when the record is there but it or its edits
+ * cannot be read.
+ */
+export function fileEditsOf(record: string | null): FileEdits {
+  const none: FileEdits = { removed: [], added: [] };
+  if (record === null) return none;
+  const edits = recordFields(record).fileMeasures as
+    | { removed?: unknown; added?: unknown }
+    | undefined;
+  if (edits === undefined) return none;
+  const removed = edits?.removed;
+  const added = edits?.added;
+  if (
+    !Array.isArray(removed) ||
+    !removed.every((id) => typeof id === "string") ||
+    !Array.isArray(added) ||
+    !added.every(
+      (a) =>
+        typeof a?.id === "string" &&
+        (a.after === null || typeof a.after === "string"),
+    )
+  )
+    throw new Error("the alignment record's file measure edits cannot be read");
+  return {
+    removed,
+    added: added.map((a) => ({ after: a.after, id: a.id })),
+  };
 }
 
 /**

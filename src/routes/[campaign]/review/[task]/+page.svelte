@@ -188,7 +188,7 @@
   });
 
   const ctx = (f: ForgeClient): CommandContext =>
-    runner.context(f, { repoId, owner, repo });
+    runner.context(f, { repoId, owner, repo, campaign });
 
   // The default branch's head commit the shown tables were read at; null when
   // it could not be read.
@@ -433,7 +433,6 @@
             {startPage}
             {anchor}
             initialPane={scoreW - 32 < 560 ? "facs" : "both"}
-            initialView={taskPage === null ? null : "single"}
             onmeasureselect={(label) => (selectedMeasure = label)}
           />
         {/if}

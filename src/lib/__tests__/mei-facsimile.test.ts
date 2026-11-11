@@ -498,7 +498,7 @@ test("buildBlankScoreMei: one pb and one seed measure per page, no facsimile", (
   assert.ok(mei.includes('facs="#surface-2"'));
   assert.equal((mei.match(/<measure /g) ?? []).length, 3);
   // The parser sees encoded breaks and measures but no facsimile pages, which
-  // is what makes the console preview paginate on the pb markers.
+  // is what makes the app's preview paginate on the pb markers.
   const parsed = parseFacsimileMei(mei);
   assert.equal(parsed.pages.length, 0);
   assert.equal(parsed.hasBreaks, true);

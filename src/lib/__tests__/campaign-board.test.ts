@@ -163,7 +163,43 @@ test("attention counts skip replies once their root comment is resolved", () => 
   const board = buildBoard(d, comments, []);
   const card = board.columns.find((c) => c.key === "validation")!.cards[0];
   assert.deepEqual(card.counts, { fails: 0, comments: 2 });
-  assert.equal(board.attention, 2);
+  assert.equal(board.attention, 1);
+});
+
+test("the attention count counts tasks, not their comments and change requests", () => {
+  const d = {
+    taskDefs: parseTaskCsv(
+      "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
+        "T0001,,sources/a.mei,,,,\n" +
+        "T0001,S0001,sources/a.mei,,,,\n" +
+        "T0002,,sources/a.mei,,,,\n" +
+        "T0002,S0001,sources/a.mei,,,,\n" +
+        "T0003,,sources/a.mei,,,,\n" +
+        "T0003,S0001,sources/a.mei,,,,\n",
+    ),
+    rows: parseStateCsv(
+      "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n" +
+        "T0001,,validation_required,7,t,\n" +
+        "T0001,S0001,validation_required,,,\n" +
+        "T0002,,validation_required,7,t,\n" +
+        "T0002,S0001,validation_required,,,\n" +
+        "T0003,,completed,7,t,\n" +
+        "T0003,S0001,completed,,,pass|9|t\n",
+    ).rows,
+    validationColumns: ["validate_status_1"],
+    locks: [],
+    passThreshold: 1,
+  };
+  // Three open comments on T0001, one on T0002, and one on the done T0003.
+  const comments = parseCommentCsv(
+    COMMENT_HEADER +
+      "c1,T0001,,comment,,,,9,t1,,,One\n" +
+      "c2,T0001,,comment,,,,9,t2,,,Two\n" +
+      "c3,T0001,,comment,,,,9,t3,,,Three\n" +
+      "c4,T0002,,comment,,,,9,t4,,,Four\n" +
+      "c5,T0003,,comment,,,,9,t5,,,Five\n",
+  );
+  assert.equal(buildBoard(d, comments, []).attention, 2);
 });
 
 test("a card in review knows whether the viewer submitted it", () => {

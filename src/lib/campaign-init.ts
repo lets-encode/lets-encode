@@ -33,7 +33,6 @@ import {
   DEFAULT_MAX_CLAIMS,
   DEFAULT_STALE_MINUTES,
 } from "./campaign-tables.ts";
-import { DEFAULT_LICENSE } from "./licenses.ts";
 
 /** The central automation pointer the campaign workflow reads (DESIGN.md §4). */
 export interface AutomationPointer {
@@ -137,22 +136,22 @@ export interface CampaignConfig {
 
 /** Create-form fields feeding buildCampaignConfig; unset fields fall to defaults. */
 export interface CampaignFields {
-  name?: string;
-  title?: string;
-  description?: string;
+  name: string;
+  title: string;
+  description: string;
   language?: string;
-  license?: string;
+  license: string;
   /** 'facsimile' | 'mei-template' | 'physical-only' — what the source itself is. */
-  sourceKind?: string;
-  sourceHeader?: {
-    title?: string;
-    composer?: string;
-    publisher?: string;
-    date?: string;
+  sourceKind: string;
+  sourceHeader: {
+    title: string;
+    composer: string;
+    publisher: string;
+    date: string;
   };
-  images?: string[];
-  rightsAcknowledged?: string;
-  pieces?: ConfigPiece[];
+  images: string[];
+  rightsAcknowledged: string;
+  pieces: ConfigPiece[];
   required_validations?: number;
   pass_threshold?: number;
   stale_after_minutes?: number;
@@ -162,7 +161,6 @@ export interface CampaignFields {
 // Defaults for fields the create form does not surface.
 const DEFAULTS = {
   language: "en",
-  license: DEFAULT_LICENSE,
   required_validations: 1,
   pass_threshold: 1,
   stale_after_minutes: DEFAULT_STALE_MINUTES,
@@ -229,31 +227,30 @@ export function buildCampaignConfig(
   automation: AutomationPointer,
   repoId: number,
 ): CampaignConfig {
-  const header = fields.sourceHeader ?? {};
   return {
     schema_version: 3,
     campaign: {
-      name: fields.name ?? "",
-      title: fields.title ?? "",
-      description: fields.description ?? "",
+      name: fields.name,
+      title: fields.title,
+      description: fields.description,
       instigator,
       repo_id: repoId,
       language: fields.language ?? DEFAULTS.language,
-      license: fields.license ?? DEFAULTS.license,
+      license: fields.license,
     },
     automation: { ...automation },
     source: {
-      kind: fields.sourceKind ?? "facsimile",
-      images: fields.images ?? [],
+      kind: fields.sourceKind,
+      images: fields.images,
       header: {
-        title: header.title ?? "",
-        composer: header.composer ?? "",
-        publisher: header.publisher ?? "",
-        date: header.date ?? "",
+        title: fields.sourceHeader.title,
+        composer: fields.sourceHeader.composer,
+        publisher: fields.sourceHeader.publisher,
+        date: fields.sourceHeader.date,
       },
-      rights_acknowledged: fields.rightsAcknowledged ?? "",
+      rights_acknowledged: fields.rightsAcknowledged,
     },
-    pieces: fields.pieces ?? [],
+    pieces: fields.pieces,
     fragmentation: { strategy: "by-piece" },
     validation: {
       required_validations:

@@ -30,7 +30,7 @@ mutations and notification muting.
   headers sent a byte at a time can take longer. Each login has a daily
   allowance (see [Relay use](#relay-use)).
 - `/omr/api/<path>` and `/omr/blob?url=…` — relay the Musibot OMR service for
-  the console's OMR preparation: a fixed set of API endpoints (create page,
+  the app's OMR preparation: a fixed set of API endpoints (create page,
   presigned file URLs, start and poll an execution, delete page, list
   pipelines) with the institutional token attached server-side, and file
   transfers to and from the presigned URLs on the service's host. Login-gated
@@ -123,8 +123,7 @@ of the SPA's origin:
 - development: the Vite dev server proxies `/auth` and `/registry` (see
   `vite.config.js`).
 
-The SPA reaches it via `PUBLIC_BROKER_URL` (default `/auth`) and
-`PUBLIC_REGISTRY_URL` (default `/registry`).
+The SPA reaches it at `/auth` and `/registry`.
 
 ## Configure
 

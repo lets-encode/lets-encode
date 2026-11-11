@@ -3,7 +3,8 @@
   clef, key signature and transposition of every staff of the opening score
   definition, and the score's key and meter, as the layout task proposed them
   from the recognition. Each staff is shown beside the scan of the staff box
-  where it first appears. Opening the view claims the task; nothing is saved
+  where it first appears; the staves of one grand staff share one box and one
+  scan. Opening the view claims the task; nothing is saved
   until "Open draft in mei-friend" makes the page's draft with the checked
   definition (openEditor), commits both to the task branch and hands off.
   Once the branch holds the draft, the view shows the checked values
@@ -24,7 +25,11 @@
     ScoreDefModel,
     StaffModel,
   } from "$lib/mei-facsimile.ts";
-  import { staffPlan, type PlannedStaff } from "$lib/instrument-naming.ts";
+  import {
+    namingUnits,
+    staffPlan,
+    type PlannedStaff,
+  } from "$lib/instrument-naming.ts";
   import {
     CLEF_OPTIONS,
     COMMON_CLEFS,
@@ -41,6 +46,7 @@
   import Icon from "$lib/components/Icon.svelte";
   import PageState from "$lib/components/PageState.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
+  import MusicGlyph from "$lib/components/MusicGlyph.svelte";
   import KeyTimeFields from "$lib/components/KeyTimeFields.svelte";
   import StaffPitchSelects from "$lib/components/StaffPitchSelects.svelte";
   import StaffCustomPitch from "$lib/components/StaffCustomPitch.svelte";
@@ -133,14 +139,18 @@
   // Per score staff: its name (the instrument's, with the parts the staff
   // carries), and the staff box where it is first printed (staffPlan), with
   // the end of that system's first measure, where the crop beside it ends.
-  const rows = $derived.by(() => {
+  // The staves of a grand-staff instrument that first appear in one grand
+  // staff make one group, shown in one box with one crop; every other staff
+  // is a group of its own.
+  const groups = $derived.by(() => {
     if (!data) return [];
     const pages = data.model.pages;
     const plan = data.instruments ? staffPlan(data.instruments, pages) : null;
     const first = new Map<
       string,
-      { page: number; box: MeasureBox; end: number }
+      { page: number; box: MeasureBox; end: number; unit: number }
     >();
+    const units = namingUnits(pages);
     for (const planned of plan?.staves ?? []) {
       if (!planned.first) continue;
       const pg = pages[planned.first.page];
@@ -157,18 +167,43 @@
         page: planned.first.page,
         box,
         end: opening?.lrx ?? box.lrx,
+        unit: units.findIndex(
+          (u) =>
+            u.page === planned.first!.page &&
+            u.staves.includes(planned.first!.box),
+        ),
       });
     }
     const firstPage = Math.min(
       ...[...first.values()].map((f) => f.page),
       Infinity,
     );
-    return staves.map((staff) => {
+    const rows = staves.map((staff, i) => {
       const planned = plan?.staves.find((s) => s.id === staff.id);
-      const name = planned ? plannedName(planned) : staff.label;
+      const name =
+        (planned ? plannedName(planned) : staff.label) || `Staff ${i + 1}`;
       const at = staff.id ? first.get(staff.id) : undefined;
-      return { staff, name, at, later: !!at && at.page > firstPage };
+      return { staff, name, at, grand: planned?.instrument.grand && planned };
     });
+    const grouped: { rows: typeof rows; later: boolean }[] = [];
+    for (const row of rows) {
+      const last = grouped[grouped.length - 1]?.rows[0];
+      if (
+        row.grand &&
+        last?.grand &&
+        last.grand.instrument === row.grand.instrument &&
+        row.at &&
+        row.at.unit >= 0 &&
+        last.at?.unit === row.at.unit
+      )
+        grouped[grouped.length - 1].rows.push(row);
+      else
+        grouped.push({
+          rows: [row],
+          later: !!row.at && row.at.page > firstPage,
+        });
+    }
+    return grouped;
   });
 
   // A planned staff's row name: its instrument, the parts it carries in
@@ -181,15 +216,19 @@
   }
 
   /**
-   * The crop of a staff box: from a little before the box (the end of a
-   * printed name) to `end`, with room above and below.
+   * The crop of the staff boxes of one group: from a little before the boxes
+   * (the end of a printed name) to `end`, with room above and below, and its
+   * height on screen, where one staff with its room is CROP_HEIGHT high.
    */
-  function cropOf(box: MeasureBox, end: number) {
-    const staff = box.lry - box.uly;
+  function cropOf(boxes: MeasureBox[], end: number) {
+    const staff =
+      boxes.reduce((sum, b) => sum + b.lry - b.uly, 0) / boxes.length;
     const pad = 0.45 * staff;
-    const x = Math.max(0, box.ulx - 1.5 * staff);
-    const y = Math.max(0, box.uly - pad);
-    return { x, y, w: Math.max(end, box.lrx) - x, h: box.lry + pad - y };
+    const x = Math.max(0, Math.min(...boxes.map((b) => b.ulx)) - 1.5 * staff);
+    const y = Math.max(0, Math.min(...boxes.map((b) => b.uly)) - pad);
+    const w = Math.max(end, ...boxes.map((b) => b.lrx)) - x;
+    const h = Math.max(...boxes.map((b) => b.lry)) + pad - y;
+    return { x, y, w, h, height: (h * CROP_HEIGHT) / (staff + 2 * pad) };
   }
   const CROP_HEIGHT = 64;
 
@@ -268,68 +307,83 @@
             />
           </div>
           <ol class="rows">
-            {#each rows as row, i (row.staff.id ?? i)}
-              {@const staff = row.staff}
-              <li class="row">
-                <span class="name" title={row.name}
-                  >{row.name || `Staff ${i + 1}`}</span
-                >
-                <div class="controls">
-                  <GlyphSelect
-                    class="ctl clef"
-                    options={clefOption(staff)
-                      ? CLEF_OPTIONS
-                      : [
-                          {
-                            value: "",
-                            label: clefText(staff),
-                            glyph: clefGlyph(staff),
-                          },
-                          ...CLEF_OPTIONS,
-                        ]}
-                    top={COMMON_CLEFS}
-                    value={clefOption(staff)?.value ?? ""}
-                    onchange={(v) => setClef(keysig, staff, v)}
-                    label={`${row.name}: clef`}
-                    title="The clef this staff opens with."
-                  />
-                  {#if !unpitched(staff)}
-                    <StaffPitchSelects
-                      editor={pitch}
-                      {staff}
-                      scoreKey={keysig}
-                      name={row.name}
+            {#each groups as group, g (group.rows[0].staff.id ?? g)}
+              {@const at = group.rows[0].at}
+              {@const names = group.rows.map((r) => r.name).join(", ")}
+              <li
+                class="row"
+                class:grand={group.rows.length > 1}
+                style:--lines={group.rows.length}
+              >
+                {#if group.rows.length > 1}
+                  <span
+                    class="gbrace"
+                    title="A grand staff: these staves belong to one instrument."
+                    ><MusicGlyph name="brace" stretch /></span
+                  >
+                {/if}
+                {#each group.rows as row (row.staff.id ?? row.name)}
+                  {@const staff = row.staff}
+                  <span class="name" title={row.name}>{row.name}</span>
+                  <div class="controls">
+                    <GlyphSelect
+                      class="ctl clef"
+                      options={clefOption(staff)
+                        ? CLEF_OPTIONS
+                        : [
+                            {
+                              value: "",
+                              label: clefText(staff),
+                              glyph: clefGlyph(staff),
+                            },
+                            ...CLEF_OPTIONS,
+                          ]}
+                      top={COMMON_CLEFS}
+                      value={clefOption(staff)?.value ?? ""}
+                      onchange={(v) => setClef(keysig, staff, v)}
+                      label={`${row.name}: clef`}
+                      title="The clef this staff opens with."
                     />
-                    {#if pitch.value(staff) === "other"}
-                      <StaffCustomPitch
+                    {#if !unpitched(staff)}
+                      <StaffPitchSelects
                         editor={pitch}
                         {staff}
+                        scoreKey={keysig}
                         name={row.name}
                       />
+                      {#if pitch.value(staff) === "other"}
+                        <StaffCustomPitch
+                          editor={pitch}
+                          {staff}
+                          name={row.name}
+                        />
+                      {/if}
                     {/if}
-                  {/if}
-                </div>
-                {#if row.at && data.imageUrls[row.at.page]}
-                  {@const pg = data.model.pages[row.at.page]}
-                  {@const v = cropOf(row.at.box, row.at.end)}
+                  </div>
+                {/each}
+                {#if at && data.imageUrls[at.page]}
+                  {@const pg = data.model.pages[at.page]}
+                  {@const v = cropOf(
+                    group.rows.map((r) => r.at!.box),
+                    Math.max(...group.rows.map((r) => r.at!.end)),
+                  )}
                   <div class="cropcell">
-                    {#if row.later}
-                      <span
-                        class="first"
-                        title="The staff first appears on this page, so the scan shown is from there."
-                        >p. {row.at.page + 1}</span
-                      >
-                    {/if}
+                    <span
+                      class="first"
+                      title={group.later
+                        ? "The staff first appears on this page, so the scan shown is from there."
+                        : undefined}>Page {at.page + 1} · Facsimile</span
+                    >
                     <svg
                       class="crop"
                       viewBox={`${v.x} ${v.y} ${v.w} ${v.h}`}
-                      style:width={`${(v.w / v.h) * CROP_HEIGHT}px`}
-                      style:height={`${CROP_HEIGHT}px`}
+                      style:width={`${(v.w / v.h) * v.height}px`}
+                      style:height={`${v.height}px`}
                       role="img"
-                      aria-label={`${row.name} on page ${row.at.page + 1}`}
+                      aria-label={`${names} on page ${at.page + 1}`}
                     >
                       <image
-                        href={data.imageUrls[row.at.page]}
+                        href={data.imageUrls[at.page]}
                         x="0"
                         y="0"
                         width={pg.width}
@@ -458,17 +512,51 @@
     flex-direction: column;
     gap: 6px;
   }
-  /* One staff: its name, its clef, transposition and key, and the scan of
-     the staff where it first appears. */
+  /* One staff, or the staves of one grand staff: per staff a line with its
+     name and its clef, transposition and key, and beside the lines the scan
+     of the staves where they first appear. */
   .row {
     display: grid;
     grid-template-columns: minmax(120px, 200px) auto minmax(0, 1fr);
+    grid-auto-rows: 1fr;
     align-items: center;
-    gap: 12px;
+    gap: 4px 12px;
     padding: 4px 8px;
     background: var(--card);
     border: 1px solid var(--line);
     border-radius: 8px;
+  }
+  /* A grand staff's box: a brace before the lines of its staves. The brace
+     and its gap come off the name's column, so the controls stand where
+     those of a single staff do. */
+  .row.grand {
+    grid-template-columns: 10px minmax(98px, 178px) auto minmax(0, 1fr);
+  }
+  .gbrace {
+    grid-column: 1;
+    grid-row: 1 / span var(--lines);
+    align-self: stretch;
+    margin: 4px 0;
+    color: var(--ink-grand);
+  }
+  .row > .name {
+    grid-column: 1;
+  }
+  .row > .controls {
+    grid-column: 2;
+  }
+  .row > .cropcell {
+    grid-column: 3;
+    grid-row: 1 / span var(--lines);
+  }
+  .row.grand > .name {
+    grid-column: 2;
+  }
+  .row.grand > .controls {
+    grid-column: 3;
+  }
+  .row.grand > .cropcell {
+    grid-column: 4;
   }
   .name {
     font-size: 13px;
@@ -529,7 +617,25 @@
   @media (max-width: 900px) {
     .row {
       grid-template-columns: minmax(0, 1fr);
+      grid-auto-rows: auto;
       gap: 6px;
+    }
+    .row.grand {
+      grid-template-columns: 10px minmax(0, 1fr);
+    }
+    .row > .name,
+    .row > .controls,
+    .row > .cropcell {
+      grid-column: 1;
+      grid-row: auto;
+    }
+    .row.grand > .name,
+    .row.grand > .controls,
+    .row.grand > .cropcell {
+      grid-column: 2;
+    }
+    .gbrace {
+      grid-row: 1 / span calc(2 * var(--lines));
     }
   }
 </style>

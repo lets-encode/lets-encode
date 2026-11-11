@@ -7,9 +7,37 @@ parentheses.
 
 - The broker takes its port from the instance env file of the checked-out branch.
 - The dev server's broker proxy reads the same port, and running `app.py` directly is removed.
+- The score check and the score setup's staff list show the staves of a grand staff in one box with a brace.
+- The measure correction, the campaign page, the score setup, the setup wizard's frame and the campaign list are split into components and modules by concern.
+- The message for a submission the campaign's workflow did not run no longer names a number of files.
+- The commands, the GitHub client and the broker are split into modules by concern, and the coordinator's decisions are in unit-tested modules.
 
 ## 2026-11-10
 
+- A submission rejected for a fault in the campaign's own score or files is recorded as a failed join, not as an invalid encoding.
+- A campaign whose config.yaml has no automation block fails its run with a message instead of ending green.
+- A fork with commits of its own gives a message saying to discard them with Sync fork on GitHub.
+- A lasting failure of the campaign automation fails at once with its own message instead of after ten attempts.
+- A failed permission lookup no longer rejects an owner's operation as not permitted.
+- A preview that failed to load shows Preview failed with Try again on the campaign page.
+- Need attention on the campaign page counts tasks instead of their comments.
+- With Claimable on, the piece list's All pieces count counts only claimable tasks.
+- A campaign list link filtered to Yours shows all campaigns when logged out.
+- The progress and rejection overlays take keyboard focus, keep it inside and hand it back when closed.
+- A reply posted in the score view no longer carries the selected measure.
+- The plan editor says a task is locked only when someone holds it.
+- The score setup's Submit button reads Checking the score until the submission starts.
+- A layout detection that fails part way offers Try again and reuses the pages already detected.
+- Page images with a sideways or upside-down orientation are committed upright.
+- French instrument labels such as Clarinettes en Si♭ set the staff's transposition.
+- CSV tables saved with a byte order mark are read.
+- Pushes and pull requests run the checks, the formatting and the tests of the app and the broker on GitHub.
+- The encoding alignment has a Staves step for choosing which file staff fills each score staff, and their order on pieces without staff boxes.
+- The encoding alignment can remove a measure from the uploaded file and add an empty one at any point.
+- Cross-staff notes, marks and staff groups of an uploaded encoding follow the staves they are placed on.
+- The measure correction and the score preview open with one page per row.
+- The instruments step, the pages step, the score setup and the score check label a scan as Page N · Facsimile.
+- A task whose submission is being processed no longer carries the next-task badge.
 - Compressed MusicXML files can be uploaded as an existing encoding.
 - The README, the broker README and the broker's example settings describe the current app.
 - A submission opened after its claim ran out is rejected even while an earlier one by the same person is open.

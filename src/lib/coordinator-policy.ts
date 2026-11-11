@@ -16,11 +16,7 @@ import type {
 } from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
 import { envelopeFromPrBody } from "./command-envelope.ts";
-import {
-  spliceOpeningScoreDef,
-  splicePage,
-  splicePageSpan,
-} from "./mei-page-splice.ts";
+import { spliceOpeningScoreDef, splicePage } from "./mei-page-splice.ts";
 import {
   applicationNamesIn,
   recordApplications,
@@ -112,10 +108,7 @@ export function assembleSubmission({
     throw new Error(`${task.fragment} is missing from the campaign.`);
   let mei = forkMei;
   if (pageOfLocator(task.locator) !== null) {
-    mei =
-      pieceKindForPath(configYaml, task.fragment) === "physical-only"
-        ? splicePageSpan(baseMei, forkMei, task.locator)
-        : splicePage(baseMei, forkMei, task.locator);
+    mei = splicePage(baseMei, forkMei, task.locator);
     if (
       checksOpening(
         task,
@@ -142,8 +135,8 @@ export function assembleSubmission({
 }
 
 /**
- * The kind of the piece at `path`: a physical piece's page spans are joined
- * wholesale, a facsimile piece's measures are matched by id.
+ * The kind of the piece at `path` in config.yaml ('physical-only' for a piece
+ * without facsimile), or null.
  */
 export function pieceKindForPath(
   configText: string | null,
@@ -417,7 +410,7 @@ export function isReviewEdit(
  * How long an operation branch without an open pull request is kept: the app
  * creates the branch and opens its pull request a moment later.
  */
-export const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
+const OPERATION_BRANCH_GRACE_MS = 60 * 60_000;
 
 // The branches the app opens operation pull requests from, each ending in a
 // random suffix of eight hex digits.
@@ -425,10 +418,17 @@ const OPERATION_BRANCH =
   /^(claim|release|validate|review-edit|comment|resolve|setup|layout|zones|align)-.+-[0-9a-f]{8}$/;
 
 /**
+ * Whether `name` is the name of a branch the app opens operation pull
+ * requests from. Task branches (`encode-`) and kept work (`wip-`) are not.
+ */
+export const isOperationBranch = (name: string): boolean =>
+  OPERATION_BRANCH.test(name);
+
+/**
  * Whether a campaign branch is an operation branch left without a pull
- * request: its name is an operation branch's, no open pull request has it as
- * head, and its head commit is older than OPERATION_BRANCH_GRACE_MS. Task
- * branches (`encode-`) and kept work (`wip-`) never are.
+ * request: its name is an operation branch's (isOperationBranch), no open
+ * pull request has it as head, and its head commit is older than
+ * OPERATION_BRANCH_GRACE_MS.
  */
 export function isLeftoverOperationBranch(
   branch: { name: string; committedAt: string },
@@ -436,7 +436,7 @@ export function isLeftoverOperationBranch(
   now: number,
 ): boolean {
   return (
-    OPERATION_BRANCH.test(branch.name) &&
+    isOperationBranch(branch.name) &&
     !openHeads.has(branch.name) &&
     now - Date.parse(branch.committedAt) > OPERATION_BRANCH_GRACE_MS
   );
@@ -489,7 +489,7 @@ export function rejectionOutcome(
 export const keptWorkBranch = (task_id: string): string => `wip-${task_id}`;
 
 /**
- * Whether a commit on a task branch was made by the console rather than by
+ * Whether a commit on a task branch was made by the app rather than by
  * the claimer: an OMR page draft, the start from kept work, or the commit of
  * a task completed without changes.
  */
@@ -699,7 +699,7 @@ export const REASON_TEXT: Record<string, string> = {
     "the author's claim had run out before the submission was decided",
   mei_invalid: "the submitted MEI failed the machine check",
   splice_invalid:
-    "the page passes the machine check on its own but not joined into the score; this is an error of the platform, not of the encoding",
+    "the encoding could not be joined into the campaign's score; this is an error of the platform, not of the encoding",
   invalid_verdict: "a review verdict must approve or request changes",
   fail_without_comment:
     "a change request must carry a note saying what needs to change",

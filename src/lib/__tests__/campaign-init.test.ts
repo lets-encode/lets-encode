@@ -12,6 +12,7 @@ import {
   assertSupported,
   planTasks,
   piecePath,
+  type CampaignFields,
   type ConfigPiece,
 } from "../campaign-init.ts";
 
@@ -61,7 +62,7 @@ const WORKED_EXAMPLE_FIELDS = {
   description: "Smallest possible campaign for end-to-end testing.",
   language: "en",
   license: "CC-BY-4.0",
-  sourceHeader: { composer: "Anonymous" },
+  sourceHeader: { title: "", composer: "Anonymous", publisher: "", date: "" },
   pieces: [facsimile("piece-01", [1])],
 };
 
@@ -75,15 +76,32 @@ const AUTOMATION = {
 // The created repo's numeric id, as createRepoFromTemplate would return it.
 const REPO_ID = 424242;
 
-const build = (fields: Parameters<typeof buildCampaignConfig>[0] = {}) =>
-  buildCampaignConfig(fields, "test-instigator", AUTOMATION, REPO_ID);
+// The fields the wizard always passes, empty.
+const BLANK_FIELDS: CampaignFields = {
+  name: "",
+  title: "",
+  description: "",
+  license: "CC-BY-4.0",
+  sourceKind: "facsimile",
+  sourceHeader: { title: "", composer: "", publisher: "", date: "" },
+  images: [],
+  rightsAcknowledged: "",
+  pieces: [],
+};
+
+const build = (fields: Partial<CampaignFields> = {}) =>
+  buildCampaignConfig(
+    { ...BLANK_FIELDS, ...fields },
+    "test-instigator",
+    AUTOMATION,
+    REPO_ID,
+  );
 
 test("buildCampaignConfig: instigator + repo_id come from args; defaults fill the rest", () => {
   const config = build({ title: "T", pieces: [facsimile("piece-01", [1])] });
   assert.equal(config.schema_version, 3);
   assert.equal(config.campaign.instigator, "test-instigator");
   assert.equal(config.campaign.repo_id, REPO_ID);
-  assert.equal(config.campaign.license, "CC-BY-4.0");
   assert.equal(config.automation.central_repository, "lets-encode/lets-encode");
   assert.equal(config.fragmentation.strategy, "by-piece");
   assert.equal(config.validation.required_validations, 1);

@@ -1,9 +1,8 @@
 <!--
   The verdict controls of the review slot the viewer holds: Approve, Request
   changes and the note form a change request or an edit from review fills
-  in. In a task's own view they sit in the side panel's footer with Give back
-  task (onabandon) at the row's start, Approve at its end; in a task box
-  (ValidationRecord) they fill the slot's row as two equal cells. With
+  in. They sit in the side panel's footer of a task's own view, with Give
+  back task (onabandon) at the row's start and Approve at its end. With
   `staffs` the note form has a staff field, which the host fills from a
   click on a staff or group (staffPick) and which leads the note when sent.
   Commands run through callbacks the host passes in.
@@ -63,13 +62,10 @@
       verdict: string,
       comment?: FailComment,
     ) => Promise<Result | null>;
-    /** Switch the viewer's review to editing; no Edit button without it. */
-    onreviewedit?: (
-      sub: string,
-      comment: FailComment,
-    ) => Promise<Result | null>;
-    /** Give back the review; the footer form shows Give back task with it. */
-    onabandon?: (sub: string) => void;
+    /** Switch the viewer's review to editing. */
+    onreviewedit: (sub: string, comment: FailComment) => Promise<Result | null>;
+    /** Give back the review. */
+    onabandon: (sub: string) => void;
   } = $props();
 
   // A submission on this task still being processed (a claim or verdict):
@@ -144,7 +140,7 @@
       measure_end: form.m2.trim(),
     };
     const result = edit
-      ? await onreviewedit?.(sub, comment)
+      ? await onreviewedit(sub, comment)
       : await onvalidate(sub, "fail", comment);
     if (result?.ok) {
       if (result.background || result.outcome === "pending")
@@ -177,14 +173,12 @@
   );
 </script>
 
-<div class="ractions" class:infoot={!!onabandon}>
-  {#if onabandon}
-    <AbandonButton
-      review
-      disabled={runner.busy || processing}
-      onabandon={() => onabandon(sub)}
-    />
-  {/if}
+<div class="ractions">
+  <AbandonButton
+    review
+    disabled={runner.busy || processing}
+    onabandon={() => onabandon(sub)}
+  />
   <span class="rverdict">
     {#if approveBlock !== null && instead}
       <span class="approve instead">{@render instead()}</span>
@@ -266,19 +260,17 @@
           >
         {/if}
         <span class="mspacer"></span>
-        {#if onreviewedit}
-          <button
-            type="button"
-            class="btn"
-            onclick={() => submitFail(true)}
-            disabled={runner.busy ||
-              !failForm.body.trim() ||
-              noteTooLong ||
-              processing}
-            title="Requests changes with this note and gives you the task to edit. Your edit is then reviewed by someone else."
-            >Edit yourself</button
-          >
-        {/if}
+        <button
+          type="button"
+          class="btn"
+          onclick={() => submitFail(true)}
+          disabled={runner.busy ||
+            !failForm.body.trim() ||
+            noteTooLong ||
+            processing}
+          title="Requests changes with this note and gives you the task to edit. Your edit is then reviewed by someone else."
+          >Edit yourself</button
+        >
         <button
           type="button"
           class="btn btn-danger"
@@ -290,69 +282,52 @@
           title="Sends the change request with this note.">Send request</button
         >
       </div>
-      {#if onreviewedit}
-        <p class="editnote">
-          Edit yourself gives you the task to edit. Your edit is then reviewed
-          by someone else.
-        </p>
-      {/if}
+      <p class="editnote">
+        Edit yourself gives you the task to edit. Your edit is then reviewed by
+        someone else.
+      </p>
     </div>
   {/if}
 </div>
 
 <style>
+  /* Give back task at the start, Request changes and then Approve at the
+     end, as the editor's footer ends with its step's button. A footer
+     narrower than the three at full size (PANEL_MIN_REVIEW), as on a phone,
+     keeps them on one line with less padding, then smaller text. */
   .ractions {
     flex-basis: 100%;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     gap: 8px;
+    container: ractions / inline-size;
   }
   .mspacer {
     flex: 1;
   }
-  /* The verdict pair fills its own line as two equal cells. */
   .rverdict {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 6px;
-    flex-basis: 100%;
-  }
-  /* In the footer: Give back task at the start, Request changes and then
-     Approve at the end, as the editor's footer ends with its step's button.
-     A footer narrower than the three at full size (PANEL_MIN_REVIEW), as
-     on a phone, keeps them on one line with less padding, then smaller
-     text. */
-  .infoot {
-    container: ractions / inline-size;
-  }
-  .infoot .rverdict {
     display: flex;
-    flex-basis: auto;
+    gap: 6px;
     margin-left: auto;
   }
-  .infoot .approve {
+  .approve {
     order: 2;
   }
   /* The host's button in Approve's place. */
   .instead {
     display: inline-flex;
   }
-  .infoot .failform {
-    order: -1;
-    flex-basis: 100%;
-    margin: 0;
-  }
   @container ractions (max-width: 351px) {
-    .infoot .rverdict {
+    .rverdict {
       gap: 6px;
     }
-    .infoot :global(.btn) {
+    .ractions :global(.btn) {
       padding-inline: 10px;
     }
   }
   @container ractions (max-width: 322px) {
-    .infoot :global(.btn) {
+    .ractions :global(.btn) {
       padding-inline: 6px;
       font-size: 11.5px;
     }
@@ -363,11 +338,12 @@
     border-color: var(--danger);
   }
   .failform {
+    order: -1;
     flex-basis: 100%;
     border: 1px solid var(--danger-line);
     border-radius: 10px;
     padding: 10px 12px;
-    margin: 8px 0;
+    margin: 0;
     display: flex;
     flex-direction: column;
     gap: 8px;

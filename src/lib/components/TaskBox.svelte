@@ -56,7 +56,6 @@
     runner,
     editorError = null,
     changeRequestUrl,
-    primary = true,
     inView = false,
     tools,
     headAction,
@@ -92,9 +91,6 @@
     /** The web address of the campaign's pull request `number`, for the
         link of a rejected submission. */
     changeRequestUrl?: (number: number) => string;
-    /** The footer's action is the view's primary action (a solid button);
-        otherwise an outline, beside a primary elsewhere in the view. */
-    primary?: boolean;
     /** The box sits in the task's own view (the review view or the
         pre-task's editor): the footer leaves out the links to that view, and
         Give back task goes to the view's side panel footer (ReviewActions),
@@ -320,8 +316,7 @@
       {#if act.target === "mei-friend"}
         <button
           type="button"
-          class="btn btn-{act.stage}"
-          class:btn-primary={primary}
+          class="btn btn-primary btn-{act.stage}"
           onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
           title={auth.user ? act.title : "Log in with GitHub to claim a task."}
@@ -329,8 +324,7 @@
         >
       {:else}
         <a
-          class="btn btn-{act.stage}"
-          class:btn-primary={primary}
+          class="btn btn-primary btn-{act.stage}"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}
@@ -346,16 +340,14 @@
         {#if act.target === "mei-friend"}
           <button
             type="button"
-            class="btn"
-            class:btn-primary={primary}
+            class="btn btn-primary"
             onclick={() => oneditor?.(card.task)}
             disabled={runner.busy || processing}
             title={act.title}>{act.label} <Icon name="external" /></button
           >
         {:else}
           <a
-            class="btn"
-            class:btn-primary={primary}
+            class="btn btn-primary"
             href={processing
               ? undefined
               : (taskActionHref(campaign, card, act) ?? undefined)}
@@ -375,8 +367,7 @@
       <div class="tspfoot">
         <button
           type="button"
-          class="btn btn-{act.stage}"
-          class:btn-primary={primary}
+          class="btn btn-primary btn-{act.stage}"
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
           title={act.title}>{act.label}</button
@@ -394,8 +385,7 @@
       {@const act = taskAction(card, "continue-review")}
       <div class="tspfoot">
         <a
-          class="btn"
-          class:btn-primary={primary}
+          class="btn btn-primary"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}

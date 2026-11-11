@@ -48,8 +48,8 @@ bind = "127.0.0.1:" + _port()
 workers = 1
 
 # The IIIF and OMR relays wait on third-party servers. Threads keep a slow
-# upstream from occupying a whole worker; app.py holds relay requests to
-# RELAY_SLOTS per worker, below `threads`, and gives downloads a deadline.
+# upstream from occupying a whole worker; relay_common.py holds relay requests
+# to RELAY_SLOTS per worker, below `threads`, and gives downloads a deadline.
 # With gthread, `timeout` applies to the worker's main loop, not to a request.
 worker_class = "gthread"
 threads = 8

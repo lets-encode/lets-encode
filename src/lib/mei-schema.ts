@@ -1,5 +1,5 @@
 // The pinned MEI schema and the RelaxNG check against it, shared by the
-// campaign automation (scripts/mei-validate.ts) and the console
+// campaign automation (scripts/mei-validate.ts) and the app
 // (mei-check.ts). Pure functions over the vendored libxml2-wasm library;
 // each consumer supplies its own import of the library.
 
@@ -8,6 +8,7 @@ import type {
   RelaxNGValidator,
   XmlDocument as XmlDocumentType,
 } from "../../scripts/vendor/libxml2-wasm/index.mjs";
+import { sha256Hex } from "./util.ts";
 
 /** The libxml2-wasm entry module, as imported by the consumer. */
 export type Libxml2 =
@@ -35,11 +36,7 @@ export async function fetchMeiSchema(): Promise<Uint8Array> {
     );
   }
   const schema = new Uint8Array(await response.arrayBuffer());
-  const digest = Array.from(
-    new Uint8Array(await crypto.subtle.digest("SHA-256", schema)),
-  )
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const digest = await sha256Hex(schema);
   if (digest !== MEI_SCHEMA_SHA256) {
     throw new Error(
       `MEI schema integrity check failed (expected ${MEI_SCHEMA_SHA256}, received ${digest})`,

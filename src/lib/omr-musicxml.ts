@@ -4,7 +4,6 @@
 // the document text, no DOM.
 
 import type { ScoreDefModel, StaffModel } from "./mei-facsimile.ts";
-import { clefTokenOf, clefXml } from "./omr-stitch.ts";
 import { tagAttribute } from "./mei-xml.ts";
 
 /** What the first `<attributes>` of a MusicXML part declares; absent parts are null. */
@@ -19,6 +18,19 @@ const text = (xml: string, tag: string): string | null =>
   new RegExp(`<${tag}\\b[^>]*>\\s*([^<]*?)\\s*</${tag}>`).exec(xml)?.[1] ??
   null;
 
+/** A `<clef>`'s sign, line (the sign's usual line when absent) and octave change. */
+function readClef(clef: string): StaffAttributes["clef"] {
+  const sign = text(clef, "sign");
+  if (!sign) return null;
+  return {
+    sign,
+    line: Number(
+      text(clef, "line") ?? (sign === "F" ? 4 : sign === "C" ? 3 : 2),
+    ),
+    octaveChange: Number(text(clef, "clef-octave-change") ?? 0),
+  };
+}
+
 /** The first part's first `<attributes>` block, read for clef, key and time. */
 export function readAttributes(musicxml: string): StaffAttributes {
   const block =
@@ -26,20 +38,11 @@ export function readAttributes(musicxml: string): StaffAttributes {
   const clefXml = /<clef\b[^>]*>([\s\S]*?)<\/clef>/.exec(block)?.[1];
   const keyXml = /<key\b[^>]*>([\s\S]*?)<\/key>/.exec(block)?.[1];
   const timeTag = /<time\b([^>]*)>([\s\S]*?)<\/time>/.exec(block);
-  const sign = clefXml ? text(clefXml, "sign") : null;
   const fifths = keyXml ? text(keyXml, "fifths") : null;
   const beats = timeTag ? text(timeTag[2], "beats") : null;
   const beatType = timeTag ? text(timeTag[2], "beat-type") : null;
   return {
-    clef: sign
-      ? {
-          sign,
-          line: Number(
-            text(clefXml!, "line") ?? (sign === "F" ? 4 : sign === "C" ? 3 : 2),
-          ),
-          octaveChange: Number(text(clefXml!, "clef-octave-change") ?? 0),
-        }
-      : null,
+    clef: clefXml ? readClef(clefXml) : null,
     fifths: fifths !== null && /^-?\d+$/.test(fifths) ? Number(fifths) : null,
     time:
       beats && beatType
@@ -77,7 +80,8 @@ function staffFor(attributes: StaffAttributes): StaffModel {
     ...TREBLE,
     clefShape: shape,
     clefLine: clef.line,
-    clefDis: octaves === 1 ? "8" : octaves === 2 ? "15" : "",
+    clefDis:
+      octaves === 1 ? "8" : octaves === 2 ? "15" : octaves === 3 ? "22" : "",
     clefDisPlace: octaves ? (clef.octaveChange < 0 ? "below" : "above") : "",
   };
 }
@@ -92,17 +96,6 @@ export const keysigFor = (fifths: number): string =>
 export function fifthsFor(keysig: string): number {
   const m = /^([1-7])([sf])$/.exec(keysig);
   return m ? Number(m[1]) * (m[2] === "s" ? 1 : -1) : 0;
-}
-
-/** A staff's clef as one token (`G2`, `F4`, `perc`), or null when unknown. */
-export function clefToken(musicxml: string | null): string | null {
-  const clef = musicxml ? readAttributes(musicxml).clef : null;
-  if (!clef) return null;
-  return clef.sign === "percussion"
-    ? "perc"
-    : clef.sign === "TAB"
-      ? "TAB"
-      : `${clef.sign}${clef.line}`;
 }
 
 /**
@@ -323,7 +316,7 @@ export function correctClef(
       state === "misread" && delta
         ? shiftSegment(segment, delta, carried)
         : segment;
-    const token = clefTokenOf(clef[0]);
+    const token = staffClefToken(clef[0]);
     if (state !== "ended" && token === read) {
       state = "misread";
       out += clefXml(corrected);
@@ -337,6 +330,21 @@ export function correctClef(
   out +=
     state === "misread" && delta ? shiftSegment(rest, delta, carried) : rest;
   return { musicxml: out, state };
+}
+
+/**
+ * A MusicXML <clef> for a clef token: `G2`, `F4`, `C3`, with an octave change
+ * as a signed suffix (`G2-1` for a treble clef an octave down), `perc`, `TAB`.
+ */
+export function clefXml(token: string): string {
+  if (token === "perc") return "<clef><sign>percussion</sign></clef>";
+  if (token === "TAB") return "<clef><sign>TAB</sign></clef>";
+  const m = /^([A-Z])(\d)([+-]\d)?$/.exec(token);
+  if (!m) return "<clef><sign>G</sign><line>2</line></clef>";
+  const octave = m[3]
+    ? `<clef-octave-change>${Number(m[3])}</clef-octave-change>`
+    : "";
+  return `<clef><sign>${m[1]}</sign><line>${m[2]}</line>${octave}</clef>`;
 }
 
 /** The staff values of a clef token (see clefXml): shape, line and octave displacement. */
@@ -357,13 +365,34 @@ export function clefStaff(
   };
 }
 
-/** The clef token of a score staff, with its octave displacement (see clefXml). */
+/**
+ * The clef token of a score staff, with its octave displacement (see
+ * clefXml). Given MusicXML, the clef of a `<clef>` element, or of a staff's
+ * first `<attributes>` block; null without one.
+ */
 export function staffClefToken(
   staff: Pick<
     StaffModel,
     "clefShape" | "clefLine" | "clefDis" | "clefDisPlace"
   >,
-): string {
+): string;
+export function staffClefToken(musicxml: string | null): string | null;
+export function staffClefToken(
+  staff:
+    | Pick<StaffModel, "clefShape" | "clefLine" | "clefDis" | "clefDisPlace">
+    | string
+    | null,
+): string | null {
+  if (staff === null) return null;
+  if (typeof staff === "string") {
+    const block =
+      /<attributes\b[^>]*>([\s\S]*?)<\/attributes>/.exec(staff)?.[1] ?? staff;
+    const clef = /<clef\b[^>]*>([\s\S]*?)<\/clef>/.exec(block)?.[1];
+    const read = clef ? readClef(clef) : null;
+    return (
+      read && staffClefToken(staffFor({ clef: read, fifths: null, time: null }))
+    );
+  }
   if (staff.clefShape === "perc" || staff.clefShape === "TAB")
     return staff.clefShape;
   const octaves =
@@ -375,4 +404,11 @@ export function staffClefToken(
           ? 3
           : 0;
   return `${staff.clefShape}${staff.clefLine}${octaves ? `${staff.clefDisPlace === "below" ? "-" : "+"}${octaves}` : ""}`;
+}
+
+/** A clef token without its octave displacement, as the staff assignment compares clefs. */
+export function plainClef(token: string): string;
+export function plainClef(token: string | null): string | null;
+export function plainClef(token: string | null): string | null {
+  return token?.replace(/[+-]\d$/, "") ?? null;
 }

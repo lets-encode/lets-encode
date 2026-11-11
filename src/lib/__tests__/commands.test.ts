@@ -115,6 +115,7 @@ function claimForge(
     openChangePr: async () => ({
       number,
       html_url: `https://example.test/pr/${number}`,
+      headSha: "",
       head: {
         owner: "volunteer",
         repo: "campaign",
@@ -251,6 +252,7 @@ async function repeatZones(
         ? {
             number: 41,
             html_url: "https://example.test/pr/41",
+            headSha: "",
             head: {
               owner: "volunteer",
               repo: "campaign",
@@ -264,6 +266,7 @@ async function repeatZones(
       return {
         number: 41,
         html_url: "https://example.test/pr/41",
+        headSha: "",
         head: {
           owner: "volunteer",
           repo: "campaign",
@@ -424,6 +427,7 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
   const opened: OpenedChangeRequest = {
     number: 12,
     html_url: "https://example.test/pr/12",
+    headSha: "",
     head: { owner: "volunteer", repo: "campaign", branch: "claim-P0001-abcd" },
   };
   const forge = fakeForge({
@@ -673,7 +677,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
     closePullRequest: async (_owner, _repo, number, comment) => {
       assert.equal(number, 22);
       // The closed PR says why on GitHub too, as the app's, not a verdict.
-      assert.match(comment ?? "", /^Not processed: .*at most 50 files/);
+      assert.match(comment ?? "", /^Not processed: .*within its file limit/);
       closed++;
     },
   });
@@ -684,7 +688,7 @@ test("a skipped automation run is explained and its PR closed by the console", a
 
   assert.match(
     result.error ?? "",
-    /did not run for submission #22: a submission must change at most 50 files/,
+    /did not run for submission #22: the campaign's workflow runs only a submission/,
   );
   assert.match(result.error ?? "", /was closed/);
   assert.equal(closed, 1);
@@ -770,7 +774,11 @@ test("a volunteer encoding submission cleans the encode branch in their fork", a
     {
       createPullRequest: async (_owner, _repo, options) => {
         pullHead = options.head;
-        return { number: 14, html_url: "https://example.test/pr/14" };
+        return {
+          number: 14,
+          html_url: "https://example.test/pr/14",
+          headSha: "",
+        };
       },
       getPullRequestState: async () => "closed",
       getLastIssueComment: async () =>
@@ -802,7 +810,11 @@ test("an encoding submission comes from the repo the claim came from, whatever t
       }),
       createPullRequest: async (_owner, _repo, options) => {
         pullHead = options.head;
-        return { number: 15, html_url: "https://example.test/pr/15" };
+        return {
+          number: 15,
+          html_url: "https://example.test/pr/15",
+          headSha: "",
+        };
       },
       getPullRequestState: async () => "closed",
       getLastIssueComment: async () =>
@@ -821,6 +833,7 @@ test("a poll failure settles a background submission as timeout, not rejection",
     createPullRequest: async () => ({
       number: 16,
       html_url: "https://example.test/pr/16",
+      headSha: "",
     }),
     getPullRequestState: async () => {
       throw new Error("network down");
@@ -1031,6 +1044,7 @@ test("resolving a comment flips its replies in the PR payload too", async () => 
       return {
         number: 18,
         html_url: "https://example.test/pr/18",
+        headSha: "",
         head: {
           owner: "campaign-owner",
           repo: "campaign",
@@ -1082,6 +1096,7 @@ test("a comment PR starts at the head its comment table was read at", async () =
       return {
         number: 19,
         html_url: "https://example.test/pr/19",
+        headSha: "",
         head: { owner: "volunteer", repo: "campaign", branch: "comment-x" },
       };
     },
@@ -1110,6 +1125,7 @@ test("a rejected volunteer encoding keeps its fork branch for correction", async
     createPullRequest: async () => ({
       number: 15,
       html_url: "https://example.test/pr/15",
+      headSha: "",
     }),
     getPullRequestState: async () => "closed",
     getLastIssueComment: async () =>
@@ -1178,6 +1194,7 @@ test("openEditor claims first, then starts the task branch from the score as it 
       return {
         number: 3,
         html_url: "https://example.test/pr/3",
+        headSha: "",
         head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
       };
     },
@@ -1247,6 +1264,7 @@ test("openEditor selects the first note of a page task's page", async () => {
     openChangePr: async () => ({
       number: 3,
       html_url: "https://example.test/pr/3",
+      headSha: "",
       head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
     }),
     getPullRequestState: async () => "closed",
@@ -1298,6 +1316,7 @@ async function openWithKeptWorkBranch(earlier: string) {
     openChangePr: async () => ({
       number: 3,
       html_url: "https://example.test/pr/3",
+      headSha: "",
       head: { owner: "volunteer", repo: "campaign", branch: "claim-x" },
     }),
     getPullRequestState: async () => "closed",

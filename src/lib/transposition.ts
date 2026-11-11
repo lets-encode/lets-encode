@@ -138,8 +138,8 @@ export function keysigText(keysig: string): string {
   return m ? `${m[1]}${m[2] === "s" ? "♯" : "♭"}` : "None";
 }
 
-// Pitch names as labels write them, in English, German and Italian, mapped
-// to the names above. German B is B♭ and H is B.
+// Pitch names as labels write them, in English, German, Italian and French,
+// mapped to the names above. German B is B♭ and H is B.
 const PITCH_WORDS: Record<string, string> = {
   c: "C",
   d: "D",
@@ -166,6 +166,7 @@ const PITCH_WORDS: Record<string, string> = {
   "f#": "F♯",
   "f♯": "F♯",
   do: "C",
+  ut: "C",
   re: "D",
   mi: "E",
   "mi♭": "E♭",
@@ -273,7 +274,7 @@ export function transpositionFromLabel(label: string): Transposition | null {
   let found: [number, number] | undefined = instrument.fixed;
   if (instrument.pitches) {
     const m =
-      /(?:\bin\s+|\(\s*)(b flat|e flat|[a-h](?:is|es|s|b|♭|#|♯)?|do|re|mi[b♭]?|fa|sol|la|si[b♭]?)(?=[\s).,;:]|$)/.exec(
+      /(?:\b[ie]n\s+|\(\s*)(b flat|e flat|[a-h](?:is|es|s|b|♭|#|♯)?|do|ut|re|mi[b♭]?|fa|sol|la|si[b♭]?)(?=[\s).,;:]|$)/.exec(
         text,
       );
     const pitch = m ? PITCH_WORDS[m[1]] : undefined;

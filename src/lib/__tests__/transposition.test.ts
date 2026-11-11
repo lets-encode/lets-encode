@@ -69,9 +69,13 @@ test("transpositionFromLabel reads the instrument and its pitch", () => {
   assert.deepEqual(t("Piccolo"), [7, 12]);
   assert.deepEqual(t("Contrabbasso"), [-7, -12]);
   assert.deepEqual(t("Contrafagotto"), [-7, -12]);
+  assert.deepEqual(t("Clarinettes en Si♭"), [-1, -2]);
+  assert.deepEqual(t("Cors en Fa"), [-4, -7]);
   // In C, an ambiguous horn pitch, a pitch missing and a non-transposing
   // instrument give none.
   assert.equal(t("Trombe in C"), null);
+  assert.equal(t("Trompettes en Ut"), null);
+  assert.equal(t("Trompette en Ut (Si♭)"), null);
   assert.equal(t("Corni in C"), null);
   assert.equal(t("Clarinetti"), null);
   assert.equal(t("Violino I"), null);

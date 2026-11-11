@@ -11,6 +11,7 @@
 import {
   alignMeasures,
   alignmentRecord,
+  applyFileEdits,
   labelRanges,
   mapStaves,
   readMeasures,
@@ -18,6 +19,7 @@ import {
   summariseAlignment,
   type Alignment,
   type AlignmentSummary,
+  type FileEdits,
   type MeasureInfo,
   type Pin,
 } from "./encoding-align.ts";
@@ -27,13 +29,16 @@ import {
   parseFacsimileMei,
   parseScoreDef,
   replaceScoreDef,
+  type PageModel,
   type ScoreDefModel,
+  type StaffModel,
 } from "./mei-facsimile.ts";
 import { staffCountOf, withCorrectedLayout } from "./omr-layout.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { applicationId, recordApplications } from "./mei-provenance.ts";
 import {
   elementsNamed,
+  escapeRegex,
   startTags,
   tagAttribute,
   tagsIn,
@@ -52,10 +57,34 @@ export interface MergeResult {
   empty: number[];
   /** File measures placed in no layout measure. */
   droppedMeasures: number;
-  /** Control events dropped: their staff has no place, or an end is gone. */
+  /**
+   * Measure-level elements dropped: a control event none of whose staves has
+   * a place and which points to a note, or one an element it points to is
+   * gone from; an `<ossia>` whose staff has no place.
+   */
   droppedEvents: number;
-  /** Score-definition changes between measures that could not be carried. */
+  /**
+   * Score-definition changes between measures that could not be carried,
+   * staff definitions of staves without a place among them.
+   */
   droppedDefinitions: number;
+  /**
+   * `@staff` attributes inside a staff's content (cross-staff notes, chords,
+   * rests, beams …) removed because the staff they name has no place.
+   */
+  crossStaffRemoved: number;
+  /**
+   * `@beam.with` and `@stem.with` attributes removed because the neighbouring
+   * staff in their direction is no longer the same file staff.
+   */
+  neighbourRemoved: number;
+  /**
+   * Control events without a pointer to a note moved to the first score
+   * staff from the file because none of their staves has a place.
+   */
+  movedEvents: number;
+  /** The file's staff groups not carried into the score definition. */
+  droppedGroups: number;
 }
 
 /** A top-level element of an XML fragment. */
@@ -110,6 +139,30 @@ function withAttr(element: string, name: string, value: string): string {
   return updated + rest;
 }
 
+/** The tag (or element) with its start tag's attribute `name` removed. */
+const withoutAttr = (element: string, name: string): string =>
+  element.replace(
+    new RegExp(`^(<[^>]*?)\\s${escapeRegex(name)}="[^"]*"`),
+    "$1",
+  );
+
+/** `xml` with each start and empty-element tag replaced by `rewrite`'s result. */
+function rewriteTags(
+  xml: string,
+  rewrite: (tag: string, name: string) => string,
+): string {
+  let out = "";
+  let last = 0;
+  for (const tag of tagsIn(xml)) {
+    if (tag.kind === "end") continue;
+    out +=
+      xml.slice(last, tag.start) +
+      rewrite(xml.slice(tag.start, tag.end), tag.name);
+    last = tag.end;
+  }
+  return out + xml.slice(last);
+}
+
 /** The xml:ids an XML fragment declares. */
 const idsIn = (xml: string): string[] =>
   [...tagsIn(xml)].flatMap((tag) => {
@@ -157,14 +210,19 @@ function withoutClashes(upload: string, taken: Set<string>): string {
 /**
  * The score definition of the merged score: per layout staff, the file staff
  * mapped to it, else the skeleton's own; the skeleton's staff ids are kept.
- * The file's groups are kept where the file's staves map one to one.
+ * A file group is carried, renumbered, where its staves all have a place and
+ * stand next to each other in the same order; `droppedGroups` counts the
+ * others. With `layoutGroups`, the file's groups are kept only where the
+ * file's staves map one to one, else the skeleton's are used where its staff
+ * count is the score's, and none is counted as dropped.
  */
 function mergedScoreDef(
   skeleton: ScoreDefModel,
   file: ScoreDefModel,
   staffMap: (number | null)[],
   staffCount: number,
-): ScoreDefModel {
+  layoutGroups: boolean,
+): { def: ScoreDefModel; droppedGroups: number } {
   const staves = Array.from({ length: staffCount }, (_, t) => {
     const s = staffMap.indexOf(t + 1);
     const own = skeleton.staves[t];
@@ -173,16 +231,37 @@ function mergedScoreDef(
     const id = own?.id ?? (s >= 0 ? file.staves[s]?.id : undefined);
     return id ? { ...staff, id } : { ...staff, id: undefined };
   });
-  const oneToOne =
-    staffMap.length === staffCount && staffMap.every((t, s) => t === s + 1);
+  if (layoutGroups) {
+    const oneToOne =
+      staffMap.length === staffCount && staffMap.every((t, s) => t === s + 1);
+    return {
+      def: {
+        ...file,
+        staves,
+        groups: oneToOne
+          ? file.groups
+          : skeleton.staves.length === staffCount
+            ? skeleton.groups
+            : [],
+      },
+      droppedGroups: 0,
+    };
+  }
+  const groups = file.groups.flatMap((group) => {
+    const first = staffMap[group.start - 1] ?? null;
+    const kept =
+      first !== null &&
+      Array.from(
+        { length: group.end - group.start + 1 },
+        (_, k) => staffMap[group.start - 1 + k],
+      ).every((t, k) => t === first + k);
+    return kept
+      ? [{ ...group, start: first, end: first + group.end - group.start }]
+      : [];
+  });
   return {
-    ...file,
-    staves,
-    groups: oneToOne
-      ? file.groups
-      : skeleton.staves.length === staffCount
-        ? skeleton.groups
-        : [],
+    def: { ...file, staves, groups },
+    droppedGroups: file.groups.length - groups.length,
   };
 }
 
@@ -195,8 +274,18 @@ function indentAt(xml: string, start: number): string {
 /**
  * Merge `upload` into `skeleton` along `alignment` (computed on
  * readMeasures of both). `staffMap` gives, per file staff, its layout staff
- * (mapStaves); `staffCount` is the layout's staves per system. The file's
- * score definition replaces the skeleton's, unless `keepScoreDef`.
+ * or null (mapStaves); `staffCount` is the layout's staves per system. The
+ * file's score definition replaces the skeleton's, unless `keepScoreDef`;
+ * `layoutGroups` keeps its staff groups as mergedScoreDef describes.
+ *
+ * References to staves are rewritten through the map: `@staff` inside a
+ * staff's content, removed where its staff has no place; `@beam.with` and
+ * `@stem.with`, removed where the neighbouring staff changes; `@staff` on
+ * control events, which keep the staves that have a place. A control event
+ * none of whose staves has a place moves to the first score staff from the
+ * file when it points to no note, else it is dropped. Staff definitions
+ * between measures and the staves of an `<ossia>` are renumbered; those
+ * without a place are dropped, and an ossia with them.
  */
 export function mergeEncoding(
   skeleton: string,
@@ -204,24 +293,65 @@ export function mergeEncoding(
   alignment: Alignment,
   staffMap: (number | null)[],
   staffCount: number,
-  { keepScoreDef = false }: { keepScoreDef?: boolean } = {},
+  {
+    keepScoreDef = false,
+    layoutGroups = false,
+  }: { keepScoreDef?: boolean; layoutGroups?: boolean } = {},
 ): MergeResult {
-  const base = keepScoreDef
-    ? skeleton
-    : replaceScoreDef(
-        skeleton,
-        mergedScoreDef(
-          parseScoreDef(skeleton),
-          parseScoreDef(upload),
-          staffMap,
-          staffCount,
-        ),
+  const scoreDef = keepScoreDef
+    ? null
+    : mergedScoreDef(
+        parseScoreDef(skeleton),
+        parseScoreDef(upload),
+        staffMap,
+        staffCount,
+        layoutGroups,
       );
+  const base = scoreDef ? replaceScoreDef(skeleton, scoreDef.def) : skeleton;
   const file = withoutClashes(upload, new Set(idsIn(base)));
   const layout = readMeasures(base);
   const fileMeasures = readMeasures(file);
   const resp = `#${applicationId(UPLOAD_APPLICATION)}`;
   const mapStaff = (n: number) => staffMap[n - 1] ?? null;
+  /** The file staff at score staff `t`, or null. */
+  const fileStaffAt = (t: number) => {
+    const s = staffMap.indexOf(t);
+    return s < 0 ? null : s + 1;
+  };
+  const placedStaves = staffMap.filter((t): t is number => t !== null);
+  const top = placedStaves.length ? Math.min(...placedStaves) : null;
+  /** A list of file staff numbers as the score staves of those with a place. */
+  const mapList = (value: string) =>
+    value.split(/\s+/).flatMap((n) => {
+      const t = n ? mapStaff(Number(n)) : null;
+      return t === null ? [] : [t];
+    });
+  let crossStaffRemoved = 0;
+  let neighbourRemoved = 0;
+  let movedEvents = 0;
+  /** The tag with its `@staff` mapped, or removed when no staff has a place. */
+  const mapStaffAttr = (tag: string) => {
+    const staves = tagAttribute(tag, "staff");
+    if (staves === null) return tag;
+    const mapped = mapList(staves);
+    if (mapped.length) return withAttr(tag, "staff", mapped.join(" "));
+    crossStaffRemoved++;
+    return withoutAttr(tag, "staff");
+  };
+  /** File staff `s`'s content as score staff `t`. */
+  const placeStaff = (text: string, s: number, t: number) =>
+    rewriteTags(text, (tag) => {
+      let out = mapStaffAttr(tag);
+      for (const name of ["beam.with", "stem.with"]) {
+        const side = tagAttribute(out, name);
+        const step = side === "above" ? -1 : side === "below" ? 1 : 0;
+        if (step && fileStaffAt(t + step) !== s + step) {
+          out = withoutAttr(out, name);
+          neighbourRemoved++;
+        }
+      }
+      return out;
+    });
 
   // First the staves of every layout measure, so the ids they carry are
   // known before the control events referring to them are kept or dropped.
@@ -252,7 +382,11 @@ export function mergeEncoding(
         fromFile = true;
       } else if (source && events > 0) {
         staves.push(
-          withAttr(withAttr(source.text, "n", String(t)), "resp", resp),
+          withAttr(
+            withAttr(placeStaff(source.text, n!, t), "n", String(t)),
+            "resp",
+            resp,
+          ),
         );
         fromFile = true;
       } else staves.push(`<staff n="${t}"><layer n="1"/></staff>`);
@@ -266,13 +400,50 @@ export function mergeEncoding(
   ]);
   let droppedEvents = 0;
   let droppedDefinitions = 0;
+  /**
+   * A score-definition change with its staff definitions renumbered, those
+   * without a place and staff groups left empty removed; null when it is
+   * left without attributes and content.
+   */
+  const scoreDefChange = (definition: string): string | null => {
+    let out = "";
+    let last = 0;
+    for (const def of elementsNamed(definition, "staffDef", true)) {
+      const t = mapStaff(Number(tagAttribute(def.tag, "n")));
+      const before = definition.slice(last, def.start);
+      if (t === null) {
+        out += before.replace(/\s*$/, "");
+        droppedDefinitions++;
+      } else
+        out +=
+          before +
+          withAttr(definition.slice(def.start, def.end), "n", String(t));
+      last = def.end;
+    }
+    out += definition.slice(last);
+    for (let previous = ""; previous !== out; ) {
+      previous = out;
+      out = out.replace(/\s*<staffGrp\b[^>]*?(?:\/>|>\s*<\/staffGrp>)/g, "");
+    }
+    const open = /^<[^>]*>/.exec(out)![0];
+    const content = out
+      .slice(open.length)
+      .replace(/<\/scoreDef>$/, "")
+      .trim();
+    const attributes = [...tagsIn(open)][0].attributes ?? new Map();
+    return content || [...attributes.keys()].some((name) => name !== "xml:id")
+      ? out
+      : null;
+  };
   const leadingOf = (measure: MeasureInfo, index: number): string[] =>
     index === 0
       ? []
       : measure.leading.flatMap((definition) => {
           const name = /^<(\w+)/.exec(definition)![1];
-          if (name === "scoreDef" && !definition.includes("<staffDef"))
-            return [definition];
+          if (name === "scoreDef") {
+            const kept = scoreDefChange(definition);
+            return kept === null ? [] : [kept];
+          }
           const t =
             name === "staffDef"
               ? mapStaff(Number(tagAttribute(definition, "n")))
@@ -281,6 +452,21 @@ export function mergeEncoding(
           droppedDefinitions++;
           return [];
         });
+  /** An `<ossia>` with its staves renumbered; null when one has no place. */
+  const ossiaOf = (text: string): string | null =>
+    [...startTags(text, "staff")].some(
+      ({ tag }) => mapStaff(Number(tagAttribute(tag, "n"))) === null,
+    )
+      ? null
+      : rewriteTags(text, (tag, name) =>
+          name === "staff"
+            ? withAttr(
+                tag,
+                "n",
+                String(mapStaff(Number(tagAttribute(tag, "n")))),
+              )
+            : mapStaffAttr(tag),
+        );
 
   let out = "";
   let last = 0;
@@ -303,22 +489,27 @@ export function mergeEncoding(
               ownSigns.has(tagAttribute(child.tag, "func"))
             )
               return [];
-            const staves = tagAttribute(child.tag, "staff");
-            const mapped = staves
-              ? staves.split(/\s+/).map((n) => mapStaff(Number(n)))
-              : [];
-            if (
-              mapped.some((t) => t === null) ||
-              referencesOf(child.tag).some((id) => !present.has(id))
-            ) {
+            if (child.name === "ossia") {
+              const ossia = ossiaOf(child.text);
+              if (ossia === null) droppedEvents++;
+              return ossia === null ? [] : [ossia];
+            }
+            const references = referencesOf(child.tag);
+            if (references.some((id) => !present.has(id))) {
               droppedEvents++;
               return [];
             }
-            return [
-              staves
-                ? withAttr(child.text, "staff", mapped.join(" "))
-                : child.text,
-            ];
+            const staves = tagAttribute(child.tag, "staff");
+            if (!staves) return [child.text];
+            const mapped = mapList(staves);
+            if (mapped.length)
+              return [withAttr(child.text, "staff", mapped.join(" "))];
+            if (!references.length && top !== null) {
+              movedEvents++;
+              return [withAttr(child.text, "staff", String(top))];
+            }
+            droppedEvents++;
+            return [];
           })
         : [];
     const pad = indentAt(base, box.start);
@@ -390,6 +581,10 @@ export function mergeEncoding(
     droppedMeasures: fileMeasures.filter((_, m) => !placed.has(m)).length,
     droppedEvents,
     droppedDefinitions,
+    crossStaffRemoved,
+    neighbourRemoved,
+    movedEvents,
+    droppedGroups: scoreDef?.droppedGroups ?? 0,
   };
 }
 
@@ -414,18 +609,26 @@ export function layoutSkeleton(
   corrected: string | null,
   omr: boolean,
 ): string {
+  return skeletonWithPages(current, corrected, omr).mei;
+}
+
+/** The layout skeleton (layoutSkeleton) and the pages it is built from. */
+function skeletonWithPages(
+  current: string,
+  corrected: string | null,
+  omr: boolean,
+): { mei: string; pages: PageModel[] } {
   const parsed = parseFacsimileMei(current);
+  const pages = omr
+    ? withCorrectedLayout(parsed.pages, corrected)
+    : parsed.pages;
   const rebuilt = buildFacsimileMei(
-    {
-      headXml: parsed.headXml,
-      scoreDef: parsed.scoreDef,
-      pages: omr ? withCorrectedLayout(parsed.pages, corrected) : parsed.pages,
-    },
+    { headXml: parsed.headXml, scoreDef: parsed.scoreDef, pages },
     { withBreaks: true, emptyMeasures: true, padZones: omr },
   );
   const from = opening(current);
   const to = opening(rebuilt);
-  if (from.length !== to.length) return rebuilt;
+  if (from.length !== to.length) return { mei: rebuilt, pages };
   let out = "";
   let last = 0;
   to.forEach((at, k) => {
@@ -433,7 +636,7 @@ export function layoutSkeleton(
       rebuilt.slice(last, at.start) + current.slice(from[k].start, from[k].end);
     last = at.end;
   });
-  return out + rebuilt.slice(last);
+  return { mei: out + rebuilt.slice(last), pages };
 }
 
 /**
@@ -461,7 +664,54 @@ export function alignmentMessage(
   return `Align the uploaded encoding (${taskId}): ${parts.join(", ")}`;
 }
 
-/** What alignEncoding works from: the piece's files and the fixed links. */
+/** A problem checkScore finds: the measure it is in (index in score order), if any. */
+export interface ScoreProblem {
+  measure: number | null;
+  text: string;
+}
+
+/**
+ * What is wrong with a merged score's references: a `@staff` value that
+ * names no staff 1..`staffCount`, and a `#id` in `@startid`, `@endid` or
+ * `@plist` that no element of the score carries.
+ */
+export function checkScore(mei: string, staffCount: number): ScoreProblem[] {
+  const bodyAt = mei.indexOf("<body");
+  if (bodyAt < 0) return [];
+  const ids = new Set(idsIn(mei));
+  const problems: ScoreProblem[] = [];
+  let measure: number | null = null;
+  let count = 0;
+  let label = "";
+  for (const tag of tagsIn(mei, bodyAt)) {
+    if (tag.kind === "end") {
+      if (tag.name === "measure") measure = null;
+      continue;
+    }
+    if (tag.name === "measure") {
+      measure = count++;
+      label = xmlUnescape(tag.attributes?.get("n") ?? String(count));
+    }
+    const where = measure === null ? "Between measures" : `Measure ${label}`;
+    const staves = tag.attributes?.get("staff");
+    for (const n of staves?.split(/\s+/).filter(Boolean) ?? [])
+      if (!/^\d+$/.test(n) || Number(n) < 1 || Number(n) > staffCount)
+        problems.push({
+          measure,
+          text: `${where}: <${tag.name}> names staff ${n}, the score has ${staffCount}`,
+        });
+    for (const name of ["startid", "endid", "plist"])
+      for (const ref of tag.attributes?.get(name)?.split(/\s+/) ?? [])
+        if (ref.startsWith("#") && !ids.has(xmlUnescape(ref.slice(1))))
+          problems.push({
+            measure,
+            text: `${where}: <${tag.name}> points to ${ref}, which is not in the score`,
+          });
+  }
+  return problems;
+}
+
+/** What alignEncoding works from: the piece's files and the volunteer's choices. */
 export interface EncodingInput {
   /** The piece's score as the campaign holds it. */
   current: string;
@@ -472,62 +722,131 @@ export interface EncodingInput {
   /** The piece's preparation, one of PREPARATIONS. */
   preparation: string;
   pins: Pin[];
+  /**
+   * The file staff (1-based) per score staff, in score order, null for an
+   * empty staff; absent: placed automatically (mapStaves).
+   */
+  scoreStaves?: (number | null)[];
+  /** Changes to the uploaded file's measure sequence; absent: none. */
+  fileEdits?: FileEdits;
 }
 
+/** A staff of the uploaded file as a staff choice shows it. */
+export type FileStaff = { n: number } & Pick<
+  StaffModel,
+  "label" | "clefShape" | "clefLine"
+>;
+
 export interface AlignedEncoding {
-  /** The upload with an xml:id on every element, as merged and rendered. */
+  /**
+   * The upload with an xml:id on every element and the file edits applied,
+   * as merged and rendered.
+   */
   upload: string;
   /** The layout skeleton's measures, in score order. */
   layout: MeasureInfo[];
-  /** The upload's measures. */
+  /** The upload's measures after the file edits. */
   file: MeasureInfo[];
+  /** The xml:ids of the upload's measures before the file edits (shiftPins). */
+  fileIds: string[];
+  /** The file measures the edits removed, with their labels ('' for none). */
+  fileRemoved: { id: string; label: string }[];
+  /** The empty file measures the edits added, as the edits name them. */
+  fileAdded: FileEdits["added"];
   alignment: Alignment;
   summary: AlignmentSummary;
   /** Per file staff, its layout staff. */
   staffMap: (number | null)[];
   /** The layout's staves per system. */
   staffCount: number;
+  /**
+   * Per score staff, the file staff (1-based) it takes or null: the chosen
+   * list where it was taken, else the automatic one.
+   */
+  scoreStaves: (number | null)[];
+  /** The uploaded file's staves, in order. */
+  fileStaves: FileStaff[];
+  /**
+   * Per score staff, the name the layout task gave it (its label, else its
+   * group's), '' for none; null unless the piece is 'omr-instruments'.
+   */
+  layoutStaffNames: string[] | null;
   merged: MergeResult;
+  /** What checkScore finds in the merged score; empty when it is sound. */
+  problems: ScoreProblem[];
   /** The alignment record, as `alignment.json` is written. */
   record: string;
 }
 
 /**
- * Align and merge an uploaded encoding into the piece's layout skeleton.
- * An OMR-prepared piece's staff count is its corrected layout's; a piece
- * whose layout task named the instruments ('omr-instruments') keeps its
- * score definition, and its staves are paired with the file's by clef.
- * Otherwise the file's staves are taken as they are.
+ * Align and merge an uploaded encoding, after its file edits
+ * (applyFileEdits), into the piece's layout skeleton. An OMR-prepared piece's
+ * staff count is its corrected layout's; a piece whose layout task named the
+ * instruments ('omr-instruments') keeps its score definition, and its staves
+ * are paired with the file's by clef. Otherwise the file's staves are taken
+ * as they are.
+ *
+ * `scoreStaves`, where given, sets the staves instead: each entry an integer
+ * file staff in range or null, no file staff twice, at least one entry. For an
+ * OMR-prepared piece its length must be the layout's staff count; for
+ * another piece it sets the staff count. A list that breaks any of these is
+ * ignored and the staves are placed automatically.
  */
 export function alignEncoding(input: EncodingInput): AlignedEncoding {
   const omr =
     input.preparation === "omr" || input.preparation === "omr-instruments";
   const named = input.preparation === "omr-instruments";
-  const skeleton = layoutSkeleton(input.current, input.corrected, omr);
-  const upload = addXmlIds(input.upload, "u-");
+  const { mei: skeleton, pages } = skeletonWithPages(
+    input.current,
+    input.corrected,
+    omr,
+  );
+  const withIds = addXmlIds(input.upload, "u-");
+  const fileEdits = input.fileEdits ?? { removed: [], added: [] };
+  const upload = applyFileEdits(withIds, fileEdits);
+  const unedited = readMeasures(withIds);
+  const removed = new Set(fileEdits.removed);
   const layout = readMeasures(skeleton);
   const file = readMeasures(upload);
   const fileDef = parseScoreDef(upload);
   const ownDef = parseScoreDef(skeleton);
   const fileStaves = fileDef.staves;
   const ownStaves = ownDef.staves;
-  const staffCount = named
+  const layoutCount = named
     ? ownStaves.length
     : omr
-      ? staffCountOf(
-          withCorrectedLayout(
-            parseFacsimileMei(skeleton).pages,
-            input.corrected,
-          ),
-        )
-      : fileStaves.length;
-  const staffMap = mapStaves(
-    fileStaves.map((s, i) => staffKey(s, i + 1, fileDef.groups)),
-    staffCount,
-    named
-      ? ownStaves.map((s, i) => staffKey(s, i + 1, ownDef.groups))
-      : undefined,
-  );
+      ? staffCountOf(pages)
+      : null;
+  const chosen = input.scoreStaves;
+  const valid =
+    chosen !== undefined &&
+    chosen.length > 0 &&
+    (layoutCount === null || chosen.length === layoutCount) &&
+    chosen.every(
+      (s) =>
+        s === null || (Number.isInteger(s) && s >= 1 && s <= fileStaves.length),
+    ) &&
+    new Set(chosen.filter((s) => s !== null)).size ===
+      chosen.filter((s) => s !== null).length;
+  const staffCount = valid ? chosen.length : (layoutCount ?? fileStaves.length);
+  const staffMap = valid
+    ? fileStaves.map((_, s) => {
+        const t = chosen.indexOf(s + 1);
+        return t < 0 ? null : t + 1;
+      })
+    : mapStaves(
+        fileStaves.map((s, i) => staffKey(s, i + 1, fileDef.groups)),
+        staffCount,
+        named
+          ? ownStaves.map((s, i) => staffKey(s, i + 1, ownDef.groups))
+          : undefined,
+      );
+  const scoreStaves = valid
+    ? chosen
+    : Array.from({ length: staffCount }, (_, t) => {
+        const s = staffMap.indexOf(t + 1);
+        return s < 0 ? null : s + 1;
+      });
   const alignment = alignMeasures(layout, file, input.pins);
   const merged = mergeEncoding(
     skeleton,
@@ -535,17 +854,43 @@ export function alignEncoding(input: EncodingInput): AlignedEncoding {
     alignment,
     staffMap,
     staffCount,
-    { keepScoreDef: named },
+    { keepScoreDef: named, layoutGroups: omr },
   );
   return {
     upload,
     layout,
     file,
+    fileIds: unedited.map((m) => m.id),
+    fileRemoved: unedited.flatMap((m) =>
+      removed.has(m.id) ? [{ id: m.id, label: m.label }] : [],
+    ),
+    fileAdded: fileEdits.added.filter((a) => file.some((m) => m.id === a.id)),
     alignment,
     summary: summariseAlignment(file, alignment),
     staffMap,
     staffCount,
+    scoreStaves,
+    fileStaves: fileStaves.map((s, i) => ({
+      n: i + 1,
+      label: s.label,
+      clefShape: s.clefShape,
+      clefLine: s.clefLine,
+    })),
+    layoutStaffNames: named
+      ? ownStaves.map(
+          (s, t) =>
+            s.label ||
+            ownDef.groups.find(
+              (g) => g.label && g.start <= t + 1 && t + 1 <= g.end,
+            )?.label ||
+            "",
+        )
+      : null,
     merged,
-    record: alignmentRecord(input.pins, alignment, staffMap),
+    problems: checkScore(merged.mei, staffCount),
+    record: alignmentRecord(input.pins, alignment, staffMap, {
+      scoreStaves: valid ? chosen : undefined,
+      fileEdits: input.fileEdits,
+    }),
   };
 }

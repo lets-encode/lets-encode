@@ -34,7 +34,8 @@ behind every campaign address.
 
 ## 1. Create the template repo (one-time)
 
-1. On GitHub, create a repo with at least a README.
+1. On GitHub, create a repo from the contents of the `campaign-template` repository
+   (`lets-encode/campaign-template`).
 2. **Settings → Template repository** (tick it).
 3. Note its `owner/name` for the config below.
 
@@ -73,13 +74,12 @@ is secret; the OAuth credentials live only in the broker's env (next step).
   gitignored, loaded on top of the committed files.
 
 Every value is baked in at build time (`$env/dynamic/public`), so a change
-needs a rebuild. The SPA reaches the broker at `PUBLIC_BROKER_URL` (default
-`/auth`) and the name registry at `PUBLIC_REGISTRY_URL` (default `/registry`) —
-both proxied to the broker by the Vite dev server, and by Apache in production.
-`PUBLIC_AUTOMATION_*` is the central automation pointer written into each new
-campaign's `config.yaml`; each `.env.<mode>` sets `PUBLIC_AUTOMATION_REF` to
-its instance's branch, so a campaign runs the coordinator of the instance that
-created it. Pin it to a commit SHA for production releases. See the comments in `instances-config/.env` for the full commentary.
+needs a rebuild. The SPA reaches the broker at `/auth` and the name registry at
+`/registry` — both proxied to the broker by the Vite dev server, and by Apache
+in production. The central automation pointer written into each new campaign's
+`config.yaml` names `lets-encode/lets-encode` and `scripts/coordinator.ts`; each
+`.env.<mode>` sets `PUBLIC_AUTOMATION_REF` to its instance's branch, so a
+campaign runs the coordinator of the instance that created it. Pin it to a commit SHA for production releases. See the comments in `instances-config/.env` for the full commentary.
 
 ## 4. Run locally (two processes)
 
@@ -137,12 +137,15 @@ GH_TOKEN=$(gh auth token -u <account>) node scripts/use-branch.ts <owner>/<repo>
 instance. While a campaign on a feature branch still calls `campaign.yml` at
 another ref, its page on the dev server shows this command.
 
+`scripts/profile-actions.ts` writes the step timings of a campaign repo's
+workflow runs as CSV; its header comment gives the usage.
+
 ## 5. Build / preview / test
 
 ```bash
 npm run build     # static site → ./website (the document root: website index.html at /, SPA fallback spa.html)
 npm run preview   # serve the built site locally
-npm test          # pure campaign-logic unit tests (no network)
+npm test          # unit tests; caller-workflow.test.ts fetches the template's caller.yml from GitHub
 npm run check     # svelte-check for the app, tsc for scripts/ (check:app, check:scripts)
 ```
 

@@ -9,6 +9,7 @@
 import { detectMeasures } from "./facsimile-detect.ts";
 import { sortReadingOrder, type MeasureBox } from "./mei-facsimile.ts";
 import { downscaleImage, imageSize, type PageImage } from "./prepare-images.ts";
+import { sha256Hex } from "./util.ts";
 
 /** How many detector requests may be in flight at once — it is a shared service. */
 const DETECTOR_CONCURRENCY = 2;
@@ -66,13 +67,7 @@ function release(): void {
 const cache = new Map<string, Promise<PageMeasures>>();
 
 async function contentKey(blob: Blob, detectorUrl: string): Promise<string> {
-  const digest = await crypto.subtle.digest(
-    "SHA-256",
-    await blob.arrayBuffer(),
-  );
-  const hex = Array.from(new Uint8Array(digest), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
+  const hex = await sha256Hex(await blob.arrayBuffer());
   return `${detectorUrl}|${hex}`;
 }
 

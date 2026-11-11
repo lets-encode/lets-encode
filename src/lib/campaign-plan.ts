@@ -1,4 +1,4 @@
-// Plan editing: pure decision logic for rewriting task.csv from the console's
+// Plan editing: pure decision logic for rewriting task.csv from the app's
 // plan editor. Given the current tables and the proposed plan (the complete
 // new task table, task rows with their subtask rows, in order), decide whether
 // the rewrite is allowed and, if so, produce the matching state rows. Only

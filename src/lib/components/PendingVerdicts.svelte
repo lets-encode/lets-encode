@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import { modal } from "$lib/components/LoadingOverlay.svelte";
   import { auth, forge } from "$lib/auth.svelte.ts";
   import { commandContext, viewerId } from "$lib/command-runner.svelte.ts";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
@@ -33,12 +34,17 @@
 </script>
 
 {#if rejected.length}
-  <div class="overlay" role="alert">
+  <dialog
+    class="overlay"
+    role="alertdialog"
+    aria-labelledby="pending-verdicts-title"
+    {@attach modal}
+  >
     <div class="overlay-card">
       <div class="fail-mark" aria-hidden="true">
         <Icon name="warning" size={22} />
       </div>
-      <p class="overlay-title failed">
+      <p class="overlay-title failed" id="pending-verdicts-title">
         {rejected.every((e) => e.runFailed)
           ? "Run failed"
           : rejected.some(failed)
@@ -58,15 +64,18 @@
           </p>
         </div>
       {/each}
+      <!-- showModal() focuses the dialog's autofocus element. -->
+      <!-- svelte-ignore a11y_autofocus -->
       <button
         type="button"
         class="btn btn-primary"
+        autofocus
         onclick={() => rejected.forEach((e) => pendingVerdicts.dismiss(e.id))}
       >
         Continue
       </button>
     </div>
-  </div>
+  </dialog>
 {/if}
 
 <style>

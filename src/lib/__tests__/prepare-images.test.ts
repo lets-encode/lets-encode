@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   blobToBase64,
   classifyUpload,
+  exifOrientation,
   iiifCanvasUrl,
   iiifProxyUrl,
   parseIiifManifest,
@@ -18,8 +19,76 @@ import {
 } from "../prepare-images.ts";
 
 /** A stand-in for an uploaded File: only name/type and the bytes are read. */
-function fakeFile(name: string, type = "", text = ""): File {
-  return { name, type, text: async () => text } as unknown as File;
+function fakeFile(
+  name: string,
+  type = "",
+  text = "",
+  bytes: Uint8Array = new Uint8Array(),
+): File {
+  return {
+    name,
+    type,
+    text: async () => text,
+    arrayBuffer: async () => bytes.buffer,
+  } as unknown as File;
+}
+
+/** A TIFF block whose IFD0 holds one Orientation entry, in either byte order. */
+function tiff(orientation: number, little: boolean): number[] {
+  const u16 = (n: number) => (little ? [n & 0xff, n >> 8] : [n >> 8, n & 0xff]);
+  const u32 = (n: number) => (little ? [n, 0, 0, 0] : [0, 0, 0, n]);
+  return [
+    ...(little ? [0x49, 0x49] : [0x4d, 0x4d]),
+    ...u16(42),
+    ...u32(8),
+    ...u16(2),
+    // An unrelated entry (ImageWidth) before the Orientation one.
+    ...u16(0x0100),
+    ...u16(3),
+    ...u32(1),
+    ...u16(640),
+    0,
+    0,
+    ...u16(0x0112),
+    ...u16(3),
+    ...u32(1),
+    ...u16(orientation),
+    0,
+    0,
+  ];
+}
+
+/** A JPEG header: SOI, an APP0 segment, then APP1 Exif carrying `tiffBytes`. */
+function jpeg(tiffBytes: number[]): Uint8Array {
+  const exif = [0x45, 0x78, 0x69, 0x66, 0, 0, ...tiffBytes];
+  const app0 = [0xff, 0xe0, 0, 4, 0x4a, 0x46];
+  const app1 = [0xff, 0xe1, (exif.length + 2) >> 8, (exif.length + 2) & 0xff];
+  return new Uint8Array([0xff, 0xd8, ...app0, ...app1, ...exif, 0xff, 0xda]);
+}
+
+/** A PNG signature followed by an eXIf chunk carrying `tiffBytes` (CRC zeroed). */
+function png(tiffBytes: number[]): Uint8Array {
+  const n = tiffBytes.length;
+  return new Uint8Array([
+    0x89,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+    ...[0, 0, n >> 8, n & 0xff],
+    0x65,
+    0x58,
+    0x49,
+    0x66,
+    ...tiffBytes,
+    0,
+    0,
+    0,
+    0,
+  ]);
 }
 
 const blob = (marker: string) => ({ marker }) as unknown as Blob;
@@ -611,6 +680,50 @@ test("commits an upload byte-for-byte, keeping its type", async () => {
     downscale: async () => assert.fail("a committed page is never downscaled"),
   });
   assert.equal(images[0].path, "sources/img/01.png");
+  assert.equal(images[0].blob, file);
+});
+
+test("reads the EXIF orientation of a JPEG in either byte order", () => {
+  assert.equal(exifOrientation(jpeg(tiff(6, true))), 6);
+  assert.equal(exifOrientation(jpeg(tiff(8, false))), 8);
+  assert.equal(exifOrientation(jpeg(tiff(1, false))), 1);
+});
+
+test("reads the EXIF orientation of a PNG eXIf chunk", () => {
+  assert.equal(exifOrientation(png(tiff(3, false))), 3);
+});
+
+test("an image without readable EXIF counts as upright", () => {
+  assert.equal(exifOrientation(new Uint8Array([0xff, 0xd8, 0xff, 0xda])), 1);
+  assert.equal(exifOrientation(new Uint8Array()), 1);
+  assert.equal(exifOrientation(jpeg(tiff(9, true))), 1, "out of range");
+  assert.equal(
+    exifOrientation(jpeg(tiff(6, true)).subarray(0, 30)),
+    1,
+    "truncated",
+  );
+});
+
+test("re-encodes an upload upright when its orientation is not 1", async () => {
+  const file = fakeFile("photo.png", "image/png", "", png(tiff(6, true)));
+  const upright = blob("upright");
+  const pages = await candidatesOf([file]);
+  const images = await resolvePages(pages, undefined, {
+    ...stubs,
+    upright: async (b) => (assert.equal(b, file), upright),
+  });
+  assert.equal(images[0].path, "sources/img/01.jpg");
+  assert.equal(images[0].blob, upright);
+});
+
+test("commits an upright JPEG byte-for-byte", async () => {
+  const file = fakeFile("photo.jpg", "image/jpeg", "", jpeg(tiff(1, true)));
+  const pages = await candidatesOf([file]);
+  const images = await resolvePages(pages, undefined, {
+    ...stubs,
+    upright: async () => assert.fail("an upright image is not re-encoded"),
+  });
+  assert.equal(images[0].path, "sources/img/01.jpg");
   assert.equal(images[0].blob, file);
 });
 

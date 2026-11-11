@@ -1,4 +1,4 @@
-// The forge abstraction: the interface the instigation SPA codes against, so a
+// The forge abstraction: the interface the app codes against, so a
 // second provider (GitLab, …) is a drop-in — selection happens in index.ts,
 // per-deployment values in config.ts. The GitHub implementation is github.ts,
 // built over the REST calls in github-rest.ts.
@@ -19,8 +19,6 @@ export type {
   GitHubUser,
   RepoData,
   RepoSummary,
-  RepoRef,
-  RepoFiles,
   WorkflowRunInfo,
   WorkflowJobInfo,
 };
@@ -39,7 +37,7 @@ export interface ChangeRequest {
   number: number;
   html_url: string;
   /** The head commit SHA — identifies the CI run the request triggers. */
-  headSha?: string;
+  headSha: string;
   /** When the forge created the request (ISO); its runs start after it. */
   createdAt?: string;
 }
@@ -50,7 +48,7 @@ export interface OpenedChangeRequest extends ChangeRequest {
   head: { owner: string; repo: string; branch: string };
 }
 
-/** The forge operations the instigation GUI needs, independent of provider. */
+/** The forge operations the app needs, independent of provider. */
 export interface ForgeClient {
   /** The repo's page on the forge's website. */
   repoWebUrl(owner: string, repo: string): string;

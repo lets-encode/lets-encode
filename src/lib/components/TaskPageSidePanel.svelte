@@ -30,7 +30,6 @@
     review = false,
     done = false,
     composerHint = "",
-    banner,
     taskBox,
     tools,
     selection,
@@ -62,7 +61,6 @@
     done?: boolean;
     /** Composer placeholder override (e.g. when a measure is selected). */
     composerHint?: string;
-    banner?: Snippet;
     /** The task's record and controls, pinned above the comments; given the
         panel's Comments button for its heading (SidePanel). */
     taskBox: Snippet<[Snippet | undefined]>;
@@ -129,7 +127,6 @@
   {minWidth}
   inScore
   {composerHint}
-  {banner}
   {taskBox}
   {tools}
   {selection}

@@ -18,6 +18,8 @@ export type ProgressUpdate = {
   /** Sent with `command`: the command resolves to a background result, so it
    * runs without the busy overlay. */
   background?: boolean;
+  /** Sent with `command`: the `task_id` of the command's input, when it has one. */
+  task?: string;
 };
 
 /** Where the watched run stands after the latest tick. */
