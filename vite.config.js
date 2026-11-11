@@ -1,5 +1,5 @@
 import { sveltekit } from "@sveltejs/kit/vite";
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -99,6 +99,8 @@ export default defineConfig(({ command, mode }) => {
       ? mode
       : modeForBranch();
   }
+  const { BROKER_PORT } = loadEnv(mode, "instances-config", "BROKER_");
+  const broker = `http://127.0.0.1:${BROKER_PORT}`;
   return {
     mode,
     // The .env files live in instances-config/ with services.json; svelte.config.js
@@ -132,17 +134,17 @@ export default defineConfig(({ command, mode }) => {
       },
       // Mount the session broker under the SPA's own origin, mirroring the
       // deployed reverse proxy's /auth/ mount (README §6) — its session cookie
-      // must be first-party. Run it with:  flask --app app run --port 7777  (in broker/)
+      // must be first-party. It listens on BROKER_PORT of the mode's env file.
       proxy: {
         "/auth": {
-          target: "http://127.0.0.1:7777",
+          target: broker,
           rewrite: (path) => path.replace(/^\/auth/, ""),
         },
         // The slug registry is part of the broker, as a blueprint mounted at
         // /registry (see broker/registry.py), so the path passes through
         // unchanged to the same server.
         "/registry": {
-          target: "http://127.0.0.1:7777",
+          target: broker,
         },
       },
     },
