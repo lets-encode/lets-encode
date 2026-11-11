@@ -3,6 +3,11 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-11
+
+- The broker takes its port from the instance env file of the checked-out branch.
+- The dev server's broker proxy reads the same port, and running `app.py` directly is removed.
+
 ## 2026-11-10
 
 - Compressed MusicXML files can be uploaded as an existing encoding.

@@ -53,8 +53,9 @@ jobs:
       # it is missing (404): a scheduled or dispatched run (e.g. on a freshly
       # generated repo) no-ops with empty outputs, while a pull_request_target
       # run fails loudly — the PR cannot be processed, and a failed run is what
-      # the console's watch surfaces instead of timing out. Any other API
-      # failure fails the run rather than silently doing nothing.
+      # the app's watch surfaces instead of timing out. A config.yaml without
+      # an `automation:` block fails every run, as does any other API failure,
+      # rather than silently doing nothing.
       #
       # The pointer fields are validated against strict patterns before any
       # step uses them: `central_repository` must be owner/repo and `ref` a
@@ -75,6 +76,7 @@ jobs:
               echo "config.yaml is missing from the base branch — the campaign is not initialised, so this pull request cannot be processed." >&2
               exit 1
             fi
+            missing=1
             : > config.yaml
           fi
           read_automation() {
@@ -87,6 +89,10 @@ jobs:
           repo=$(read_automation central_repository)
           ref=$(read_automation ref)
           path=$(read_automation path)
+          if [ -z "$repo$ref$path" ] && [ -z "${missing:-}" ]; then
+            echo "config.yaml has no automation: block with central_repository, so the campaign automation cannot run." >&2
+            exit 1
+          fi
           if [ -n "$repo$ref$path" ]; then
             if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
               echo "config.yaml: automation.central_repository must be owner/repo, got '$repo'." >&2

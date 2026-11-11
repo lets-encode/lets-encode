@@ -168,14 +168,16 @@ pip install --require-hashes -r requirements.txt
 flask --app app run --port 7777
 
 # deployed (behind the reverse proxy — see README.md §6)
-PORT=7777 gunicorn -c gunicorn_config.py wsgi:app
+gunicorn -c gunicorn_config.py wsgi:app
 ```
 
 `wsgi.py` is a thin shim re-exporting `app`, so service managers can point at the
 conventional `wsgi:app` target. `gunicorn_config.py` binds to loopback on
-`PORT` (the file's default differs per branch); each deployed instance runs its own broker on its own
+the instance's port; each deployed instance runs its own broker on its own
 port — production 7777, staging 7778, testing 7779, matching the reverse
-proxy's targets (`README.md` §6). Only the proxy needs to reach the bind
+proxy's targets (`README.md` §6). The port is `BROKER_PORT` of the
+`instances-config/.env.<mode>` file that the checked-out branch selects; `PORT`
+in the environment takes precedence. Only the proxy needs to reach the bind
 address, so it stays on loopback.
 
 ## Test

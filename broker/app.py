@@ -1708,7 +1708,3 @@ def proxy(url):
         ),
     )
     return (response.content, response.status_code, out_headers)
-
-
-if __name__ == "__main__":
-    app.run(port=7777)
