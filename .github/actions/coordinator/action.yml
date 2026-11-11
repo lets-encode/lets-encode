@@ -7,7 +7,7 @@ description: >
 
 inputs:
   path:
-    description: Entry point within the central checkout (validated by campaign.yml).
+    description: Entry point within the central checkout (automation.path of config.yaml).
     required: true
 
 runs:
@@ -43,6 +43,12 @@ runs:
       # A run ends after 30 minutes whatever it is doing, and fails. The
       # schema check of a score at GitHub's 100 MB file limit takes about a
       # minute.
+      # The entry point must be the one this checkout ships; any other path
+      # fails the run before anything is executed.
       run: |
+        if [ "$CENTRAL_PATH" != "scripts/coordinator.ts" ]; then
+          echo "config.yaml: automation.path must be scripts/coordinator.ts, got '$CENTRAL_PATH'." >&2
+          exit 1
+        fi
         echo "runner node: $(node --version)"
         timeout 30m node "central/$CENTRAL_PATH"

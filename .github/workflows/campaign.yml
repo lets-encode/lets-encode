@@ -35,13 +35,13 @@ jobs:
       group: ${{ github.event_name == 'pull_request_target' && format('campaign-{0}-pr-{1}', github.repository, github.event.pull_request.number) || format('campaign-{0}-maintenance', github.repository) }}
       cancel-in-progress: false
     # Decided from the event alone, before a runner is assigned: a pull request
-    # the console opens changes at most three files (a layout correction's
-    # score and its two layout files), is not a draft, and comes from a user
-    # account. Any other pull request gets a skipped job, which the console
-    # reports with these requirements; the coordinator's scheduled catch-up
-    # pass processes oversize ones (closing them with a rejection) and leaves
-    # drafts and non-user pull requests alone.
-    if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 3 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
+    # changes at most 50 files, is not a draft, and comes from a user account.
+    # Any other pull request gets a skipped job, which the app reports with
+    # these requirements; the coordinator's scheduled catch-up pass processes
+    # oversize ones (closing them with a rejection) and leaves drafts and
+    # non-user pull requests alone. Which files an operation may change is the
+    # coordinator's check, so it comes from the campaign's automation.ref.
+    if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 50 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
     runs-on: ubuntu-24.04
     steps:
       # The central pointer comes from config.yaml on the base ref — a fork PR
@@ -53,15 +53,16 @@ jobs:
       # it is missing (404): a scheduled or dispatched run (e.g. on a freshly
       # generated repo) no-ops with empty outputs, while a pull_request_target
       # run fails loudly — the PR cannot be processed, and a failed run is what
-      # the console's watch surfaces instead of timing out. Any other API
-      # failure fails the run rather than silently doing nothing.
+      # the app's watch surfaces instead of timing out. A config.yaml without
+      # an `automation:` block fails every run, as does any other API failure,
+      # rather than silently doing nothing.
       #
-      # The three pointer fields are validated against strict patterns before
-      # any step uses them: `central_repository` must be owner/repo, `ref` a
+      # The pointer fields are validated against strict patterns before any
+      # step uses them: `central_repository` must be owner/repo and `ref` a
       # branch, tag or commit name (empty selects the repository's default
-      # branch), and `path` the entry point central ships. A mistyped or
-      # tampered base config.yaml therefore fails the run instead of reaching
-      # a checkout or a command line.
+      # branch). A mistyped or tampered base config.yaml therefore fails the
+      # run instead of reaching a checkout. `path` is checked by the
+      # coordinator action, which comes from that checkout.
       - name: Read the central automation pointer from config.yaml
         id: cfg
         env:
@@ -75,6 +76,7 @@ jobs:
               echo "config.yaml is missing from the base branch — the campaign is not initialised, so this pull request cannot be processed." >&2
               exit 1
             fi
+            missing=1
             : > config.yaml
           fi
           read_automation() {
@@ -87,6 +89,10 @@ jobs:
           repo=$(read_automation central_repository)
           ref=$(read_automation ref)
           path=$(read_automation path)
+          if [ -z "$repo$ref$path" ] && [ -z "${missing:-}" ]; then
+            echo "config.yaml has no automation: block with central_repository, so the campaign automation cannot run." >&2
+            exit 1
+          fi
           if [ -n "$repo$ref$path" ]; then
             if ! [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
               echo "config.yaml: automation.central_repository must be owner/repo, got '$repo'." >&2
@@ -94,10 +100,6 @@ jobs:
             fi
             if [ -n "$ref" ] && { ! [[ "$ref" =~ ^[A-Za-z0-9_./-]+$ ]] || [[ "$ref" == *..* ]]; }; then
               echo "config.yaml: automation.ref must be a branch, tag or commit name, got '$ref'." >&2
-              exit 1
-            fi
-            if [ "$path" != "scripts/coordinator.ts" ]; then
-              echo "config.yaml: automation.path must be scripts/coordinator.ts, got '$path'." >&2
               exit 1
             fi
           fi
