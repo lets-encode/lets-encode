@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-11
 
+- The wizard's preparation step groups the optical music recognition options in one box that credits Musibot, the Prague Music Computing Group and OmniOMR with both logos.
+- The website has an Acknowledgments section for Musibot above the funding section, and the small headings above the section headings are removed.
 - The broker takes its port from the instance env file of the checked-out branch.
 - The dev server's broker proxy reads the same port, and running `app.py` directly is removed.
 - The score check and the score setup's staff list show the staves of a grand staff in one box with a brace.

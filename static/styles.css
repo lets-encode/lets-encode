@@ -489,15 +489,6 @@ section.alt {
   margin: 0 0 .4rem;
 }
 
-.section-head .kicker {
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  font-size: .78rem;
-  font-weight: 700;
-  color: var(--accent);
-  margin: 0 0 .5rem;
-}
-
 .section-head p {
   color: var(--ink-soft);
   margin: 0;
@@ -648,6 +639,14 @@ section.alt {
   width: auto;
 }
 
+/* Logos without a link: no card, left-aligned in a row. */
+.logos-plain {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2.5rem;
+}
+
 .logos a {
   flex: 1;
   display: flex;
@@ -765,7 +764,7 @@ section.alt {
 
 @media (max-width: 560px) {
 
-  /* clear the sticky topbar on anchor jumps so the section kicker stays visible
+  /* clear the sticky topbar on anchor jumps so the section heading stays visible
      (desktop's larger section padding already handles this) */
   html {
     scroll-padding-top: 26px;
@@ -979,8 +978,8 @@ section.alt {
   transform-origin: 50% 8%;
 }
 
-/* headings whose hand reaches above the cap line get headroom to clear the
-   kicker; those whose hand hangs below get room so it doesn't touch the body */
+/* headings whose hand reaches above the cap line get headroom;
+   those whose hand hangs below get room so it doesn't touch the body */
 .section-head h2:has(.gx.above) {
   margin-top: 1.15em;
 }
