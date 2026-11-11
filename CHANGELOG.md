@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-11
 
+- The score check and the score setup's staff list show the staves of a grand staff in one box with a brace.
 - The measure correction, the campaign page, the score setup, the setup wizard's frame and the campaign list are split into components and modules by concern.
 - The message for a submission the campaign's workflow did not run no longer names a number of files.
 - The commands, the GitHub client and the broker are split into modules by concern, and the coordinator's decisions are in unit-tested modules.

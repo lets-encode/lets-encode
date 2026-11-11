@@ -23,7 +23,10 @@ export class StaffListEditor {
     this.#model = model;
     this.#marking = marking;
     this.reorder = new HandleReorder({
-      rows: () => [...(this.list?.children ?? [])] as HTMLElement[],
+      rows: () => [
+        ...(this.list?.querySelectorAll<HTMLElement>(":scope > .staffrow") ??
+          []),
+      ],
       scroller: () => {
         let scroller = this.list?.parentElement ?? null;
         while (

@@ -1,11 +1,13 @@
 <!--
   The score setup's staves, step 1: a row per staff with its handle and
   number, the instrument, the clef and the transposition or the line count,
-  and "Add staff" below.
+  and "Add staff" below. The staves of a grand staff (a brace of one
+  instrument) stand in one box with a brace before them.
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import GlyphSelect from "$lib/components/GlyphSelect.svelte";
+  import MusicGlyph from "$lib/components/MusicGlyph.svelte";
   import StaffPitchSelects from "$lib/components/StaffPitchSelects.svelte";
   import StaffCustomPitch from "$lib/components/StaffCustomPitch.svelte";
   import { MAX_STAVES } from "$lib/setup/score-def.ts";
@@ -41,12 +43,26 @@
 
   const reorder = $derived(editor.reorder);
   const pitch = $derived(model.pitch);
+  // The grand staves: the braces of one instrument that fit the staves.
+  const grands = $derived(
+    model.groups.filter(
+      (g) =>
+        g.symbol === "brace" &&
+        g.oneInstrument &&
+        g.start >= 1 &&
+        g.start < g.end &&
+        g.end <= model.staves.length,
+    ),
+  );
 </script>
 
-<ol class="staves" bind:this={editor.list}>
+<ol class="staves" class:braced={grands.length > 0} bind:this={editor.list}>
   {#each model.staves as staff, i (i)}
     <li
       class="staffrow"
+      class:gfirst={grands.some((g) => g.start === i + 1)}
+      class:afterg={grands.some((g) => g.end === i)}
+      style:grid-row={i + 1}
       class:transposing={!unpitched(staff) && transposes(staff)}
       class:pointed={preview.pointedStaff === i}
       class:dragged={reorder.dragging === i && reorder.picked < 0}
@@ -153,6 +169,19 @@
       {/if}
     </li>
   {/each}
+  {#each grands as g (g)}
+    <li
+      class="grandbox"
+      style:grid-row="{g.start} / {g.end + 1}"
+      aria-hidden="true"
+    >
+      <span
+        class="gbrace"
+        title="A grand staff: these staves belong to one instrument."
+        ><MusicGlyph name="brace" stretch /></span
+      >
+    </li>
+  {/each}
 </ol>
 {#if canEdit}
   <button
@@ -171,8 +200,28 @@
     list-style: none;
     margin: 0 0 12px;
     padding: 0;
+    display: grid;
+    grid-template-columns: 0 minmax(0, 1fr);
+  }
+  /* With a grand staff, a column before the rows holds its brace. */
+  .staves.braced {
+    grid-template-columns: 16px minmax(0, 1fr);
+  }
+  /* A grand staff's box around the rows of its staves, drawn over them, with
+     the brace in the column before them. Only the brace takes the pointer. */
+  .grandbox {
+    grid-column: 1 / -1;
+    z-index: 1;
     display: flex;
-    flex-direction: column;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    pointer-events: none;
+  }
+  .gbrace {
+    width: 8px;
+    margin: 8px 0 8px 5px;
+    color: var(--ink-grand);
+    pointer-events: auto;
   }
   /* A staff, as a row under a hairline: its number beside the instrument
      with the row's buttons, the clef, transposition and key below it, and
@@ -182,12 +231,18 @@
     grid-template-columns: 14px minmax(0, 1fr);
     column-gap: 6px;
     row-gap: 6px;
+    grid-column: 2;
     padding: 10px 2px 10px 6px;
     border-radius: 8px;
   }
   .staffrow + .staffrow {
     border-top: 1px solid var(--line);
     border-radius: 0;
+  }
+  /* The box's own border stands for the hairline at its top and below it. */
+  .staffrow.gfirst,
+  .staffrow.afterg {
+    border-top-color: transparent;
   }
   .staffrow > .staffno {
     grid-column: 1;
