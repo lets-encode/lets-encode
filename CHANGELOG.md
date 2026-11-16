@@ -5,7 +5,13 @@ parentheses.
 
 ## 2026-11-16
 
+- A IIIF canvas the source does not deliver no longer fails the upload step: the pages step marks the page and offers Try again.
+- The wizard's rail lists the other setups by their title under the line "Resume another setup".
+- A drag with Shift over the pages of the wizard's pages step keeps or leaves out every page from the first to the last passed.
 - The measure and layout correction takes its pages, its progress display and its network work from the page that hosts it.
+- The score setup takes its score, its progress display and its recognition from the page that hosts it.
+- The dev server shows the score viewer, the encoding alignment, the measure correction and the score setup on fixture data under `/units`, and `units` is a reserved campaign name.
+- The measure correction and the score setup are each assembled by one module that their task page and their development page share.
 
 ## 2026-11-13
 

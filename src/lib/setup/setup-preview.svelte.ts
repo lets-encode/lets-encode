@@ -9,7 +9,7 @@
 // row of the form or the summary points at are coloured in it.
 
 import { tick } from "svelte";
-import type { FacsimileTaskData } from "../commands.ts";
+import type { SetupInput } from "./host.ts";
 import { fitRoom } from "../components/FacsimileFrame.svelte";
 import { buildBlankScoreMei } from "../mei-facsimile.ts";
 import { getVerovio, loadSnippet, renderPage } from "../verovio-render.ts";
@@ -38,7 +38,7 @@ const MARK_PITCH = 32;
 const SHEET_PAD = { top: 9, x: 36, y: 16 };
 
 export interface SetupPreviewHost {
-  data: () => FacsimileTaskData | null;
+  data: () => SetupInput | null;
   /** The source's first measure, where the piece has one. */
   firstMeasure: () => FirstMeasure | null;
   /** The page a comment anchor shows whole; null while the first measure is shown. */

@@ -4,29 +4,34 @@
   step 2.
 -->
 <script lang="ts">
-  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
-  import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import type { Snippet } from "svelte";
   import type { SetupModel } from "$lib/setup/setup-model.svelte.ts";
   import type { SetupRecognition } from "$lib/setup/setup-recognition.svelte.ts";
-  import type { SetupSubmission } from "$lib/setup/setup-submission.svelte.ts";
 
   let {
-    session,
+    status,
     model,
     recognition,
-    submission,
+    canEdit,
+    busy,
+    checking,
     step,
     ongo,
+    onsubmit,
   }: {
-    session: PreTaskSession;
+    /** The host's status: the claim or the draft state and give back. */
+    status: Snippet;
     model: SetupModel;
     recognition: SetupRecognition;
-    submission: SetupSubmission;
+    canEdit: boolean;
+    /** A submission or another command is running. */
+    busy: boolean;
+    /** The submitted setup is being checked. */
+    checking: boolean;
     step: 1 | 2;
     ongo: (step: 1 | 2) => void;
+    onsubmit: () => void;
   } = $props();
-
-  const runner = $derived(session.runner);
 </script>
 
 <div class="wfoot">
@@ -39,7 +44,7 @@
         : "cut time"}
   </span>
   <span class="wstatus">
-    <PreTaskStatus {session} />
+    {@render status()}
   </span>
   {#if step === 1}
     <button
@@ -54,19 +59,17 @@
     <button
       type="button"
       class="btn btn-primary btn-pre"
-      onclick={() => submission.submit()}
-      disabled={session.busy ||
-        !session.canEdit ||
+      onclick={onsubmit}
+      disabled={busy ||
+        !canEdit ||
         !model.meterValid ||
         !model.groupsValid ||
         (recognition.omr && !recognition.result)}
-      title={recognition.omr && session.canEdit && !recognition.result
+      title={recognition.omr && canEdit && !recognition.result
         ? "The staves have to be transcribed before the setup can be submitted"
         : "Submit the staves, clefs, key signature and time signature for review"}
     >
-      {submission.submitting && runner.busy && !runner.overlay
-        ? "Checking the score…"
-        : "Submit setup"}
+      {checking ? "Checking the score…" : "Submit setup"}
     </button>
   {/if}
 </div>

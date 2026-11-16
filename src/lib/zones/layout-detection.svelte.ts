@@ -14,18 +14,14 @@ import {
   type PageLayout,
 } from "../omr-layout.ts";
 import { centreInRegions } from "../box-geometry.ts";
-import type {
-  CorrectorInput,
-  CorrectorServices,
-  CorrectorWork,
-  WorkResult,
-} from "./host.ts";
+import type { UnitWork, WorkResult } from "../editor-units.ts";
+import type { CorrectorInput, CorrectorServices } from "./host.ts";
 import { resort, resortStaves } from "./measures.ts";
 import type { ZonePages } from "./zone-pages.svelte.ts";
 
 export interface LayoutDetectionHost {
   model: ZonePages;
-  runner: CorrectorWork;
+  runner: UnitWork;
   /** The task corrects an OMR layout. */
   omr(): boolean;
   canEdit(): boolean;

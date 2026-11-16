@@ -20,13 +20,8 @@
 // not recognised. The count stays editable until the piece holds notation,
 // since the setup submission rebuilds empty measures for it until then.
 
-import { onDestroy } from "svelte";
-import type { FacsimileTaskData, Result } from "../commands.ts";
-import { omr as omrModels, provider } from "../forge/config.ts";
-import type { ForgeClient } from "../forge/types.ts";
-import { forge } from "../auth.svelte.ts";
+import type { UnitWork, WorkResult } from "../editor-units.ts";
 import type { MeasureBox, StaffGroupModel } from "../mei-facsimile.ts";
-import { createOmrClient } from "../omr-client.ts";
 import { grandStaffSpans, pageSystems } from "../omr-layout.ts";
 import {
   clefStaff,
@@ -34,67 +29,62 @@ import {
   proposeScoreDef,
   staffClefToken,
 } from "../omr-musicxml.ts";
-import { recognisePiece } from "../omr-piece-recognition.ts";
 import type { PieceRecognition } from "../omr-piece-recognition.ts";
-import { omrRecordPath, parseOmrRecord } from "../omr-record.ts";
 import type { OmrRecord } from "../omr-record.ts";
 import { suggestStaffAssignment } from "../omr-staff-assign.ts";
 import { openingClefs, pieceStaves } from "../omr-timeline.ts";
-import type { PreTaskSession } from "../pre-task-session.svelte.ts";
 import { spanProblem } from "../staff-groups.ts";
+import type { SetupInput, SetupServices } from "./host.ts";
 import { newGroup } from "./score-def.ts";
 import type { SetupModel } from "./setup-model.svelte.ts";
 
+export interface SetupRecognitionHost {
+  data(): SetupInput | null;
+  canEdit(): boolean;
+  runner: UnitWork;
+  taskId(): string;
+  /** The network work; null while it is not available. */
+  services(): SetupServices | null;
+}
+
 export class SetupRecognition {
-  #session: PreTaskSession;
-  #taskId: () => string;
+  #host: SetupRecognitionHost;
   #model: SetupModel;
   /** The recognition this session made, once it has run. */
   result = $state<PieceRecognition | null>(null);
   /** The task the recognition was started for. */
   recognisedFor = $state<string | null>(null);
-  omr = $derived.by(() => this.#session.data?.preparation === "omr");
-  // The recognition service's calls stop when the page goes away.
-  #stop = new AbortController();
+  omr = $derived.by(() => this.#host.data()?.preparation === "omr");
 
-  constructor(
-    session: PreTaskSession,
-    taskId: () => string,
-    model: SetupModel,
-  ) {
-    this.#session = session;
-    this.#taskId = taskId;
+  constructor(host: SetupRecognitionHost, model: SetupModel) {
+    this.#host = host;
     this.#model = model;
-    onDestroy(() => this.#stop.abort());
   }
-
-  #client = () =>
-    createOmrClient(provider.brokerUrl, { signal: this.#stop.signal });
 
   /** Run inside an `$effect`: recognises the piece once the holder opens
       the task. */
   startWhenHeld() {
     if (
       this.omr &&
-      this.#session.canEdit &&
-      this.#session.data &&
-      !this.#session.runner.busy &&
-      this.recognisedFor !== this.#taskId()
+      this.#host.canEdit() &&
+      this.#host.data() &&
+      !this.#host.runner.busy &&
+      this.recognisedFor !== this.#host.taskId()
     ) {
-      this.recognisedFor = this.#taskId();
+      this.recognisedFor = this.#host.taskId();
       this.recognise();
     }
   }
 
   recognise = async () => {
-    const f = forge();
-    if (!f || !this.#session.data) return;
-    const d = this.#session.data;
-    await this.#session.runner.run(() => this.steps(f, d));
+    const services = this.#host.services();
+    const d = this.#host.data();
+    if (!services || !d) return;
+    await this.#host.runner.run(() => this.steps(services, d));
   };
 
   /** The definition proposed from a record, and the labels it reads; a note says what was used. */
-  #proposalFrom(d: FacsimileTaskData, record: OmrRecord): { note: string } {
+  #proposalFrom(d: SetupInput, record: OmrRecord): { note: string } {
     type System = { p: number; index: number; staves: MeasureBox[] };
     let first: System | null = null;
     let fullest: System | null = null;
@@ -196,41 +186,15 @@ export class SetupRecognition {
   }
 
   // The recognition steps, logged to the running command's overlay.
-  async steps(f: ForgeClient, d: FacsimileTaskData): Promise<Result> {
-    const runner = this.#session.runner;
-    const campaign = this.#session.campaign;
-    const client = this.#client();
+  async steps(services: SetupServices, d: SetupInput): Promise<WorkResult> {
+    const runner = this.#host.runner;
     try {
       runner.log.step("Reading the recognition record");
-      // A record saved with the work, or kept from an expired claim, comes
-      // before the campaign's.
-      const from = d.workSource ?? {
-        owner: campaign.owner,
-        repo: campaign.repo,
-        ref: undefined,
-      };
-      const existing =
-        this.result?.record ??
-        parseOmrRecord(
-          await f.getRepoFile(
-            from.owner,
-            from.repo,
-            omrRecordPath(d.fragment),
-            from.ref,
-          ),
-        );
-      const result = await recognisePiece({
-        forge: f,
-        client,
-        owner: campaign.owner,
-        repo: campaign.repo,
-        repoId: campaign.repoId,
-        fragment: d.fragment,
-        pages: d.model.pages,
-        existing,
-        pipeline: omrModels.staffPipeline,
-        progress: (step) => runner.log.step(step),
-      });
+      const result = await services.recogniseStaves(
+        d.model.pages,
+        this.result?.record ?? null,
+        (step) => runner.log.step(step),
+      );
       this.result = result;
       const total = result.record.pages.reduce(
         (n, pg) => n + pg.staves.length,

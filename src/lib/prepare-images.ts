@@ -56,8 +56,13 @@ export interface PageCandidate {
   id: string;
   /** Where the page comes from, e.g. "scan.pdf — page 12". */
   label: string;
-  /** Small raster of the page, for choosing between them. */
-  preview: Blob;
+  /**
+   * Small raster of the page, for choosing between them; null for a canvas
+   * whose source did not deliver it.
+   */
+  preview: Blob | null;
+  /** Why there is no preview. */
+  failure?: string;
   source: PageSource;
 }
 
@@ -493,6 +498,9 @@ function createPacer(wait: (ms: number) => Promise<void>) {
 
 type Pacer = ReturnType<typeof createPacer>;
 
+/** A canvas image its source did not deliver; other canvases may load. */
+export class CanvasFailure extends Error {}
+
 // The relay's refusal once an account has used the day's allowance of IIIF
 // downloads carries this header with the value `daily`. The relay refuses every
 // further request until 00:00 UTC, so it is not re-attempted.
@@ -552,9 +560,14 @@ async function fetchIiifImage(
     }
     if (res.ok) return res.blob();
     if (!reattempt(res) || attempt === RELAY_RETRY_WAITS_MS.length) {
-      throw new Error(
-        relayFailure(res, `Could not fetch the IIIF image at ${url}`),
-      );
+      const why = relayFailure(res, `Could not fetch the IIIF image at ${url}`);
+      // The source's own answer, or the relay's when the source was too slow
+      // or out of reach, concerns this image alone.
+      throw fromUpstream(res, "iiif") ||
+        res.status === 502 ||
+        res.status === 504
+        ? new CanvasFailure(why)
+        : new Error(why);
     }
     await pacer.hold(RELAY_RETRY_WAITS_MS[attempt]);
   }
@@ -562,31 +575,45 @@ async function fetchIiifImage(
 
 /**
  * Fetch for every item, `IIIF_PREVIEW_REQUESTS` at a time, and return the
- * results in the items' own order. The first failure is thrown and stops the
- * rest from being started.
+ * results in the items' own order. An item its source did not deliver has its
+ * CanvasFailure as the result. Any other failure is thrown and stops the rest
+ * from being started, and so does a source that has delivered nothing after
+ * `IIIF_PREVIEW_REQUESTS` items or by the end.
  */
 async function fetchInParallel<T, R>(
   items: T[],
   fetchOne: (item: T) => Promise<R>,
   onFetched: (fetched: number) => void,
-): Promise<R[]> {
-  const results = new Array<R>(items.length);
+): Promise<Array<R | CanvasFailure>> {
+  const results = new Array<R | CanvasFailure>(items.length);
   let next = 0;
   let fetched = 0;
+  let failed = 0;
   let stopped = false;
   const worker = async () => {
     for (let i = next++; i < items.length && !stopped; i = next++) {
       try {
         results[i] = await fetchOne(items[i]);
       } catch (err) {
-        stopped = true;
-        throw err;
+        const nothingYet = fetched === failed;
+        if (
+          err instanceof CanvasFailure &&
+          !(nothingYet && failed + 1 >= IIIF_PREVIEW_REQUESTS)
+        ) {
+          results[i] = err;
+          failed++;
+        } else {
+          stopped = true;
+          throw err;
+        }
       }
       onFetched(++fetched);
     }
   };
   const workers = Math.min(IIIF_PREVIEW_REQUESTS, items.length);
   await Promise.all(Array.from({ length: workers }, worker));
+  const first = results.find((r) => r instanceof CanvasFailure);
+  if (first && failed === items.length) throw first;
   return results;
 }
 
@@ -671,10 +698,16 @@ export async function prepareCandidates(
     // Added after the fetches, so the pages follow the manifest's order rather
     // than the order the server happened to answer in.
     for (const [i, preview] of previews.entries()) {
-      await addCandidate(preview, `Canvas ${i + 1}`, {
-        kind: "iiif",
-        canvas: iiifCanvases[i],
-      });
+      const source: PageSource = { kind: "iiif", canvas: iiifCanvases[i] };
+      if (preview instanceof CanvasFailure) {
+        candidates.push({
+          id: `page-${candidates.length + 1}`,
+          label: `Canvas ${i + 1}`,
+          preview: null,
+          failure: preview.message,
+          source,
+        });
+      } else await addCandidate(preview, `Canvas ${i + 1}`, source);
     }
   }
 
@@ -682,6 +715,24 @@ export async function prepareCandidates(
     throw new Error("No images or encodings to process.");
   }
   return { candidates, encodings };
+}
+
+/** Fetch the preview of a canvas whose source did not deliver it before. */
+export async function fetchCanvasPreview(
+  canvas: IiifCanvas,
+  options: PrepareImagesOptions = {},
+): Promise<Blob> {
+  if (!options.brokerUrl)
+    throw new Error("A broker URL is required to fetch IIIF images.");
+  const previewEdge = options.previewEdge ?? PREVIEW_IMAGE_EDGE;
+  const raster = await fetchIiifImage(
+    canvas,
+    previewEdge,
+    options.brokerUrl,
+    options.fetchFn ?? brokerFetch,
+    createPacer(options.wait ?? sleep),
+  );
+  return (options.downscale ?? downscaleImage)(raster, previewEdge);
 }
 
 /**

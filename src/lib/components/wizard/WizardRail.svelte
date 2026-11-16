@@ -150,19 +150,21 @@
           </button>
         {/if}
       {/if}
+      {#if otherDrafts.length}
+        <div class="others-head">Resume another setup</div>
+      {/if}
       {#each otherDrafts as draft (draft.handle)}
         {@const name = draft.entries?.title?.trim() || draft.handle}
         <button
           type="button"
           class="btn other-draft"
           title={`Resume setup of “${name}”`}
+          aria-label={`Resume setup of “${name}”`}
           onclick={() => onResume(draft.handle)}
           disabled={resuming !== null || backDisabled}
         >
           <span class="resume-text">
-            {resuming === draft.handle
-              ? "Working…"
-              : `Resume setup of “${name}”`}
+            {resuming === draft.handle ? "Working…" : name}
           </span>
         </button>
       {/each}
@@ -231,7 +233,8 @@
     color: var(--accent);
     font-weight: 600;
   }
-  .saved {
+  .saved,
+  .others-head {
     font-size: 11.5px;
     color: var(--ink-faint);
     display: flex;

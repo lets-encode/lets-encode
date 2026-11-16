@@ -9,9 +9,15 @@
   import { commentAnchor } from "$lib/campaign-tables.ts";
   import PageState from "$lib/components/PageState.svelte";
   import { page } from "$app/state";
-  import type { Snippet } from "svelte";
+  import { onDestroy, type Snippet } from "svelte";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { auth } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { setupServices } from "$lib/corrector-services.ts";
+  import type { FacsimileTaskData } from "$lib/commands.ts";
+  import { provider } from "$lib/forge/config.ts";
+  import type { ForgeClient } from "$lib/forge/types.ts";
+  import { createOmrClient } from "$lib/omr-client.ts";
+  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import type { CommentRow } from "$lib/campaign-tables.ts";
   import {
     DOCKED_QUERY,
@@ -28,13 +34,8 @@
   import DraftBubble from "$lib/components/DraftBubble.svelte";
   import { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
   import type { StaffGroupModel } from "$lib/mei-facsimile.ts";
-  import { firstMeasureOf } from "$lib/setup/source-frame.ts";
-  import { SetupModel } from "$lib/setup/setup-model.svelte.ts";
-  import { SetupPreview } from "$lib/setup/setup-preview.svelte.ts";
-  import { GroupMarking } from "$lib/setup/group-marking.svelte.ts";
-  import { StaffListEditor } from "$lib/setup/staff-list.svelte.ts";
-  import { SetupRecognition } from "$lib/setup/setup-recognition.svelte.ts";
-  import { SetupSubmission } from "$lib/setup/setup-submission.svelte.ts";
+  import { SetupEditor } from "$lib/setup/setup-editor.svelte.ts";
+  import { SetupSubmission } from "$lib/setup-submission.svelte.ts";
   import SetupSourcePane from "$lib/components/setup/SetupSourcePane.svelte";
   import SetupPreviewPane from "$lib/components/setup/SetupPreviewPane.svelte";
   import SetupSummary from "$lib/components/setup/SetupSummary.svelte";
@@ -47,37 +48,60 @@
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
 
-  // The form's working copy of the score definition.
-  const model = new SetupModel({
-    canEdit: () => canEdit,
-    taskId: () => taskId,
-  });
-
-  const session = new PreTaskSession(
+  const session: PreTaskSession = new PreTaskSession(
     () => campaign,
     () => taskId,
     {
       loaded(d) {
-        model.load(d);
+        editor.model.load(d);
       },
       // A claim of an OMR piece's setup task continues into the piece's
       // recognition in the same overlay.
       afterClaim(f, d) {
         if (!(d.preparation === "omr" && session.canEdit)) return null;
-        recognition.recognisedFor = taskId;
-        return recognition.steps(f, d);
+        editor.recognition.recognisedFor = taskId;
+        return editor.recognition.steps(servicesFor(f, d), d);
       },
     },
   );
   const runner = session.runner;
-  // The piece's recognition (an OMR-prepared piece); its service's calls
-  // stop when the page goes away.
-  const recognition: SetupRecognition = new SetupRecognition(
-    session,
-    () => taskId,
-    model,
-  );
   const data = $derived(session.data);
+  // The recognition service's calls stop when the page goes away.
+  const omrStop = new AbortController();
+  onDestroy(() => omrStop.abort());
+  // The setup's network work on this task.
+  const servicesFor = (f: ForgeClient, d: FacsimileTaskData) =>
+    setupServices({
+      forge: f,
+      data: d,
+      owner: session.campaign.owner,
+      repo: session.campaign.repo,
+      repoId: session.campaign.repoId,
+      omrClient: () =>
+        createOmrClient(provider.brokerUrl, { signal: omrStop.signal }),
+    });
+  // The setup: its working copy, preview, group marking, staff list and
+  // recognition.
+  const editor: SetupEditor = new SetupEditor({
+    data: () => data,
+    canEdit: () => canEdit,
+    runner,
+    taskId: () => taskId,
+    services: () => {
+      const f = forge();
+      return f && data ? servicesFor(f, data) : null;
+    },
+    picking: () => reviewAsking,
+    pickStaff: (i) => pickStaff(i),
+    draft: () => submission.saveDraft(),
+  });
+  const { model, preview, marking, staffList, recognition } = editor;
+  const firstMeasure = $derived(editor.firstMeasure);
+  const anchorPage = $derived(editor.anchorPage);
+  const shownPage = $derived(editor.shownPage);
+  const setupStep = $derived(editor.step);
+  const markable = $derived(editor.markable);
+  const goStep = editor.goStep;
   const holds = $derived(session.holds);
   // Only the volunteer holding the task edits it; everyone else, and everyone
   // once it is done, sees its values read-only without the editing buttons.
@@ -94,17 +118,12 @@
   // The side panel beside the tool. Posting and resolving refresh the tables
   // only: a full reload would discard unsubmitted form values.
   let sidePanel = $state(readSidePanel());
-  // The source side of the work area: the first measure's page, framed on
-  // the measure and the names in front of its system, the measure outlined
-  // (source-frame.ts). A comment anchor shows its page whole until the fit
-  // button returns.
-  const firstMeasure = $derived(firstMeasureOf(data?.model.pages));
-  let anchorPage = $state<number | null>(null);
+  // A comment anchor shows its page whole until the fit button returns.
   function showAnchorFor(c: CommentRow) {
     const p = commentAnchor(c).page - 1;
-    anchorPage = data && p >= 0 && p < data.model.pages.length ? p : null;
+    editor.anchorPage =
+      data && p >= 0 && p < data.model.pages.length ? p : null;
   }
-  const shownPage = $derived(anchorPage ?? firstMeasure?.page ?? 0);
   // The anchor a change request opens with: the page shown.
   const reviewPrefill = () => ({ page: String(shownPage + 1), m1: "", m2: "" });
 
@@ -116,22 +135,8 @@
   // (DOCKED_QUERY) it shows one section at a time, chosen by a switch.
   const dockedQuery = new MediaQuery(DOCKED_QUERY, false);
   const docked = $derived(dockedQuery.current);
-  // The setup's two steps: the staves with the key and time signature, then
-  // the groups.
-  let setupStep = $state<1 | 2>(1);
   let panelTab = $state<"selection" | "comments">("selection");
 
-  // The preview of the setup beside the source.
-  const preview = new SetupPreview(model, {
-    data: () => data,
-    firstMeasure: () => firstMeasure,
-    anchorPage: () => anchorPage,
-    markable: () => markable,
-  });
-  // Groups are marked in step 2, by the volunteer holding the task.
-  const markable = $derived(
-    canEdit && setupStep === 2 && model.staves.length > 1,
-  );
   // While a reviewer's change request form is open (ReviewActions), a click
   // on a staff (on the page or in the summary) or on a group in the summary
   // fills its staff field.
@@ -146,13 +151,6 @@
     if (!reviewAsking) return;
     staffPick = { text: `${g.start}–${g.end} (${g.symbol})` };
   }
-  const marking = new GroupMarking(model, preview, {
-    markable: () => markable,
-    step: () => setupStep,
-    picking: () => reviewAsking,
-    pickStaff,
-  });
-  const staffList = new StaffListEditor(model, marking);
   const submission = new SetupSubmission(
     session,
     () => taskId,
@@ -160,29 +158,12 @@
     recognition,
   );
 
-  // The page's effects, in this order: the preview's measuring, the draft,
-  // the recognition, the groups' one-instrument guess, the transpositions
-  // from the labels, the preview's render, its coloured staves and its staff
-  // numbers.
-  $effect(() => preview.measureRendering());
-  $effect(() => submission.saveDraft());
-  $effect(() => recognition.startWhenHeld());
-  $effect(() => model.followInstrumentGuess());
-  $effect(() => model.fillLabelsOnce());
-  $effect(() => preview.render());
-  $effect(() => preview.lightStaves(marking.lit));
-  $effect(() => preview.observeSheet());
-
   const coarseQuery = new MediaQuery("(pointer: coarse)", false);
   const tapWord = $derived(coarseQuery.current ? "Tap" : "Click");
   // Docked, the sheet shows the marking line or the open group until it is
   // opened; the list of groups is in the opened sheet.
   let sheetOpen = $state(false);
   const compact = $derived(docked && !sheetOpen);
-  function goStep(step: 1 | 2) {
-    setupStep = step;
-    marking.clearMark();
-  }
 </script>
 
 <svelte:window
@@ -252,7 +233,7 @@
             {shownPage}
             {firstMeasure}
             {anchorPage}
-            onfit={() => (anchorPage = null)}
+            onfit={() => (editor.anchorPage = null)}
             align={preview.align}
             {desk}
             bind:split={() => split[setupStep], (v) => (split[setupStep] = v)}
@@ -328,14 +309,21 @@
     {/snippet}
 
     <!-- The task's action at the panel's bottom. -->
+    {#snippet status()}
+      <PreTaskStatus {session} />
+    {/snippet}
+
     {#snippet footer()}
       <SetupFooter
-        {session}
+        {status}
         {model}
         {recognition}
-        {submission}
+        {canEdit}
+        {busy}
+        checking={submission.submitting && runner.busy && !runner.overlay}
         step={setupStep}
         ongo={goStep}
+        onsubmit={submission.submit}
       />
     {/snippet}
 

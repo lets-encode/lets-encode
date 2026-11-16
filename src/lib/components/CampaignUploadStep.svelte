@@ -118,11 +118,11 @@
         log.fail();
         return;
       }
-      // Everything is kept to begin with, so an upload that is all of the source
-      // needs no choosing.
+      // Every page with a preview is kept to begin with, so an upload that is
+      // all of the source needs no choosing.
       wizard.candidates = prepared.candidates.map((page) => ({
         ...page,
-        include: true,
+        include: page.preview !== null,
       }));
       wizard.encodings = prepared.encodings;
       wizard.uploadKey = key;

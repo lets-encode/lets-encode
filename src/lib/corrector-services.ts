@@ -1,5 +1,5 @@
-// The measure and layout correction's network work for a task of a campaign
-// repository: page images through the forge API, the layout model and the
+// The network work of the measure and layout correction and of the score
+// setup for a task of a campaign repository: page images through the forge API, the layout model and the
 // staff transcription through the broker's relay, the detected layouts kept
 // in this browser per task.
 
@@ -14,8 +14,13 @@ import {
   readCachedLayouts,
   writeCachedLayout,
 } from "./omr-layout-cache.ts";
-import { recognisePiece } from "./omr-piece-recognition.ts";
-import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
+import type { PageModel } from "./mei-facsimile.ts";
+import {
+  recognisePiece,
+  type PieceRecognition,
+} from "./omr-piece-recognition.ts";
+import { omrRecordPath, parseOmrRecord, type OmrRecord } from "./omr-record.ts";
+import type { SetupServices } from "./setup/host.ts";
 import type { CorrectorServices } from "./zones/host.ts";
 
 export interface CorrectorServicesOptions {
@@ -27,6 +32,48 @@ export interface CorrectorServicesOptions {
   repoId: number;
   taskId: string;
   omrClient(): ReturnType<typeof createOmrClient>;
+}
+
+/**
+ * Transcribe the staves of `pages`, reading their labels with `readLabels`.
+ * `known` is the record of this session; without one, the record saved with
+ * the work, or kept from an expired claim, comes before the campaign's.
+ */
+export async function recogniseStaves(
+  o: Omit<CorrectorServicesOptions, "taskId">,
+  pages: PageModel[],
+  known: OmrRecord | null,
+  progress: (step: string) => void,
+  readLabels: boolean,
+): Promise<PieceRecognition> {
+  const from = o.data.workSource ?? {
+    owner: o.owner,
+    repo: o.repo,
+    ref: undefined,
+  };
+  const existing =
+    known ??
+    parseOmrRecord(
+      await o.forge.getRepoFile(
+        from.owner,
+        from.repo,
+        omrRecordPath(o.data.fragment),
+        from.ref,
+      ),
+    );
+  return recognisePiece({
+    forge: o.forge,
+    client: o.omrClient(),
+    owner: o.owner,
+    repo: o.repo,
+    repoId: o.repoId,
+    fragment: o.data.fragment,
+    pages,
+    existing,
+    pipeline: omrModels.staffPipeline,
+    progress,
+    readLabels,
+  });
 }
 
 export function correctorServices(
@@ -75,38 +122,15 @@ export function correctorServices(
       );
       return layout;
     },
-    async transcribeStaves(pages, known, progress) {
-      // A record saved with the work, or kept from an expired claim, comes
-      // before the campaign's.
-      const from = data.workSource ?? {
-        owner: o.owner,
-        repo: o.repo,
-        ref: undefined,
-      };
-      const existing =
-        known ??
-        parseOmrRecord(
-          await f.getRepoFile(
-            from.owner,
-            from.repo,
-            omrRecordPath(data.fragment),
-            from.ref,
-          ),
-        );
-      return recognisePiece({
-        forge: f,
-        client: o.omrClient(),
-        owner: o.owner,
-        repo: o.repo,
-        repoId: o.repoId,
-        fragment: data.fragment,
-        pages,
-        existing,
-        pipeline: omrModels.staffPipeline,
-        progress,
-        readLabels: false,
-      });
-    },
+    transcribeStaves: (pages, known, progress) =>
+      recogniseStaves(o, pages, known, progress, false),
     pageImage,
   };
 }
+
+export const setupServices = (
+  o: Omit<CorrectorServicesOptions, "taskId">,
+): SetupServices => ({
+  recogniseStaves: (pages, known, progress) =>
+    recogniseStaves(o, pages, known, progress, true),
+});

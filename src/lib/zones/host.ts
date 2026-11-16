@@ -1,6 +1,5 @@
 // What the measure and layout correction is given by the page that hosts
-// it: the pages to correct, the long work it may show, and the work done
-// for it over the network.
+// it: the pages to correct and the work done for it over the network.
 
 import type {
   MeasureBox,
@@ -21,27 +20,6 @@ export interface CorrectorInput {
   regions: MeasureBox[][];
   /** The instruments named so far; null when none. */
   instruments: LayoutInstruments | null;
-}
-
-/** How long work ended. */
-export interface WorkResult {
-  ok?: boolean;
-  /** An ok result of which part failed. */
-  outcome?: "partial";
-  error?: string;
-  message?: string;
-  /** Runs the failed work again. */
-  retry?: () => void;
-}
-
-/** Long work as the host shows it: one at a time, its steps and its result. */
-export interface CorrectorWork {
-  readonly busy: boolean;
-  readonly log: {
-    step(text: string): void;
-    detail(text: string): void;
-  };
-  run(work: () => Promise<WorkResult>): Promise<unknown>;
 }
 
 /** The work done for the correction over the network. */

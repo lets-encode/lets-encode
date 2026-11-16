@@ -10,6 +10,15 @@
    ========================================================================= */
 
 :root {
+  /* The box layers' hues of the measure and layout correction, as "r, g, b"
+     for rgba(): on the paper they stay the same in both themes. The --ink-*
+     colours for text and glyphs beside the paper are theme tokens. */
+  --layer-staff: 128, 34, 64;
+  --layer-grand: 38, 100, 60;
+  --layer-measure: 14, 129, 149;
+  --layer-movement: 139, 95, 191;
+  --layer-system: 36, 82, 178;
+
   --blue: #6dc3ff;
   --green: #76de76;
 

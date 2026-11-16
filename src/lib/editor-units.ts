@@ -25,3 +25,24 @@ export interface UnitScore {
    */
   pages: string[];
 }
+
+/** How long work of a unit ended. */
+export interface WorkResult {
+  ok?: boolean;
+  /** An ok result of which part failed. */
+  outcome?: "partial";
+  error?: string;
+  message?: string;
+  /** Runs the failed work again. */
+  retry?: () => void;
+}
+
+/** Long work as a unit's host shows it: one at a time, its steps and its result. */
+export interface UnitWork {
+  readonly busy: boolean;
+  readonly log: {
+    step(text: string): void;
+    detail(text: string): void;
+  };
+  run(work: () => Promise<WorkResult>): Promise<unknown>;
+}

@@ -24,16 +24,13 @@ import {
 } from "../instrument-naming.ts";
 import { readStaffLabels } from "../ocr.ts";
 import { toPageModels } from "./edit-pages.ts";
-import type {
-  CorrectorInput,
-  CorrectorServices,
-  CorrectorWork,
-} from "./host.ts";
+import type { UnitWork } from "../editor-units.ts";
+import type { CorrectorInput, CorrectorServices } from "./host.ts";
 import type { ZonePages } from "./zone-pages.svelte.ts";
 
 export interface InstrumentStepHost {
   model: ZonePages;
-  runner: CorrectorWork;
+  runner: UnitWork;
   omr(): boolean;
   /** The layout task names the instruments. */
   naming(): boolean;

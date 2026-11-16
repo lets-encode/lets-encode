@@ -1,12 +1,12 @@
 // The score setup's submission and its draft: the definition, with the
 // recognition record this session made (an OMR-prepared piece).
 
-import { commands, invoke } from "../commands.ts";
-import { serializeOmrRecord } from "../omr-record.ts";
-import type { PreTaskSession } from "../pre-task-session.svelte.ts";
-import { withClefCorrections } from "./clef-corrections.ts";
-import type { SetupModel } from "./setup-model.svelte.ts";
-import type { SetupRecognition } from "./setup-recognition.svelte.ts";
+import { commands, invoke } from "./commands.ts";
+import { serializeOmrRecord } from "./omr-record.ts";
+import type { PreTaskSession } from "./pre-task-session.svelte.ts";
+import { withClefCorrections } from "./setup/clef-corrections.ts";
+import type { SetupModel } from "./setup/setup-model.svelte.ts";
+import type { SetupRecognition } from "./setup/setup-recognition.svelte.ts";
 
 export class SetupSubmission {
   // True from Submit until the command has finished. The submission runs

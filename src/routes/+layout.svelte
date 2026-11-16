@@ -36,7 +36,7 @@
   }
 
   // The main screen, the campaign view, the wizard, the pre-task editors, the
-  // score check and the review view are full-bleed, full-height surfaces (the wizard splits
+  // score check, the review view and the development unit pages are full-bleed, full-height surfaces (the wizard splits
   // into a form pane and a page-preview pane); every other route keeps the
   // narrow reading column.
   const corrector = $derived(
@@ -44,7 +44,8 @@
       page.route.id === "/[campaign]/setup/[task]" ||
       page.route.id === "/[campaign]/align/[task]" ||
       page.route.id === "/[campaign]/check/[task]" ||
-      page.route.id === "/[campaign]/review/[task]",
+      page.route.id === "/[campaign]/review/[task]" ||
+      page.route.id === "/units/[[unit]]",
   );
   const full = $derived(
     page.route.id === "/campaigns" ||

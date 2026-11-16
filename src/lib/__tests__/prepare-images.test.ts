@@ -8,6 +8,7 @@ import {
   iiifProxyUrl,
   parseIiifManifest,
   prepareCandidates,
+  fetchCanvasPreview,
   resolvePages,
   fetchIiifCanvases,
   IIIF_PREVIEW_REQUESTS,
@@ -547,7 +548,7 @@ test("does not re-attempt a canvas or a manifest past the relay's daily limit", 
   assert.equal(requests, 1);
 });
 
-test("stops fetching previews once one canvas has failed", async () => {
+test("stops fetching previews when the source delivers no canvas", async () => {
   const canvases = Array.from({ length: 40 }, (_, i) =>
     service(`https://iiif.example/img/${i + 1}`),
   );
@@ -566,8 +567,67 @@ test("stops fetching previews once one canvas has failed", async () => {
     /returned 503/,
   );
   assert.ok(
-    requests <= IIIF_PREVIEW_REQUESTS,
+    requests <= 2 * IIIF_PREVIEW_REQUESTS,
     `expected the pass to stop, but it made ${requests} requests`,
+  );
+});
+
+test("offers a canvas the source did not deliver as a page without a preview", async () => {
+  const canvases = Array.from({ length: 6 }, (_, i) =>
+    service(`https://iiif.example/img/${i + 1}`),
+  );
+  const fetchFn = async (input: RequestInfo | URL) =>
+    decodeURIComponent(String(input)).includes("/img/1/")
+      ? relayed(504)
+      : new Response(new Blob(["x"]));
+  const { candidates } = await prepareCandidates([], canvases, undefined, {
+    ...stubs,
+    fetchFn: fetchFn as typeof fetch,
+    brokerUrl: "/auth",
+  });
+  assert.deepEqual(
+    candidates.map((c) => c.preview !== null),
+    [false, true, true, true, true, true],
+  );
+  assert.match(candidates[0].failure ?? "", /source server returned 504/);
+  assert.equal(candidates[0].label, "Canvas 1");
+  assert.equal(candidates[1].failure, undefined);
+});
+
+test("stops at a failure of the relay itself although other canvases loaded", async () => {
+  const canvases = Array.from({ length: 6 }, (_, i) =>
+    service(`https://iiif.example/img/${i + 1}`),
+  );
+  const fetchFn = async (input: RequestInfo | URL) =>
+    decodeURIComponent(String(input)).includes("/img/6/")
+      ? dailyLimited()
+      : new Response(new Blob(["x"]));
+  await assert.rejects(
+    () =>
+      prepareCandidates([], canvases, undefined, {
+        ...stubs,
+        fetchFn: fetchFn as typeof fetch,
+        brokerUrl: "/auth",
+      }),
+    /today's limit for IIIF downloads/,
+  );
+});
+
+test("fetches the preview of one canvas again", async () => {
+  const preview = await fetchCanvasPreview(service("https://iiif.example/p"), {
+    ...stubs,
+    fetchFn: async () => new Response(new Blob(["x"])),
+    brokerUrl: "/auth",
+  });
+  assert.ok(preview instanceof Blob);
+  await assert.rejects(
+    () =>
+      fetchCanvasPreview(service("https://iiif.example/p"), {
+        ...stubs,
+        fetchFn: async () => relayed(504),
+        brokerUrl: "/auth",
+      }),
+    /source server returned 504/,
   );
 });
 
