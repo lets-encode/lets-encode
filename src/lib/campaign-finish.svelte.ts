@@ -13,7 +13,7 @@ import { provider, automation, measureDetectorUrl } from "./forge/config.ts";
 import { registerCampaign } from "./campaign-resolve.ts";
 import { blobToBase64, imageSize } from "./prepare-images.ts";
 import { ensureCampaignRepo } from "./campaign-repo.ts";
-import { licenseById } from "./licenses.ts";
+import { LICENSES, licenseById } from "./licenses.ts";
 import type { ProgressUpdate } from "./run-watch.ts";
 import { startDetection, type DetectionSession } from "./measure-detection.ts";
 import {
@@ -76,8 +76,15 @@ export function finishSummary(owner: string): string {
   return `Creates the public repository ${owner}/${name} with ${content} under ${licence}, and publishes the campaign at ${location.host}/${name}.`;
 }
 
+/** The template's text of a selectable licence, named by its SPDX id. */
+const licenseTextPath = (id: string): string => `licenses/${id}.txt`;
+
 /** Files the campaign template carries for its own repository, removed from a campaign at init. */
-const TEMPLATE_ONLY_PATHS = ["CHANGELOG.md", "config.example.yaml"];
+const TEMPLATE_ONLY_PATHS = [
+  "CHANGELOG.md",
+  "config.example.yaml",
+  ...LICENSES.map((license) => licenseTextPath(license.id)),
+];
 
 export class CampaignFinisher {
   busy = $state(false);
@@ -217,6 +224,16 @@ export class CampaignFinisher {
         // Every piece is published under the campaign's licence, so it is stated
         // in each piece's header as well as in the config.
         const license = wizard.license;
+        // The chosen licence's text replaces the template's own LICENSE.
+        const licenseText = await f.getRepoFile(
+          repo.owner,
+          repo.name,
+          licenseTextPath(license),
+        );
+        if (licenseText == null)
+          throw new Error(
+            `The campaign template has no text for the licence ${license} (${licenseTextPath(license)}).`,
+          );
         const pieces = campaignPieces(wizard.pieces);
         const split = partitionPages(pieces, detected);
         // The committed pages, as an uploaded encoding's facsimile is relinked to
@@ -386,6 +403,7 @@ export class CampaignFinisher {
           { path: LOCK_PATH, content: buildLockCsv() },
           { path: HISTORY_PATH, content: buildHistoryCsv() },
           { path: COMMENT_PATH, content: buildCommentCsv() },
+          { path: "LICENSE", content: licenseText },
           {
             path: "README.md",
             content: buildCampaignReadme(

@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-16
 
+- A new campaign repository gets the text of the licence chosen in the wizard as its LICENSE.
 - A IIIF canvas the source does not deliver no longer fails the upload step: the pages step marks the page and offers Try again.
 - The wizard's rail lists the other setups by their title under the line "Resume another setup".
 - A drag with Shift over the pages of the wizard's pages step keeps or leaves out every page from the first to the last passed.
