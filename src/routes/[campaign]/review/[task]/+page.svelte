@@ -36,8 +36,8 @@
     pieceNamesOf,
     piecePreparationsOf,
     commentAnchor,
-    type MeasureAnchor,
   } from "$lib/campaign-tables.ts";
+  import type { MeasureAnchor } from "$lib/editor-units.ts";
   import type {
     TaskRow,
     StateRow,
@@ -56,7 +56,7 @@
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
-  import ScorePreview from "$lib/components/ScorePreview.svelte";
+  import RepoScorePreview from "$lib/components/RepoScorePreview.svelte";
   import TaskBox from "$lib/components/TaskBox.svelte";
   import ReviewActions from "$lib/components/ReviewActions.svelte";
   import Icon from "$lib/components/Icon.svelte";
@@ -144,7 +144,7 @@
   const startPage = $derived(taskPage ?? 0);
 
   // The score viewer, bound for the anchor jump and the fail-form prefill.
-  let preview = $state<ReturnType<typeof ScorePreview>>();
+  let preview = $state<ReturnType<typeof RepoScorePreview>>();
   // The score column's width, padding included: where the preview inside it
   // is narrower than 560px (the preview's narrow width, a phone) the review
   // opens on the facsimile alone instead of side by side.
@@ -425,7 +425,7 @@
       {/if}
       {#if fragment}
         {#if scoreW > 0}
-          <ScorePreview
+          <RepoScorePreview
             bind:this={preview}
             {owner}
             {repo}

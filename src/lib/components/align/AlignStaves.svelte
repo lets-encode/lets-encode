@@ -16,8 +16,8 @@
   import type { StaffModel } from "$lib/mei-facsimile.ts";
   import { clefGlyph } from "$lib/staff-edit.ts";
   import { HandleReorder } from "$lib/handle-reorder.svelte.ts";
-  import Icon from "./Icon.svelte";
-  import MusicGlyph from "./MusicGlyph.svelte";
+  import Icon from "../Icon.svelte";
+  import MusicGlyph from "../MusicGlyph.svelte";
 
   let {
     staves,

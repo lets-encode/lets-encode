@@ -4,7 +4,6 @@
 // each step; the measures' flags and numbers, and the copies the editor's
 // undo history keeps.
 
-import type { FacsimileTaskData } from "../commands.ts";
 import type { BoxEditor } from "../box-editor.svelte.ts";
 import type { MeasureBox, MeasureSign } from "../mei-facsimile.ts";
 import { MEASURE_SIGNS } from "../mei-facsimile.ts";
@@ -17,6 +16,7 @@ import {
   type EditPage,
   type Layer,
 } from "./edit-pages.ts";
+import type { CorrectorInput } from "./host.ts";
 import {
   pbAt,
   renumber,
@@ -77,7 +77,7 @@ export class ZonePages {
   }
 
   /** Fill the working copy from a loaded task. */
-  load(d: FacsimileTaskData) {
+  load(d: CorrectorInput) {
     this.rawLayouts = {};
     this.seen = { staves: [], grandstaves: [], measures: [] };
     this.named = d.instruments ?? NO_INSTRUMENTS;

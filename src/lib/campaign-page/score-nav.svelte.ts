@@ -14,7 +14,8 @@ import type ScoreView from "../components/ScoreView.svelte";
 import type { BoardCard } from "../campaign-board.ts";
 import { pageOfLocator, taskHref } from "../campaign-graph.ts";
 import { commentAnchor, pieceLabel } from "../campaign-tables.ts";
-import type { CommentRow, MeasureAnchor } from "../campaign-tables.ts";
+import type { CommentRow } from "../campaign-tables.ts";
+import type { MeasureAnchor } from "../editor-units.ts";
 import type { BoardModel } from "./board-model.svelte.ts";
 import type { TaskSelection } from "./task-selection.svelte.ts";
 

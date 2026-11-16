@@ -4,21 +4,18 @@
   pages with zoom shared by the panes. The pane choice is a per-browser preference (see
   preview-pane.ts), so it carries from one preview to the next.
 
-  A caller can pass a measure range to highlight, which marks those measures in
-  both panes, and the score's text in place of the file at `fragment` (a
-  score built in the browser); new text for the same score keeps the view
-  where it is.
+  The caller passes the score's text and the addresses of its page images,
+  and can pass a measure range to highlight, which marks those measures in
+  both panes; new text for the same score keeps the view where it is.
 -->
 <script lang="ts">
-  import { type MeasureAnchor } from "$lib/campaign-tables.ts";
+  import type { MeasureAnchor, UnitScore } from "$lib/editor-units.ts";
   import Icon from "$lib/components/Icon.svelte";
   import Notice from "$lib/components/Notice.svelte";
   import { tick, untrack } from "svelte";
-  import { readForge } from "$lib/command-runner.svelte.ts";
   import { parseFacsimileMei } from "$lib/mei-facsimile.ts";
   import { startTags } from "$lib/mei-xml.ts";
   import type { MeasureBox } from "$lib/mei-facsimile.ts";
-  import { resolveFacsimileImageUrls } from "$lib/facsimile-images.ts";
   import { buildSpreads, shownPagesLabel } from "$lib/page-spreads.ts";
   import {
     applyAnchor,
@@ -44,20 +41,18 @@
   import type { PreviewPane } from "$lib/preview-pane.ts";
 
   let {
-    owner,
-    repo,
-    fragment,
+    score,
+    loadError = null,
     startPage = 0,
     anchor = null,
     initialPane = null,
     initialZones = true,
-    mei = null,
     onmeasureselect,
   }: {
-    owner: string;
-    repo: string;
-    /** Repo path of the score to show; changing it loads the other score. */
-    fragment: string;
+    /** The score to show; null while the caller is still reading it. */
+    score: UnitScore | null;
+    /** Why the caller could not read the score; shown in place of it. */
+    loadError?: string | null;
     /** The page the preview opens at, 0-based. */
     startPage?: number;
     /** A measure range to highlight in both panes. */
@@ -66,11 +61,6 @@
     initialPane?: PreviewPane | null;
     /** Whether the measure-zone overlay starts visible. */
     initialZones?: boolean;
-    /**
-     * The score's text, shown in place of the file at `fragment`; the
-     * facsimile images are still resolved relative to `fragment`.
-     */
-    mei?: string | null;
     /**
      * Reports the selected measure's label and its position among the
      * score's measures (0-based; null when not known); both null when
@@ -89,7 +79,7 @@
   // Facsimile image addresses that failed to load.
   let failedFacs = $state<Record<string, true>>({});
   let preview = $state<{
-    /** The fragment this state belongs to — a late load for another one is dropped. */
+    /** The name of the score this state belongs to. */
     key: string;
     loading: boolean;
     error?: string;
@@ -458,12 +448,16 @@
   // references any) and the rendered encoding (when it holds measures).
   // Each load's number; a load finishing after a later one started is dropped.
   let loads = 0;
-  async function loadPreview(path: string, from: number, text: string | null) {
-    const f = readForge();
+  async function loadPreview(
+    given: UnitScore | null,
+    failure: string | null,
+    from: number,
+  ) {
     const load = ++loads;
+    const path = given?.name ?? "";
     // New text for the score already shown keeps the view and the selection.
     const again =
-      text !== null &&
+      given !== null &&
       preview?.key === path &&
       !preview.loading &&
       !preview.error;
@@ -484,20 +478,25 @@
         onmeasureselect?.(null, null);
       }
     }
+    if (!given) {
+      if (failure !== null)
+        preview = {
+          key: path,
+          loading: false,
+          error: `Preview failed: ${failure}`,
+          pageCount: 0,
+          encAspect: A4_ASPECT,
+          svgs: {},
+        };
+      return;
+    }
     try {
-      const mei = text ?? (await f.getRepoFile(owner, repo, path));
-      if (mei == null) throw new Error(`Could not read ${path}.`);
+      const mei = given.document;
       const parsed = parseFacsimileMei(mei);
 
       let facs: PreviewPage[] | undefined;
       if (parsed.pages.length) {
-        const urls = await resolveFacsimileImageUrls(
-          f,
-          owner,
-          repo,
-          path,
-          parsed.pages.map((page) => page.image),
-        );
+        const urls = parsed.pages.map((_, index) => given.pages[index] ?? "");
         // A facsimile whose images are all unreachable (an encoding uploaded
         // without its page images) gets no facsimile pane — there is nothing
         // to show on it.
@@ -567,12 +566,12 @@
     }
   }
 
-  // The score loads when the preview opens, and again when another score is
-  // put in front of it.
+  // The score loads when the caller hands it over, and again when another
+  // score or new text is put in front of it.
   $effect(() => {
-    const path = fragment;
-    const text = mei;
-    untrack(() => loadPreview(path, startPage, text));
+    const given = score;
+    const failure = loadError;
+    untrack(() => loadPreview(given, failure, startPage));
   });
 </script>
 

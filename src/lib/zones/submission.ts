@@ -1,12 +1,12 @@
 // What the measure correction saves and submits: the draft of the boxes,
 // the submission's input, and why a submission is not possible yet.
 
-import type { DraftInput } from "../commands.ts";
 import type { PageModel } from "../mei-facsimile.ts";
 import {
   layoutRecord,
   type CocoLayout,
   type LayoutInstruments,
+  type LayoutRecord,
 } from "../omr-layout.ts";
 import type { OmrPipeline } from "../omr-client.ts";
 import { namingProblem, pruneInstruments } from "../instrument-naming.ts";
@@ -110,11 +110,20 @@ export const rawLayoutRecord = (w: ZoneWork, layoutModel: OmrPipeline) =>
 export const shownInstruments = (w: ZoneWork): LayoutInstruments =>
   pruneInstruments(w.named, toPageModels(w.pages, w.omr));
 
+/** The work as a draft keeps it. */
+export interface ZoneDraft {
+  pages: PageModel[];
+  /** The pages are a layout correction's. */
+  layout?: boolean;
+  /** The layout model's raw output, when detection ran in this session. */
+  rawLayout?: LayoutRecord;
+  instruments?: LayoutInstruments;
+  /** The transcription record. */
+  omr?: string;
+}
+
 /** The draft of the work: the pages, and for a layout task its side files. */
-export function draftInput(
-  w: ZoneWork,
-  layoutModel: OmrPipeline,
-): Omit<DraftInput, "task_id"> {
+export function draftInput(w: ZoneWork, layoutModel: OmrPipeline): ZoneDraft {
   return w.omr
     ? {
         pages: toPageModels(w.pages, w.omr),

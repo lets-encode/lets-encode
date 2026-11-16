@@ -4,7 +4,12 @@
   import { MediaQuery } from "svelte/reactivity";
   import { page } from "$app/state";
   import { recordCampaignTitle } from "$lib/campaign-title.svelte.ts";
-  import { auth } from "$lib/auth.svelte.ts";
+  import { auth, forge } from "$lib/auth.svelte.ts";
+  import { anchorCell, MAX_ANCHOR_LENGTH } from "$lib/campaign-submit.ts";
+  import { correctorServices } from "$lib/corrector-services.ts";
+  import type { ForgeClient } from "$lib/forge/types.ts";
+  import type { FacsimileTaskData } from "$lib/commands.ts";
+  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
   import { commands, invoke } from "$lib/commands.ts";
   import type { CommandContext, Result } from "$lib/commands.ts";
   import { taskDescription } from "$lib/campaign-graph.ts";
@@ -92,7 +97,7 @@
       afterClaim(f, d) {
         if (!detection.needsDetection()) return null;
         detection.detectedFor = taskId;
-        return detection.detectSteps(f, d.fragment);
+        return detection.detectSteps(servicesFor(f, d));
       },
     },
   );
@@ -103,6 +108,21 @@
   const omrClient = () =>
     createOmrClient(provider.brokerUrl, { signal: omrStop.signal });
   const data = $derived(session.data);
+  // The correction's network work on this task.
+  const servicesFor = (f: ForgeClient, d: FacsimileTaskData) =>
+    correctorServices({
+      forge: f,
+      data: d,
+      owner,
+      repo,
+      repoId,
+      taskId,
+      omrClient,
+    });
+  const services = () => {
+    const f = forge();
+    return f && data ? servicesFor(f, data) : null;
+  };
   const tables = $derived(session.tables);
   $effect(() => {
     if (tables) recordCampaignTitle(campaign, tables.title);
@@ -218,8 +238,7 @@
     canEdit: () => canEdit,
     taskId: () => taskId,
     data: () => data,
-    owner: () => owner,
-    repo: () => repo,
+    services,
     commit: () => ed.commit(),
   });
   const transcriber = new StaffTranscription({
@@ -229,10 +248,7 @@
     canEdit: () => canEdit,
     data: () => data,
     pages: () => model.pages,
-    owner: () => owner,
-    repo: () => repo,
-    repoId: () => repoId,
-    omrClient,
+    services,
   });
 
   // The work as the draft, the submission and its checks read it.
@@ -312,10 +328,7 @@
     canEdit: () => canEdit,
     data: () => data,
     taskId: () => taskId,
-    repoId: () => repoId,
-    owner: () => owner,
-    repo: () => repo,
-    omrClient,
+    services,
     detected: () => {
       setLayoutStep(1);
       ed.resetHistory();
@@ -544,15 +557,20 @@
         {canEdit}
         {coarse}
         docked={view.docked}
-        oncompose={() => compose++}
+        labelMax={MAX_ANCHOR_LENGTH}
+        oncompose={auth.user ? () => compose++ : undefined}
       />
+    {/snippet}
+
+    {#snippet status()}
+      <PreTaskStatus {session} />
     {/snippet}
 
     <!-- The task's action at the panel's bottom: the claim or the draft
          state and give back, then the next step or the submission. -->
     {#snippet footer()}
       <ZoneFooter
-        {session}
+        {status}
         {transcriber}
         {omr}
         {naming}
@@ -590,7 +608,10 @@
           task={session.card.task}
           sub={session.reviewSub}
           runner={session.runner}
-          prefill={sel.reviewPrefill}
+          prefill={() => {
+            const at = sel.reviewPrefill();
+            return { ...at, m1: anchorCell(at.m1), m2: anchorCell(at.m2) };
+          }}
           onvalidate={(sub, verdict, comment) =>
             session.validate(sub, verdict, comment)}
           onreviewedit={async (sub, comment) => {

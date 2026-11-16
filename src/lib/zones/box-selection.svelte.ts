@@ -4,9 +4,6 @@
 // a comment's or a change request's anchor.
 
 import { tick } from "svelte";
-import type { CommentAnchorInput } from "../commands.ts";
-import type { CommentRow } from "../campaign-tables.ts";
-import { anchorCell } from "../campaign-submit.ts";
 import type { MeasureBox } from "../mei-facsimile.ts";
 import { movedBox } from "../box-geometry.ts";
 import type { Layer } from "./edit-pages.ts";
@@ -90,13 +87,13 @@ export class BoxSelection {
         this.#host.view.spreads[this.#host.view.rowIndex]?.pages[0] ??
         0) + 1,
     ),
-    m1: anchorCell(this.selectedLabel),
-    m2: anchorCell(this.selectedLabel),
+    m1: this.selectedLabel,
+    m2: this.selectedLabel,
   });
 
   // A comment anchor scrolls the desk to its page and selects the measure with
   // the anchored number where the page has one.
-  showAnchorFor = (c: CommentRow) => {
+  showAnchorFor = (c: { page: string; measure_start: string }) => {
     const pages = this.#host.model.pages;
     const p = Number(c.page) - 1;
     if (!Number.isInteger(p) || p < 0 || p >= pages.length) return;
@@ -107,7 +104,9 @@ export class BoxSelection {
     this.#host.editor.select(p, z >= 0 ? pages[p].zones[z] : null);
   };
   // A new comment carries the selected measure as its anchor.
-  commentAnchor = (): CommentAnchorInput | undefined =>
+  commentAnchor = ():
+    | { page: string; measure_start: string; measure_end: string }
+    | undefined =>
     this.selected && this.selectedLabel
       ? {
           page: String(this.selected.p + 1),

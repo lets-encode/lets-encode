@@ -3,6 +3,14 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-16
+
+- The measure and layout correction takes its pages, its progress display and its network work from the page that hosts it.
+
+## 2026-11-13
+
+- The score viewer takes the score's text and its page image addresses from a loading component, and the encoding alignment is split into a state module and components.
+
 ## 2026-11-11
 
 - The wizard's preparation step groups the optical music recognition options in one box that credits Musibot, the Prague Music Computing Group and OmniOMR with both logos.

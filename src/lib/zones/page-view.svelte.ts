@@ -5,7 +5,7 @@
 
 import { tick, untrack } from "svelte";
 import { MediaQuery } from "svelte/reactivity";
-import type { FacsimileTaskData } from "../commands.ts";
+import type { CorrectorInput } from "./host.ts";
 import type { MeasureBox } from "../mei-facsimile.ts";
 import { DOCKED_QUERY } from "../side-panels.ts";
 import { buildSpreads, shownPagesLabel } from "../page-spreads.ts";
@@ -46,7 +46,7 @@ const REGION_MARGIN = 0.02;
 export interface PageViewHost {
   pages(): EditPage[];
   /** The loaded task; each new one opens at the initial view. */
-  data(): FacsimileTaskData | null;
+  data(): CorrectorInput | null;
   /** A touch screen. */
   coarse(): boolean;
   /** The instruments step is in view: its pages show no boxes. */
@@ -64,7 +64,7 @@ export class PageView {
   // loaded task opens at one page per row and the whole-page fit; on a
   // touch screen (a tablet) at the page width.
   fit = $state<"width" | "page" | null>("page");
-  #zoomInitFor = $state<FacsimileTaskData | null>(null);
+  #zoomInitFor = $state<CorrectorInput | null>(null);
 
   // The pages scroll as rows of one or two pages. `view` is one or two pages
   // per row; `firstOnRight` places page 1 as a right-hand page (recto), so a

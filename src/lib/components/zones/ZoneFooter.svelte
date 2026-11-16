@@ -5,13 +5,12 @@
   submission.
 -->
 <script lang="ts">
-  import PreTaskStatus from "$lib/components/PreTaskStatus.svelte";
-  import type { PreTaskSession } from "$lib/pre-task-session.svelte.ts";
+  import type { Snippet } from "svelte";
   import type { LayoutStep } from "$lib/zones/layout-steps.svelte.ts";
   import type { StaffTranscription } from "$lib/zones/staff-transcription.svelte.ts";
 
   let {
-    session,
+    status,
     transcriber,
     omr,
     naming,
@@ -24,7 +23,8 @@
     onstep,
     onsubmit,
   }: {
-    session: PreTaskSession;
+    /** The host's status: the claim or the draft state and give back. */
+    status: Snippet;
     transcriber: StaffTranscription;
     /** The task corrects an OMR layout, in steps. */
     omr: boolean;
@@ -103,7 +103,7 @@
       {/if}
     </p>
   {/if}
-  <PreTaskStatus {session} />
+  {@render status()}
   {#if omr && layoutStep < lastStep}
     {@render nextStep()}
   {:else}

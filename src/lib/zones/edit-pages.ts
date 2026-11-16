@@ -3,10 +3,10 @@
 // from a loaded task and turned back into page models for the draft and the
 // submission.
 
-import type { FacsimileTaskData } from "../commands.ts";
 import { measureLabels, type MeasureSign } from "../mei-facsimile.ts";
 import type { MeasureBox, PageModel } from "../mei-facsimile.ts";
 import { centreInRegions } from "../box-geometry.ts";
+import type { CorrectorInput } from "./host.ts";
 import { numbering, renumber, rowStarts } from "./measures.ts";
 
 // Editor-side zone: the box, the label override (null = automatic), the
@@ -78,7 +78,7 @@ export const layerItems = (
  * regions on a page are dropped.
  */
 export function editPagesFrom(
-  d: Pick<FacsimileTaskData, "model" | "regions" | "imageUrls">,
+  d: Pick<CorrectorInput, "model" | "regions" | "imageUrls">,
 ): EditPage[] {
   let droppedMeasures = false;
   const pages: EditPage[] = d.model.pages.map((pg, i) => {
