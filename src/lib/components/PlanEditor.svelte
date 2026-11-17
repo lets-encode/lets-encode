@@ -214,7 +214,7 @@
 
 <div class="plan">
   <div class="phead">
-    <span class="plabel"
+    <span class="grouplabel"
       >Task plan <span class="countpill">{groups.length}</span></span
     >
     <span class="pmode">● Editing the plan</span>
@@ -240,7 +240,7 @@
       >Save the plan</button
     >
   </div>
-  <div class="prow phrow">
+  <div class="grouplabel prow phrow">
     <span></span><span>Task</span><span>Type</span><span>Size</span><span
       >Depends on</span
     ><span>Status</span><span></span>
@@ -388,13 +388,6 @@
     padding: 0 16px;
     gap: 10px;
   }
-  .plabel {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
-  }
   .pmode {
     font-size: 11.5px;
     font-weight: 600;
@@ -424,11 +417,6 @@
     background: var(--bg-alt);
     border-bottom: 1px solid var(--line);
     padding: 8px 16px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
   }
   .pbody {
     flex: 1;

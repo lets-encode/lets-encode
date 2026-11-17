@@ -87,7 +87,7 @@
           onclick={() => onselect(piece.path)}
           ><span class="piecedot dot"
           ></span>{#if (attention.get(piece.path) ?? 0) > 0}<span
-              class="attnmark"
+              class="statusdot attnmark"
             ></span>{/if}</button
         >
       {/each}
@@ -332,10 +332,7 @@
     position: absolute;
     top: 3px;
     right: 3px;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--danger);
+    color: var(--danger);
   }
   .dotsname {
     flex: none;

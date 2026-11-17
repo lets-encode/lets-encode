@@ -478,7 +478,6 @@
         aria-selected={named.fixed}
         aria-disabled={!named.fixed && fixBlock !== null}
         class:on={named.fixed}
-        class:blocked={!named.fixed && fixBlock !== null}
         title={!named.fixed && fixBlock
           ? fixBlock
           : "Choose for every staff of the other systems an instrument of the first system and its parts."}
@@ -548,10 +547,10 @@
 
   {#if named.fixed && canEdit}
     <section class="summary" aria-label="Instruments and groups">
-      <h2 class="list-h">
+      <h2 class="sectitle">
         Instruments <span class="countpill">{named.instruments.length}</span>
       </h2>
-      <div class="sumcard">
+      <div class="sumcard face-tile">
         <table>
           <thead>
             <tr>
@@ -657,7 +656,7 @@
         <section class="npage" aria-label={`Page ${p + 1}`}>
           <p class="page-label">Page {p + 1} · Facsimile</p>
           {#if !systems.length}
-            <p class="muted">No staves on this page.</p>
+            <p class="note">No staves on this page.</p>
           {/if}
           {#each systems as strip (strip.system)}
             {@const v = strip.view}
@@ -908,7 +907,7 @@
               </div>
               <div class="cropbox">
                 <svg
-                  class="crop"
+                  class="sheet crop"
                   viewBox={`${v.ulx} ${v.uly} ${w} ${h}`}
                   style:width={`${w * strip.scale}px`}
                   role="img"
@@ -949,7 +948,7 @@
 
     {#if !named.fixed}
       <section class="groups" aria-label="Groups">
-        <h2 class="list-h">Groups</h2>
+        <h2 class="sectitle">Groups</h2>
         {#each named.groups as group, k (group.id)}
           {@const options = named.instruments.map((i) => ({
             value: i.id,
@@ -975,7 +974,7 @@
             />
           </div>
         {:else}
-          <p class="muted">No groups.</p>
+          <p class="note">No groups.</p>
         {/each}
         {#if canEdit && !named.fixed}
           <button
@@ -1067,13 +1066,8 @@
   .named-text.double {
     color: var(--warn);
   }
-  /* The tab of the other systems before the first is named. */
   .systems-tabs {
     align-self: flex-start;
-  }
-  .systems-tabs > button.blocked {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   .doubles {
     display: flex;
@@ -1177,9 +1171,6 @@
     display: block;
     max-width: 100%;
     height: auto;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 6px;
   }
   .strip.whole .crop {
     max-width: none;
@@ -1200,9 +1191,6 @@
     max-width: 760px;
   }
   .sumcard {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
     overflow: hidden;
   }
   .sumcard table {
@@ -1275,10 +1263,6 @@
     flex-direction: column;
     gap: 10px;
     max-width: 760px;
-  }
-  .list-h {
-    margin: 0;
-    font-size: 15px;
   }
   .field-row .short {
     width: 64px;

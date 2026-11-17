@@ -1,8 +1,10 @@
 <!--
   A progress bar filled by the share done, with a label beside it: "X of Y
   tasks done" (a campaign's progress), the host's own (`label`), or none
-  (`label={null}`). The bar's width is the host's: --track-w sets its
-  largest width (the whole row by default); it shrinks to 48px.
+  (`label={null}`). With `review` the bar is three segments in the stage
+  colours: done, in review and the rest. `title` names the bar where no
+  label says what it shows. The bar's width is the host's: --track-w sets
+  its largest width (the whole row by default); it shrinks to 48px.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -10,13 +12,37 @@
   let {
     done,
     total,
+    review,
     label,
-  }: { done: number; total: number; label?: Snippet | null } = $props();
+    title,
+  }: {
+    done: number;
+    total: number;
+    review?: number;
+    label?: Snippet | null;
+    title?: string;
+  } = $props();
   const pct = $derived(total ? Math.round((done / total) * 100) : 0);
 </script>
 
 <span class="progressbar">
-  <span class="track"><span class="fill" style:width="{pct}%"></span></span>
+  <span
+    class="track"
+    class:segments={review !== undefined}
+    role={title ? "img" : undefined}
+    aria-label={title}
+    {title}
+  >
+    {#if review === undefined}
+      <span class="fill" style:width="{pct}%"></span>
+    {:else}
+      {#if done}<span class="part done" style:flex={done}></span>{/if}
+      {#if review}<span class="part review" style:flex={review}></span>{/if}
+      {#if total - done - review > 0}
+        <span class="part" style:flex={total - done - review}></span>
+      {/if}
+    {/if}
+  </span>
   {#if label}<span class="plabel">{@render label()}</span
     >{:else if label === undefined}<span class="plabel"
       >{done} of {total} tasks done</span
@@ -46,6 +72,16 @@
     display: block;
     height: 100%;
     background: linear-gradient(90deg, var(--blue), var(--green));
+  }
+  .track.segments {
+    display: flex;
+    gap: 2px;
+  }
+  .part.done {
+    background: var(--green);
+  }
+  .part.review {
+    background: var(--warn-line);
   }
   .plabel {
     flex: none;

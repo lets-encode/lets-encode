@@ -58,13 +58,16 @@
       {#if !result.error && result.meiFriendUrl}
         <div class="rawlink">
           <input
+            class="ctl mono"
             readonly
             aria-label="mei-friend link"
             value={result.meiFriendUrl}
             onfocus={(e) => (e.target as HTMLInputElement).select()}
           />
-          <button type="button" onclick={() => copy(result.meiFriendUrl!)}
-            >Copy</button
+          <button
+            type="button"
+            class="btn"
+            onclick={() => copy(result.meiFriendUrl!)}>Copy</button
           >
         </div>
         <span class="muted">
@@ -91,31 +94,13 @@
     overflow: hidden;
     clip-path: inset(50%);
   }
-  .muted {
-    color: var(--ink-faint);
-  }
   .rawlink {
     display: flex;
-    gap: 0.4rem;
+    gap: 6px;
     margin-top: 4px;
   }
   .rawlink input {
     flex: 1;
     min-width: 0;
-    font-size: 12px;
-    font-family: var(--mono);
-    padding: 0.3rem 0.5rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-  }
-  .rawlink button {
-    font: inherit;
-    font-size: 12px;
-    padding: 0.2rem 0.6rem;
-    border: 1px solid var(--line-strong);
-    border-radius: 6px;
-    background: var(--card);
-    cursor: pointer;
   }
 </style>

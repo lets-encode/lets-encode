@@ -171,6 +171,8 @@
   --invert-ink: #ffffff;
   /* Covers the page while a modal action runs. */
   --scrim: rgba(249, 250, 254, 0.72);
+  /* Darkens the page behind a dialog, in both themes. */
+  --backdrop: rgba(35, 40, 56, 0.48);
 
   --shadow-sm: 0 1px 3px rgba(31, 36, 51, 0.08);
   --shadow-md: 0 2px 8px rgba(31, 36, 51, 0.14);

@@ -394,7 +394,7 @@
     text-align: center;
     pointer-events: none;
     border: 2px dashed var(--accent-line-strong);
-    border-radius: 18px;
+    border-radius: var(--radius-card);
     background: color-mix(in srgb, var(--accent-tint) 95%, transparent);
   }
   .overlay-icon {

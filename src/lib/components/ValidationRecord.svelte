@@ -74,9 +74,6 @@
 {/if}
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-  }
   .mspacer {
     flex: 1;
   }

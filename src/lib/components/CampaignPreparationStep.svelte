@@ -28,6 +28,7 @@
   import { encodingSize } from "$lib/encoding-align.ts";
   import WizardCard from "./WizardCard.svelte";
   import FacsimilePages from "./FacsimilePages.svelte";
+  import Notice, { splitMessage } from "./Notice.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
 
   const OPTIONS: { id: Preparation; name: string; info: string }[] = [
@@ -212,7 +213,7 @@
   {/each}
   {#snippet pinned()}
     {#if finisher.error}
-      <p class="msg-error" role="alert">{finisher.error}</p>
+      <Notice tone="err" {...splitMessage(finisher.error)} />
     {:else if !finisher.busy && auth.user}
       <p class="finish-note">{finishSummary(auth.user.login)}</p>
     {/if}

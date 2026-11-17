@@ -121,7 +121,7 @@
   const actionOf = (n: NextTask) => taskAction(n, nextTaskMode(n));
 </script>
 
-<div class="shelfrow">
+<div class="shelfrow face-panel">
   <div class="rowmain">
     <span class="spine">
       {#if thumb}
@@ -204,10 +204,6 @@
   .shelfrow {
     display: flex;
     align-items: stretch;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: var(--shadow-sm);
     overflow: hidden;
     transition:
       border-color var(--dur-short) var(--ease),

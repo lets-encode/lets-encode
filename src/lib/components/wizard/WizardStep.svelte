@@ -38,8 +38,8 @@
   const active = $derived(index === current);
 </script>
 
-{#snippet bubble()}
-  <span class="bubble" class:done class:active>
+{#snippet disc()}
+  <span class="stepno" class:done class:on={active}>
     {#if done}<Icon name="check" size={12} />{:else}{index + 1}{/if}
   </span>
 {/snippet}
@@ -71,7 +71,7 @@
 >
   {#if rail}
     <span class="rail-chain">
-      {@render bubble()}
+      {@render disc()}
       {#if !last}
         <span class="connector" class:done class:tolive={index === current - 1}
         ></span>
@@ -82,41 +82,16 @@
     </span>
   {:else}
     <span class="hit">
-      {@render bubble()}
+      {@render disc()}
     </span>
     {@render text()}
   {/if}
 </button>
 
 <style>
-  .bubble {
-    box-sizing: border-box;
-    flex: none;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12.5px;
-    background: var(--card);
-    border: 1px solid var(--line-strong);
-    color: var(--ink-faint);
+  .stepno {
     position: relative;
     z-index: 1;
-  }
-  .bubble.done {
-    font-size: 13px;
-    background: var(--ok-btn);
-    border: none;
-    color: #fff;
-  }
-  .bubble.active {
-    font-weight: 600;
-    background: var(--accent-btn);
-    border: none;
-    color: #fff;
-    box-shadow: 0 0 0 4px rgba(var(--paper-select), 0.15);
   }
   .step-label {
     display: block;
@@ -186,7 +161,7 @@
   .step-text {
     display: block;
     flex: 1;
-    padding-top: 5px;
+    padding-top: 6px;
     min-width: 0;
   }
   .rail-step .step-summary,
@@ -195,7 +170,7 @@
   }
 
   /* A window 500px tall or less (the frame's .short). */
-  :global(.short) .bubble {
+  :global(.short) .stepno {
     width: 24px;
     height: 24px;
     font-size: 11.5px;
@@ -243,13 +218,10 @@
     align-items: center;
     justify-content: center;
   }
-  .tstep .bubble {
+  .tstep .stepno {
     width: 24px;
     height: 24px;
     font-size: 11.5px;
-  }
-  .tstep .bubble.active {
-    box-shadow: 0 0 0 3px rgba(var(--paper-select), 0.15);
   }
   .tstep .step-label {
     margin-top: -6px;

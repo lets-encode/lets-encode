@@ -516,7 +516,4 @@
     flex: 1 1 auto;
     white-space: normal;
   }
-  .tspfoot .btn {
-    padding-block: 4px;
-  }
 </style>

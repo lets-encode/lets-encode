@@ -570,7 +570,7 @@
   />
   <aside
     bind:this={aside}
-    class="sp"
+    class="sp face-card"
     class:peek
     class:hastask={!!taskBox}
     style={zone ? `--zone: var(--zone-${zone})` : ""}
@@ -766,10 +766,6 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -979,10 +975,6 @@
     flex: none;
     min-height: 0;
     overflow-y: visible;
-  }
-  .sphead :global(.btn),
-  .showinline {
-    padding: 4px 12px;
   }
   .empty {
     margin: 0;

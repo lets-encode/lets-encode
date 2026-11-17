@@ -137,6 +137,7 @@
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 <dialog
+  class="dialog"
   bind:this={dialog}
   aria-labelledby="construction-title"
   onclick={(e) => {
@@ -285,14 +286,6 @@
     max-width: calc(100vw - 32px);
     max-height: calc(100dvh - 32px);
     padding: 0;
-    border: none;
-    border-radius: 16px;
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: var(--shadow);
-  }
-  dialog::backdrop {
-    background: rgba(35, 40, 56, 0.48);
   }
   .stripe {
     display: flex;
@@ -402,7 +395,7 @@
       width: 100%;
       max-width: 100%;
       margin: auto 0 0;
-      border-radius: 16px 16px 0 0;
+      border-radius: var(--radius-card) var(--radius-card) 0 0;
     }
     .content {
       padding: 24px 20px 28px;

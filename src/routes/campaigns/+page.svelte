@@ -378,7 +378,7 @@
         {/if}
       {/if}
       {#if !auth.user && auth.status === "anonymous" && !list.rateLimit && !list.partialRateLimit}
-        <p class="note login-hint noteline">
+        <p class="note small noteline">
           <span
             >{#if auth.expired}Your GitHub login has expired.{/if}
             Browsing works logged out. Log in to claim a task or see your work here.</span
@@ -420,11 +420,6 @@
       padding: 16px;
     }
   }
-  .note {
-    margin: 0;
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
   /* Wide screens: the viewer's work in a side column beside the list. */
   .layout {
     flex: 1;
@@ -463,10 +458,6 @@
   }
   .showmore {
     align-self: center;
-  }
-  .login-hint {
-    font-size: 12.5px;
-    color: var(--ink-faint);
   }
   /* A note whose action follows it at the line's right end. */
   .noteline {

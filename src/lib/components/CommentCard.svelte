@@ -104,7 +104,7 @@
   );
 </script>
 
-<div class="ccard" class:review class:reply class:resolved class:fail>
+<div class="ccard face-tile" class:review class:reply class:resolved class:fail>
   <div class="chead">
     <span class="avatar">{initialOf(login)}</span>
     <span class="cwho">{login}</span>
@@ -168,10 +168,7 @@
     display: flex;
     flex-direction: column;
     gap: 3px;
-    background: var(--card);
-    border: 1px solid var(--line);
     border-left: 3px solid var(--info);
-    border-radius: 10px;
     padding: 6px 10px;
   }
   .ccard.review {

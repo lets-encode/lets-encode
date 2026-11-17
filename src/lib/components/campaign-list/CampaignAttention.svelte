@@ -43,7 +43,7 @@
 
 {#if attention.length > 0}
   <ListPanel>
-    <h2 class="stitle danger">
+    <h2 class="sectitle danger">
       <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your
       attention
     </h2>
@@ -92,7 +92,7 @@
 {/if}
 
 <style>
-  .stitle.danger {
+  .sectitle.danger {
     display: flex;
     align-items: center;
     gap: 8px;

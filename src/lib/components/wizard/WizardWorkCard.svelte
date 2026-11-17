@@ -92,7 +92,7 @@
   <div class="card-head">
     <div class="title-row">
       <div class="headline">
-        <h1>{heading}</h1>
+        <h1 class="pagehead">{heading}</h1>
         {#if shared && (intro || info)}
           <button
             type="button"
@@ -108,7 +108,7 @@
       </div>
       {#if shared && panes}
         <div
-          class="seg panes"
+          class="seg"
           role="tablist"
           aria-label="Pane"
           tabindex="-1"
@@ -128,7 +128,7 @@
               onclick={() => (tab = id)}
             >
               {id === "form" ? panes.form : panes.material}
-              {#if count !== undefined}<span class="n">{count}</span>{/if}
+              {#if count !== undefined}<span>{count}</span>{/if}
             </button>
           {/each}
         </div>
@@ -251,16 +251,6 @@
     gap: 2px;
     min-width: 0;
   }
-  h1 {
-    margin: 0;
-    font-size: 21px;
-    line-height: 1.25;
-    font-weight: 600;
-  }
-  .card.solo h1 {
-    font-size: 26px;
-    line-height: 1.2;
-  }
   .intro {
     margin: 8px 0 0;
     font-size: 13.5px;
@@ -284,31 +274,12 @@
     color: var(--ink-faint);
     cursor: pointer;
   }
-  /* The two tabs (.seg, ui.css), under the heading or, in a short window,
-     beside it. */
-  .panes {
-    flex: 1 1 100%;
-    display: flex;
-    margin-top: 12px;
-  }
-  :global(.short) .panes {
-    flex: 1 1 0;
-    margin-top: 0;
-  }
   :global(.short) .title-row {
     flex-wrap: nowrap;
   }
   :global(.short) .card.shared h1 {
     font-size: 18px;
     white-space: nowrap;
-  }
-  .panes > button {
-    flex: 1;
-    justify-content: center;
-  }
-  .panes .n {
-    font-weight: 400;
-    color: var(--ink-faint);
   }
 
   /* The body takes what the heading and footer leave and scrolls within it,
@@ -402,7 +373,7 @@
   .pinned > :global(:last-child) {
     margin-bottom: 10px;
   }
-  .pinned :global(.msg-error),
+  .pinned :global(.notice),
   .pinned :global(.msg-warn) {
     margin: 10px 0 0;
   }
@@ -435,9 +406,6 @@
     }
     .card.solo .card-head {
       padding-top: 14px;
-    }
-    .panes {
-      margin-top: 8px;
     }
     .panes-body {
       margin-top: 8px;

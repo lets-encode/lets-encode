@@ -41,11 +41,11 @@
 {#if markable && !(compact && marking.openG && marking.markFrom === null)}
   <div class="markline">
     {#if marking.markFrom === null}
-      <p class="markhint">
+      <p class="note markhint">
         {tapWord} the first staff of a group in the preview.
       </p>
     {:else if marking.markTo === null}
-      <p class="markhint">
+      <p class="note markhint">
         <strong>Staff {marking.markFrom + 1}</strong> · {tapWord.toLowerCase()}
         the last staff of the group.
       </p>
@@ -65,7 +65,7 @@
         >
       </div>
     {:else if marking.markSpan}
-      <p class="markhint">
+      <p class="note markhint">
         <strong>Staves {marking.markSpan.start}–{marking.markSpan.end}</strong>
       </p>
       {#if marking.markProblem}
@@ -116,7 +116,7 @@
     {#each model.ordered as g (g)}
       <li>{@render groupRow(g)}</li>
     {:else}
-      <li class="muted">No groups.</li>
+      <li class="note">No groups.</li>
     {/each}
   </ul>
   {#if canEdit && marking.freePair !== null}
@@ -197,21 +197,12 @@
 {/snippet}
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-    font-size: 14px;
-  }
   /* The marking in the preview: what to do next, then its buttons. */
   .markline {
     display: flex;
     flex-direction: column;
     gap: 8px;
     margin-bottom: 12px;
-  }
-  .markhint {
-    margin: 0;
-    font-size: 13px;
-    color: var(--ink-soft);
   }
   .markhint strong {
     font-weight: 600;

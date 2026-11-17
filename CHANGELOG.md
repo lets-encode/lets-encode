@@ -7,6 +7,26 @@ parentheses.
 
 - An instrument that enters in a later system takes its place in the score order from its neighbours in that system.
 - The "your next task" badge on the board no longer touches the lane's heading.
+- The campaign list's sort control is a soft button like the other buttons.
+- The campaign list takes its titles, notes, group label and card surfaces from shared classes.
+- The campaign name above the board is 21px at every width.
+- The board takes its heading, notes, card surfaces and monospace text from shared classes.
+- Page crops and thumbnails in the volunteer view have square corners and the page edge of the viewers.
+- The campaign name in the volunteer view is 21px at every width.
+- The task and piece lists of the volunteer view have the small shadow of the other tiles.
+- The help panel and the view menu of the measure correction have a 12px radius and the large shadow.
+- Comment cards have the small shadow of the other tiles.
+- The empty and waiting lines of the score setup are 13px in the soft ink.
+- The fields of the request-changes form and the mei-friend link row use the app's compact control and button.
+- The wizard marks its steps with the numbered disc of the task pages.
+- Errors in the wizard, the drafts list, the setup preview and the encoding alignment show as notice lines.
+- The wizard's first step has a 21px heading like the other steps.
+- The buttons in the top bar have the size of the other buttons.
+- The under-construction dialog and the branch dialog have a 14px radius.
+- The buttons in the side panel's head and under a task have the size of the other buttons.
+- The chevron of a piece row in the volunteer view is in the faint ink like the other row chevrons.
+- The file drop overlay and the group bar of the pieces step have a 14px radius.
+- The wizard's pane tabs sit beside the step heading at the width of their labels.
 
 ## 2026-11-16
 

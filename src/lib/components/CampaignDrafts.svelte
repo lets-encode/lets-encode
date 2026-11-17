@@ -13,6 +13,7 @@
   import { onDestroy } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import DiscardSetupConfirm from "$lib/components/DiscardSetupConfirm.svelte";
+  import Notice, { splitMessage } from "$lib/components/Notice.svelte";
   import {
     readDraft,
     resumableDrafts,
@@ -74,7 +75,7 @@
 
 {#if drafts.length}
   <section class="drafts">
-    <span class="dlabel">Drafts</span>
+    <span class="grouplabel">Drafts</span>
     {#each drafts as draft (draft.handle)}
       <div class="drow">
         <span class="dline">
@@ -120,7 +121,7 @@
     {/each}
 
     {#if error}
-      <p class="msg-error" role="alert">{error}</p>
+      <Notice tone="err" {...splitMessage(error)} />
     {/if}
   </section>
 {/if}
@@ -144,13 +145,6 @@
     border: 1px dashed var(--line-input);
     border-radius: 10px;
     min-width: 0;
-  }
-  .dlabel {
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink-faint);
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
   }
   .dline {
     font-size: 13px;

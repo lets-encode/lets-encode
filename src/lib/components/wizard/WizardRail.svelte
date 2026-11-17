@@ -8,6 +8,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import Icon from "$lib/components/Icon.svelte";
+  import Notice, { splitMessage } from "$lib/components/Notice.svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import type { WizardDraft } from "$lib/wizard-draft.ts";
   import {
@@ -141,7 +142,7 @@
         </button>
       {/each}
       {#if resumeError}
-        <p class="msg-error" role="alert">{resumeError}</p>
+        <Notice tone="err" {...splitMessage(resumeError)} />
       {/if}
     {/if}
   </div>
@@ -237,6 +238,11 @@
   .other-draft {
     max-width: 100%;
     margin-top: 4px;
+  }
+  /* A notice is a size container, so it takes the foot's width rather than
+     its content's. */
+  .rail-foot > :global(.notice) {
+    align-self: stretch;
   }
 
   /* A window 500px tall or less (the frame's .short): a narrow rail with the

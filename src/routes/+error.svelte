@@ -18,7 +18,7 @@
 </svelte:head>
 
 <section class="error">
-  <h1>
+  <h1 class="pagehead">
     {detail
       ? page.error?.message
       : missing
@@ -49,12 +49,6 @@
   .error {
     max-width: 520px;
     margin: 3rem auto 0;
-  }
-  h1 {
-    margin: 0;
-    font-size: 21px;
-    font-weight: 600;
-    line-height: 1.25;
   }
   p {
     margin: 10px 0 0;

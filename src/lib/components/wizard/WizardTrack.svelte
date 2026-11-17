@@ -205,7 +205,7 @@
     display: grid;
     grid-template-columns: repeat(var(--n), minmax(0, 1fr));
   }
-  /* The connecting line runs between the first and the last bubble's
+  /* The connecting line runs between the first and the last disc's
      centres; its completed part ends at the current step. */
   .line {
     position: absolute;

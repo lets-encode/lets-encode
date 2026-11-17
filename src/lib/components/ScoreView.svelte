@@ -172,7 +172,7 @@
 <div class="scoreview">
   <div class="shead">
     <h1
-      class="sname"
+      class="sectitle sname"
       bind:this={heading}
       tabindex="-1"
       title={pieceLabel(piece)}
@@ -260,10 +260,6 @@
     gap: 10px;
   }
   .sname {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

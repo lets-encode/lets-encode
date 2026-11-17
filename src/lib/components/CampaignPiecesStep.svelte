@@ -40,6 +40,7 @@
   import ConfirmInline from "./ConfirmInline.svelte";
   import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
+  import Notice, { splitMessage } from "./Notice.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
@@ -326,7 +327,7 @@
   finish={last && !finisher.error}
 >
   <div class="pieces-head">
-    <span class="pieces-count"
+    <span class="grouplabel pieces-count"
       >Pieces <span class="countpill">{wizard.pieces.length}</span></span
     >
     <button
@@ -561,7 +562,7 @@
 
   {#snippet pinned()}
     {#if pagesError}
-      <p class="msg-error" role="alert">{pagesError}</p>
+      <Notice tone="err" {...splitMessage(pagesError)} />
     {/if}
     {#if wizard.piecesRedone}
       <p class="msg-warn" role="status">
@@ -569,7 +570,7 @@
       </p>
     {/if}
     {#if finisher.error}
-      <p class="msg-error" role="alert">{finisher.error}</p>
+      <Notice tone="err" {...splitMessage(finisher.error)} />
     {:else if last && !finisher.busy && auth.user}
       <p class="finish-note">{finishSummary(auth.user.login)}</p>
     {/if}
@@ -586,11 +587,6 @@
   }
   .pieces-count {
     flex: 1;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
   }
   .pieces {
     display: grid;

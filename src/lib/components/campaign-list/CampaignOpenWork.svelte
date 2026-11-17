@@ -90,14 +90,14 @@
   <ListPanel fold={!wide}>
     {#if wide}
       <div class="phead">
-        <h2 class="stitle">Your open work</h2>
+        <h2 class="sectitle">Your open work</h2>
         <span class="countpill">{openCount} to do</span>
       </div>
     {:else}
       <h2 class="barh">
         <button
           type="button"
-          class="workbar"
+          class="rowbtn workbar"
           aria-label={`Your open work: ${openCount} to do, ${loading && tasks.length === 0 ? "loading" : workSummary}`}
           aria-expanded={open}
           aria-controls="worklist"
@@ -195,7 +195,7 @@
         {#if done.length > 0}
           <button
             type="button"
-            class="donetoggle"
+            class="rowbtn donetoggle"
             aria-expanded={showCompleted}
             title={since ? `Contributing since ${since}` : undefined}
             onclick={() => (showCompleted = !showCompleted)}
@@ -231,15 +231,8 @@
 {/if}
 
 <style>
-  .note {
-    margin: 0;
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
   .note.small {
     padding: 4px 0;
-    font-size: 12.5px;
-    color: var(--ink-faint);
   }
   /* The folded work panel's header: one line that opens the list. */
   .barh {
@@ -252,13 +245,8 @@
     width: 100%;
     min-height: 40px;
     padding: 4px 12px 4px 16px;
-    font: inherit;
     color: var(--ink-soft);
-    text-align: left;
-    background: none;
-    border: 0;
     border-radius: 14px;
-    cursor: pointer;
   }
   .btitle {
     font-size: 13.5px;
@@ -309,10 +297,7 @@
     padding: 6px 0 0;
     font: 600 12.5px var(--font);
     color: var(--ink-soft);
-    background: none;
-    border: 0;
     border-top: 1px solid var(--line);
-    cursor: pointer;
   }
   @media (hover: hover) {
     .donetoggle:hover {

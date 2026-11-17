@@ -637,7 +637,7 @@
     gap: 6px;
     padding: 6px 8px;
     background: var(--card);
-    border-radius: 18px;
+    border-radius: var(--radius-card);
     box-shadow: var(--shadow-sm);
   }
   .groupcount {

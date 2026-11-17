@@ -87,10 +87,6 @@
 {/if}
 
 <style>
-  .note {
-    margin: 0;
-    color: var(--ink-soft);
-  }
   .checking {
     padding: 2rem 1.5rem;
   }

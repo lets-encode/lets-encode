@@ -861,9 +861,6 @@
 </div>
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-  }
   .preview {
     flex: 1;
     min-width: 0;

@@ -205,6 +205,7 @@
   {#if failForm}
     <div class="failform">
       <textarea
+        class="ctl"
         rows="3"
         bind:value={failForm.body}
         aria-label="What needs to change"
@@ -226,6 +227,7 @@
       <div class="failform-anchor">
         <label
           >p. <input
+            class="ctl"
             size="3"
             maxlength={MAX_ANCHOR_LENGTH}
             bind:value={failForm.page}
@@ -234,7 +236,7 @@
         {#if staffs}
           <label
             >staff <input
-              class="staffin"
+              class="ctl staffin"
               bind:value={failForm.staff}
               placeholder="click a staff or group"
               title="Click a staff on the page or in the summary, or a brace or bracket in the summary, to fill this in. It is put in front of the note."
@@ -244,6 +246,7 @@
         {#if measures}
           <label
             >m. <input
+              class="ctl"
               size="4"
               maxlength={MAX_ANCHOR_LENGTH}
               bind:value={failForm.m1}
@@ -252,6 +255,7 @@
           >
           <label
             >– <input
+              class="ctl"
               size="4"
               maxlength={MAX_ANCHOR_LENGTH}
               bind:value={failForm.m2}
@@ -350,13 +354,8 @@
     background: var(--danger-wash);
   }
   .failform textarea {
-    font: inherit;
-    font-size: 12.5px;
+    height: auto;
     padding: 7px 10px;
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--ink);
     resize: vertical;
   }
   .editnote {
@@ -373,14 +372,7 @@
     flex-wrap: wrap;
   }
   .failform-anchor input {
-    font: inherit;
-    font-size: 11.5px;
-    padding: 3px 6px;
-    border: 1px solid var(--line-input);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--ink);
-    width: 3.2em;
+    width: 4.2em;
   }
   .failform-anchor .staffin {
     width: 12em;

@@ -23,7 +23,7 @@
 </script>
 
 <div class="taskheading">
-  <h3 class="name">
+  <h3 class="sectitle name">
     {description}{#if scope}<span class="scope">{` · ${scope}`}</span>{/if}
   </h3>
   <div class="pieceline">
@@ -45,11 +45,7 @@
     min-width: 0;
   }
   .name {
-    margin: 0;
-    font-size: 15px;
     line-height: 1.25;
-    font-weight: 600;
-    color: var(--ink);
   }
   .scope {
     color: var(--ink-soft);

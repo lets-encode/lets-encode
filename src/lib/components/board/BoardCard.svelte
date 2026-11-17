@@ -56,7 +56,7 @@
      it can render a PR link, which HTML does not allow
      nested in a button. -->
 <div
-  class="card col-{card.column}"
+  class="card face-tile col-{card.column}"
   class:justmoved={recentlyFinished || card.task === completedTask}
   class:paneled={selected}
   aria-current={selected ? "true" : undefined}
@@ -180,11 +180,7 @@
     flex-direction: column;
     text-align: left;
     font-family: inherit;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
     padding: 10px 12px;
-    box-shadow: var(--shadow-sm);
     cursor: pointer;
     flex: none;
     box-sizing: border-box;

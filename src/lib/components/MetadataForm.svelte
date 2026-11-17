@@ -23,6 +23,7 @@
     type SourceMetadata,
   } from "$lib/source-metadata.ts";
   import Icon from "./Icon.svelte";
+  import Notice from "./Notice.svelte";
   import XmlEditor from "./XmlEditor.svelte";
 
   type View = "short" | "long" | "xml";
@@ -168,7 +169,7 @@
       </p>
       {#if readBack}
         <div class="read-back">
-          <div class="read-back-head">Read from the XML</div>
+          <div class="grouplabel read-back-head">Read from the XML</div>
           <div class="read-back-rows">
             <div class="row">
               <span class="key">Title</span><span class="val"
@@ -211,10 +212,11 @@
       </p>
       <XmlEditor bind:value={xml} />
       {#if !xmlValid}
-        <p class="msg-error" role="alert">
-          Not a well-formed meiHead. The fields keep the last well-formed
-          version.
-        </p>
+        <Notice
+          tone="err"
+          title="Not a well-formed meiHead"
+          detail="The fields keep the last well-formed version."
+        />
       {/if}
     {/if}
   {:else}
@@ -482,6 +484,9 @@
       width: 110px;
     }
   }
+  .metaform > :global(.notice) {
+    margin-top: 10px;
+  }
   .xml-note {
     margin: 14px 0 0;
     font-size: 12px;
@@ -495,11 +500,6 @@
   }
   .read-back-head {
     padding: 8px 12px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
     background: var(--bg-alt);
     border-bottom: 1px solid var(--line);
   }

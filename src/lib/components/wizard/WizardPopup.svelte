@@ -5,6 +5,7 @@
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Notice, { splitMessage } from "$lib/components/Notice.svelte";
   import type { WizardDraft } from "$lib/wizard-draft.ts";
   import type { PopupKind } from "$lib/wizard/popup-place.ts";
 
@@ -33,9 +34,9 @@
   } = $props();
 </script>
 
-<div class="popup {kind}-popup" {style} data-popup>
+<div class="popover popup {kind}-popup" {style} data-popup>
   {#if kind === "others"}
-    <div class="popup-head">Other setups on this account</div>
+    <div class="grouplabel popup-head">Other setups on this account</div>
     {#each otherDrafts as draft (draft.handle)}
       <button
         type="button"
@@ -51,7 +52,7 @@
       </button>
     {/each}
     {#if resumeError}
-      <p class="msg-error" role="alert">{resumeError}</p>
+      <Notice tone="err" {...splitMessage(resumeError)} />
     {/if}
   {:else if kind === "discard"}
     {@render discardQuestion()}
@@ -66,10 +67,6 @@
     position: fixed;
     z-index: var(--z-popover);
     box-sizing: border-box;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: var(--shadow);
     padding: 8px;
   }
   .discard-popup {
@@ -96,11 +93,6 @@
     padding: 0;
   }
   .popup-head {
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
     padding: 6px 8px 4px;
   }
   .resume {
@@ -127,7 +119,7 @@
       background: var(--accent-tint);
     }
   }
-  .popup .msg-error {
+  .popup :global(.notice) {
     margin: 6px 4px 2px;
   }
 </style>

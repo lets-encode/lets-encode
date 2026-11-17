@@ -8,6 +8,7 @@
   import { addFileMeasure, differentReason } from "$lib/encoding-align.ts";
   import Icon from "$lib/components/Icon.svelte";
   import MeasureSelection from "$lib/components/MeasureSelection.svelte";
+  import Notice, { splitMessage } from "$lib/components/Notice.svelte";
   import type ScorePreview from "$lib/components/ScorePreview.svelte";
   import AlignStaves from "./AlignStaves.svelte";
 
@@ -180,7 +181,13 @@
   {/if}
 {/if}
 {#if aligned.summary.kind === "different"}
-  <p class="msg-error">{differentReason(aligned.summary)}</p>
+  <div class="different">
+    <Notice
+      tone="err"
+      {...splitMessage(differentReason(aligned.summary))}
+      live={false}
+    />
+  </div>
 {:else if editor.problems.length}
   <ul class="problems">
     {#each editor.problems as problem, i (i)}
@@ -200,6 +207,9 @@
 {/if}
 
 <style>
+  .different {
+    margin-top: 10px;
+  }
   .problems {
     list-style: none;
     margin: 12px 0 0;

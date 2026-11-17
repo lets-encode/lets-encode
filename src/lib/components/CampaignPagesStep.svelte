@@ -41,7 +41,7 @@
   } from "./ZoomLevel.svelte";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import Icon from "./Icon.svelte";
-  import Notice from "./Notice.svelte";
+  import Notice, { splitMessage } from "./Notice.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let busy = $state(false);
@@ -722,7 +722,7 @@
 
   {#snippet pinned()}
     {#if error}
-      <p class="msg-error" role="alert">{error}</p>
+      <Notice tone="err" {...splitMessage(error)} />
     {/if}
     <ProgressSteps {log} />
   {/snippet}

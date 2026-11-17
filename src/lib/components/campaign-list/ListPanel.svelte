@@ -20,17 +20,13 @@
   } = $props();
 </script>
 
-<section class="panel" class:fold>
+<section class="panel face-card" class:fold>
   {@render children()}
 </section>
 
 <style>
   .panel {
     padding: 14px 16px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
   }
   .panel.fold {
     padding: 0;
@@ -43,13 +39,7 @@
     align-items: center;
     gap: 8px;
   }
-  .panel :global(:where(.stitle)) {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
-  }
-  .panel > :global(.stitle),
+  .panel > :global(.sectitle),
   .panel > :global(.phead) {
     margin-bottom: 6px;
   }

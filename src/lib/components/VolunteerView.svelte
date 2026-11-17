@@ -34,6 +34,7 @@
   import type { BoardCard } from "$lib/campaign-board.ts";
   import { piecePreview, scoreVersion } from "$lib/piece-previews.ts";
   import PreviewFailed from "$lib/components/PreviewFailed.svelte";
+  import ProgressBar from "$lib/components/ProgressBar.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
   import { pendingVerdicts } from "$lib/pending-verdicts.svelte.ts";
   import type { PagePreview, PiecePreview } from "$lib/piece-previews.ts";
@@ -303,7 +304,7 @@
 
 {#snippet thumb(path: string)}
   {@const url = previews[path]?.thumb}
-  <span class="paper">
+  <span class="sheet paper">
     {#if url}
       <img src={url} alt="" loading="lazy" />
     {/if}
@@ -354,7 +355,7 @@
           <!-- The task's own page, cropped to its measures; a page without
                zones shows from its top; a piece without pages shows its
                opening system. -->
-          <div class="crop" bind:clientWidth={cropW}>
+          <div class="sheet crop" bind:clientWidth={cropW}>
             {#if nextPagePreview?.url}
               <img
                 src={nextPagePreview.url}
@@ -377,7 +378,7 @@
           <div class="nextbody">
             <button
               type="button"
-              class="nexttitle"
+              class="rowbtn nexttitle"
               onclick={() => onopen(featured.task)}
               title="Open this task"
               >{featured.description}{#if featured.scope}<span class="scope"
@@ -435,7 +436,7 @@
             {/each}
           {/if}
         </div>
-        <div class="tlist">
+        <div class="tlist face-tile">
           {#each listed as card (card.task)}
             {@const index = pieceIndex.get(card.task) ?? 0}
             <div class="trow" style={tintOf(index)}>
@@ -443,7 +444,7 @@
               <span class="stext">
                 <button
                   type="button"
-                  class="stitle"
+                  class="rowbtn stitle"
                   onclick={() => onopen(card.task)}
                   title="Open this task"
                   >{card.description}{#if card.scope}<span class="scope"
@@ -461,7 +462,7 @@
               {@render chips(card)}
             </div>
           {:else}
-            <span class="none">No open tasks of these kinds.</span>
+            <span class="note small none">No open tasks of these kinds.</span>
           {/each}
         </div>
       </div>
@@ -472,14 +473,14 @@
         <h2 class="seclabel">
           In review <span class="countpill">{waitingCards.length}</span>
         </h2>
-        <div class="tlist">
+        <div class="tlist face-tile">
           {#each waitingCards as card (card.task)}
             <div class="trow" style={tintOf(pieceIndex.get(card.task) ?? 0)}>
               <span class="piecedot sdot"></span>
               <span class="stext">
                 <button
                   type="button"
-                  class="stitle"
+                  class="rowbtn stitle"
                   onclick={() => onopen(card.task)}
                   title="Open this task"
                   >{card.description}{#if card.scope}<span class="scope"
@@ -509,7 +510,7 @@
         <h2 class="seclabel">Being processed</h2>
         {#each running as card (card.task)}
           <div class="runcard" data-stage={stageOf(card)}>
-            <span class="runtitle">{card.title}</span>
+            <span class="sectitle runtitle">{card.title}</span>
             <TaskRunState task={card.task} {repoId} pill large />
           </div>
         {/each}
@@ -517,7 +518,7 @@
     {/if}
 
     {#if !featured && openCards.length === 0}
-      <span class="none"
+      <span class="note small none"
         >{waitingCards.length > 0
           ? "No tasks are open for you right now."
           : "No tasks are open right now: every task is claimed, in review, waiting for an earlier task, or done."}
@@ -528,7 +529,7 @@
     {#if pieces.length > 0}
       <div class="vsec">
         <h2 class="seclabel">Pieces</h2>
-        <div class="ptable">
+        <div class="ptable face-tile">
           {#each pieces as piece, index (piece.path)}
             {@const p = progress.get(piece.path)}
             {@const open = lone || expandedPiece === piece.path}
@@ -542,7 +543,7 @@
                 {:else}
                   <button
                     type="button"
-                    class="piecename"
+                    class="rowbtn piecename"
                     aria-expanded={open}
                     onclick={() => toggle(piece.path)}
                     title={open
@@ -553,25 +554,15 @@
                 <!-- Done, in review and the rest, in the stage colours; a lone
                      piece leaves its progress to the page header. -->
                 {#if !lone}
-                  <div
-                    class="segbar"
-                    role="img"
-                    aria-label={`${p?.done ?? 0} done, ${review} in review, ${(p?.total ?? 0) - (p?.done ?? 0) - review} to do`}
-                    title={`${p?.done ?? 0} done, ${review} in review, ${(p?.total ?? 0) - (p?.done ?? 0) - review} to do`}
-                  >
-                    {#if p?.done}
-                      <div class="barseg done" style="flex: {p.done}"></div>
-                    {/if}
-                    {#if review}
-                      <div class="barseg review" style="flex: {review}"></div>
-                    {/if}
-                    {#if p && p.total - p.done - review > 0}
-                      <div
-                        class="barseg"
-                        style="flex: {p.total - p.done - review}"
-                      ></div>
-                    {/if}
-                  </div>
+                  <span class="segbar">
+                    <ProgressBar
+                      done={p?.done ?? 0}
+                      total={p?.total ?? 0}
+                      {review}
+                      label={null}
+                      title={`${p?.done ?? 0} done, ${review} in review, ${(p?.total ?? 0) - (p?.done ?? 0) - review} to do`}
+                    />
+                  </span>
                   {#if p && p.total > 0 && p.done === p.total}
                     <span class="piecedone complete"
                       ><Icon name="check" size={12} /> done</span
@@ -599,7 +590,7 @@
                 {/if}
                 <span class="vspacer"></span>
                 {#if !lone}
-                  <span class="pchev"
+                  <span class="chev pchev"
                     ><Icon
                       name={open ? "chevron-down" : "chevron-right"}
                     /></span
@@ -621,7 +612,7 @@
                       <div class="taskrow" data-stage={stageOf(card)}>
                         <button
                           type="button"
-                          class="tasktitle"
+                          class="rowbtn tasktitle"
                           onclick={() => onopen(card.task)}
                           title="Open this task">{cardName(card)}</button
                         >
@@ -633,13 +624,13 @@
                           ><Icon name="check" size={12} />
                           {doneLabel(card)}</span
                         >
-                        <span class="tchev"><Icon name="chevron-right" /></span>
+                        <span class="chev"><Icon name="chevron-right" /></span>
                       </div>
                     {:else}
                       <div class="taskrow" data-stage={stageOf(card)}>
                         <button
                           type="button"
-                          class="tasktitle"
+                          class="rowbtn tasktitle"
                           onclick={() => onopen(card.task)}
                           title="Open this task">{cardName(card)}</button
                         >
@@ -662,7 +653,7 @@
                         {:else}
                           <span class="chip">{cardPill(card, viewer)}</span>
                         {/if}
-                        <span class="tchev"><Icon name="chevron-right" /></span>
+                        <span class="chev"><Icon name="chevron-right" /></span>
                       </div>
                     {/if}
                   {/each}
@@ -725,15 +716,6 @@
 
   /* A row's title button reaches over the whole row; the row's other buttons
      and pills sit above it. The focus ring is drawn on the row. */
-  :where(.nexttitle, .stitle, button.piecename, .tasktitle) {
-    font: inherit;
-    color: inherit;
-    background: none;
-    border: 0;
-    padding: 0;
-    text-align: left;
-    cursor: pointer;
-  }
   .nexttitle::after,
   .stitle::after,
   button.piecename::after,
@@ -819,8 +801,6 @@
     margin-top: 8px;
   }
   .runtitle {
-    font-size: 15px;
-    font-weight: 600;
     overflow-wrap: anywhere;
   }
   /* The crop grows with the card, keeping its proportions. */
@@ -829,10 +809,7 @@
     flex: none;
     width: clamp(260px, 36%, 480px);
     aspect-ratio: 260 / 144;
-    border: 1px solid var(--line);
-    border-radius: 6px;
     overflow: hidden;
-    background: var(--facsimile-paper);
     box-shadow:
       4px 4px 0 var(--mat),
       var(--shadow-md);
@@ -932,9 +909,6 @@
 
   /* ------------------------------------------------------- open-task list */
   .tlist {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
     overflow: hidden;
   }
   .trow {
@@ -989,10 +963,6 @@
     padding: 10px 12px;
   }
 
-  .none {
-    font-size: 12px;
-    color: var(--ink-faint);
-  }
   .none a {
     display: block;
     width: fit-content;
@@ -1003,9 +973,6 @@
 
   /* --------------------------------------------------------- pieces table */
   .ptable {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
     overflow: hidden;
   }
   .piece + .piece {
@@ -1023,9 +990,6 @@
     flex: none;
     width: 32px;
     height: 42px;
-    background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 2px;
     overflow: hidden;
     box-sizing: border-box;
     box-shadow: var(--shadow-sm);
@@ -1052,19 +1016,7 @@
   }
   .segbar {
     flex: none;
-    display: flex;
-    gap: 2px;
     width: 120px;
-    height: 6px;
-    border-radius: 3px;
-    background: var(--bg-tint);
-    overflow: hidden;
-  }
-  .barseg.done {
-    background: var(--green);
-  }
-  .barseg.review {
-    background: var(--warn-line);
   }
   .piecedone {
     font-size: 12px;
@@ -1088,11 +1040,8 @@
     color: var(--info);
   }
   .pchev {
-    font-size: 20px;
-    line-height: 1;
     width: 20px;
-    text-align: center;
-    color: var(--ink-soft);
+    justify-content: center;
   }
   .piecetasks {
     padding: 8px 12px 10px;
@@ -1139,10 +1088,6 @@
     font-size: 12px;
     color: var(--ink-faint);
     white-space: nowrap;
-  }
-  .tchev {
-    font-size: 14px;
-    color: var(--ink-faint);
   }
 
   /* Narrow column: the next-task card puts its actions on a full-width line

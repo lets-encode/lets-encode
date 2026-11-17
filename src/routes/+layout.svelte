@@ -372,9 +372,6 @@
     .user > span {
       display: none;
     }
-    header .user :global(.btn) {
-      padding: 5px 11px;
-    }
     .nav-link.back {
       --back-h: 32px;
       min-width: 32px;
@@ -388,10 +385,6 @@
     .brand img {
       height: 24px;
     }
-    header .user :global(.btn) {
-      min-height: 32px;
-      padding: 4px 12px;
-    }
   }
   .user {
     display: flex;
@@ -400,8 +393,6 @@
     font-size: 13.5px;
   }
   .user :global(.btn) {
-    font-size: 14px;
-    padding: 6px 13px;
     background: var(--bg-alt);
   }
   .userimg {
