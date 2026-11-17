@@ -164,7 +164,7 @@
         {/if}
         {#each view.showBoxes && tool !== "measures" ? staffPaintOrder(pg, p) : [] as { staff, s } (`${tool}-${s}`)}
           <rect
-            class="staff"
+            class="zonebox-staff staff"
             class:grand={tool === "grandstaves"}
             class:selected={sel.inSelection(p, s)}
             vector-effect="non-scaling-stroke"
@@ -185,7 +185,7 @@
         {/each}
         {#each view.showBoxes && tool === "measures" ? paintOrder(pg, p) : [] as { zone, z } (z)}
           <rect
-            class="zone"
+            class="zonebox-measure zone"
             class:selected={sel.inSelection(p, z)}
             class:mdivstart={startsMovement(pages, p, z)}
             vector-effect="non-scaling-stroke"
@@ -354,13 +354,7 @@
      piece-region palette (--zone-1…8), so a colour never carries two meanings. */
   /* Strokes are screen pixels — the markup sets
      vector-effect="non-scaling-stroke" — scaled by the damped zoom factor
-     --stroke-scale. */
-  .zone {
-    fill: rgba(var(--layer-measure), 0.2);
-    stroke: rgba(var(--layer-measure), 0.85);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    cursor: pointer;
-  }
+     --stroke-scale. A box at rest is .zonebox-measure (ui.css). */
   /* A selected box: a fill twice as dark and a solid outline. */
   .zone.selected {
     fill: rgba(var(--layer-measure), 0.4);
@@ -386,22 +380,17 @@
     stroke-width: calc(2.5px * var(--stroke-scale, 1));
   }
   .volta rect {
-    fill: rgba(255, 255, 255, 0.92);
+    fill: rgba(var(--paper-label), 0.92);
   }
   .volta text {
     font-family: var(--font);
     font-weight: 600;
-    fill: #1a1a1a;
+    fill: rgb(var(--paper-ink));
   }
   /* Wine red for staff boxes, dark green for grand staves, teal for measures:
      hues outside the region palette, darker than the red and green that mean
-     fail and done. Only one layer is shown at a time. */
-  .staff {
-    fill: rgba(var(--layer-staff), 0.16);
-    stroke: rgba(var(--layer-staff), 0.9);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    cursor: pointer;
-  }
+     fail and done. Only one layer is shown at a time. A staff box at rest
+     is .zonebox-staff (ui.css). */
   .staff.selected {
     fill: rgba(var(--layer-staff), 0.4);
     stroke: rgb(var(--layer-staff));

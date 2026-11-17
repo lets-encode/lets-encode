@@ -323,10 +323,6 @@
     grid-column: 1;
     font-weight: 400;
   }
-  .row.dragged {
-    background: var(--accent-tint-strong);
-    box-shadow: 0 2px 8px rgba(31, 36, 51, 0.14);
-  }
   .row.picked {
     background: var(--accent-tint-strong);
     outline: 1.5px solid var(--accent);

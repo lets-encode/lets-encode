@@ -334,7 +334,7 @@
     height: 26px;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity var(--dur-short) var(--ease);
   }
   .body-wrap::before {
     top: 0;

@@ -73,7 +73,8 @@
         aria-pressed={selected === "all"}
         aria-label="All pieces · {openCount} open"
         title="All pieces · {openCount} open"
-        onclick={() => onselect("all")}><span class="dot"></span></button
+        onclick={() => onselect("all")}
+        ><span class="piecedot dot"></span></button
       >
       {#each pieces as piece, i (piece.path)}
         <button
@@ -84,7 +85,7 @@
           aria-label={tooltip(piece)}
           title={tooltip(piece)}
           onclick={() => onselect(piece.path)}
-          ><span class="dot"
+          ><span class="piecedot dot"
           ></span>{#if (attention.get(piece.path) ?? 0) > 0}<span
               class="attnmark"
             ></span>{/if}</button
@@ -106,7 +107,7 @@
       onclick={() => onselect("all")}
       title="All pieces · {openCount} open"
     >
-      <span class="dot"></span>
+      <span class="piecedot dot"></span>
       <span class="railname">All pieces</span>
       <span class="countpill openpill">{openCount} open</span>
     </button>
@@ -122,7 +123,7 @@
         title={tooltip(piece)}
       >
         <span class="railtop">
-          <span class="dot"></span>
+          <span class="piecedot dot"></span>
           <span class="railname">{clipTitle(pieceLabel(piece))}</span>
           {#if count > 0}
             <span class="attn"> <Icon name="comment" size={10} />{count}</span>
@@ -169,7 +170,7 @@
     cursor: pointer;
     font-family: inherit;
     text-align: left;
-    transition: border-color 0.15s ease;
+    transition: border-color var(--dur-short) var(--ease);
   }
   .railrow.all {
     flex-direction: row;
@@ -198,14 +199,6 @@
     align-items: center;
     gap: 6px;
     min-width: 0;
-  }
-  /* The piece's tint, as on its board cards. */
-  .dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--zone);
   }
   .all .dot {
     display: none;
@@ -293,7 +286,7 @@
     padding: 2px;
     background: var(--bg-inset);
     box-shadow: var(--shadow-inset);
-    border-radius: 9px;
+    border-radius: var(--radius-control);
     box-sizing: border-box;
   }
   .dotbtn {
@@ -306,7 +299,7 @@
     padding: 0;
     background: none;
     border: 1.5px solid transparent;
-    border-radius: 7px;
+    border-radius: var(--radius-strip);
     cursor: pointer;
   }
   @media (pointer: coarse) {

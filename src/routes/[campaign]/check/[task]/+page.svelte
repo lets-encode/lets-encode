@@ -57,6 +57,7 @@
   import RunnerBanner from "$lib/components/RunnerBanner.svelte";
   import TaskPageSidePanel from "$lib/components/TaskPageSidePanel.svelte";
   import TaskRunState from "$lib/components/TaskRunState.svelte";
+  import WorkspaceFooter from "$lib/components/WorkspaceFooter.svelte";
 
   const campaign = $derived(page.params.campaign!);
   const taskId = $derived(page.params.task!);
@@ -272,7 +273,7 @@
   />
 {/if}
 
-<div class="checker sidehost" data-stage="encode">
+<div class="workshell sidehost" data-stage="encode">
   {#if session.campaign.error}
     <PageState
       error={session.campaign.error}
@@ -289,7 +290,7 @@
   {:else if session.loadError}
     <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data}
-    <div class="main">
+    <div class="workmain">
       <h1 class="vh">Score check · {session.pieceName || campaign}</h1>
       <div class="runrow">
         <TaskRunState task={taskId} repoId={session.campaign.repoId} pill />
@@ -400,16 +401,16 @@
     </div>
 
     {#snippet footer()}
-      <div class="wfoot">
-        <span class="abcount wsum">
+      <WorkspaceFooter>
+        {#snippet summary()}
           {staves.length} staves · {keysigText(keysig)} · {meterType ===
           "numeric"
             ? `${meterCount}/${meterUnit}`
             : meterType === "common"
               ? "common time"
               : "cut time"}
-        </span>
-        <span class="wstatus"><PreTaskStatus {session} stage="enc" /></span>
+        {/snippet}
+        {#snippet status()}<PreTaskStatus {session} stage="enc" />{/snippet}
         {#if session.holds}
           <button
             type="button"
@@ -423,7 +424,7 @@
             <Icon name="external" /></button
           >
         {/if}
-      </div>
+      </WorkspaceFooter>
     {/snippet}
 
     {#snippet resultNote()}
@@ -462,23 +463,6 @@
 </div>
 
 <style>
-  .checker {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    background: var(--desk);
-    box-shadow: var(--shadow-inset);
-  }
-  .checker > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 4px 0;
-  }
-  .main {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
   /* The run state's pill above the work area; takes room only while shown. */
   .runrow {
     flex: none;
@@ -590,29 +574,6 @@
     font-size: 11.5px;
     color: var(--ink-faint);
     font-variant-numeric: tabular-nums;
-  }
-  .wfoot {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .wsum {
-    flex-basis: 100%;
-  }
-  .wstatus {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    min-width: 0;
-  }
-  .abcount {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
   }
   @media (max-width: 900px) {
     .row {

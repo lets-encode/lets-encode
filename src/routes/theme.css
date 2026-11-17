@@ -18,6 +18,13 @@
   --layer-measure: 14, 129, 149;
   --layer-movement: 139, 95, 191;
   --layer-system: 36, 82, 178;
+  /* Fixed colours on the paper, as "r, g, b" for rgb() and rgba(), the same
+     in both themes: text and marks, a label's text on a filled label and the
+     white under a label, the selected item and a flagged one. */
+  --paper-ink: 26, 26, 26;
+  --paper-label: 255, 255, 255;
+  --paper-select: 27, 102, 199;
+  --paper-flag: 187, 54, 36;
 
   --blue: #6dc3ff;
   --green: #76de76;
@@ -76,6 +83,28 @@
 
   --font:
     "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  /* File names, task ids and the XML editor. */
+  --mono: ui-monospace, Menlo, Consolas, monospace;
+
+  /* Corner radii. Paper is square-cornered and has no step. */
+  --radius-strip: 6px;
+  --radius-control: 8px;
+  --radius-tile: 10px;
+  --radius-panel: 12px;
+  --radius-card: 14px;
+  --radius-pill: 999px;
+
+  /* Stacking layers above the page, lowest first. Values from 1 to 6 order
+     elements inside one component and are written where they apply. */
+  --z-popover: 30;
+  --z-drop: 40;
+  --z-overlay: 60;
+  --z-tooltip: 1000;
+
+  /* Transition durations and the easing they share. */
+  --dur-short: 0.15s;
+  --dur-long: 0.2s;
+  --ease: ease;
 
   /* Facsimile / PDF page images always sit on white paper, in both themes, so
      scanned scores keep their true contrast (decision: theme port). */
@@ -121,13 +150,10 @@
   --pre-btn: #7a56a3;
   --pre-btn-hover: #654689;
   --pre-wash: #f1ebf8;
-  --pre-solid: #7a56a3;
   /* Amber, marking the viewer's own campaigns and owner-only controls. */
   --owner: #ad561c;
   --owner-bg: #fff0e4;
   --owner-line: #f0d2ab;
-  /* Progress-bar track on the owner-amber card surface. */
-  --owner-track: #f6ddbd;
   /* The measure corrector's desk: the surface the page sheets float on.
      Same value as --bg-inset; pairs with --shadow-inset. */
   --desk: #e3e7f0;
@@ -148,6 +174,10 @@
 
   --shadow-sm: 0 1px 3px rgba(31, 36, 51, 0.08);
   --shadow-md: 0 2px 8px rgba(31, 36, 51, 0.14);
+  /* The active option of a segmented control; the same in both themes. */
+  --shadow-segment: 0 1px 3px rgba(31, 36, 51, 0.22);
+  /* A button on paper on a tinted section; the same in both themes. */
+  --shadow-lift: 0 1px 2px rgba(31, 36, 51, 0.1);
   /* For a shadow whose geometry is the rule's own. */
   --shade: rgba(31, 36, 51, 0.16);
 
@@ -170,11 +200,11 @@
   /* The measure-correction layers, for text and glyphs beside the paper:
      staves, grand staves, measures, sections and systems. The same hues mark
      the boxes on the paper. */
-  --ink-staff: rgb(128, 34, 64);
-  --ink-grand: rgb(38, 100, 60);
-  --ink-measure: rgb(14, 129, 149);
-  --ink-movement: rgb(139, 95, 191);
-  --ink-system: rgb(36, 82, 178);
+  --ink-staff: rgb(var(--layer-staff));
+  --ink-grand: rgb(var(--layer-grand));
+  --ink-measure: rgb(var(--layer-measure));
+  --ink-movement: rgb(var(--layer-movement));
+  --ink-system: rgb(var(--layer-system));
 }
 
 /* Dark theme. Applied via [data-theme="dark"] on <html>, which an inline head
@@ -252,11 +282,9 @@
   --pre-btn: #8360b0;
   --pre-btn-hover: #7454a0;
   --pre-wash: rgba(184, 153, 221, 0.1);
-  --pre-solid: #7f5ba6;
   --owner: #ffa76d;
   --owner-bg: rgba(255, 167, 109, 0.15);
   --owner-line: #6e5530;
-  --owner-track: rgba(255, 167, 109, 0.26);
   --desk: #101423;
 
   --accent-tint: rgba(126, 202, 253, 0.07);

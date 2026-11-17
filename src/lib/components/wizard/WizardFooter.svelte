@@ -66,7 +66,7 @@
     {#if onBack}
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn press-touch"
         onclick={onBack}
         disabled={backDisabled || navBlocked !== undefined}
         title={navBlocked}
@@ -77,7 +77,7 @@
     {#if onNext}
       <button
         type="button"
-        class="btn btn-primary"
+        class="btn btn-primary press-touch"
         class:btn-finish={finish}
         onclick={onNext}
         disabled={nextDisabled || navBlocked !== undefined}
@@ -104,19 +104,6 @@
   :global(.card.solo) .footer {
     margin-top: 18px;
   }
-  /* On a touch screen the footer's 32px buttons take a 44px press through
-     an invisible ::after. */
-  @media (pointer: coarse) {
-    .footer > :global(.btn) {
-      position: relative;
-    }
-    .footer > :global(.btn)::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
-  }
-
   /* ---- Smaller windows ---------------------------------------------------- */
   @media (max-width: 999px) {
     .footer,

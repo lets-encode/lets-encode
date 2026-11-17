@@ -396,7 +396,7 @@
               <div class="nextacts">
                 <button
                   type="button"
-                  class="btn btn-primary {stageClass(featured)}"
+                  class="btn btn-primary press-touch {stageClass(featured)}"
                   onclick={() => (viewer === "" ? login() : onact(featured))}
                   disabled={busy ||
                     pendingVerdicts.taskProcessing(featured.task, repoId)}
@@ -439,7 +439,7 @@
           {#each listed as card (card.task)}
             {@const index = pieceIndex.get(card.task) ?? 0}
             <div class="trow" style={tintOf(index)}>
-              <span class="sdot"></span>
+              <span class="piecedot sdot"></span>
               <span class="stext">
                 <button
                   type="button"
@@ -475,7 +475,7 @@
         <div class="tlist">
           {#each waitingCards as card (card.task)}
             <div class="trow" style={tintOf(pieceIndex.get(card.task) ?? 0)}>
-              <span class="sdot"></span>
+              <span class="piecedot sdot"></span>
               <span class="stext">
                 <button
                   type="button"
@@ -560,14 +560,14 @@
                     title={`${p?.done ?? 0} done, ${review} in review, ${(p?.total ?? 0) - (p?.done ?? 0) - review} to do`}
                   >
                     {#if p?.done}
-                      <div class="seg done" style="flex: {p.done}"></div>
+                      <div class="barseg done" style="flex: {p.done}"></div>
                     {/if}
                     {#if review}
-                      <div class="seg review" style="flex: {review}"></div>
+                      <div class="barseg review" style="flex: {review}"></div>
                     {/if}
                     {#if p && p.total - p.done - review > 0}
                       <div
-                        class="seg"
+                        class="barseg"
                         style="flex: {p.total - p.done - review}"
                       ></div>
                     {/if}
@@ -798,7 +798,7 @@
     border-radius: 14px;
     padding: 18px 22px;
     box-shadow: var(--shadow-md);
-    transition: border-color 0.15s ease;
+    transition: border-color var(--dur-short) var(--ease);
   }
   @media (hover: hover) {
     .nextcard:hover {
@@ -878,7 +878,7 @@
     font-size: 11px;
     font-weight: 600;
     color: var(--ink);
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(var(--paper-label), 0.9);
     border: 1px solid var(--line);
     border-radius: 999px;
     line-height: 1;
@@ -929,18 +929,6 @@
     align-items: flex-start;
     margin-top: 6px;
   }
-  /* On a touch screen the 32px button takes a 44px press through an
-     invisible ::after. */
-  @media (pointer: coarse) {
-    .nextacts .btn {
-      position: relative;
-    }
-    .nextacts .btn::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
-  }
 
   /* ------------------------------------------------------- open-task list */
   .tlist {
@@ -955,7 +943,7 @@
     align-items: center;
     gap: 12px;
     padding: 9px 12px;
-    transition: background-color 0.15s ease;
+    transition: background-color var(--dur-short) var(--ease);
   }
   .trow + .trow {
     border-top: 1px solid var(--line);
@@ -966,10 +954,6 @@
     }
   }
   .sdot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
     background: var(--piece-tint);
   }
   .stext {
@@ -1076,10 +1060,10 @@
     background: var(--bg-tint);
     overflow: hidden;
   }
-  .seg.done {
+  .barseg.done {
     background: var(--green);
   }
-  .seg.review {
+  .barseg.review {
     background: var(--warn-line);
   }
   .piecedone {
@@ -1125,7 +1109,7 @@
     padding: 7px 10px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    transition: border-color 0.15s ease;
+    transition: border-color var(--dur-short) var(--ease);
   }
   @media (hover: hover) {
     .taskrow:not(.still):hover {

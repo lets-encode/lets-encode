@@ -809,7 +809,7 @@
     color: var(--danger);
     background: var(--card);
     border: 1px solid var(--line-input);
-    border-radius: 7px;
+    border-radius: var(--radius-strip);
     pointer-events: auto;
     cursor: pointer;
   }

@@ -102,8 +102,8 @@
   .rawlink input {
     flex: 1;
     min-width: 0;
-    font-size: 0.75rem;
-    font-family: ui-monospace, monospace;
+    font-size: 12px;
+    font-family: var(--mono);
     padding: 0.3rem 0.5rem;
     border: 1px solid var(--line-strong);
     border-radius: 6px;
@@ -111,7 +111,7 @@
   }
   .rawlink button {
     font: inherit;
-    font-size: 0.75rem;
+    font-size: 12px;
     padding: 0.2rem 0.6rem;
     border: 1px solid var(--line-strong);
     border-radius: 6px;

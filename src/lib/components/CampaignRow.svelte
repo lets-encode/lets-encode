@@ -210,8 +210,8 @@
     box-shadow: var(--shadow-sm);
     overflow: hidden;
     transition:
-      border-color 0.15s ease,
-      box-shadow 0.15s ease;
+      border-color var(--dur-short) var(--ease),
+      box-shadow var(--dur-short) var(--ease);
   }
   @media (hover: hover) {
     .shelfrow:hover {

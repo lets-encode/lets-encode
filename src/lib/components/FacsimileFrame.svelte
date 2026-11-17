@@ -260,7 +260,7 @@
   <div class="fftools">
     <button
       type="button"
-      class="tbtn tbtn-icon"
+      class="tbtn tbtn-icon press"
       aria-label="Zoom out"
       title="Zoom out"
       disabled={zoom <= ZOOM_MIN}
@@ -268,7 +268,7 @@
     >
     <button
       type="button"
-      class="tbtn tbtn-icon"
+      class="tbtn tbtn-icon press"
       aria-label="Zoom in"
       title="Zoom in"
       disabled={zoom >= ZOOM_MAX}
@@ -276,7 +276,7 @@
     >
     <button
       type="button"
-      class="tbtn tbtn-icon"
+      class="tbtn tbtn-icon press"
       class:on={framed && !away}
       aria-pressed={framed && !away}
       aria-label={fitLabel}
@@ -320,7 +320,7 @@
     stroke-width: 2;
   }
   /* The zoom controls in the view's top band. 32px buttons with a 44px
-     press through an invisible ::after. */
+     press (.press). */
   .fftools {
     position: absolute;
     top: 6px;
@@ -329,16 +329,10 @@
     gap: 6px;
   }
   .fftools .tbtn-icon {
-    position: relative;
     box-sizing: border-box;
     min-width: 32px;
     min-height: 32px;
     justify-content: center;
     box-shadow: var(--shadow-sm);
-  }
-  .fftools .tbtn-icon::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
   }
 </style>

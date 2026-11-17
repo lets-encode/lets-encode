@@ -198,7 +198,7 @@
       >
       <button
         type="button"
-        class="btn btn-soft"
+        class="btn"
         onclick={postComment}
         disabled={runner.busy ||
           !text.trim() ||

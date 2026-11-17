@@ -190,7 +190,7 @@
 <!-- On touch screens a long press opens no context menu (Android's save
      image menu) outside text fields and comment text. -->
 <div
-  class="corrector sidehost"
+  class="workshell corrector sidehost"
   data-stage="pre"
   role="presentation"
   oncontextmenu={(e) => {
@@ -222,7 +222,7 @@
     <!-- The work area: the source's first measure beside the preview of
          the setup, split by a divider that moves the boundary. A piece
          without page images has the preview alone. -->
-    <div class="main">
+    <div class="workmain">
       <h1 class="vh">Score setup · {session.pieceName || campaign}</h1>
       <div class="runrow"><TaskRunState task={taskId} {repoId} pill /></div>
       <div class="desk" bind:this={desk}>
@@ -399,28 +399,10 @@
 </div>
 
 <style>
-  /* The whole tool: the form and its preview on the desk, with the comments
-     panel — carrying the task box — beside it. The app's navigation bar and
-     footer come from the layout, as on every other page. */
-  .corrector {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    background: var(--desk);
-    box-shadow: var(--shadow-inset);
-  }
-  /* The side panel brings no outer spacing of its own; the score view's
-     host row provides it there. Docked below the tool it spans the width. */
-  .corrector > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 4px 0;
-  }
-  .main {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
+  /* The whole tool (.workshell, ui.css): the form and its preview on the
+     desk, with the comments panel — carrying the task box — beside it. The
+     app's navigation bar and footer come from the layout, as on every other
+     page. */
   /* The run state's pill above the work area; takes room only while shown. */
   .runrow {
     flex: none;

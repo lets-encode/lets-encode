@@ -172,23 +172,23 @@
     pointer-events: none;
   }
   .sysmark.on {
-    stroke: #fff;
+    stroke: rgb(var(--paper-label));
   }
   /* A repeat sign on its label: the label's ink, white on a selected box. */
   .repicon {
-    color: #1a1a1a;
+    color: rgb(var(--paper-ink));
     pointer-events: none;
   }
   .repicon.on {
-    color: #fff;
+    color: rgb(var(--paper-label));
   }
   /* A sign's tag: paper with the measure's colour as its edge. */
   .signtag {
     pointer-events: none;
-    color: #1a1a1a;
+    color: rgb(var(--paper-ink));
   }
   .signtag rect {
-    fill: rgba(255, 255, 255, 0.94);
+    fill: rgba(var(--paper-label), 0.94);
     stroke: rgba(var(--layer-measure), 0.85);
     stroke-width: 1px;
     vector-effect: non-scaling-stroke;
@@ -196,31 +196,31 @@
   .signtag text {
     font-family: var(--font);
     font-weight: 600;
-    fill: #1a1a1a;
+    fill: rgb(var(--paper-ink));
   }
   .labelbg {
-    fill: rgba(255, 255, 255, 0.88);
+    fill: rgba(var(--paper-label), 0.88);
     pointer-events: none;
   }
   .zonelabel {
-    font-family: ui-monospace, monospace;
+    font-family: var(--mono);
     font-weight: 600;
-    fill: #1a1a1a;
+    fill: rgb(var(--paper-ink));
     pointer-events: none;
   }
   /* The double bar of a section start, in the label's ink. */
   .dbar {
-    fill: #1a1a1a;
+    fill: rgb(var(--paper-ink));
     pointer-events: none;
   }
   .dbar.on {
-    fill: #fff;
+    fill: rgb(var(--paper-label));
   }
   /* The selected measure's number label in the measure colour. */
   .labelbg.on {
     fill: rgb(var(--layer-measure));
   }
   .zonelabel.on {
-    fill: #fff;
+    fill: rgb(var(--paper-label));
   }
 </style>

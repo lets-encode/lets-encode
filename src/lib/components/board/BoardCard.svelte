@@ -92,7 +92,7 @@
   {/if}
   {#if pieceListed}
     <div class="card-piece" style="--zone: var(--zone-{zone})">
-      <span class="piece-dot"></span>
+      <span class="piecedot"></span>
       <span class="card-pname" title={card.piece}>{clipTitle(card.piece)}</span>
     </div>
   {/if}
@@ -284,14 +284,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  /* The piece's colour, as on its dot in the piece rail. */
-  .piece-dot {
-    flex: none;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--zone);
-  }
   .card.col-blocked .card-title,
   .card.col-done .card-title {
     color: var(--ink-soft);
@@ -320,19 +312,6 @@
     align-items: center;
     gap: 7px;
     padding-top: 4px;
-  }
-  .avatar {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-btn);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
   }
   .worker-line {
     font-size: 11.5px;

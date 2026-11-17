@@ -7,6 +7,7 @@
   import type { Snippet } from "svelte";
   import { differentReason } from "$lib/encoding-align.ts";
   import type { AlignedEncoding } from "$lib/encoding-merge.ts";
+  import WorkspaceFooter from "$lib/components/WorkspaceFooter.svelte";
 
   let {
     aligned,
@@ -25,12 +26,11 @@
   } = $props();
 </script>
 
-<div class="wfoot">
-  <span class="abcount wsum">
+<WorkspaceFooter {status}>
+  {#snippet summary()}
     {aligned.summary.filled} of {aligned.layout.length} measures from the file
     {#if aligned.summary.empty}· {aligned.summary.empty} empty{/if}
-  </span>
-  <span class="wstatus">{@render status()}</span>
+  {/snippet}
   <button
     type="button"
     class="btn btn-primary btn-pre"
@@ -47,30 +47,4 @@
   >
     Submit alignment
   </button>
-</div>
-
-<style>
-  .wfoot {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .wsum {
-    flex-basis: 100%;
-  }
-  .wstatus {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-    min-width: 0;
-  }
-  .abcount {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-</style>
+</WorkspaceFooter>

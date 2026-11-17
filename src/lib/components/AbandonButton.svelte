@@ -37,7 +37,7 @@
 {:else}
   <button
     type="button"
-    class="btn btn-soft"
+    class="btn"
     {disabled}
     onclick={() => (asking = true)}
     title={review

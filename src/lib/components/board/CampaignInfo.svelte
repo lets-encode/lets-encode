@@ -112,7 +112,7 @@
 
 <style>
   .mono {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-family: var(--mono);
   }
   .muted {
     color: var(--ink-faint);

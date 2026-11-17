@@ -186,7 +186,7 @@
 <!-- On touch screens a long press opens no context menu (Android's save
      image menu) outside text fields and comment text. -->
 <div
-  class="corrector sidehost"
+  class="workshell corrector sidehost"
   data-stage="pre"
   role="presentation"
   oncontextmenu={(e) => {
@@ -215,7 +215,7 @@
   {:else if session.loadError}
     <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data}
-    <div class="main">
+    <div class="workmain main">
       <h1 class="vh">{taskTitle} · {session.pieceName || campaign}</h1>
       <ZoneToolbar
         {view}
@@ -323,7 +323,7 @@
     {#snippet reviewNext()}
       <button
         type="button"
-        class="btn btn-secondary"
+        class="btn"
         onclick={() => setLayoutStep(steps.nextMissing as LayoutStep)}
         title={`Go on to step ${steps.nextMissing}. Approve is available once every step has been opened.`}
       >
@@ -429,22 +429,10 @@
 </div>
 
 <style>
-  /* The whole tool: the desk the page sheets float on (the only scrolling
-     region), with the side panel — carrying the task box — beside it.
-     The app's navigation bar and footer come from the layout, as on every
-     other page. */
-  .corrector {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    background: var(--desk);
-    box-shadow: var(--shadow-inset);
-  }
-  /* The side panel brings no outer spacing of its own; the score view's
-     host row provides it there. Docked below the tool it spans the width. */
-  .corrector > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 4px 0;
-  }
+  /* The whole tool (.workshell, ui.css): the desk the page sheets float on
+     (the only scrolling region), with the side panel — carrying the task
+     box — beside it. The app's navigation bar and footer come from the
+     layout, as on every other page. */
   /* A phone sheet: less space around the steps and the selection's heading. */
   @media (orientation: portrait) and (max-width: 559px) {
     .corrector :global(.sptools) {
@@ -460,11 +448,6 @@
   /* The tool column: its toolbar's top edge and the side panel's are one
      line, 12px below the navigation bar. */
   .main {
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
     padding: 12px 16px 0;
     box-sizing: border-box;
     container-type: inline-size;

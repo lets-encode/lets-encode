@@ -91,7 +91,7 @@
           <Icon name="grip" />
         </button>
       {/if}
-      <span class="staffno">{i + 1}</span>
+      <span class="setup-staffno staffno">{i + 1}</span>
       <div class="staffline">
         <input
           class="ctl grow"
@@ -257,8 +257,9 @@
   .staffrow > .staffline + .staffline {
     gap: 4px;
   }
-  /* A transposing instrument's staff, in a tint of its own. */
-  .staffrow.transposing {
+  /* A transposing instrument's staff, in a tint of its own; the dragged
+     row's fill (.dragged) takes its place. */
+  .staffrow.transposing:not(.dragged) {
     background: var(--pre-wash);
   }
   .staffrow.pointed {
@@ -271,10 +272,6 @@
     grid-column: 1;
     justify-self: center;
     align-self: center;
-  }
-  .staffrow.dragged {
-    background: var(--accent-tint-strong);
-    box-shadow: 0 2px 8px rgba(31, 36, 51, 0.14);
   }
   .staffrow.picked {
     background: var(--accent-tint-strong);
@@ -324,19 +321,11 @@
   .staffline > .ctl.lines {
     flex: 0 0 96px;
   }
-  .staffno {
-    flex: none;
-    width: 22px;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--ink-faint);
-    font-variant-numeric: tabular-nums;
-  }
   .addbtn {
     align-self: flex-start;
   }
-  /* No element of the score setup carries .meterrow, .mfield, .field or
-     .rowbtns; KeyTimeFields styles its own fields. */
+  /* No element of the score setup carries .meterrow, .field or .rowbtns;
+     KeyTimeFields styles its own fields. */
   /* Key and time signature: two controls to a row, labelled like the
      group rows, set like the staff rows. */
   .meterrow {
@@ -346,17 +335,6 @@
   }
   .meterrow + .meterrow {
     margin-top: 8px;
-  }
-  .mfield {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-  .mfield > span {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--ink-faint);
   }
   .field {
     flex: 1;

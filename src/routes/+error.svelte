@@ -37,10 +37,8 @@
   <p class="actions">
     <a class="btn btn-primary" href="/campaigns">All campaigns</a>
     {#if !missing}
-      <button
-        type="button"
-        class="btn btn-secondary"
-        onclick={() => location.reload()}>Reload</button
+      <button type="button" class="btn" onclick={() => location.reload()}
+        >Reload</button
       >
     {/if}
   </p>

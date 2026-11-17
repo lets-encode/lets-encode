@@ -202,19 +202,6 @@
     gap: 7px;
     min-width: 0;
   }
-  .avatar {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-btn);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
-  }
   .cwho {
     font-size: 11.5px;
     font-weight: 600;

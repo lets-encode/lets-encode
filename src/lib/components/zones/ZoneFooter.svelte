@@ -8,6 +8,7 @@
   import type { Snippet } from "svelte";
   import type { LayoutStep } from "$lib/zones/layout-steps.svelte.ts";
   import type { StaffTranscription } from "$lib/zones/staff-transcription.svelte.ts";
+  import WorkspaceFooter from "$lib/components/WorkspaceFooter.svelte";
 
   let {
     status,
@@ -51,7 +52,7 @@
   {#if layoutStep === 1}
     <button
       type="button"
-      class="btn btn-secondary"
+      class="btn"
       onclick={() => onstep(2)}
       title={`Go on to step 2: the grand staves, one box around the staves one performer plays together.${canEdit ? ` Submission is in step ${lastStep}.` : ""}`}
     >
@@ -60,7 +61,7 @@
   {:else if layoutStep === 2}
     <button
       type="button"
-      class="btn btn-secondary"
+      class="btn"
       onclick={() => onstep(3)}
       title={`Go on to step 3: the measures, their numbers and breaks.${canEdit ? ` Submission is in step ${lastStep}.` : ""}`}
     >
@@ -69,7 +70,7 @@
   {:else if naming && layoutStep === 3}
     <button
       type="button"
-      class="btn btn-secondary"
+      class="btn"
       onclick={() => onstep(4)}
       title={`Go on to step 4: the instrument of every staff.${canEdit ? " Submission is in step 4." : ""}`}
     >
@@ -78,7 +79,7 @@
   {/if}
 {/snippet}
 
-<div class="wfoot">
+<WorkspaceFooter class="presses-docked">
   <!-- Why Submit is not available yet, while it is the step's button. -->
   {#if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
     <p class="blockline">{submitBlock}</p>
@@ -122,18 +123,12 @@
       Submit corrections
     </button>
   {/if}
-</div>
+</WorkspaceFooter>
 
 <style>
-  /* Give back task and the step's button at the two ends of one row; the draft
-     state shows over the pages (DraftBubble). */
-  .wfoot {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-  .wfoot > .btn {
+  /* Give back task and the step's button at the two ends of the footer's row
+     (WorkspaceFooter); the draft state shows over the pages (DraftBubble). */
+  :global(.wfoot) > .btn {
     margin-left: auto;
   }
   .blockline {
@@ -152,19 +147,5 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-  }
-  .wfoot :global(.btn) {
-    white-space: nowrap;
-  }
-  /* Docked as a sheet the buttons take a 44px press. */
-  @media (orientation: portrait) and (max-width: 1100px) {
-    .wfoot :global(.btn) {
-      position: relative;
-    }
-    .wfoot :global(.btn)::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
   }
 </style>

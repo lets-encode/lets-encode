@@ -37,7 +37,8 @@
   <span class="btns">
     <button
       type="button"
-      class="btn {soft ? 'btn-soft' : 'btn-danger'}"
+      class="btn"
+      class:btn-danger={!soft}
       {disabled}
       onclick={onconfirm}>{confirm}</button
     >

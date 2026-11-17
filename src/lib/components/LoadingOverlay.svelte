@@ -103,6 +103,6 @@
   .overlay-sub {
     margin: 0;
     color: var(--ink-faint);
-    font-size: 0.85rem;
+    font-size: 13.5px;
   }
 </style>

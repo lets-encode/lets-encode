@@ -61,7 +61,11 @@
       live in a repository on your account.
     </p>
     {#snippet footer()}
-      <button type="button" class="btn btn-primary" onclick={() => login()}>
+      <button
+        type="button"
+        class="btn btn-primary press-touch"
+        onclick={() => login()}
+      >
         Log in with GitHub
       </button>
     {/snippet}

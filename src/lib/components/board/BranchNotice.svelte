@@ -49,7 +49,7 @@
   <div class="branch-actions">
     <button
       type="button"
-      class="btn btn-secondary"
+      class="btn"
       onclick={() =>
         navigator.clipboard
           .writeText(branch.command)

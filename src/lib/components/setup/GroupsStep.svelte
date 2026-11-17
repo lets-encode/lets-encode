@@ -199,7 +199,7 @@
 <style>
   .muted {
     color: var(--ink-faint);
-    font-size: 0.9rem;
+    font-size: 14px;
   }
   /* The marking in the preview: what to do next, then its buttons. */
   .markline {

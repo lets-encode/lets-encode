@@ -90,12 +90,12 @@
   .failure-label {
     margin: 0 0 2px;
     font-weight: 600;
-    font-size: 0.85rem;
+    font-size: 13.5px;
   }
   .failure-message {
     margin: 0;
     color: var(--danger);
-    font-size: 0.85rem;
+    font-size: 13.5px;
     overflow-wrap: anywhere;
   }
 </style>

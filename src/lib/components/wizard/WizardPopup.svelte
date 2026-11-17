@@ -64,7 +64,7 @@
 <style>
   .popup {
     position: fixed;
-    z-index: 30;
+    z-index: var(--z-popover);
     box-sizing: border-box;
     background: var(--card);
     border: 1px solid var(--line);

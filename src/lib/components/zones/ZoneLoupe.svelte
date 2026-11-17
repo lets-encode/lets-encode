@@ -55,7 +55,9 @@
         .items(loupe.p, tool)
         .filter((it) => it.box.lrx > loupe!.x - span / 2 && it.box.ulx < loupe!.x + span / 2 && it.box.lry > loupe!.y - span / 2 && it.box.uly < loupe!.y + span / 2) as it, i (i)}
         <rect
-          class={tool === "measures" ? "zone" : "staff"}
+          class={tool === "measures"
+            ? "zonebox-measure"
+            : "zonebox-staff staff"}
           class:grand={tool === "grandstaves"}
           vector-effect="non-scaling-stroke"
           x={it.box.ulx}
@@ -84,19 +86,8 @@
     touch-action: none;
     user-select: none;
   }
-  /* The boxes in the colours of the page's boxes (ZonePageCanvas). */
-  .zone {
-    fill: rgba(var(--layer-measure), 0.2);
-    stroke: rgba(var(--layer-measure), 0.85);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    cursor: pointer;
-  }
-  .staff {
-    fill: rgba(var(--layer-staff), 0.16);
-    stroke: rgba(var(--layer-staff), 0.9);
-    stroke-width: calc(2px * var(--stroke-scale, 1));
-    cursor: pointer;
-  }
+  /* The boxes are those of the page (.zonebox-measure and .zonebox-staff,
+     ui.css); a grand staff in the colour it has there (ZonePageCanvas). */
   .staff.grand {
     fill: rgba(var(--layer-grand), 0.16);
     stroke: rgba(var(--layer-grand), 0.9);
@@ -104,7 +95,7 @@
   /* The magnifier above a finger resizing or drawing a box. */
   .loupe {
     position: fixed;
-    z-index: 60;
+    z-index: var(--z-overlay);
     border-radius: 50%;
     overflow: hidden;
     pointer-events: none;

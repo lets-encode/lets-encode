@@ -81,7 +81,7 @@
 <style>
   .muted {
     color: var(--ink-faint);
-    font-size: 0.9rem;
+    font-size: 14px;
   }
   /* The preview column: a sheet at the column's full size with the
      rendered setup at the width the script computes (--w), its first staff
@@ -121,7 +121,7 @@
     pointer-events: none;
   }
   .staffmark.lit {
-    color: #1b66c7;
+    color: rgb(var(--paper-select));
   }
   .sheet > :global(svg) {
     display: block;
@@ -149,7 +149,7 @@
   /* The staves a row of the form points at, and the marked ones. */
   .sheet :global(g.staff.pointed),
   .sheet :global(g.staff.pointed *) {
-    fill: #1b66c7;
-    stroke: #1b66c7;
+    fill: rgb(var(--paper-select));
+    stroke: rgb(var(--paper-select));
   }
 </style>

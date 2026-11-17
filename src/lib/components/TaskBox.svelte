@@ -316,7 +316,7 @@
       {#if act.target === "mei-friend"}
         <button
           type="button"
-          class="btn btn-primary btn-{act.stage}"
+          class="btn press-touch btn-primary btn-{act.stage}"
           onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
           title={auth.user ? act.title : "Log in with GitHub to claim a task."}
@@ -324,7 +324,7 @@
         >
       {:else}
         <a
-          class="btn btn-primary btn-{act.stage}"
+          class="btn press-touch btn-primary btn-{act.stage}"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}
@@ -340,14 +340,14 @@
         {#if act.target === "mei-friend"}
           <button
             type="button"
-            class="btn btn-primary"
+            class="btn press-touch btn-primary"
             onclick={() => oneditor?.(card.task)}
             disabled={runner.busy || processing}
             title={act.title}>{act.label} <Icon name="external" /></button
           >
         {:else}
           <a
-            class="btn btn-primary"
+            class="btn press-touch btn-primary"
             href={processing
               ? undefined
               : (taskActionHref(campaign, card, act) ?? undefined)}
@@ -367,14 +367,14 @@
       <div class="tspfoot">
         <button
           type="button"
-          class="btn btn-primary btn-{act.stage}"
+          class="btn press-touch btn-primary btn-{act.stage}"
           onclick={() => onclaim(card.task, claimableSub)}
           disabled={runner.busy || processing}
           title={act.title}>{act.label}</button
         >
         {#if !card.pre && !inView}
           <a
-            class="btn btn-soft"
+            class="btn press-touch"
             href={reviewViewHref(campaign, card.task)}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review</a
@@ -385,7 +385,7 @@
       {@const act = taskAction(card, "continue-review")}
       <div class="tspfoot">
         <a
-          class="btn btn-primary"
+          class="btn press-touch btn-primary"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}
@@ -402,7 +402,7 @@
   {:else if card.column === "done" && card.pre}
     <div class="tspfoot">
       <a
-        class="btn"
+        class="btn press-touch"
         href={editorRoute}
         title={`Open the accepted work in the ${editorName}, read-only.`}
         >View {editorName}</a
@@ -474,7 +474,7 @@
     display: none;
   }
   .more summary :global(svg) {
-    transition: transform 160ms ease-out;
+    transition: transform var(--dur-short) var(--ease);
   }
   .more[open] summary :global(svg) {
     transform: rotate(180deg);
@@ -493,19 +493,6 @@
     display: flex;
     align-items: center;
     gap: 7px;
-  }
-  .avatar {
-    width: 20px;
-    height: 20px;
-    border-radius: 50%;
-    background: var(--accent-btn);
-    color: #fff;
-    font-size: 10px;
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: none;
   }
   .subtext {
     font-size: 11.5px;
@@ -531,17 +518,5 @@
   }
   .tspfoot .btn {
     padding-block: 4px;
-  }
-  /* On a touch screen the 32px buttons take a 44px press through an
-     invisible ::after. */
-  @media (pointer: coarse) {
-    .tspfoot .btn {
-      position: relative;
-    }
-    .tspfoot .btn::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
   }
 </style>

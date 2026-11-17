@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import ListPanel from "$lib/components/campaign-list/ListPanel.svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { handle, taskHref } from "$lib/campaign-graph.ts";
   import type { CampaignStats } from "$lib/campaign-stats.ts";
@@ -41,7 +42,7 @@
 </script>
 
 {#if attention.length > 0}
-  <section class="panel">
+  <ListPanel>
     <h2 class="stitle danger">
       <img class="hand-attn" src="/attention-hand.svg" alt="" />Needs your
       attention
@@ -87,26 +88,10 @@
         >
       {/if}
     </div>
-  </section>
+  </ListPanel>
 {/if}
 
 <style>
-  .panel {
-    padding: 14px 16px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
-  }
-  .panel > .stitle {
-    margin-bottom: 6px;
-  }
-  .stitle {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
-  }
   .stitle.danger {
     display: flex;
     align-items: center;
@@ -116,59 +101,6 @@
   .hand-attn {
     height: 22px;
     flex: none;
-  }
-  .items {
-    display: flex;
-    flex-direction: column;
-  }
-  .item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px 10px;
-    margin: 0 -10px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    color: inherit;
-    text-decoration: none;
-  }
-  @media (hover: hover) {
-    a.item:hover {
-      background: var(--bg-tint);
-    }
-  }
-  .itext {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    color: inherit;
-    text-decoration: none;
-  }
-  /* In the narrow side column titles wrap to at most two lines, so their end
-     still tells similar tasks apart; full width (the page's .layout without
-     .split), they keep to one line. */
-  .ititle {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--ink);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-  }
-  :global(.layout:not(.split)) .ititle {
-    display: block;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
-  .isub {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
   .moretoggle {
     align-self: flex-start;

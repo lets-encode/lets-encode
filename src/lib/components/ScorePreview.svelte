@@ -1034,35 +1034,33 @@
      vector-effect="non-scaling-stroke" — so they stay even at every zoom. */
   .pv-zone {
     fill: rgba(109, 195, 255, 0.12);
-    stroke: rgba(37, 99, 201, 0.55);
+    stroke: rgba(var(--paper-select), 0.55);
     stroke-width: 1.5;
     cursor: pointer;
   }
   .pv-zone.flagged {
-    fill: rgba(180, 35, 24, 0.1);
-    stroke: #b42318;
+    fill: rgba(var(--paper-flag), 0.1);
+    stroke: rgb(var(--paper-flag));
     stroke-width: 2.5;
   }
   .pv-zone.sel {
-    fill: rgba(37, 99, 201, 0.18);
-    stroke: #2563c9;
+    fill: rgba(var(--paper-select), 0.18);
+    stroke: rgb(var(--paper-select));
     stroke-width: 2.5;
   }
   .pv-zonelabel {
-    font:
-      24px ui-monospace,
-      monospace;
-    fill: #1a1a1a;
+    font: 24px var(--mono);
+    fill: rgb(var(--paper-ink));
     paint-order: stroke;
-    stroke: #fff;
+    stroke: rgb(var(--paper-label));
     stroke-width: 4;
   }
   .pv-zonelabel.flagged {
-    fill: #b42318;
+    fill: rgb(var(--paper-flag));
     font-weight: 600;
   }
   .pv-zonelabel.sel {
-    fill: #2563c9;
+    fill: rgb(var(--paper-select));
     font-weight: 600;
   }
   /* The whole page is clickable (clicks resolve to a measure's bounding
@@ -1071,12 +1069,12 @@
     cursor: pointer;
   }
   .pv-sheet :global(g.measure.m-flag *) {
-    fill: #b42318;
-    stroke: #b42318;
+    fill: rgb(var(--paper-flag));
+    stroke: rgb(var(--paper-flag));
   }
   /* The selection wins over a fail flag where both mark the same measure. */
   .pv-sheet :global(g.measure.m-sel *) {
-    fill: #2563c9;
-    stroke: #2563c9;
+    fill: rgb(var(--paper-select));
+    stroke: rgb(var(--paper-select));
   }
 </style>

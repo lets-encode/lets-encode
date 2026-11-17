@@ -6,6 +6,21 @@
    and fonts come from the tokens in theme.css.
    ========================================================================= */
 
+/* ---- Breakpoints -------------------------------------------------------
+   A media or container query cannot read a custom property, so each rule
+   writes its query out. The query strings in use for the two layout widths:
+     Docked (the side panel below the content; DOCKED_QUERY in
+     side-panels.ts):
+       @media (orientation: portrait) and (max-width: 1100px)
+     Phone:
+       @media (max-width: 560px)       app shell, campaigns page, notices
+       @media (max-width: 599px)       wizard
+       @media (max-width: 640px)       instrument naming
+       @media (orientation: portrait) and (max-width: 559px)
+                                       docked sheet at phone width
+       @container (max-width: 559px)   page viewers, selection panel
+       @container (min-width: 560px)   selection panel */
+
 /* ---- Buttons -----------------------------------------------------------
    One vocabulary for every button in the app. .btn is the soft default: a
    faint ink-tinted fill (--soft) with no outline, pill radius. A surface
@@ -14,7 +29,6 @@
      .btn-primary   solid accent — at most one per surface (page, open dock
                     panel, or wizard footer); its label states the consequence
      .btn-finish    the solid green Pass/complete action (the only solid green)
-     .btn-secondary / .btn-soft   the same soft fill, kept as names
      .btn-danger    red label on the soft fill — danger actions are never solid
      .btn-icon      round icon-only button (32×32)
    Buttons are at most 32px tall; sizing comes from context, not new
@@ -32,7 +46,7 @@
   color: var(--ink);
   background: var(--btn-bg, var(--soft));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
@@ -222,7 +236,7 @@ a.btn[aria-disabled="true"] {
   padding: 3px;
   background: var(--bg-tint);
   box-shadow: inset 0 0 0 1px var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .seg > button {
   cursor: pointer;
@@ -235,7 +249,7 @@ a.btn[aria-disabled="true"] {
   color: var(--ink-soft);
   background: transparent;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 @media (hover: hover) {
@@ -246,7 +260,7 @@ a.btn[aria-disabled="true"] {
 .seg > button.on {
   color: var(--ink);
   background: var(--card);
-  box-shadow: 0 1px 3px rgba(31, 36, 51, 0.22);
+  box-shadow: var(--shadow-segment);
 }
 .seg > button:disabled {
   opacity: 0.5;
@@ -262,7 +276,7 @@ a.btn[aria-disabled="true"] {
   color: var(--ink-soft);
   background: var(--btn-bg, var(--soft));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--btn-shadow, none);
 }
 @media (hover: hover) {
@@ -306,7 +320,7 @@ a.btn[aria-disabled="true"] {
 }
 
 /* A small status chip: neutral for a task's state, coloured for a result
-   (.chip-ok, .chip-err) or something that needs attention (.chip-fail,
+   (.chip-ok, .chip-fail) or something that needs attention (.chip-fail,
    .chip-note). */
 .chip {
   display: inline-flex;
@@ -317,7 +331,7 @@ a.btn[aria-disabled="true"] {
   color: var(--ink-soft);
   background: var(--bg-tint);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   line-height: 1;
   padding: 4px 10px;
   white-space: nowrap;
@@ -330,11 +344,6 @@ a.btn[aria-disabled="true"] {
 button.chip {
   min-height: 24px;
   cursor: pointer;
-}
-.chip.chip-err {
-  color: var(--danger);
-  background: var(--danger-bg);
-  border-color: var(--danger-line);
 }
 /* Attention chips on a task (fails, comments) and measure-anchor chips. */
 .chip.chip-fail {
@@ -362,7 +371,7 @@ button.chip {
   letter-spacing: 0;
   text-transform: none;
   padding: 3px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-variant-numeric: tabular-nums;
 }
@@ -370,7 +379,7 @@ button.chip {
    the element itself) takes the card's colour and a light shadow. */
 .on-tint {
   --btn-bg: var(--card);
-  --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+  --btn-shadow: var(--shadow-lift);
   --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
 }
 /* A task's standing among the viewer's tasks: your next task, just
@@ -383,7 +392,7 @@ button.chip {
   letter-spacing: 0.03em;
   line-height: 1;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
   color: #fff;
   background: var(--st-solid);
@@ -397,6 +406,30 @@ button.chip {
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+/* A person's initial in a 20px circle. */
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent-btn);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+/* An 8px circle in a piece's colour (--zone). */
+.piecedot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--zone);
 }
 
 /* An on/off toggle: a soft pill at rest, the stage tint with the stage's
@@ -413,7 +446,7 @@ button.chip {
   color: var(--ink-soft);
   background: var(--btn-bg, var(--soft));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
@@ -478,7 +511,7 @@ button.chip {
   height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--line) 55%, transparent);
   color: var(--ink-soft);
   cursor: grab;
@@ -506,6 +539,11 @@ button.chip {
 .grip.target {
   cursor: pointer;
 }
+/* The row moving with the pointer. */
+.dragged {
+  background: var(--accent-tint-strong);
+  box-shadow: var(--shadow-md);
+}
 
 /* ---- Pane divider --------------------------------------------------------
    The grab bar between two panes side by side, with a centred handle;
@@ -523,7 +561,7 @@ button.chip {
   content: "";
   width: 3px;
   height: 2.5rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--line);
 }
 @media (hover: hover) {
@@ -643,6 +681,43 @@ button.chip {
   }
 }
 
+/* ---- Press area ---------------------------------------------------------
+   A 32px control takes a 44px press through an invisible ::after that
+   reaches 6px past each edge. The class goes on the control and names the
+   condition: .press always, .press-touch on a coarse pointer, .press-docked
+   on the docked query. .presses-docked goes on a container, for every .btn
+   and .tbtn inside it. */
+.press {
+  position: relative;
+}
+.press::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+@media (pointer: coarse) {
+  .press-touch {
+    position: relative;
+  }
+  .press-touch::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
+@media (orientation: portrait) and (max-width: 1100px) {
+  .press-docked,
+  .presses-docked :is(.btn, .tbtn) {
+    position: relative;
+  }
+  .press-docked::after,
+  .presses-docked :is(.btn, .tbtn)::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
+
 /* ---- Form controls ----------------------------------------------------- */
 .input {
   display: block;
@@ -657,7 +732,7 @@ button.chip {
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line-input);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
 }
 .input:focus-visible {
   outline: 2px solid var(--accent);
@@ -695,7 +770,7 @@ textarea.input {
   height: 32px;
   padding: 4px 8px;
   border: 1px solid var(--line-input);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--card);
   color: var(--ink);
   text-overflow: ellipsis;
@@ -715,6 +790,18 @@ select.ctl {
   display: block;
   font-size: 13px;
   font-weight: 600;
+}
+/* A small label (a span) stacked above its control. */
+.mfield {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.mfield > span {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
 }
 
 /* ---- Messages ----------------------------------------------------------
@@ -742,7 +829,7 @@ select.ctl {
   font-size: 0.9rem;
   color: var(--danger);
   border: 1px solid var(--danger);
-  border-radius: 6px;
+  border-radius: var(--radius-strip);
 }
 /* A failure reported next to the control it concerns, rather than in a box. */
 .msg-error-inline {
@@ -775,7 +862,7 @@ select.ctl {
   flex-direction: column;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -790,10 +877,7 @@ select.ctl {
   box-shadow: none;
 }
 .vtoolbar .toolbar-name {
-  font:
-    11.5px ui-monospace,
-    Menlo,
-    monospace;
+  font: 11.5px var(--mono);
   color: var(--ink-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -825,10 +909,10 @@ select.ctl {
   border-radius: 0;
 }
 .tbtn-pair > .tbtn:first-child {
-  border-radius: 999px 0 0 999px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
 }
 .tbtn-pair > .tbtn:last-child {
-  border-radius: 0 999px 999px 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
 }
 .tbtn-pair > * + * {
   margin-left: 2px;
@@ -937,7 +1021,7 @@ select.ctl {
 .notice.card {
   padding: 10px 14px;
   background: var(--nt-wash);
-  border-radius: 10px;
+  border-radius: var(--radius-tile);
 }
 .notice.strip {
   flex: none;
@@ -1028,7 +1112,7 @@ select.ctl {
   padding: 14px 16px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-tile);
   cursor: pointer;
 }
 @media (hover: hover) {
@@ -1067,7 +1151,7 @@ select.ctl {
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-overlay);
   width: auto;
   height: auto;
   max-width: none;
@@ -1098,7 +1182,7 @@ select.ctl {
   padding: 26px 34px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   box-shadow: 0 12px 44px var(--shade);
   text-align: center;
 }
@@ -1144,6 +1228,28 @@ select.ctl {
     flex-direction: column !important;
     gap: 0 !important;
   }
+}
+
+/* ------------------------------------------------------------ task workspace
+   A task page's desk: the work column and, beside it, the side panel, which
+   brings no outer spacing of its own. Markup: <div class="workshell
+   sidehost"><div class="workmain">work</div><SidePanel /></div> */
+.workshell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--desk);
+  box-shadow: var(--shadow-inset);
+}
+.workshell > .spwrap:not(.docked) {
+  margin: 12px 16px 4px 0;
+}
+.workmain {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ------------------------------------------------------- selection controls
@@ -1201,7 +1307,7 @@ select.ctl {
   color: var(--ink);
   background: var(--card);
   border: 1px solid var(--line-input);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .selnum:focus-visible {
   outline: 2px solid var(--accent);
@@ -1376,7 +1482,7 @@ select.ctl {
   text-align: left;
   background: none;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 @media (hover: hover) {
@@ -1436,7 +1542,7 @@ select.ctl {
     padding: 3px;
     background: var(--bg-tint);
     box-shadow: inset 0 0 0 1px var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
   }
   .steps::before {
     display: none;
@@ -1457,7 +1563,7 @@ select.ctl {
   }
   .step.on {
     background: var(--card);
-    box-shadow: 0 1px 3px rgba(31, 36, 51, 0.22);
+    box-shadow: var(--shadow-segment);
   }
   /* Dark paper is darker than the track; the active cell lifts lighter. */
   [data-theme="dark"] .step.on {
@@ -1516,6 +1622,41 @@ select.ctl {
     display: inline;
     flex: 0 1 auto;
   }
+}
+
+/* --------------------------------------------------------------- score setup
+   In the setup form and its summary: a section's heading, and a staff's
+   number before its row. */
+.setup-grouphead {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.setup-staffno {
+  flex: none;
+  width: 22px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- zone boxes
+   A measure's and a staff's box at rest on a page of the zone editor and in
+   its magnifier: SVG rects whose markup sets
+   vector-effect="non-scaling-stroke", the stroke in screen pixels scaled by
+   --stroke-scale. */
+.zonebox-measure {
+  fill: rgba(var(--layer-measure), 0.2);
+  stroke: rgba(var(--layer-measure), 0.85);
+  stroke-width: calc(2px * var(--stroke-scale, 1));
+  cursor: pointer;
+}
+.zonebox-staff {
+  fill: rgba(var(--layer-staff), 0.16);
+  stroke: rgba(var(--layer-staff), 0.9);
+  stroke-width: calc(2px * var(--stroke-scale, 1));
+  cursor: pointer;
 }
 
 /* Verovio's own rules for the SVG it renders, which reach the page without

@@ -219,7 +219,7 @@
     {/if}
   {:else}
     <div class="fields">
-      <label class="field">
+      <label class="field metafield">
         Title
         <input
           class="input"
@@ -230,7 +230,7 @@
         />
       </label>
       {#if view === "short"}
-        <label class="field">
+        <label class="field metafield">
           Composer
           <input
             class="input"
@@ -238,7 +238,7 @@
             placeholder="e.g. L. van Beethoven"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Lyricist
           <input
             class="input"
@@ -246,7 +246,7 @@
             placeholder="e.g. J. W. von Goethe"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Editor
           <input
             class="input"
@@ -256,7 +256,7 @@
         </label>
         {#if variant === "source"}
           <div class="pair">
-            <label class="field grow">
+            <label class="field metafield grow">
               Publisher
               <input
                 class="input"
@@ -264,7 +264,7 @@
                 placeholder="e.g. Breitkopf &amp; Härtel"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Place of publication
               <input
                 class="input"
@@ -272,7 +272,7 @@
                 placeholder="e.g. Leipzig"
               />
             </label>
-            <label class="field year">
+            <label class="field metafield year">
               Year
               <input
                 class="input"
@@ -283,7 +283,7 @@
           </div>
         {/if}
       {:else}
-        <label class="field">
+        <label class="field metafield">
           Composer
           <input
             class="input"
@@ -291,7 +291,7 @@
             placeholder="e.g. L. van Beethoven"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Lyricist
           <input
             class="input"
@@ -299,7 +299,7 @@
             placeholder="e.g. J. W. von Goethe"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Editor
           <input
             class="input"
@@ -309,7 +309,7 @@
         </label>
         {#if variant === "source"}
           <div class="row">
-            <label class="field grow">
+            <label class="field metafield grow">
               Publisher
               <input
                 class="input"
@@ -317,7 +317,7 @@
                 placeholder="e.g. Breitkopf &amp; Härtel"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Place of publication
               <input
                 class="input"
@@ -325,7 +325,7 @@
                 placeholder="e.g. Leipzig"
               />
             </label>
-            <label class="field year">
+            <label class="field metafield year">
               Year
               <input
                 class="input"
@@ -335,7 +335,7 @@
             </label>
           </div>
           <div class="row">
-            <label class="field grow">
+            <label class="field metafield grow">
               Edition
               <input
                 class="input"
@@ -343,7 +343,7 @@
                 placeholder="e.g. 2nd revised edition"
               />
             </label>
-            <label class="field year">
+            <label class="field metafield year">
               Year of edition
               <input
                 class="input"
@@ -351,7 +351,7 @@
                 placeholder="e.g. 1854"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Extent
               <input
                 class="input"
@@ -361,7 +361,7 @@
             </label>
           </div>
           <div class="row">
-            <label class="field grow">
+            <label class="field metafield grow">
               Holding institution
               <input
                 class="input"
@@ -369,7 +369,7 @@
                 placeholder="e.g. Austrian National Library"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Shelfmark
               <input
                 class="input"
@@ -410,7 +410,7 @@
         </fieldset>
 
         <div class="row">
-          <label class="field grow">
+          <label class="field metafield grow">
             {variant === "piece"
               ? "Note about the piece"
               : "Note about the source"}
@@ -442,7 +442,7 @@
     display: grid;
     grid-template-columns: 1fr;
   }
-  .field {
+  .metafield {
     margin-top: 14px;
   }
   /* Fields in a row line up at their inputs when a label wraps. A field

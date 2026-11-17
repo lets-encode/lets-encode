@@ -224,7 +224,8 @@
     --lane-line: var(--ok-line);
   }
   .well {
-    padding: 8px;
+    /* A card's edge badge reaches 8px above the card (BoardCard.svelte). */
+    padding: 9px 8px 8px;
     display: flex;
     flex-direction: column;
     gap: 8px;

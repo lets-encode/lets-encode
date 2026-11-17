@@ -361,7 +361,7 @@
             {#if confirmingRemove !== p.id}
               <button
                 type="button"
-                class="btn btn-icon btn-danger delete"
+                class="btn btn-icon btn-danger press-touch delete"
                 onclick={() => (confirmingRemove = p.id)}
                 disabled={busy}
                 aria-label="Remove {labelOf(p)}"
@@ -657,17 +657,6 @@
   }
   .delete {
     margin-right: 10px;
-  }
-  /* On touch the remove button's press area grows to 44px. */
-  @media (pointer: coarse) {
-    .delete {
-      position: relative;
-    }
-    .delete::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
   }
   .ask {
     padding: 0 12px 10px 35px;

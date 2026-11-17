@@ -97,7 +97,7 @@
   {#if viewOpen && view.viewMenu}
     <div
       id="zone-view"
-      class="viewmenu"
+      class="viewmenu presses-docked"
       role="group"
       aria-label={view.inSheet ? "View options and help" : "View options"}
     >
@@ -276,18 +276,12 @@
     background: var(--st-wash);
     border-color: var(--st);
   }
-  /* Docked as a sheet the View options' buttons take a 44px press. */
+  /* Docked as a sheet the View options' buttons are 32px high, with a 44px
+     press (.presses-docked). */
   @media (orientation: portrait) and (max-width: 1100px) {
     .viewmenu :global(.tbtn),
     .viewmenu .btn {
-      position: relative;
       min-height: 32px;
-    }
-    .viewmenu :global(.tbtn)::after,
-    .viewmenu .btn::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
     }
   }
 </style>

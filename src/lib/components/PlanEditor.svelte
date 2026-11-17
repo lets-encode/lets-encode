@@ -437,10 +437,6 @@
   .prow.locked {
     opacity: 0.65;
   }
-  .prow.dragged {
-    background: var(--accent-tint-strong);
-    box-shadow: 0 2px 8px rgba(31, 36, 51, 0.14);
-  }
   .prow.picked {
     background: var(--accent-tint-strong);
     outline: 1.5px solid var(--accent);
@@ -464,7 +460,7 @@
     color: var(--ink-faint);
   }
   .mono {
-    font-family: ui-monospace, Menlo, monospace;
+    font-family: var(--mono);
   }
   .pselect,
   .pinput {

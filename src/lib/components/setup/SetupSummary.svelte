@@ -74,7 +74,7 @@
     </dd>
   </dl>
   <section>
-    <p class="grouphead">Staves</p>
+    <p class="setup-grouphead">Staves</p>
     <!-- The groups drawn beside the staves they join, an outer group
        nearer the staves than the groups inside it. -->
     <div
@@ -106,7 +106,7 @@
             onmouseleave={() => (preview.hoveredStaff = null)}
             onclick={() => onpickstaff(i)}
           >
-            <span class="staffno">{i + 1}</span>
+            <span class="setup-staffno staffno">{i + 1}</span>
             <span class="sumbody">
               <span class="sumname" class:unnamed={!staff.label}
                 >{staff.label || "No instrument name"}</span
@@ -135,7 +135,7 @@
   </section>
   {#if model.groups.length}
     <section>
-      <p class="grouphead">Groups</p>
+      <p class="setup-grouphead">Groups</p>
       <ul class="sumgroups">
         {#each model.ordered as group (group)}
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -160,20 +160,6 @@
 </div>
 
 <style>
-  .grouphead {
-    margin: 0 0 10px;
-    font-size: 13.5px;
-    font-weight: 600;
-  }
-  .staffno {
-    flex: none;
-    width: 22px;
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--ink-faint);
-    font-variant-numeric: tabular-nums;
-  }
-
   /* ---------------------------------------------------------------- summary
      The submitted setup as text, for the reviewer and everyone not holding
      the task. */

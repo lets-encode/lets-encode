@@ -3,8 +3,15 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-17
+
+- The "your next task" badge on the board no longer touches the lane's heading.
+
 ## 2026-11-16
 
+- Styles that were written in several components exist once as shared classes, tokens and components.
+- The score preview draws the selected measure and a flagged measure in the app's blue and red.
+- The progress segments of the volunteer view no longer carry the outline and padding of the segmented control.
 - A new campaign repository gets the text of the licence chosen in the wizard as its LICENSE.
 - A IIIF canvas the source does not deliver no longer fails the upload step: the pages step marks the page and offers Try again.
 - The wizard's rail lists the other setups by their title under the line "Resume another setup".

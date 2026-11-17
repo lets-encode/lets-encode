@@ -223,7 +223,7 @@
   }
   .glist {
     position: fixed;
-    z-index: 50;
+    z-index: var(--z-popover);
     margin: 0;
     padding: 4px;
     list-style: none;
@@ -233,9 +233,7 @@
     background: var(--card);
     border: 1px solid var(--line-strong);
     border-radius: 8px;
-    box-shadow:
-      0 1px 2px rgba(31, 36, 51, 0.06),
-      0 12px 30px rgba(31, 36, 51, 0.13);
+    box-shadow: var(--shadow);
     box-sizing: border-box;
   }
   .glist.above {

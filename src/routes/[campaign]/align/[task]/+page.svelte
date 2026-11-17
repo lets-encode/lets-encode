@@ -149,7 +149,7 @@
   />
 {/if}
 
-<div class="aligner sidehost" data-stage="pre">
+<div class="workshell sidehost" data-stage="pre">
   {#if session.campaign.error}
     <PageState
       error={session.campaign.error}
@@ -166,7 +166,7 @@
   {:else if session.loadError}
     <PageState error={session.loadError} onretry={() => session.load()} />
   {:else if data && aligned}
-    <div class="scorecol" bind:clientWidth={scoreW}>
+    <div class="workmain scorecol" bind:clientWidth={scoreW}>
       <h1 class="vh">Encoding alignment · {session.pieceName || campaign}</h1>
       <div class="runrow">
         <TaskRunState task={taskId} repoId={session.campaign.repoId} pill />
@@ -287,25 +287,10 @@
 </div>
 
 <style>
-  .aligner {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    background: var(--desk);
-    box-shadow: var(--shadow-inset);
-  }
-  .aligner > :global(.spwrap:not(.docked)) {
-    margin: 12px 16px 4px 0;
-  }
   /* The score column: the viewer's toolbar and the side panel share their
      top edge, as in the review view. */
   .scorecol {
     position: relative;
-    flex: 1;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
     padding: 12px 16px 0;
     box-sizing: border-box;
   }

@@ -96,17 +96,6 @@
   .meterrow + .meterrow {
     margin-top: 8px;
   }
-  .mfield {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
-  }
-  .mfield > span {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--ink-faint);
-  }
   .mfield > .ctl.bad {
     border-color: var(--danger-line);
   }

@@ -36,7 +36,7 @@
       out:fade={{ duration: reduceMotion.current ? 0 : 300 }}>Draft saved</span
     >
   {:else if draft && draft !== "saved"}
-    <span class="chip chip-err bubble err" role="alert">{draft}</span>
+    <span class="chip chip-fail bubble err" role="alert">{draft}</span>
   {/if}
 </div>
 

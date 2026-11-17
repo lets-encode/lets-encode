@@ -28,7 +28,7 @@
   </h3>
   <div class="pieceline">
     {#if piece}
-      <span class="dot"></span>
+      <span class="piecedot dot"></span>
       <span class="pname" title={piece}>{piece}</span>
     {/if}
     {#if task}
@@ -63,11 +63,7 @@
     color: var(--ink-soft);
   }
   .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
     background: var(--zone, var(--ink-faint));
-    flex: none;
   }
   .pname {
     min-width: 0;
@@ -81,10 +77,7 @@
   .tid {
     margin-left: auto;
     flex: none;
-    font:
-      400 10.5px ui-monospace,
-      Menlo,
-      monospace;
+    font: 400 10.5px var(--mono);
     color: var(--ink-faint);
   }
 </style>

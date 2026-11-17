@@ -441,7 +441,7 @@
 {#snippet commentsToggle()}
   <button
     type="button"
-    class="tbtn tbtn-icon commentsbtn"
+    class="tbtn tbtn-icon press commentsbtn"
     class:on={tab === "comments"}
     aria-pressed={tab === "comments"}
     aria-label={`Comments, ${count}`}
@@ -465,7 +465,7 @@
   {#if open}
     <button
       type="button"
-      class="btn btn-icon showinline"
+      class="btn btn-icon press-docked showinline"
       aria-expanded="true"
       aria-label="Close"
       title="Close the panel"
@@ -481,7 +481,7 @@
   {:else}
     <button
       type="button"
-      class="btn showinline"
+      class="btn press-docked showinline"
       aria-expanded="false"
       onpointerdown={() => (openAtPress = open)}
       onclick={toggle}
@@ -506,8 +506,10 @@
 {#snippet composer()}
   {#if writeShown}
     <div class="composerwrap on-tint">
-      <button type="button" class="btn writebtn" onclick={openField}
-        ><Icon name="plus" /> {writeLabel}</button
+      <button
+        type="button"
+        class="btn press-docked writebtn"
+        onclick={openField}><Icon name="plus" /> {writeLabel}</button
       >
     </div>
   {/if}
@@ -585,7 +587,7 @@
       {#if ondeselect}
         <button
           type="button"
-          class="btn deselect"
+          class="btn press-docked deselect"
           title="Deselect the task and show the campaign comments"
           onclick={ondeselect}><Icon name="arrow-left" /> Campaign</button
         >
@@ -737,8 +739,8 @@
     width: 100%;
     interpolate-size: allow-keywords;
     transition:
-      height 200ms cubic-bezier(0.22, 1, 0.36, 1),
-      max-height 200ms cubic-bezier(0.22, 1, 0.36, 1);
+      height var(--dur-long) cubic-bezier(0.22, 1, 0.36, 1),
+      max-height var(--dur-long) cubic-bezier(0.22, 1, 0.36, 1);
     border-top: 1px solid var(--line-strong);
     box-shadow: 0 -2px 8px var(--shade);
     background: var(--card);
@@ -848,22 +850,16 @@
     background: var(--card);
     border-top: 1px solid var(--line);
   }
-  /* The Comments button, 32px with a 44px press through an invisible
-     ::after; its word gives way to the icon below 320px of task heading
-     (TaskBox's taskhead container). */
+  /* The Comments button, 32px with a 44px press (.press); its word gives
+     way to the icon below 320px of task heading (TaskBox's taskhead
+     container). */
   .commentsbtn {
     flex: none;
-    position: relative;
     box-sizing: border-box;
     min-width: 32px;
     min-height: 32px;
     justify-content: center;
     gap: 5px;
-  }
-  .commentsbtn::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
   }
   .cbtnlabel,
   .cbtncount {
@@ -947,7 +943,7 @@
     height: 26px;
     pointer-events: none;
     opacity: 0;
-    transition: opacity 0.15s;
+    transition: opacity var(--dur-short) var(--ease);
   }
   /* The top fade covers the panel's top padding too. */
   .spedge.top::after {
@@ -1003,20 +999,6 @@
   /* Open, the button is the round × of .btn-icon. */
   .showinline.btn-icon {
     padding: 0;
-  }
-  /* Docked, the header's buttons and the comment button take a 44px press
-     through an invisible ::after. */
-  .docked .sphead :global(.btn),
-  .docked .showinline,
-  .docked .writebtn {
-    position: relative;
-  }
-  .docked .sphead :global(.btn)::after,
-  .docked .showinline::after,
-  .docked .writebtn::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
   }
   .writebtn {
     width: 100%;

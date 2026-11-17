@@ -6,6 +6,7 @@
 -->
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
+  import ListPanel from "$lib/components/campaign-list/ListPanel.svelte";
   import {
     reviewHref,
     taskAction,
@@ -86,7 +87,7 @@
 
 <!-- Narrow screens drop the work bar for a volunteer with no work. -->
 {#if wide || tasks.length > 0 || loading}
-  <section class="panel" class:fold={!wide}>
+  <ListPanel fold={!wide}>
     {#if wide}
       <div class="phead">
         <h2 class="stitle">Your open work</h2>
@@ -131,7 +132,7 @@
               <span class="itext">
                 <span class="ititle" title={t.title}>{t.title}</span>
                 <span class="isub">{t.campaign}</span>
-                <span class="imeta">{reviewMeta(t, now)}</span>
+                <span class="vh imeta">{reviewMeta(t, now)}</span>
               </span>
               <span class="chip">review</span>
             </a>
@@ -146,7 +147,7 @@
               >
                 <span class="ititle" title={t.title}>{t.title}</span>
                 <span class="isub">{t.campaign}</span>
-                <span class="imeta">{claimMeta(t, now)}</span>
+                <span class="vh imeta">{claimMeta(t, now)}</span>
               </a>
               {#if t.group === "encoding"}
                 <span class="chip">encoding</span>
@@ -226,7 +227,7 @@
         {/if}
       </div>
     {/if}
-  </section>
+  </ListPanel>
 {/if}
 
 <style>
@@ -239,33 +240,6 @@
     padding: 4px 0;
     font-size: 12.5px;
     color: var(--ink-faint);
-  }
-  .panel {
-    padding: 14px 16px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-sm);
-  }
-  .panel.fold {
-    padding: 0;
-  }
-  .fold .items {
-    padding: 0 16px 10px;
-  }
-  .phead {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .panel > .phead {
-    margin-bottom: 6px;
-  }
-  .stitle {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
   }
   /* The folded work panel's header: one line that opens the list. */
   .barh {
@@ -302,80 +276,18 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .items {
-    display: flex;
-    flex-direction: column;
-  }
-  .item {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 6px 10px;
-    margin: 0 -10px;
-    padding: 8px 10px;
-    border-radius: 8px;
-    color: inherit;
-    text-decoration: none;
-  }
-  @media (hover: hover) {
-    a.item:hover {
-      background: var(--bg-tint);
-    }
-  }
-  .itext {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    color: inherit;
-    text-decoration: none;
-  }
-  /* In the narrow side column titles wrap to at most two lines, so their end
-     still tells similar tasks apart; full width (the page's .layout without
-     .split), they keep to one line. */
-  .ititle {
-    font-size: 13.5px;
-    font-weight: 600;
-    color: var(--ink);
-    overflow: hidden;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    line-clamp: 2;
-  }
-  :global(.layout:not(.split)) .ititle {
-    display: block;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-  }
   @media (hover: hover) {
     a.itext:hover .ititle {
       color: var(--link);
     }
   }
-  .isub {
-    font-size: 12.5px;
-    color: var(--ink-faint);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
   /* The claim or review details: a tooltip where a pointer can hover,
      a visible line on phones. */
-  .imeta {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
   @media (max-width: 560px) {
     .imeta {
       position: static;
       width: auto;
       height: auto;
-      clip-path: none;
       white-space: normal;
       font-size: 12.5px;
       color: var(--ink-faint);
