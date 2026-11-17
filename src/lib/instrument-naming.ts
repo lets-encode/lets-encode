@@ -570,8 +570,10 @@ export function assignUnit(
 
 /**
  * The instruments with only the staves some box shows, without the
- * instruments left with none, in score order: the order in which they first
- * appear, page by page, system by system, top to bottom. Groups keep the
+ * instruments left with none, in score order: the first system's order, top
+ * to bottom, and an instrument a later system prints first directly below
+ * the instrument above it there, or, at the top of that system, directly
+ * above the instrument below it. Groups keep the
  * instruments they still span: a group whose first or last instrument is
  * gone moves its end inward, and a group left without instruments is
  * dropped.
@@ -585,19 +587,30 @@ export function pruneInstruments(
       (page.staves ?? []).flatMap((s) => (s.staff ? [s.staff] : [])),
     ),
   );
-  const firstSeen = new Map<string, number>();
-  namingUnits(pages).forEach((unit, k) => {
-    const shown = unitName(named, pages[unit.page], unit);
-    if (shown && !firstSeen.has(shown.instrument.id))
-      firstSeen.set(shown.instrument.id, k);
-  });
+  const systems: string[][] = [];
+  let last: NamingUnit | undefined;
+  for (const unit of namingUnits(pages)) {
+    if (last?.page !== unit.page || last.system !== unit.system)
+      systems.push([]);
+    last = unit;
+    const id = unitName(named, pages[unit.page], unit)?.instrument.id;
+    const system = systems[systems.length - 1];
+    if (id && !system.includes(id)) system.push(id);
+  }
+  const placed: string[] = [];
+  for (const system of systems) {
+    system.forEach((id, k) => {
+      if (placed.includes(id)) return;
+      const below = system.slice(k + 1).find((x) => placed.includes(x));
+      if (k > 0) placed.splice(placed.indexOf(system[k - 1]) + 1, 0, id);
+      else if (below) placed.splice(placed.indexOf(below), 0, id);
+      else placed.push(id);
+    });
+  }
   const instruments = named.instruments
     .map((i) => ({ ...i, staves: i.staves.filter((s) => used.has(s.id)) }))
     .filter((i) => i.staves.length > 0)
-    .sort(
-      (a, b) =>
-        (firstSeen.get(a.id) ?? Infinity) - (firstSeen.get(b.id) ?? Infinity),
-    );
+    .sort((a, b) => placed.indexOf(a.id) - placed.indexOf(b.id));
   const order = instruments.map((i) => i.id);
   const position = (id: string) =>
     named.instruments.findIndex((i) => i.id === id);

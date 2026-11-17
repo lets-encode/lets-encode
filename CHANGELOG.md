@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-17
 
+- An instrument that enters in a later system takes its place in the score order from its neighbours in that system.
 - The "your next task" badge on the board no longer touches the lane's heading.
 
 ## 2026-11-16

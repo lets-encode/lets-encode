@@ -255,6 +255,37 @@ test("pruneInstruments drops unused staves and instruments and moves groups inwa
   );
 });
 
+test("pruneInstruments places an instrument that enters in a later system by its neighbours there", () => {
+  // First system: piano. Second: voice above the piano, a bass below it.
+  const pages: NamingPage[] = [
+    {
+      zones: [zone(100, 400, true, false), zone(500, 900, false, true)],
+      staves: [
+        box(110, 170),
+        box(210, 270),
+        box(510, 570),
+        box(610, 670),
+        box(710, 770),
+        box(810, 870),
+      ],
+      grandstaves: [
+        { ulx: 90, uly: 100, lrx: 900, lry: 280 },
+        { ulx: 90, uly: 600, lrx: 900, lry: 780 },
+      ],
+    },
+  ];
+  const named = nameAll(pages, [
+    [0, "Klavier", ""],
+    [1, "Singstimme", ""],
+    [2, "Klavier", ""],
+    [3, "Bass", ""],
+  ]);
+  assert.deepEqual(
+    pruneInstruments(named, pages).instruments.map((i) => i.name),
+    ["Singstimme", "Klavier", "Bass"],
+  );
+});
+
 test("staffPlan and instrumentScoreDef: as many staves as printed at once, layers by part, names as the first system prints them", () => {
   const pages = [pageA(), pageB()];
   let named = nameAll(pages, [
