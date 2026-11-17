@@ -162,7 +162,7 @@
   {/if}
 
   {#if note}
-    <p class="note">{note}</p>
+    <p class="note warn">{note}</p>
   {/if}
 
   {#if files.length}
@@ -415,9 +415,6 @@
   }
   .note {
     flex: none;
-    margin: 0;
-    font-size: 12px;
-    color: var(--warn);
   }
   .file-row {
     flex: none;

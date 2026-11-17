@@ -90,7 +90,7 @@
         {#each sp.pages as p (p)}
           {@const pg = pages[p]}
           <div class="page">
-            <p class="page-label pagehead">Page {p + 1} · Facsimile</p>
+            <p class="page-label pagecap">Page {p + 1} · Facsimile</p>
             {#if pg.failed}
               <Notice
                 tone="err"
@@ -161,7 +161,7 @@
   .page {
     margin-bottom: 1.5rem;
   }
-  .pagehead {
+  .pagecap {
     margin-bottom: 4px;
   }
 </style>

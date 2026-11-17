@@ -300,8 +300,6 @@
   /* Docked (SetupForm's .setup.docked), the controls are 32px high and the
      text is larger: the transposition takes its own line below the clef and
      key. */
-  :global(.setup.docked) .field select,
-  :global(.setup.docked) .field input,
   :global(.setup.docked) .ctl {
     min-height: 32px;
   }
@@ -323,42 +321,5 @@
   }
   .addbtn {
     align-self: flex-start;
-  }
-  /* No element of the score setup carries .meterrow, .field or .rowbtns;
-     KeyTimeFields styles its own fields. */
-  /* Key and time signature: two controls to a row, labelled like the
-     group rows, set like the staff rows. */
-  .meterrow {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-  .meterrow + .meterrow {
-    margin-top: 8px;
-  }
-  .field {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-  }
-  .field.narrow {
-    flex: none;
-    width: 88px;
-  }
-  .field span {
-    font-size: 11.5px;
-    font-weight: 600;
-    color: var(--ink-faint);
-  }
-  .field select,
-  .field input {
-    width: 100%;
-  }
-  .rowbtns {
-    flex: none;
-    display: flex;
-    gap: 4px;
   }
 </style>

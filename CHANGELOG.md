@@ -5,6 +5,12 @@ parentheses.
 
 ## 2026-11-17
 
+- The coordinator action uses the runner's own Node when it is new enough and runs the setup action only otherwise.
+- `npm run check:styles` reports component styles that depart from the shared styles.
+- The page captions of the measure correction are regular weight again.
+- The warning line above the pieces step's pages is in the warning colour.
+- The page captions of the instrument naming look like the other page captions.
+- The request-changes form has its note above its two buttons, which share one line and are 28px high with a mouse.
 - The arrow of compact selects stands in from the border.
 - The campaign list's work panel has the sections Your open tasks, Waiting for review and Done, and a dialog lists all done tasks with a search and a campaign filter.
 - An instrument that enters in a later system takes its place in the score order from its neighbours in that system.

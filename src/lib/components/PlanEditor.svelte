@@ -445,10 +445,6 @@
   .psub.muted,
   .muted {
     font-size: 11.5px;
-    color: var(--ink-faint);
-  }
-  .mono {
-    font-family: var(--mono);
   }
   .pselect,
   .pinput {

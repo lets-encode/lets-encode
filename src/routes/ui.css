@@ -50,6 +50,17 @@
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
+/* A button in a dense form of the side panel: 28px with a mouse, 32px on
+   a coarse pointer. */
+.btn.btn-small {
+  min-height: 28px;
+  padding: 4px 12px;
+}
+@media (pointer: coarse) {
+  .btn.btn-small {
+    min-height: 32px;
+  }
+}
 /* Links styled as buttons drop their underline. */
 a.btn {
   text-decoration: none;
@@ -917,6 +928,9 @@ select.ctl:disabled {
 .note.small {
   font-size: 12.5px;
   color: var(--ink-faint);
+}
+.note.warn {
+  color: var(--warn);
 }
 
 /* ---- Card surfaces ------------------------------------------------------

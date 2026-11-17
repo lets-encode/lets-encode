@@ -299,7 +299,7 @@
     background: var(--green);
   }
   .stripe span:nth-child(3) {
-    background: #ffa76d;
+    background: var(--orange);
   }
   .content {
     display: flex;

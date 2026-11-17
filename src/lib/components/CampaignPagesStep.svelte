@@ -731,8 +731,6 @@
 <style>
   .note {
     margin: 22px 0 0;
-    font-size: 13.5px;
-    color: var(--ink-soft);
   }
   .count-row {
     display: flex;

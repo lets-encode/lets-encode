@@ -393,7 +393,7 @@
   </ViewerToolbar>
 
   {#if notice}
-    <p class="msg-warn notice" role="status">{notice}</p>
+    <p class="msg-warn zonenote" role="status">{notice}</p>
   {/if}
   <span class="vh" role="status"
     >{ed.armed
@@ -730,7 +730,7 @@
   .material-body.drawing {
     touch-action: none;
   }
-  .notice {
+  .zonenote {
     margin: 0;
     padding: 6px 16px;
     border-bottom: 1px solid var(--line);

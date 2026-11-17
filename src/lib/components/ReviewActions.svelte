@@ -263,10 +263,15 @@
             /></label
           >
         {/if}
-        <span class="mspacer"></span>
+      </div>
+      <p class="editnote">
+        Edit yourself gives you the task to edit. Your edit is then reviewed by
+        someone else.
+      </p>
+      <div class="failacts">
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={() => submitFail(true)}
           disabled={runner.busy ||
             !failForm.body.trim() ||
@@ -277,7 +282,7 @@
         >
         <button
           type="button"
-          class="btn btn-danger"
+          class="btn btn-small btn-danger"
           onclick={() => submitFail(false)}
           disabled={runner.busy ||
             !failForm.body.trim() ||
@@ -286,10 +291,6 @@
           title="Sends the change request with this note.">Send request</button
         >
       </div>
-      <p class="editnote">
-        Edit yourself gives you the task to edit. Your edit is then reviewed by
-        someone else.
-      </p>
     </div>
   {/if}
 </div>
@@ -306,9 +307,6 @@
     align-items: center;
     gap: 8px;
     container: ractions / inline-size;
-  }
-  .mspacer {
-    flex: 1;
   }
   .rverdict {
     display: flex;
@@ -371,8 +369,22 @@
     color: var(--ink-soft);
     flex-wrap: wrap;
   }
+  /* The height of the selection panel's number field; on a coarse pointer
+     the compact control's 32px. */
   .failform-anchor input {
     width: 4.2em;
+    height: 28px;
+    padding-block: 2px;
+  }
+  @media (pointer: coarse) {
+    .failform-anchor input {
+      height: 32px;
+    }
+  }
+  .failacts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
   }
   .failform-anchor .staffin {
     width: 12em;
