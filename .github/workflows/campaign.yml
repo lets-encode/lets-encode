@@ -15,7 +15,7 @@ name: Campaign automation
 #
 # Trust boundary: a called workflow runs in the calling repo's context. For
 # pull_request_target that is the campaign's base branch with a write token.
-# Only the pinned central code is checked out; the automation pointer is read
+# Only the pinned central code is fetched; the automation pointer is read
 # from the campaign's base tree via the API, and the fork's PR is only ever
 # read as data, never executed. The github context (event, repository, token)
 # is the calling workflow's.
@@ -46,8 +46,10 @@ jobs:
     steps:
       # The central pointer comes from config.yaml on the base ref — a fork PR
       # cannot redirect where central lives (GITHUB_SHA is the base branch head
-      # for pull_request_target). One API read; nothing else in the campaign
-      # repo is needed on disk, so there is no base checkout. `path:` also
+      # for pull_request_target). One API read with curl; nothing else in the
+      # campaign repo is needed on disk, so there is no base checkout. The
+      # response body goes to config.yaml and the status code to the shell;
+      # the authorization header reaches curl on its standard input. `path:` also
       # appears under `sources:`, so the reads are scoped to the `automation:`
       # block. config.yaml is committed by campaign initialisation; before that
       # it is missing (404): a scheduled or dispatched run (e.g. on a freshly
@@ -68,10 +70,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh api "repos/$GITHUB_REPOSITORY/contents/config.yaml?ref=$GITHUB_SHA" \
-               -H "Accept: application/vnd.github.raw" > config.yaml 2> gh-error.txt; then
-            cat gh-error.txt >&2
-            grep -q 'HTTP 404' gh-error.txt || exit 1
+          status=$(curl -sSL -o config.yaml -w '%{http_code}' \
+            -H @- \
+            -H "Accept: application/vnd.github.raw" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/contents/config.yaml?ref=$GITHUB_SHA" \
+            <<< "Authorization: Bearer $GH_TOKEN")
+          if [ "$status" != "200" ]; then
+            echo "Reading config.yaml: HTTP $status" >&2
+            cat config.yaml >&2
+            [ "$status" = "404" ] || exit 1
             if [ "$GITHUB_EVENT_NAME" = "pull_request_target" ]; then
               echo "config.yaml is missing from the base branch — the campaign is not initialised, so this pull request cannot be processed." >&2
               exit 1
@@ -98,7 +106,7 @@ jobs:
               echo "config.yaml: automation.central_repository must be owner/repo, got '$repo'." >&2
               exit 1
             fi
-            if [ -n "$ref" ] && { ! [[ "$ref" =~ ^[A-Za-z0-9_./-]+$ ]] || [[ "$ref" == *..* ]]; }; then
+            if [ -n "$ref" ] && { ! [[ "$ref" =~ ^[A-Za-z0-9_./-]+$ ]] || [[ "$ref" == *..* ]] || [[ "$ref" == -* ]]; }; then
               echo "config.yaml: automation.ref must be a branch, tag or commit name, got '$ref'." >&2
               exit 1
             fi
@@ -107,13 +115,46 @@ jobs:
           echo "ref=$ref" >> "$GITHUB_OUTPUT"
           echo "path=$path" >> "$GITHUB_OUTPUT"
 
+      # One shallow fetch of the pointer's ref into central/, without a token:
+      # the job's token is the campaign repository's and reads no other
+      # private repository, so the central repository is a public one. The
+      # ref is tried as a branch, then as a tag, then as given (a commit
+      # hash); an empty ref is the default branch. A fetch that fails for
+      # another reason than a missing ref is tried three times, and then the
+      # step fails without trying a further form of the ref. The pointer
+      # reaches git as environment variables, after the patterns of the step
+      # above, and behind --end-of-options.
       - name: Check out the central automation code
         if: steps.cfg.outputs.repo != ''
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          repository: ${{ steps.cfg.outputs.repo }}
-          ref: ${{ steps.cfg.outputs.ref }}
-          path: central
+        env:
+          CENTRAL_REPO: ${{ steps.cfg.outputs.repo }}
+          CENTRAL_REF: ${{ steps.cfg.outputs.ref }}
+        run: |
+          git -c init.defaultBranch=main init -q central
+          url="$GITHUB_SERVER_URL/$CENTRAL_REPO"
+          # 0: fetched; 1: the remote has no such ref; 2: failed three times.
+          fetch_ref() {
+            for attempt in 1 2 3; do
+              if git -C central fetch -q --depth=1 --no-tags --end-of-options "$url" "$1" 2> fetch-error.txt; then return 0; fi
+              if grep -q "couldn't find remote ref" fetch-error.txt; then return 1; fi
+              sleep "$attempt"
+            done
+            return 2
+          }
+          fetched=""
+          for candidate in ${CENTRAL_REF:+"refs/heads/$CENTRAL_REF" "refs/tags/$CENTRAL_REF"} "${CENTRAL_REF:-HEAD}"; do
+            result=0
+            fetch_ref "$candidate" || result=$?
+            if [ "$result" = 0 ]; then fetched="$candidate"; fi
+            if [ "$result" != 1 ]; then break; fi
+          done
+          if [ -z "$fetched" ]; then
+            cat fetch-error.txt >&2
+            echo "The central automation code could not be fetched from $CENTRAL_REPO at '${CENTRAL_REF:-the default branch}'." >&2
+            exit 1
+          fi
+          git -C central -c advice.detachedHead=false checkout -q FETCH_HEAD
+          echo "central: $CENTRAL_REPO $fetched at $(git -C central rev-parse HEAD)"
 
       - name: Run the central coordinator
         if: steps.cfg.outputs.repo != ''

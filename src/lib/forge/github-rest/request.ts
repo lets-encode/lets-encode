@@ -227,6 +227,16 @@ const requestTelemetry: GitHubRequestTelemetry = {
   last: null,
 };
 
+type GitHubRequestEntry = NonNullable<GitHubRequestTelemetry["last"]>;
+let requestListener: ((entry: GitHubRequestEntry) => void) | null = null;
+
+/** Calls `listener` with every finished request's entry; null stops it. */
+export function onGitHubRequest(
+  listener: ((entry: GitHubRequestEntry) => void) | null,
+): void {
+  requestListener = listener;
+}
+
 /** Cumulative GitHub request counters for this browser tab or coordinator run. */
 export function getGitHubRequestTelemetry(): GitHubRequestTelemetry {
   return {
@@ -309,6 +319,7 @@ function recordRequest(
   requestTelemetry.byResource[bucket] =
     (requestTelemetry.byResource[bucket] ?? 0) + 1;
   requestTelemetry.last = entry;
+  requestListener?.(entry);
   if (res == null || res.status >= 400 || source === "broker") {
     console.info("[github-api]", entry);
   }

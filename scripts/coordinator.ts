@@ -123,6 +123,7 @@ import {
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
+  onGitHubRequest,
   isTransientError,
   listWorkflowRuns,
 } from "../src/lib/forge/github-rest.ts";
@@ -1344,15 +1345,31 @@ async function run(): Promise<void> {
 // commands, so the runner stops processing them for the rest of the run.
 console.log(`::stop-commands::${crypto.randomUUID()}`);
 
+// Every request of the run as [start, duration, method, status, endpoint],
+// the times in milliseconds from the run's start: requests whose spans
+// overlap ran in parallel.
+const runStartedAt = Date.now();
+const requestSpans: Array<[number, number, string, number | null, string]> = [];
+onGitHubRequest((entry) =>
+  requestSpans.push([
+    Date.now() - entry.durationMs - runStartedAt,
+    entry.durationMs,
+    entry.method,
+    entry.status,
+    entry.endpoint,
+  ]),
+);
+
 run()
   .catch((e) => {
     console.error(e);
     process.exitCode = 1;
   })
-  .finally(() =>
-    // JSON on one line, so log collectors can extract the whole summary.
+  .finally(() => {
+    // JSON on one line each, so log collectors can extract them whole.
+    console.info("[github-api-requests]", JSON.stringify(requestSpans));
     console.info(
       "[github-api-summary]",
       JSON.stringify(getGitHubRequestTelemetry()),
-    ),
-  );
+    );
+  });

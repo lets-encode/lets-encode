@@ -20,6 +20,7 @@ export {
   isTransientError,
   getGitHubRequestTelemetry,
   resetGitHubRequestTelemetry,
+  onGitHubRequest,
 } from "./github-rest/request.ts";
 export type { GitHubRequestTelemetry } from "./github-rest/request.ts";
 export type {

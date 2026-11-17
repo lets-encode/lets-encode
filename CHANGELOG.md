@@ -5,6 +5,9 @@ parentheses.
 
 ## 2026-11-17
 
+- The campaign workflow reads the pointer with curl and fetches the central code with git, without the checkout action.
+- The coordinator logs the start and duration of each of its GitHub requests.
+- An automation.ref that starts with a hyphen fails the run.
 - The coordinator action uses the runner's own Node when it is new enough and runs the setup action only otherwise.
 - `npm run check:styles` reports component styles that depart from the shared styles.
 - The page captions of the measure correction are regular weight again.

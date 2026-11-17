@@ -26,6 +26,7 @@ runs:
         want="$(tr -d 'v[:space:]' < central/.nvmrc)"
         at_least() { [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]; }
         have="$(node --version 2>/dev/null | tr -d 'v[:space:]' || true)"
+        if [ -z "$want" ]; then exit 0; fi
         if [ -n "$have" ] && at_least "$want" "$have"; then
           echo "found=true" >> "$GITHUB_OUTPUT"
           exit 0
