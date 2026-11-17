@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-17
 
+- The arrow of compact selects stands in from the border.
+- The campaign list's work panel has the sections Your open tasks, Waiting for review and Done, and a dialog lists all done tasks with a search and a campaign filter.
 - An instrument that enters in a later system takes its place in the score order from its neighbours in that system.
 - The "your next task" badge on the board no longer touches the lane's heading.
 - The campaign list's sort control is a soft button like the other buttons.

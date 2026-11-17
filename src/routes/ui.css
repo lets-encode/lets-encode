@@ -784,14 +784,77 @@ textarea.input {
   color: var(--ink);
   text-overflow: ellipsis;
 }
-/* The select's arrow brings its own space on the right. */
+/* The select draws its own arrow: a 12px chevron of two gradient strokes,
+   8px in from the right edge, with the right padding keeping the text clear
+   of it. The Content-Security-Policy's img-src admits no data: image. */
 select.ctl {
-  padding: 4px 2px 4px 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 4px 22px 4px 6px;
+  --ctl-arrow: var(--ink-soft);
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 1.25px),
+      var(--ctl-arrow) calc(50% - 0.5px),
+      var(--ctl-arrow) calc(50% + 0.5px),
+      transparent calc(50% + 1.25px)
+    ),
+    linear-gradient(
+      135deg,
+      transparent calc(50% - 1.25px),
+      var(--ctl-arrow) calc(50% - 0.5px),
+      var(--ctl-arrow) calc(50% + 0.5px),
+      transparent calc(50% + 1.25px)
+    );
+  background-position:
+    right 14px center,
+    right 8px center;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
 }
 .ctl:disabled {
   color: var(--ink-faint);
-  background: var(--bg-tint);
+  background-color: var(--bg-tint);
   cursor: not-allowed;
+}
+select.ctl:disabled {
+  --ctl-arrow: var(--ink-faint);
+}
+
+/* A search field: a label that holds the search icon and the input. */
+.search {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  color: var(--ink-faint);
+  background: var(--card);
+  border: 1px solid var(--line-input);
+  border-radius: 8px;
+}
+/* The input has no outline of its own; the field shows the focus. */
+.search:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  font: 400 14px var(--font);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.search input::placeholder {
+  color: var(--ink-faint);
 }
 
 /* Label text above a control. The control's own top margin sets the gap. */

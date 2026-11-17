@@ -13,7 +13,9 @@ import {
   attentionItems,
   contributingSince,
   doneTasks,
-  openWorkOrder,
+  toDoOrder,
+  claimEndsSoon,
+  doneGroups,
   viewerTasks,
   workSummary,
 } from "../campaign-list/my-work.ts";
@@ -145,21 +147,72 @@ const task = (over: Partial<MyTask>): MyTask =>
     ...over,
   }) as MyTask;
 
-test("openWorkOrder lists encoding, reviewing, then awaiting, newest first", () => {
-  const order = openWorkOrder(
+test("toDoOrder lists encoding, then reviews, newest claim first", () => {
+  const order = toDoOrder(
     [
       task({ task: "E1", claimedAt: "2026-01-01" }),
       task({ task: "E2", claimedAt: "2026-02-01" }),
     ],
     [task({ group: "validating", task: "V1" })],
-    [
-      task({ group: "awaiting", task: "A2", campaignSlug: "b" }),
-      task({ group: "awaiting", task: "A1", campaignSlug: "a" }),
-    ],
   );
   assert.deepEqual(
     order.map((t) => t.task),
-    ["E2", "E1", "V1", "A1", "A2"],
+    ["E2", "E1", "V1"],
+  );
+});
+
+test("claimEndsSoon names a claim in its last 48 hours", () => {
+  const now = Date.parse("2026-01-01T00:00:00Z");
+  assert.equal(
+    claimEndsSoon(task({ expiresAt: "2026-01-01T05:00:00Z" }), now),
+    "claim expires in 5 h",
+  );
+  assert.equal(
+    claimEndsSoon(task({ expiresAt: "2026-01-04T00:00:00Z" }), now),
+    "",
+  );
+  assert.equal(claimEndsSoon(task({ expiresAt: "" }), now), "");
+});
+
+test("doneGroups groups by campaign in list order and filters", () => {
+  const done = [
+    task({
+      task: "D1",
+      campaignSlug: "a",
+      campaign: "Alpha",
+      title: "Encode p. 1",
+    }),
+    task({
+      task: "D2",
+      campaignSlug: "b",
+      campaign: "Beta",
+      title: "Score setup",
+    }),
+    task({
+      task: "D3",
+      campaignSlug: "a",
+      campaign: "Alpha",
+      title: "Encode p. 2",
+    }),
+  ];
+  assert.deepEqual(
+    doneGroups(done).map((g) => [g.campaign, g.tasks.map((t) => t.task)]),
+    [
+      ["Alpha", ["D1", "D3"]],
+      ["Beta", ["D2"]],
+    ],
+  );
+  assert.deepEqual(
+    doneGroups(done, " P. 2 ").map((g) => g.tasks.map((t) => t.task)),
+    [["D3"]],
+  );
+  assert.deepEqual(
+    doneGroups(done, "beta").map((g) => g.campaign),
+    ["Beta"],
+  );
+  assert.deepEqual(
+    doneGroups(done, "", "b").map((g) => g.tasks.length),
+    [1],
   );
 });
 
@@ -177,24 +230,12 @@ test("doneTasks keeps the done group, latest submission first", () => {
 
 test("workSummary leads with an incomplete listing and always counts done", () => {
   assert.equal(
-    workSummary({
-      incomplete: false,
-      encoding: 0,
-      validating: 0,
-      awaiting: 0,
-      done: 0,
-    }),
+    workSummary({ incomplete: false, awaiting: 0, done: 0 }),
     "0 done",
   );
   assert.equal(
-    workSummary({
-      incomplete: true,
-      encoding: 2,
-      validating: 1,
-      awaiting: 3,
-      done: 4,
-    }),
-    "Incomplete · 2 encoding · 1 reviewing · 3 awaiting review · 4 done",
+    workSummary({ incomplete: true, awaiting: 3, done: 4 }),
+    "Incomplete · 3 waiting · 4 done",
   );
 });
 

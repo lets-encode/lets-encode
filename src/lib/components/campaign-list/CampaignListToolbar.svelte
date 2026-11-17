@@ -106,38 +106,7 @@
   }
   .search {
     flex: 1;
-    min-width: 0;
     max-width: 520px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    padding: 0 12px;
-    box-sizing: border-box;
-    color: var(--ink-faint);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-  }
-  /* The input has no outline of its own; the field shows the focus. */
-  .search:focus-within {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    min-height: 32px;
-    padding: 0;
-    font: 400 14px var(--font);
-    color: var(--ink);
-    background: transparent;
-    border: 0;
-    outline: none;
-  }
-  .search input::placeholder {
-    color: var(--ink-faint);
   }
   /* The sort control is a native select laid transparently over a button
      face, so the platform's own menu opens. */
