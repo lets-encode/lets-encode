@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-18
 
+- The coordinator commits the tables in one request.
 - The coordinator reads the branch head and the tables in one request.
 - The coordinator reads the tables while it reads the pull request.
 - The coordinator no longer reads config and comments a second time for a verdict or a submission.

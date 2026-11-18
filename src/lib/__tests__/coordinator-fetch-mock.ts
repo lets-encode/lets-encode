@@ -2,14 +2,22 @@
 // replaces fetch with a GitHub that holds campaign o/r with PR #5 from the
 // fork bob/r. Each request is printed to stdout as `[mock] start|end METHOD
 // path`, a commit's parents and base tree as `[mock] commit ...`/`[mock] tree
-// ...`. Each answer comes 20 ms after its request. A file of o/r is answered
-// only at the head last read. MOCK_SCENARIO (JSON) varies the answers:
+// ...`, a createCommitOnBranch mutation's expected head as `[mock] mutation
+// ...`, and the first line of a pull request comment as `[mock] comment ...`.
+// Each answer comes 20 ms after its request. A file of o/r is answered only at
+// the head last read. MOCK_SCENARIO (JSON) varies the answers:
 // - kind: the operation PR #5 carries, "claim" (default), "validation" (a
 //   pass on T0001/S0001) or "encoding" (page task T0001, claimed by the
 //   author).
-// - graphqlError: GraphQL answers with an `errors` array and no data.
+// - graphqlError: the GraphQL read answers with an `errors` array and no data.
 // - tablesFail: also the repository read through REST fails.
-// - movedOnce: the first update of main is refused as not a fast forward.
+// - movedOnce: the first commit to main is refused because main moved.
+// - mutationRefused: every mutation is refused as not permitted.
+// - mutationLost: the first mutation commits its files, which later reads
+//   return, and its answer is lost.
+// - mutationEmpty: as mutationLost, but the answer is an empty object.
+// - movedAlways: every mutation is refused because main moved; the pauses
+//   between attempts are zero (Math.random returns 0).
 // - prMissing: the pull request read answers 404.
 // - prClosed: the pull request is closed.
 // - slowGraphql: GraphQL answers after 300 ms.
@@ -19,10 +27,16 @@ const scenario: {
   graphqlError?: boolean;
   tablesFail?: boolean;
   movedOnce?: boolean;
+  mutationRefused?: boolean;
+  mutationLost?: boolean;
+  mutationEmpty?: boolean;
+  movedAlways?: boolean;
   prMissing?: boolean;
   prClosed?: boolean;
   slowGraphql?: boolean;
 } = JSON.parse(process.env.MOCK_SCENARIO ?? "{}");
+
+if (scenario.movedAlways) Math.random = () => 0;
 
 const STATE_HEADER =
   "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
@@ -74,11 +88,68 @@ const PR_FILES = {
 let graphqlReads = 0;
 let branchReads = 0;
 let refUpdates = 0;
+let mutations = 0;
 // The head commit the last read of the branch head returned.
 let lastHead = "";
 
+// A thrown TypeError is a request that got no answer.
 function answer(method: string, url: URL, body: unknown): Response {
   const path = url.pathname;
+  if (
+    method === "POST" &&
+    path === "/graphql" &&
+    (body as { query: string }).query.startsWith("mutation")
+  ) {
+    const { input } = (
+      body as {
+        variables: {
+          input: {
+            expectedHeadOid: string;
+            fileChanges: { additions: { path: string; contents: string }[] };
+          };
+        };
+      }
+    ).variables;
+    console.log(`[mock] mutation ${input.expectedHeadOid}`);
+    const n = ++mutations;
+    if (scenario.mutationRefused)
+      return Response.json({
+        data: { createCommitOnBranch: null },
+        errors: [
+          {
+            type: "FORBIDDEN",
+            path: ["createCommitOnBranch"],
+            message: "Resource not accessible by integration",
+          },
+        ],
+      });
+    if (
+      input.expectedHeadOid !== lastHead ||
+      scenario.movedAlways ||
+      (scenario.movedOnce && n === 1)
+    )
+      return Response.json({
+        data: { createCommitOnBranch: null },
+        errors: [
+          {
+            type: "STALE_DATA",
+            path: ["createCommitOnBranch"],
+            message: `Expected branch to point to "${input.expectedHeadOid}" but it did not.  Pull and try again.`,
+          },
+        ],
+      });
+    if ((scenario.mutationLost || scenario.mutationEmpty) && n === 1) {
+      for (const { path, contents } of input.fileChanges.additions)
+        TABLES[path] = new TextDecoder().decode(
+          Uint8Array.from(atob(contents), (c) => c.charCodeAt(0)),
+        );
+      if (scenario.mutationEmpty) return Response.json({});
+      throw new TypeError("fetch failed");
+    }
+    return Response.json({
+      data: { createCommitOnBranch: { commit: { oid: `m${n}` } } },
+    });
+  }
   if (method === "POST" && path === "/graphql") {
     if (scenario.graphqlError || scenario.tablesFail)
       return Response.json({ data: null, errors: [{ message: "Timeout" }] });
@@ -161,8 +232,12 @@ function answer(method: string, url: URL, body: unknown): Response {
           { status: 422 },
         )
       : Response.json({});
-  if (method === "POST" && path === "/repos/o/r/issues/5/comments")
+  if (method === "POST" && path === "/repos/o/r/issues/5/comments") {
+    console.log(
+      `[mock] comment ${(body as { body: string }).body.split("\n", 1)[0]}`,
+    );
     return Response.json({ id: 1 });
+  }
   if (method === "PATCH" && path === "/repos/o/r/pulls/5")
     return Response.json({ state: "closed" });
   console.log(`[mock] unexpected ${method} ${path}`);

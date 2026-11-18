@@ -54,20 +54,25 @@ function runCoordinator(scenario: Record<string, boolean | string> = {}): {
 const started = (mock: string[], prefix: string) =>
   mock.filter((line) => line.startsWith(`start ${prefix}`));
 
-test("a claim reads the head and its tables in one query, started with the pull request read, and commits on that head", () => {
-  const { status, mock } = runCoordinator();
+// The commits of a run: mutations by expected head, REST trees and commits.
+const commits = (mock: string[]) =>
+  mock.filter((line) => /^(mutation|tree|commit) /.test(line));
+
+test("a claim reads the head and its tables in one query, started with the pull request read, and commits on that head in one mutation", () => {
+  const { status, mock, logged } = runCoordinator();
   assert.equal(status, 0);
-  assert.deepEqual(started(mock, "POST /graphql").length, 1);
+  assert.deepEqual(started(mock, "POST /graphql").length, 2);
   assert.deepEqual(started(mock, "GET /repos/o/r/contents"), []);
   assert.deepEqual(started(mock, "GET /repos/o/r/branches"), []);
   assert.ok(
     mock.indexOf("start POST /graphql") <
       mock.indexOf("end GET /repos/o/r/pulls/5"),
   );
-  assert.deepEqual(
-    mock.filter((line) => /^(tree|commit) /.test(line)),
-    ["tree t1", "commit h1"],
-  );
+  assert.deepEqual(commits(mock), ["mutation h1"]);
+  assert.deepEqual(started(mock, "POST /repos/o/r/git"), []);
+  assert.deepEqual(started(mock, "PATCH /repos/o/r/git"), []);
+  // Reads of the tables and the pull request, the mutation, comment and close.
+  assert.equal(logged.length, 7);
   assert.ok(mock.includes("end PATCH /repos/o/r/pulls/5"));
   assert.deepEqual(
     mock.filter((line) => line.startsWith("unexpected")),
@@ -78,16 +83,66 @@ test("a claim reads the head and its tables in one query, started with the pull 
 test("a claim whose commit lost the race reads the tables again and commits on the new head", () => {
   const { status, mock } = runCoordinator({ movedOnce: true });
   assert.equal(status, 0);
-  assert.equal(started(mock, "POST /graphql").length, 2);
+  assert.equal(started(mock, "POST /graphql").length, 4);
   // The list of open pull requests is read once.
   assert.equal(
     mock.filter((line) => line === "start GET /repos/o/r/pulls").length,
     1,
   );
-  assert.deepEqual(
-    mock.filter((line) => /^(tree|commit) /.test(line)),
-    ["tree t1", "commit h1", "tree t2", "commit h2"],
+  assert.deepEqual(commits(mock), ["mutation h1", "mutation h2"]);
+});
+
+test("a refused mutation commits through the Git Data API with a warning", () => {
+  const { status, mock, stderr } = runCoordinator({ mutationRefused: true });
+  assert.equal(status, 0);
+  assert.deepEqual(commits(mock), ["mutation h1", "tree t1", "commit h1"]);
+  assert.match(
+    stderr,
+    /The one-request commit failed; committing through the Git Data API: FORBIDDEN: Resource not accessible by integration/,
   );
+  assert.ok(mock.includes("end PATCH /repos/o/r/pulls/5"));
+});
+
+test("a refused mutation that lost the race reads the tables again", () => {
+  const { status, mock } = runCoordinator({
+    mutationRefused: true,
+    movedOnce: true,
+  });
+  assert.equal(status, 0);
+  assert.deepEqual(commits(mock), [
+    "mutation h1",
+    "tree t1",
+    "commit h1",
+    "mutation h2",
+    "tree t2",
+    "commit h2",
+  ]);
+});
+
+for (const [answer, scenario] of [
+  ["was lost", { mutationLost: true }],
+  ["was empty", { mutationEmpty: true }],
+] as const)
+  test(`a mutation whose answer ${answer} after it committed is not committed again, and the committed decision is posted`, () => {
+    const { status, mock } = runCoordinator(scenario);
+    assert.equal(status, 0);
+    assert.deepEqual(commits(mock), ["mutation h1"]);
+    assert.equal(started(mock, "POST /graphql").length, 3);
+    const comments = mock.filter((line) => line.startsWith("comment "));
+    assert.equal(comments.length, 1);
+    assert.match(comments[0], /Claim accepted/);
+    assert.ok(mock.includes("end PATCH /repos/o/r/pulls/5"));
+  });
+
+test("a claim whose every commit finds main moved is closed as not recorded", () => {
+  const { status, mock } = runCoordinator({ movedAlways: true });
+  assert.equal(status, 0);
+  assert.equal(commits(mock).length, 10);
+  assert.deepEqual(
+    mock.filter((line) => line.startsWith("comment ")),
+    [mock.find((line) => line.startsWith("comment ❌ Not recorded"))],
+  );
+  assert.ok(mock.includes("end PATCH /repos/o/r/pulls/5"));
 });
 
 test("a GraphQL error leaves the table read to REST at the head it reads", () => {
@@ -95,10 +150,7 @@ test("a GraphQL error leaves the table read to REST at the head it reads", () =>
   assert.equal(status, 0);
   assert.equal(started(mock, "GET /repos/o/r/branches/main").length, 1);
   assert.equal(started(mock, "GET /repos/o/r/contents").length, 6);
-  assert.deepEqual(
-    mock.filter((line) => /^(tree|commit) /.test(line)),
-    ["tree resttree1", "commit rest1"],
-  );
+  assert.deepEqual(commits(mock), ["mutation rest1"]);
 });
 
 test("a failed pull request read fails the run while the table read fails after it", () => {
@@ -142,12 +194,9 @@ test("the table read of a pull request left alone is in the run's request log", 
 test("a review verdict takes config and comments from the table read", () => {
   const { status, mock } = runCoordinator({ kind: "validation" });
   assert.equal(status, 0);
-  assert.equal(started(mock, "POST /graphql").length, 1);
+  assert.equal(started(mock, "POST /graphql").length, 2);
   assert.deepEqual(started(mock, "GET /repos/o/r/contents"), []);
-  assert.deepEqual(
-    mock.filter((line) => /^(tree|commit) /.test(line)),
-    ["tree t1", "commit h1"],
-  );
+  assert.deepEqual(commits(mock), ["mutation h1"]);
 });
 
 test("an encoding of a page task takes config from the table read", () => {

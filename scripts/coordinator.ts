@@ -120,6 +120,8 @@ import {
   listBranchCommitTimes,
   getCollaboratorCanPush,
   commitFiles,
+  commitToBranch,
+  BranchMovedError,
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
@@ -355,10 +357,14 @@ function checkMeiOnce(mei: string): Promise<MeiCheck> {
 // write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
 const LOST_RACE = /\(422 PATCH \S*\/git\/refs\/heads\//;
 
+// Whether `e` is a commit lost to another run's: a refused branch update, or
+// a commit refused because the branch moved (BranchMovedError).
+const lostRace = (e: unknown): boolean =>
+  e instanceof BranchMovedError || LOST_RACE.test((e as Error).message);
+
 // Whether another attempt may get past `e`: a commit lost to another run's,
 // or a failure of GitHub's that may pass (isTransientError).
-const retryable = (e: unknown): boolean =>
-  isTransientError(e) || LOST_RACE.test((e as Error).message);
+const retryable = (e: unknown): boolean => isTransientError(e) || lostRace(e);
 
 // Every attempt of a decision lost the commit to other runs' commits. The
 // pull request is closed with that reason rather than left open, so the
@@ -374,10 +380,9 @@ let lastAttempt = false;
 
 // Run one optimistic decide-and-apply pass, retrying (up to MAX_ATTEMPTS) when
 // it throws an error another attempt may get past (retryable) — most often
-// the non-fast-forward commit failing because the branch head moved. Each
-// attempt is handed its own read of the tables (the first attempt `first`,
-// when given), so retrying a failed read is equally safe. Any other error is
-// thrown at once.
+// the commit failing because the branch head moved. Each attempt is handed
+// its own read of the tables (the first attempt `first`, when given), so
+// retrying a failed read is equally safe. Any other error is thrown at once.
 // Runs for different pull requests execute concurrently — several at once when
 // operations are submitted in quick succession — so a random pause that grows
 // with each retry (up to 8 s) spreads competing writers apart until each has
@@ -394,7 +399,7 @@ async function withRetry<T>(
       if (!retryable(e)) throw e;
       const message = (e as Error).message;
       if (i === MAX_ATTEMPTS - 1)
-        throw LOST_RACE.test(message) ? new TablesBusy(message) : e;
+        throw lostRace(e) ? new TablesBusy(message) : e;
       console.warn(`Attempt ${i + 1} failed, retrying: ${message}`);
       await new Promise((resolve) =>
         setTimeout(resolve, Math.random() * Math.min(8_000, 500 * 2 ** i)),
@@ -478,9 +483,9 @@ async function attemptClaim(
   });
   if (!commit) return verdict;
   const { files, message } = commit;
-  // Non-fast-forward update fails if `main` moved since `sha` → we retry.
+  // The commit fails if `main` moved since `sha` → we retry.
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -560,7 +565,7 @@ async function attemptRelease(
     envelope,
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -649,7 +654,7 @@ async function attemptReviewEdit(
     newId: shortId(),
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -937,7 +942,7 @@ async function attemptSubmit(
   )
     throw new HeadMoved();
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -1021,7 +1026,7 @@ async function attemptComment(
     envelope,
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -1081,7 +1086,7 @@ async function attemptReap(tables: Promise<Tables>): Promise<void> {
     now,
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,

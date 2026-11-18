@@ -16,6 +16,10 @@ import {
   searchReposByTopic,
   commentAndClosePr,
   commitFiles,
+  commitToBranch,
+  BranchMovedError,
+  MAX_ONE_REQUEST_COMMIT_BYTES,
+  ApiError,
   ensureFork,
   ForkDivergedError,
   isTransientError,
@@ -798,6 +802,287 @@ test("commitFiles rejects ambiguous file content before making a request", async
     /exactly one of content or contentBase64/,
   );
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+const branchCommit = {
+  baseSha: "base-sha",
+  baseTreeSha: "base-tree",
+  branch: "main",
+};
+
+// The requests of a commit as "METHOD path", the API root left out.
+const writesOf = (calls: RecordedCall[]) =>
+  calls.map(
+    (c) =>
+      `${c.method} ${new URL(c.url).pathname.replace(/^\/repos\/owner\/repo/, "")}`,
+  );
+
+test("commitToBranch commits in one mutation on the expected head, every value a variable", async (t) => {
+  const calls: RecordedCall[] = [];
+  gitDataMock(t, {
+    record: calls,
+    extra: (url) =>
+      url.endsWith("/graphql")
+        ? Response.json({
+            data: { createCommitOnBranch: { commit: { oid: "one-commit" } } },
+          })
+        : undefined,
+  });
+  const sha = await commitToBranch(
+    "token",
+    "owner",
+    "repo",
+    [
+      { path: "tracking/lock.csv", content: "locks ✓\n" },
+      { path: "tracking/history.csv", content: "" },
+    ],
+    "Lock T0001 for bob\n\nCo-authored-by: bob <42+bob@users.noreply.github.com>",
+    branchCommit,
+  );
+  assert.equal(sha, "one-commit");
+  assert.deepEqual(writesOf(calls), ["POST /graphql"]);
+  const { query, variables } = calls[0].body as {
+    query: string;
+    variables: unknown;
+  };
+  assert.match(query, /^mutation\(\$input: CreateCommitOnBranchInput!\)/);
+  assert.doesNotMatch(query, /owner|repo|main|base-sha|tracking|Lock/);
+  assert.deepEqual(variables, {
+    input: {
+      branch: { repositoryNameWithOwner: "owner/repo", branchName: "main" },
+      expectedHeadOid: "base-sha",
+      message: {
+        headline: "Lock T0001 for bob",
+        body: "Co-authored-by: bob <42+bob@users.noreply.github.com>",
+      },
+      fileChanges: {
+        additions: [
+          {
+            path: "tracking/lock.csv",
+            contents: Buffer.from("locks ✓\n").toString("base64"),
+          },
+          { path: "tracking/history.csv", contents: "" },
+        ],
+      },
+    },
+  });
+});
+
+test("commitToBranch reports a moved branch as BranchMovedError without another request", async (t) => {
+  const calls: RecordedCall[] = [];
+  gitDataMock(t, {
+    record: calls,
+    extra: (url) =>
+      url.endsWith("/graphql")
+        ? Response.json({
+            data: { createCommitOnBranch: null },
+            errors: [
+              {
+                type: "STALE_DATA",
+                path: ["createCommitOnBranch"],
+                message:
+                  'Expected branch to point to "base-sha" but it did not.  Pull and try again.',
+              },
+            ],
+          })
+        : undefined,
+  });
+  await assert.rejects(
+    commitToBranch(
+      "token",
+      "owner",
+      "repo",
+      [{ path: "a.csv", content: "a" }],
+      "Update",
+      branchCommit,
+    ),
+    (e) =>
+      e instanceof BranchMovedError &&
+      /Expected branch to point to "base-sha"/.test(e.message),
+  );
+  assert.deepEqual(writesOf(calls), ["POST /graphql"]);
+});
+
+test("commitToBranch commits through the Git Data API on the same parent when GitHub refuses the mutation", async (t) => {
+  const refusals = [
+    () =>
+      Response.json({
+        data: { createCommitOnBranch: null },
+        errors: [
+          {
+            type: "FORBIDDEN",
+            message: "Resource not accessible by integration",
+          },
+        ],
+      }),
+    () =>
+      Response.json({
+        data: { createCommitOnBranch: null },
+        errors: [{ type: "NOT_FOUND", message: "Branch not found" }],
+      }),
+    () => Response.json({ message: "Forbidden" }, { status: 403 }),
+    () =>
+      Response.json(
+        { message: "API rate limit exceeded" },
+        { status: 403, headers: { "X-RateLimit-Remaining": "0" } },
+      ),
+  ];
+  for (const refusal of refusals) {
+    const calls: RecordedCall[] = [];
+    gitDataMock(t, {
+      record: calls,
+      extra: (url) => (url.endsWith("/graphql") ? refusal() : undefined),
+    });
+    const warn = t.mock.method(console, "warn", () => {});
+    const sha = await commitToBranch(
+      "token",
+      "owner",
+      "repo",
+      [{ path: "a.csv", content: "a" }],
+      "Update",
+      branchCommit,
+    );
+    assert.equal(sha, "new-commit");
+    assert.deepEqual(writesOf(calls), [
+      "POST /graphql",
+      "POST /git/trees",
+      "POST /git/commits",
+      "PATCH /git/refs/heads/main",
+    ]);
+    assert.deepEqual(calls[2].body, {
+      message: "Update",
+      tree: "new-tree",
+      parents: ["base-sha"],
+    });
+    assert.match(
+      String(warn.mock.calls[0].arguments[0]),
+      /^The one-request commit failed/,
+    );
+    t.mock.restoreAll();
+  }
+});
+
+test("commitToBranch throws when the mutation's outcome is unknown, without committing through REST", async (t) => {
+  for (const [lost, expected] of [
+    [
+      () => {
+        throw new TypeError("fetch failed");
+      },
+      TypeError,
+    ],
+    [
+      () => Response.json({ message: "Bad gateway" }, { status: 502 }),
+      ApiError,
+    ],
+    [() => Response.json({}), TypeError],
+    [() => new Response("<html>", { status: 200 }), TypeError],
+    [
+      () =>
+        Response.json({
+          data: null,
+          errors: [
+            { message: "Something went wrong while executing your query." },
+          ],
+        }),
+      TypeError,
+    ],
+    [
+      () =>
+        Response.json({
+          data: { createCommitOnBranch: null },
+          errors: [
+            { type: "FORBIDDEN", message: "Forbidden" },
+            { message: "Something went wrong" },
+          ],
+        }),
+      TypeError,
+    ],
+  ] as const) {
+    const calls: RecordedCall[] = [];
+    gitDataMock(t, {
+      record: calls,
+      extra: (url) => (url.endsWith("/graphql") ? lost() : undefined),
+    });
+    await assert.rejects(
+      commitToBranch(
+        "token",
+        "owner",
+        "repo",
+        [{ path: "a.csv", content: "a" }],
+        "Update",
+        branchCommit,
+      ),
+      expected,
+    );
+    assert.deepEqual(writesOf(calls), ["POST /graphql"]);
+    t.mock.restoreAll();
+  }
+});
+
+test("commitToBranch returns the commit oid also beside errors, and sends exactly MAX_ONE_REQUEST_COMMIT_BYTES", async (t) => {
+  const calls: RecordedCall[] = [];
+  gitDataMock(t, {
+    record: calls,
+    extra: (url) =>
+      url.endsWith("/graphql")
+        ? Response.json({
+            data: { createCommitOnBranch: { commit: { oid: "one-commit" } } },
+            errors: [{ message: "Something went wrong" }],
+          })
+        : undefined,
+  });
+  const sha = await commitToBranch(
+    "token",
+    "owner",
+    "repo",
+    [
+      { path: "a.mei", content: "x".repeat(MAX_ONE_REQUEST_COMMIT_BYTES - 1) },
+      { path: "a.csv", content: "y" },
+    ],
+    "Update",
+    branchCommit,
+  );
+  assert.equal(sha, "one-commit");
+  assert.deepEqual(writesOf(calls), ["POST /graphql"]);
+});
+
+test("commitToBranch commits through the Git Data API what the mutation cannot carry", async (t) => {
+  const cases: Array<
+    [string, Parameters<typeof commitToBranch>[3], string, string]
+  > = [
+    [
+      "binary",
+      [{ path: "a.jpg", contentBase64: "aW1hZ2U=" }],
+      "Update",
+      "token",
+    ],
+    [
+      "oversized",
+      [
+        { path: "a.mei", content: "x".repeat(MAX_ONE_REQUEST_COMMIT_BYTES) },
+        { path: "a.csv", content: "y" },
+      ],
+      "Update",
+      "token",
+    ],
+    ["one newline", [{ path: "a.csv", content: "a" }], "Update\nbody", "token"],
+    ["empty headline", [{ path: "a.csv", content: "a" }], "\n\nbody", "token"],
+    ["empty rest", [{ path: "a.csv", content: "a" }], "Update\n\n", "token"],
+  ];
+  for (const [name, files, message, token] of cases) {
+    const calls: RecordedCall[] = [];
+    gitDataMock(t, { record: calls });
+    await commitToBranch(token, "owner", "repo", files, message, branchCommit);
+    assert.ok(
+      !calls.some((c) => c.url.endsWith("/graphql")),
+      `${name}: no mutation`,
+    );
+    assert.ok(
+      calls.some((c) => c.url.endsWith("/git/commits")),
+      `${name}: a REST commit`,
+    );
+    t.mock.restoreAll();
+  }
 });
 
 test("ensureFork waits for readiness and syncs its default branch with upstream", async (t) => {
