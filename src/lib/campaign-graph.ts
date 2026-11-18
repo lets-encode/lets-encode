@@ -249,14 +249,14 @@ export function taskAction(
   if (mode === "continue-review")
     return task.pre
       ? {
-          label: `Continue in ${place}`,
+          label: "Continue review",
           short: "Continue",
           title: `Opens the ${place} to review the submitted work.`,
           target: "pre",
           stage: "review",
         }
       : {
-          label: "Continue in review",
+          label: "Continue review",
           short: "Continue",
           title:
             "Opens the review view: score and facsimile side by side, with the Approve and Request changes buttons.",

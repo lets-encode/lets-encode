@@ -116,8 +116,20 @@ export function filterCampaigns(
         (b.total ? b.done / b.total : 0) - (a.total ? a.done / a.total : 0),
     );
   else {
+    // By the row's next task: work the viewer holds, a task they can claim,
+    // a task open to others, then none; each group in order of recent
+    // activity.
+    const rank = new Map(
+      list.map((s) => {
+        const next = nextTask(s, who.viewer);
+        return [
+          s,
+          !next ? 0 : next.action === "continue" ? 3 : next.action ? 2 : 1,
+        ];
+      }),
+    );
     const active = (s: CampaignStats) => ts(s.lastActivity || s.createdAt);
-    list.sort((a, b) => active(b) - active(a));
+    list.sort((a, b) => rank.get(b)! - rank.get(a)! || active(b) - active(a));
   }
   return list;
 }

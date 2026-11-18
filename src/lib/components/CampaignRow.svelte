@@ -175,7 +175,7 @@
       {:else if next.action === "continue"}
         {@const act = actionOf(next)}
         <a
-          class="btn"
+          class="btn btn-{act.stage}"
           href={taskActionHref(stats.name, next, act)}
           title={act.title}>{act.label}</a
         >

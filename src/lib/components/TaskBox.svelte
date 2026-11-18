@@ -406,7 +406,7 @@
         />
         <a
           aria-label={act.label}
-          class="btn press-touch btn-primary"
+          class="btn press-touch btn-primary btn-{act.stage}"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}

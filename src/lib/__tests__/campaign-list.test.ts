@@ -20,6 +20,11 @@ import {
   workSummary,
 } from "../campaign-list/my-work.ts";
 import type { CampaignStats, MyTask } from "../campaign-stats.ts";
+import {
+  parseLockCsv,
+  parseStateCsv,
+  parseTaskCsv,
+} from "../campaign-tables.ts";
 
 const campaign = (over: Partial<CampaignStats>): CampaignStats =>
   ({
@@ -36,6 +41,13 @@ const campaign = (over: Partial<CampaignStats>): CampaignStats =>
     lastActivity: "",
     createdAt: "",
     history: [],
+    taskDefs: [],
+    rows: [],
+    validationColumns: [],
+    locks: [],
+    piecePreparations: {},
+    passThreshold: 2,
+    allowSelfValidation: false,
     ...over,
   }) as CampaignStats;
 
@@ -134,6 +146,52 @@ test("filterCampaigns filters, then sorts by the chosen order", () => {
       ),
     ),
     ["b"],
+  );
+});
+
+test("filterCampaigns by activity puts held work, then claims, then tasks open to others first", () => {
+  const TASKS =
+    "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
+    "T0001,,sources/a.mei,surface-1,,,\n" +
+    "T0001,S0001,sources/a.mei,surface-1,,,\n";
+  const STATE =
+    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
+  const LOCKS = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
+  const withTask = (name: string, state: string, locks = "") =>
+    campaign({
+      name,
+      lastActivity: "2026-01-01",
+      taskDefs: parseTaskCsv(TASKS),
+      ...((t) => ({ rows: t.rows, validationColumns: t.validationColumns }))(
+        parseStateCsv(STATE + state),
+      ),
+      locks: parseLockCsv(LOCKS + locks),
+    });
+  const encoding = "T0001,,encoding_required,,,\nT0001,S0001,pending,,,\n";
+  const none = campaign({ name: "none", lastActivity: "2026-05-01" });
+  // 7 encoded the task; another volunteer has to review it.
+  const others = withTask(
+    "others",
+    "T0001,,validation_required,7,2026-01-01T00:00:00Z,\n" +
+      "T0001,S0001,validation_required,,,\n",
+  );
+  const claim = withTask("claim", encoding);
+  const held = withTask(
+    "held",
+    encoding,
+    "T0001,,7,2026-01-01T00:00:00Z,encoding,2099-01-01T00:00:00.000Z\n",
+  );
+  const me = { viewer: "7", user: { login: "me" } };
+  const q = { search: "", filter: "all" as const };
+  const list = [none, others, claim, held];
+  assert.deepEqual(
+    filterCampaigns(list, { ...q, sort: "active" }, me).map((s) => s.name),
+    ["held", "claim", "others", "none"],
+  );
+  // The other sorts ignore the next task.
+  assert.deepEqual(
+    filterCampaigns(list, { ...q, sort: "progress" }, me).map((s) => s.name),
+    ["none", "others", "claim", "held"],
   );
 });
 

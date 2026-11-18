@@ -5,6 +5,10 @@ parentheses.
 
 ## 2026-11-18
 
+- A held review's button says Continue review.
+- The campaign list colours continue buttons by stage.
+- The task box's Continue review button takes the review colour.
+- Sorted by recent activity, the campaign list shows campaigns where you hold a task first.
 - The switch between first system and other systems moved into the side panel as substeps of Instruments.
 - The instruments step's first system ends with Next: other systems.
 - An open change request disables Approve and turns Request changes into Cancel request.
