@@ -1,11 +1,15 @@
+import importlib
 import io
 import json
 import logging
 import os
 import struct
+import sys
 import tempfile
+import threading
 import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from unittest.mock import patch
 from urllib.parse import parse_qs, urlsplit
@@ -53,6 +57,25 @@ class BrokerTest(unittest.TestCase):
             os.path.join(relay_dir.name, "relay.db")
         )
         patcher = patch.object(broker, "relay_store", self.relay_store)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # An HTTP request no test has patched fails the test instead of
+        # reaching the network; 127.0.0.1 (a test's own server) is reached.
+        send = broker.requests.adapters.HTTPAdapter.send
+
+        def local_only(adapter, prepared, **options):
+            if urlsplit(prepared.url).hostname != "127.0.0.1":
+                raise AssertionError("unpatched request to " + prepared.url)
+            return send(adapter, prepared, **options)
+
+        patcher = patch.object(
+            broker.requests.adapters.HTTPAdapter, "send", local_only
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def without_rate_limits(self):
+        patcher = patch.object(broker.limiter, "enabled", False)
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -231,7 +254,9 @@ class BrokerTest(unittest.TestCase):
             raw=SimpleNamespace(headers={"Content-Type": "application/json"}),
         )
         start = 1_800_000_000
-        with patch.object(broker.requests, "request", return_value=upstream):
+        with patch.object(
+            broker.github_session(), "request", return_value=upstream
+        ):
             with patch("cachelib.file.time", return_value=start):
                 self.authenticate()
             with patch("cachelib.file.time", return_value=start + 3600):
@@ -271,7 +296,7 @@ class BrokerTest(unittest.TestCase):
         )
 
         with patch.object(
-            broker.requests, "request", return_value=upstream
+            broker.github_session(), "request", return_value=upstream
         ) as request_upstream:
             with self.assertLogs(broker.app.logger.name, level="INFO") as logs:
                 response = self.client.get(
@@ -422,8 +447,10 @@ class BrokerTest(unittest.TestCase):
             ),
         ]
         with patch.object(
-            broker.requests, "request", return_value=upstream
-        ) as request_upstream:
+            broker.github_session(), "request", return_value=upstream
+        ) as request_upstream, patch.object(
+            broker.requests, "request", request_upstream
+        ):
             for method, path, *body in relayed:
                 response = self.client.open(
                     f"/proxy/api.github.com/{path}",
@@ -478,13 +505,15 @@ class BrokerTest(unittest.TestCase):
             },
         }
 
-        def lookup(url, **_options):
+        def lookup(_method, url, **_options):
             name = url.split("/repos/", 1)[1]
             body = repositories.get(name)
             return SimpleNamespace(
                 ok=body is not None,
                 status_code=200 if body is not None else 404,
                 json=lambda: body,
+                content=b"{}",
+                raw=SimpleNamespace(headers={}),
             )
 
         upstream = SimpleNamespace(
@@ -494,7 +523,7 @@ class BrokerTest(unittest.TestCase):
             json=lambda: {"full_name": "alice/new-campaign"},
         )
         with patch.object(
-            broker.requests, "get", side_effect=lookup
+            broker.github_session(), "request", side_effect=lookup
         ) as lookups, patch.object(
             broker.requests, "request", return_value=upstream
         ) as request_upstream:
@@ -509,9 +538,9 @@ class BrokerTest(unittest.TestCase):
                 "/proxy/api.github.com/repos/o/campaign/git/blobs", json={}
             )
             self.assertEqual(lookups.call_count, looked_up)
-            # Reads need no lookup.
+            # A read is relayed with no lookup.
             self.client.get("/proxy/api.github.com/repos/alice/project")
-            self.assertEqual(lookups.call_count, looked_up)
+            self.assertEqual(lookups.call_count, looked_up + 1)
             request_upstream.reset_mock()
 
             with self.assertLogs(broker.app.logger.name, level="WARNING"):
@@ -551,7 +580,9 @@ class BrokerTest(unittest.TestCase):
     def test_proxy_maps_a_failed_campaign_lookup(self):
         self.authenticate()
         with patch.object(
-            broker.requests, "get", side_effect=broker.requests.Timeout
+            broker.github_session(),
+            "request",
+            side_effect=broker.requests.Timeout,
         ), patch.object(broker.requests, "request") as request_upstream:
             response = self.client.post(
                 "/proxy/api.github.com/repos/o/r/git/blobs", json={}
@@ -577,7 +608,7 @@ class BrokerTest(unittest.TestCase):
                 json=lambda: {"message": "GitHub says no"},
             )
             with patch.object(
-                broker.requests, "get", return_value=failed
+                broker.github_session(), "request", return_value=failed
             ), patch.object(broker.requests, "request") as request_upstream:
                 response = self.client.post(
                     "/proxy/api.github.com/repos/o/r/git/blobs", json={}
@@ -614,7 +645,7 @@ class BrokerTest(unittest.TestCase):
             content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
         )
         with patch.object(
-            broker.requests, "request", return_value=upstream
+            broker.github_session(), "request", return_value=upstream
         ) as request_upstream:
             self.client.get(
                 "/proxy/api.github.com/repos/o/r/contents/a%25b%3Fc%23d%20e.mei?ref=main"
@@ -667,19 +698,24 @@ class BrokerTest(unittest.TestCase):
         )
         moved = "https://api.github.com/repositories/42"
 
+        def github(*answers):
+            """The repository lookup's answer for `moved`, else `answers`."""
+            pending = list(answers)
+            return lambda _method, url, **_options: (
+                lookup if url == moved else pending.pop(0)
+            )
+
         with patch.object(
-            broker.requests, "get", return_value=lookup
-        ) as lookups, patch.object(
-            broker.requests,
+            broker.github_session(),
             "request",
-            side_effect=[redirect(moved + "/contents/a.csv?ref=abc"), ok],
+            side_effect=github(redirect(moved + "/contents/a.csv?ref=abc"), ok),
         ) as request_upstream:
             response = self.client.get(
                 "/proxy/api.github.com/repos/o/old-name/contents/a.csv?ref=abc"
             )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
-            lookups.call_args.args[0], "https://api.github.com/repositories/42"
+            request_upstream.call_args_list[1].args, ("GET", moved)
         )
         self.assertEqual(
             request_upstream.call_args.args,
@@ -691,20 +727,21 @@ class BrokerTest(unittest.TestCase):
 
         # The current name's endpoint is checked like any other.
         with patch.object(
-            broker.requests, "get", return_value=lookup
-        ), patch.object(
-            broker.requests, "request", side_effect=[redirect(moved + "/hooks")]
+            broker.github_session(),
+            "request",
+            side_effect=github(redirect(moved + "/hooks")),
         ) as request_upstream:
             with self.assertLogs(broker.app.logger.name, level="WARNING"):
                 response = self.client.get(
                     "/proxy/api.github.com/repos/o/old-name"
                 )
         self.assertEqual(response.status_code, 403)
-        self.assertEqual(request_upstream.call_count, 1)
+        # The redirected request and the lookup; /hooks is not requested.
+        self.assertEqual(request_upstream.call_count, 2)
 
         # A redirect anywhere else is not followed.
         with patch.object(
-            broker.requests,
+            broker.github_session(),
             "request",
             side_effect=[redirect("https://evil.test/repos/o/r")],
         ) as request_upstream:
@@ -715,13 +752,164 @@ class BrokerTest(unittest.TestCase):
     def test_proxy_maps_upstream_timeouts(self):
         self.authenticate()
         with patch.object(
-            broker.requests, "request", side_effect=broker.requests.Timeout
+            broker.github_session(),
+            "request",
+            side_effect=broker.requests.Timeout,
         ):
             response = self.client.get("/proxy/api.github.com/user")
         self.assertEqual(response.status_code, 504)
         self.assertEqual(
             response.get_json(), {"error": "Upstream request timed out"}
         )
+
+    def test_proxy_sends_each_users_token_and_the_session_keeps_none(self):
+        self.without_rate_limits()
+        github = broker.github_session()
+        sent = []
+
+        def answer(prepared, **_options):
+            sent.append(prepared)
+            upstream = broker.requests.Response()
+            upstream.status_code = 200
+            upstream._content = b"{}"
+            upstream.raw = SimpleNamespace(headers={})
+            return upstream
+
+        with patch.object(
+            github.get_adapter("https://api.github.com/"),
+            "send",
+            side_effect=answer,
+        ):
+            for token in ("token-a", "token-b"):
+                with self.client.session_transaction() as current:
+                    current["githubToken"] = token
+                    current["userLogin"] = "alice"
+                self.assertEqual(
+                    self.client.get("/proxy/api.github.com/user").status_code,
+                    200,
+                )
+        self.assertEqual(
+            [prepared.headers["Authorization"] for prepared in sent],
+            ["token token-a", "token token-b"],
+        )
+        self.assertNotIn("Authorization", github.headers)
+        self.assertIsNone(github.auth)
+
+    def test_github_session_sends_no_cookie_an_upstream_set(self):
+        received = []
+
+        class Upstream(BaseHTTPRequestHandler):
+            def do_GET(self):
+                received.append(self.headers.get("Cookie"))
+                self.send_response(200)
+                self.send_header("Set-Cookie", "upstream=1; Path=/")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *_args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Upstream)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        url = "http://127.0.0.1:{}/".format(server.server_address[1])
+
+        # A plain session sends the cookie back, the GitHub session does not.
+        with broker.requests.Session() as plain:
+            plain.get(url, timeout=5)
+            plain.get(url, timeout=5)
+        github = broker.github_session()
+        github.get(url, timeout=5)
+        github.get(url, timeout=5)
+        self.assertEqual(received, [None, "upstream=1", None, None])
+        self.assertEqual(len(github.cookies), 0)
+
+    def test_a_get_whose_pooled_connection_fails_is_sent_once_more(self):
+        self.without_rate_limits()
+        self.authenticate()
+        ok = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        adapter = broker.github_session().get_adapter("https://api.github.com/")
+        with patch.object(
+            adapter, "send", side_effect=broker.requests.ConnectionError
+        ) as pooled, patch.object(
+            broker.requests, "request", return_value=ok
+        ) as fresh:
+            response = self.client.get("/proxy/api.github.com/user")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(pooled.call_count, 1)
+        self.assertEqual(fresh.call_count, 1)
+        self.assertEqual(
+            fresh.call_args.args, ("GET", "https://api.github.com/user")
+        )
+        self.assertEqual(fresh.call_args.kwargs["timeout"], (10, 60))
+        self.assertFalse(fresh.call_args.kwargs["allow_redirects"])
+        self.assertEqual(
+            fresh.call_args.kwargs["headers"]["Authorization"],
+            "token server-side-token",
+        )
+
+    def test_a_get_that_times_out_is_not_sent_again(self):
+        self.without_rate_limits()
+        self.authenticate()
+        adapter = broker.github_session().get_adapter("https://api.github.com/")
+        for timeout in (
+            broker.requests.ConnectTimeout,
+            broker.requests.ReadTimeout,
+        ):
+            with patch.object(
+                adapter, "send", side_effect=timeout
+            ) as pooled, patch.object(broker.requests, "request") as fresh:
+                response = self.client.get("/proxy/api.github.com/user")
+            self.assertEqual(response.status_code, 504, timeout)
+            self.assertEqual(pooled.call_count, 1, timeout)
+            fresh.assert_not_called()
+
+    def test_writes_are_sent_once_on_a_new_connection(self):
+        self.without_rate_limits()
+        self.authenticate()
+        self.known_campaigns("o/r")
+        ok = SimpleNamespace(
+            content=b"{}", status_code=200, raw=SimpleNamespace(headers={})
+        )
+        with patch.object(
+            broker.github_session(), "request"
+        ) as pooled, patch.object(
+            broker.requests, "request", return_value=ok
+        ) as fresh:
+            self.client.post(
+                "/proxy/api.github.com/graphql",
+                json={"query": "{ viewer { id } }"},
+            )
+            self.client.delete(
+                "/proxy/api.github.com/repos/o/r/git/refs/heads/x"
+            )
+            fresh.reset_mock(return_value=True)
+            fresh.side_effect = broker.requests.ConnectionError
+            failed = self.client.delete(
+                "/proxy/api.github.com/repos/o/r/git/refs/heads/x"
+            )
+        pooled.assert_not_called()
+        self.assertEqual(failed.status_code, 502)
+        self.assertEqual(fresh.call_count, 1)
+
+    def test_github_session_pool_covers_every_thread_of_a_worker(self):
+        with patch.dict(os.environ, {"PORT": "1"}):
+            config = importlib.import_module("broker.gunicorn_config")
+        adapter = broker.github_session().get_adapter("https://api.github.com/")
+        self.assertGreaterEqual(
+            adapter.poolmanager.connection_pool_kw["maxsize"], config.threads
+        )
+
+    def test_github_session_is_created_once_per_process(self):
+        github_proxy = sys.modules["broker.github_proxy"]
+        github = broker.github_session()
+        self.assertIs(broker.github_session(), github)
+        with patch.object(github_proxy, "getpid", return_value=-1):
+            self.assertIsNot(broker.github_session(), github)
+        self.assertIsNot(broker.github_session(), github)
 
     @staticmethod
     def iiif_response(

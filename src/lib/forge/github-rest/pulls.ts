@@ -11,7 +11,12 @@ import {
   githubFetch,
 } from "./request.ts";
 import type { ErrorResponse, FileChange } from "./shapes.ts";
-import { commitFiles, deleteBranch, getRepoHead } from "./commits.ts";
+import {
+  commitFiles,
+  deleteBranch,
+  getRepoHead,
+  getRepoHeadInfo,
+} from "./commits.ts";
 import { ensureFork } from "./forks.ts";
 
 /**
@@ -478,7 +483,9 @@ export async function createPullRequest(
  * the repo itself. Otherwise the user's fork is used and a cross-repo PR is
  * opened upstream — the real volunteer model. Either way the branch is based on
  * the upstream head, or on `baseSha` when given, so the PR diff is only the
- * change in `files` as long as they were read at that commit.
+ * change in `files` as long as they were read at that commit. With `baseSha`
+ * the upstream head is not read; `baseTreeSha`, the tree of `baseSha`, also
+ * saves reading that commit.
  */
 export async function openChangePr(
   token: string,
@@ -491,6 +498,7 @@ export async function openChangePr(
     title,
     body,
     baseSha,
+    baseTreeSha,
   }: {
     branch: string;
     files: FileChange[];
@@ -498,6 +506,7 @@ export async function openChangePr(
     title: string;
     body: string;
     baseSha?: string;
+    baseTreeSha?: string;
   },
 ): Promise<{
   number: number;
@@ -505,9 +514,10 @@ export async function openChangePr(
   headSha: string;
   head: { owner: string; repo: string; branch: string };
 }> {
-  const head = await getRepoHead(token, owner, repo);
-  const { branch: base, canPush } = head;
-  const sha = baseSha ?? head.sha;
+  const { branch: base, canPush } = await getRepoHeadInfo(token, owner, repo);
+  const from = baseSha
+    ? { sha: baseSha, treeSha: baseTreeSha }
+    : await getRepoHead(token, owner, repo);
   const target = canPush
     ? { owner, repo }
     : await ensureFork(token, owner, repo);
@@ -517,7 +527,8 @@ export async function openChangePr(
   let branchCreated = false;
   try {
     await commitFiles(token, target.owner, target.repo, files, message, {
-      baseSha: sha,
+      baseSha: from.sha,
+      baseTreeSha: from.treeSha,
       newBranch: branch,
     });
     branchCreated = true;

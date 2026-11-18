@@ -3,8 +3,20 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-18
+
+- The coordinator reads the branch head and the tables in one request.
+- The coordinator reads the tables while it reads the pull request.
+- The coordinator no longer reads config and comments a second time for a verdict or a submission.
+
 ## 2026-11-17
 
+- The broker keeps its connections to GitHub open between read requests.
+- A pre-task page finds the claim holder's saved work from the history it has already read.
+- Opening a submission reads the branch head once and no longer reads its commit.
+- A submission followed in the background is polled every 3 seconds at most, a claim or give-back every second.
+- The result of a closed submission is read without waiting for the run's status, with its comment read beside its record.
+- A claim of a pre-task deletes the old task branch without first looking up its repository.
 - The campaign workflow reads the pointer with curl and fetches the central code with git, without the checkout action.
 - The coordinator logs the start and duration of each of its GitHub requests.
 - An automation.ref that starts with a hyphen fails the run.

@@ -7,8 +7,10 @@ import {
   parseTaskCsv,
   parseStateCsv,
   parseLockCsv,
+  parseHistoryCsv,
   findRow,
   CONFIG_PATH,
+  HISTORY_PATH,
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
@@ -114,7 +116,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
   log: "none",
   async run({ task_id }, ctx) {
     const { forge: f, owner, repo, viewer } = ctx;
-    const { files } = await readTableFiles(ctx);
+    const { files, canPush } = await readTableFiles(ctx);
     const [taskCsv, stateCsv, lockCsv, configYaml] = [
       TASK_PATH,
       STATE_PATH,
@@ -138,7 +140,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     // kept from expired claims, else on the campaign's score.
     const source =
       holdsLock && taskState?.status === "encoding_required"
-        ? await workSource(ctx, task)
+        ? await workSource(ctx, task, {
+            history: parseHistoryCsv(files[HISTORY_PATH] ?? ""),
+            canPush,
+          })
         : null;
     const from = source ?? { owner, repo, ref: undefined };
     const [mei, corrected] = await Promise.all([

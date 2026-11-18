@@ -389,6 +389,8 @@ test("table reads started together share one batch read", async () => {
       return [
         {
           headSha: "head1",
+          treeSha: "tree1",
+          branch: "main",
           isPrivate: false,
           canPush: true,
           files: Object.fromEntries(paths.map((p) => [p, files[p] ?? null])),
@@ -421,9 +423,9 @@ test("submitValidation rejects an invalid verdict before opening a PR", async ()
   assert.equal(result.error, "Invalid review verdict: passing.");
 });
 
-test("a headless claim carries its envelope and cleans its fork branch after acceptance", async () => {
+test("a headless claim carries its envelope and cleans its fork branches after acceptance", async () => {
   let openedBody = "";
-  let deleted: string[] = [];
+  const deleted: string[][] = [];
   const opened: OpenedChangeRequest = {
     number: 12,
     html_url: "https://example.test/pr/12",
@@ -447,7 +449,7 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
     getPullRequestState: async () => "closed",
     getLastIssueComment: async () => bot("✅ Claim accepted."),
     deleteBranch: async (owner, repo, branch) => {
-      deleted = [owner, repo, branch];
+      deleted.push([owner, repo, branch]);
     },
   });
 
@@ -464,7 +466,10 @@ test("a headless claim carries its envelope and cleans its fork branch after acc
   assert.equal(envelope?.command, "campaign.claimTask");
   assert.equal(envelope?.user_id, "9001");
   assert.deepEqual(envelope?.input, { task_id: "P0001" });
-  assert.deepEqual(deleted, ["volunteer", "campaign", "claim-P0001-abcd"]);
+  assert.deepEqual(deleted, [
+    ["volunteer", "campaign", "claim-P0001-abcd"],
+    ["volunteer", "campaign", "encode-P0001"],
+  ]);
 });
 
 test("a failed automation run surfaces as an error while the PR stays open", async () => {

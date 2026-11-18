@@ -78,6 +78,7 @@ const submitValidation: CommandDef<
         await muteOnce(ctx);
         const {
           sha,
+          treeSha,
           files: [stateCsv, commentCsv],
         } = await readAtHead(ctx, [STATE_PATH, COMMENT_PATH]);
         const state = parseStateCsv(stateCsv ?? "");
@@ -126,6 +127,7 @@ const submitValidation: CommandDef<
           title: `Review ${task_id}/${subtask_id} (${verdict})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
           baseSha: sha,
+          baseTreeSha: treeSha,
         });
         console.log("[validate] validation PR opened", pr.number, pr.html_url);
         return pr;
@@ -160,6 +162,7 @@ const reviewEdit: CommandDef<
       await muteOnce(ctx);
       const {
         sha,
+        treeSha,
         files: [lockCsv, commentCsv],
       } = await readAtHead(ctx, [LOCK_PATH, COMMENT_PATH]);
       const locks = parseLockCsv(lockCsv ?? "");
@@ -207,6 +210,7 @@ const reviewEdit: CommandDef<
         title: `Edit ${task_id} from review`,
         body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         baseSha: sha,
+        baseTreeSha: treeSha,
       });
       console.log("[review-edit] PR opened", pr.number, pr.html_url);
       let verdict: PrProcessingResult;

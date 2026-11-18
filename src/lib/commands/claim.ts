@@ -17,7 +17,7 @@ import { claimRanOut, liveLocks, reapLocks } from "../campaign-reaper.ts";
 import { appendEnvelopeToPrBody } from "../command-envelope.ts";
 import type { CommandEnvelope } from "../command-envelope.ts";
 import type { CommandContext, CommandDef, Result } from "./core.ts";
-import { deleteTaskBranch } from "./task-branch.ts";
+import { deleteTaskBranch, rememberClaimRepo } from "./task-branch.ts";
 import {
   followInBackground,
   muteOnce,
@@ -96,6 +96,7 @@ async function openClaimPr(
   await muteOnce(ctx);
   const {
     sha,
+    treeSha,
     files: [lockCsv, configYaml],
   } = await readAtHead(ctx, [LOCK_PATH, CONFIG_PATH]);
   const lockRows = parseLockCsv(lockCsv ?? "");
@@ -125,18 +126,23 @@ async function openClaimPr(
     title: `Claim ${target} (${work})`,
     body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
     baseSha: sha,
+    baseTreeSha: treeSha,
   });
 }
 
 // Open a claim PR and wait for its verdict synchronously — the claim gates the
 // user's next step. A poll failure after the PR opened is indeterminate: it
 // resolves as the "still being processed" warning, never as a rejection.
+// With `freshBranch`, an accepted claim deletes the viewer's task branch in
+// the repo the claim's pull request came from, which is where the task branch
+// of that claim lives (workRepoOf).
 async function claimAndWait(
   ctx: CommandContext,
   task_id: string,
   subtask_id: string,
   kind: string,
   envelope: CommandEnvelope | null,
+  freshBranch = false,
 ): Promise<Result> {
   try {
     ctx.progress({ step: "Opening the claim…" });
@@ -165,6 +171,10 @@ async function claimAndWait(
         verdict.state === "run_failed" ? { ...pr, headSha: undefined } : pr,
         kind === "encoding" ? task_id : undefined,
       );
+    if (freshBranch && verdict.state === "decided" && verdict.accepted) {
+      rememberClaimRepo(ctx, pr.number, pr.head);
+      await deleteTaskBranch(ctx, task_id, pr.head);
+    }
     return verdictResult(
       verdict,
       pr.number,
@@ -205,6 +215,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
       await muteOnce(ctx);
       const {
         sha,
+        treeSha,
         files: [lockCsv],
       } = await readAtHead(ctx, [LOCK_PATH]);
       const locks = parseLockCsv(lockCsv ?? "");
@@ -231,6 +242,7 @@ const abandon: CommandDef<{ task_id: string; subtask_id: string }, Result> = {
         title: `Abandon ${target} (${work})`,
         body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
         baseSha: sha,
+        baseTreeSha: treeSha,
       });
       console.log("[abandon] release PR opened", pr.number, pr.html_url);
       let verdict: PrProcessingResult;
@@ -269,16 +281,12 @@ const claimTask: CommandDef<{ task_id: string }, Result> = {
   id: "campaign.claimTask",
   version: 1,
   log: "pr",
-  async run({ task_id }, ctx, envelope) {
-    const result = await claimAndWait(ctx, task_id, "", "encoding", envelope);
-    // A new claim starts from the current score or the work kept from
-    // expired claims, never from a branch of an earlier claim. The branch is
-    // deleted only once the claim is accepted: until then, an expired claim's
-    // work on it may still be being kept.
-    if (result.ok && result.outcome !== "pending" && result.outcome !== "noop")
-      await deleteTaskBranch(ctx, task_id);
-    return result;
-  },
+  // A new claim starts from the current score or the work kept from expired
+  // claims, never from a branch of an earlier claim. The branch is deleted
+  // only once the claim is accepted: until then, an expired claim's work on
+  // it may still be being kept.
+  run: ({ task_id }, ctx, envelope) =>
+    claimAndWait(ctx, task_id, "", "encoding", envelope, true),
 };
 
 export {

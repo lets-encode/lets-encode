@@ -84,6 +84,7 @@ const submitComment: CommandDef<
         await muteOnce(ctx);
         const {
           sha,
+          treeSha,
           files: [commentCsv],
         } = await readAtHead(ctx, [COMMENT_PATH]);
         const content = appendComments(commentCsv ?? "", [
@@ -111,6 +112,7 @@ const submitComment: CommandDef<
           title: `Comment on ${target} (${input.kind})`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
           baseSha: sha,
+          baseTreeSha: treeSha,
         });
         console.log("[comment] comment PR opened", pr.number, pr.html_url);
         return pr;
@@ -130,9 +132,10 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
     const { forge: f, owner, repo } = ctx;
     let comments;
     let sha: string;
+    let treeSha: string;
     try {
       const read = await readAtHead(ctx, [COMMENT_PATH]);
-      sha = read.sha;
+      ({ sha, treeSha } = read);
       comments = parseCommentCsv(read.files[0] ?? "");
     } catch (e) {
       return { error: `Resolve failed: ${(e as Error).message}` };
@@ -162,6 +165,7 @@ const resolveComment: CommandDef<{ comment_id: string }, Result> = {
           title: `Resolve comment ${comment_id}`,
           body: envelope ? appendEnvelopeToPrBody(body, envelope) : body,
           baseSha: sha,
+          baseTreeSha: treeSha,
         });
         console.log("[comment] resolve PR opened", pr.number, pr.html_url);
         return pr;

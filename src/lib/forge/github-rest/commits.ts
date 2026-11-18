@@ -11,21 +11,17 @@ import {
 } from "./request.ts";
 import type { ErrorResponse, FileChange, RepoData } from "./shapes.ts";
 import { RESOLVE_TTL_MS, memoGet, repoHeadInfoCache } from "./caches.ts";
-import { encodeRepoPath } from "./files.ts";
+import { encodeRepoPath, getRepoFile, getRepoFilesBatch } from "./files.ts";
 
 /**
- * Read a repo's default branch, its current head commit SHA and that commit's
- * tree SHA, and whether the authenticated user can push to it (drives the
- * same-repo vs. fork PR path). The tree SHA is what a commit built on this
- * head starts from (`commitFiles`'s `baseTreeSha`).
+ * A repo's default branch and whether the authenticated user can push to it.
+ * Both are memoised.
  */
-export async function getRepoHead(
+export async function getRepoHeadInfo(
   token: string,
   owner: string,
   repo: string,
-): Promise<{ branch: string; sha: string; treeSha: string; canPush: boolean }> {
-  // The branch name and push permission are memoised; the head SHA is read
-  // fresh on every call — callers rely on it for optimistic concurrency.
+): Promise<{ branch: string; canPush: boolean }> {
   const key = `${owner}/${repo}`;
   let info = memoGet(repoHeadInfoCache, key);
   if (!info) {
@@ -46,6 +42,23 @@ export async function getRepoHead(
       expires: Date.now() + RESOLVE_TTL_MS,
     });
   }
+  return info;
+}
+
+/**
+ * Read a repo's default branch, its current head commit SHA and that commit's
+ * tree SHA, and whether the authenticated user can push to it (drives the
+ * same-repo vs. fork PR path). The tree SHA is what a commit built on this
+ * head starts from (`commitFiles`'s `baseTreeSha`).
+ */
+export async function getRepoHead(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<{ branch: string; sha: string; treeSha: string; canPush: boolean }> {
+  // The branch name and push permission are memoised; the head SHA is read
+  // fresh on every call — callers rely on it for optimistic concurrency.
+  const info = await getRepoHeadInfo(token, owner, repo);
   // The branch endpoint carries the head commit together with its tree, so
   // one read serves both the optimistic-concurrency parent and the tree a
   // commit on it is built from.
@@ -66,6 +79,52 @@ export async function getRepoHead(
     sha: head.sha,
     treeSha: head.commit.tree.sha,
     canPush: info.canPush,
+  };
+}
+
+/**
+ * The default branch, its head commit and that commit's tree, and the text of
+ * each of `paths` at that commit: null where the file does not exist. One
+ * GraphQL query reads them all (getRepoFilesBatch). When that query fails —
+ * GraphQL reports errors, a missing file among them, with status 200 — or
+ * returns no head, the head is read as getRepoHead reads it and each file
+ * through REST at that head.
+ */
+export async function getRepoHeadFiles(
+  token: string,
+  owner: string,
+  repo: string,
+  paths: string[],
+): Promise<{
+  branch: string;
+  sha: string;
+  treeSha: string;
+  files: Record<string, string | null>;
+}> {
+  try {
+    const [read] =
+      (await getRepoFilesBatch(token, [{ owner, repo }], paths)) ?? [];
+    if (read?.headSha && read.treeSha && read.branch)
+      return {
+        branch: read.branch,
+        sha: read.headSha,
+        treeSha: read.treeSha,
+        files: read.files,
+      };
+  } catch (e) {
+    console.warn(
+      `The batched read of ${owner}/${repo} failed; reading each file: ${(e as Error).message}`,
+    );
+  }
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
+  const contents = await Promise.all(
+    paths.map((path) => getRepoFile(token, owner, repo, path, sha)),
+  );
+  return {
+    branch,
+    sha,
+    treeSha,
+    files: Object.fromEntries(paths.map((path, i) => [path, contents[i]])),
   };
 }
 

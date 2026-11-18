@@ -59,6 +59,7 @@ export {
 export type { RepoFiles } from "./github-rest/files.ts";
 export {
   getRepoHead,
+  getRepoHeadFiles,
   commitFiles,
   getBranchHead,
   createBranch,
