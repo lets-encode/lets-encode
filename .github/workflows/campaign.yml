@@ -43,11 +43,6 @@ jobs:
     # coordinator's check, so it comes from the campaign's automation.ref.
     if: github.event_name != 'pull_request_target' || (github.event.pull_request.changed_files <= 50 && github.event.pull_request.draft == false && github.event.pull_request.user.type == 'User')
     runs-on: ubuntu-24.04
-    # The runner uses a shell given by its full path as it is. A shell given
-    # by name, or none, it looks up by listing every directory on PATH.
-    defaults:
-      run:
-        shell: /usr/bin/bash -e {0}
     steps:
       # The central pointer comes from config.yaml on the base ref — a fork PR
       # cannot redirect where central lives (GITHUB_SHA is the base branch head

@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-18
 
+- The campaign workflow and the coordinator action name bash without its path again.
 - The coordinator action downloads the Node setup action only when the runner has no suitable Node.
 - The campaign workflow and the coordinator action name bash by its full path.
 - The coordinator commits the tables in one request.

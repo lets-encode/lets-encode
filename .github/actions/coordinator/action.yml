@@ -12,9 +12,6 @@ inputs:
 
 runs:
   using: composite
-  # The run steps name bash by its full path, which the runner uses as it is;
-  # a shell given by name it looks up by listing every directory on PATH.
-  # The arguments are those the runner gives the shell named bash.
   steps:
     # .nvmrc of the central checkout names the oldest Node the coordinator
     # runs on. The runner's own `node` is used when it is at least that
@@ -24,7 +21,7 @@ runs:
     # versions first.
     - name: Use the runner's Node
       id: node
-      shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+      shell: bash
       run: |
         want="$(tr -d 'v[:space:]' < central/.nvmrc)"
         at_least() { [ "$(printf '%s\n' "$1" "$2" | sort -V | head -n 1)" = "$1" ]; }
@@ -62,7 +59,7 @@ runs:
     # unknown-extension error. The entry point reaches the shell as an
     # environment variable, quoted, never expanded into the command line.
     - name: Run the central coordinator
-      shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+      shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
         CENTRAL_PATH: ${{ inputs.path }}
