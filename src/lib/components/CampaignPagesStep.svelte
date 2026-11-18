@@ -553,7 +553,7 @@
                 <span>Not loaded</span>
                 <button
                   type="button"
-                  class="btn"
+                  class="btn btn-small"
                   title={page.failure}
                   onclick={() => retry(page)}
                   disabled={busy || retrying.includes(page.id)}

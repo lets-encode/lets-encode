@@ -27,6 +27,7 @@
     onanchor,
     onreply,
     onresolve,
+    replying = false,
   }: {
     /** The campaign's repository id; task ids repeat across campaigns. */
     repoId: number;
@@ -49,6 +50,8 @@
     /** Start a reply to this comment; absent hides the Reply action. */
     onreply?: (comment: CommentRow) => void;
     onresolve: (comment_id: string) => Promise<unknown>;
+    /** The comment field holds a reply to this comment. */
+    replying?: boolean;
   } = $props();
 
   const login = $derived(handle(logins, comment.author_id));
@@ -129,8 +132,13 @@
           {anchorLabel}
         </button>
       {/if}
-      {#if onreply && auth.user}
-        <button type="button" class="btn" onclick={() => onreply(comment)}>
+      <!-- A thread being resolved takes no new replies. -->
+      {#if onreply && auth.user && !resolvePending && !resolveStuck}
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={() => onreply(comment)}
+        >
           <Icon name="reply" />Reply
         </button>
       {/if}
@@ -151,9 +159,12 @@
         {:else}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={resolve}
-            disabled={runner.busy}
+            disabled={runner.busy || replying}
+            title={replying
+              ? "Send or cancel your reply to resolve this comment."
+              : undefined}
           >
             <Icon name="check" />Resolve
           </button>
@@ -212,7 +223,7 @@
     text-overflow: ellipsis;
   }
   .cbody {
-    font-size: 12.5px;
+    font-size: 13px;
     color: var(--ink);
     line-height: 1.45;
     overflow-wrap: anywhere;

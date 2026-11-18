@@ -149,8 +149,10 @@
     {#if replyTo}
       <div class="replying">
         <span>Replying to <strong>{commentLogin(replyTo)}</strong></span>
-        <button type="button" class="btn" onclick={() => (replyTo = null)}
-          >Cancel</button
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={() => (replyTo = null)}>Cancel</button
         >
       </div>
     {/if}
@@ -192,13 +194,13 @@
     <div class="composer-actions">
       <button
         type="button"
-        class="btn"
+        class="btn btn-small"
         onclick={cancel}
         disabled={!oncancel && !text && !replyTo}>Cancel</button
       >
       <button
         type="button"
-        class="btn"
+        class="btn btn-small"
         onclick={postComment}
         disabled={runner.busy ||
           !text.trim() ||

@@ -10,10 +10,13 @@
   let {
     disabled = false,
     review = false,
+    small = false,
     onabandon,
   }: {
     disabled?: boolean;
     review?: boolean;
+    /** The button and its confirmation as small buttons. */
+    small?: boolean;
     onabandon: () => void;
   } = $props();
 
@@ -27,6 +30,7 @@
       : "Give back this task? All your changes will be deleted."}
     confirm={review ? "Give back task" : "Give back task and delete changes"}
     soft={review}
+    {small}
     {disabled}
     onconfirm={() => {
       asking = false;
@@ -38,6 +42,7 @@
   <button
     type="button"
     class="btn"
+    class:btn-small={small}
     {disabled}
     onclick={() => (asking = true)}
     title={review

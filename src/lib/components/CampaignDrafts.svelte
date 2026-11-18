@@ -84,7 +84,7 @@
         </span>
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={() => continueSetup(draft)}
           disabled={busy !== null}
         >
@@ -108,7 +108,7 @@
         {:else}
           <button
             type="button"
-            class="btn btn-icon btn-danger"
+            class="btn btn-icon btn-small btn-danger"
             onclick={() => (confirming = draft.handle)}
             disabled={busy !== null || draft.claim?.registered}
             aria-label="Discard this setup"

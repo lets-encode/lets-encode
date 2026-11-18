@@ -23,6 +23,7 @@
     preTaskInstruction,
     reviewViewHref,
     taskAction,
+    type TaskAction,
     taskActionHref,
     workPlace,
   } from "$lib/campaign-graph.ts";
@@ -192,6 +193,12 @@
   const stage = $derived(stageOf(card));
 </script>
 
+<!-- A main button's label: in full, or without the place where the footer
+     is too narrow for it beside another button. The button's aria-label
+     carries the full label. -->
+{#snippet actLabel(act: TaskAction)}<span class="actlong">{act.label}</span
+  ><span class="actshort">{act.short}</span>{/snippet}
+
 <div
   class="taskcard on-tint"
   data-stage={stage}
@@ -315,21 +322,23 @@
     <div class="tspfoot">
       {#if act.target === "mei-friend"}
         <button
+          aria-label={act.label}
           type="button"
           class="btn press-touch btn-primary btn-{act.stage}"
           onclick={() => oneditor?.(card.task)}
           disabled={runner.busy || !auth.user || processing}
           title={auth.user ? act.title : "Log in with GitHub to claim a task."}
-          >{act.label} <Icon name="external" /></button
+          >{@render actLabel(act)} <Icon name="external" /></button
         >
       {:else}
         <a
+          aria-label={act.label}
           class="btn press-touch btn-primary btn-{act.stage}"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}
           aria-disabled={processing}
-          title={act.title}>{act.label}</a
+          title={act.title}>{@render actLabel(act)}</a
         >
       {/if}
     </div>
@@ -337,72 +346,79 @@
     {#if (card.pre && card.worker?.mine) || (!card.pre && mineEncoding)}
       {@const act = taskAction(card, "continue")}
       <div class="tspfoot">
+        <AbandonButton
+          small
+          disabled={runner.busy || processing}
+          onabandon={() => onabandon(card.task, "")}
+        />
         {#if act.target === "mei-friend"}
           <button
+            aria-label={act.label}
             type="button"
             class="btn press-touch btn-primary"
             onclick={() => oneditor?.(card.task)}
             disabled={runner.busy || processing}
-            title={act.title}>{act.label} <Icon name="external" /></button
+            title={act.title}
+            >{@render actLabel(act)} <Icon name="external" /></button
           >
         {:else}
           <a
+            aria-label={act.label}
             class="btn press-touch btn-primary"
             href={processing
               ? undefined
               : (taskActionHref(campaign, card, act) ?? undefined)}
             aria-disabled={processing}
-            title={act.title}>{act.label}</a
+            title={act.title}>{@render actLabel(act)}</a
           >
         {/if}
-        <AbandonButton
-          disabled={runner.busy || processing}
-          onabandon={() => onabandon(card.task, "")}
-        />
       </div>
     {/if}
   {:else if card.column === "validation"}
     {#if claimableSub !== undefined}
       {@const act = taskAction(card, "claim-review")}
       <div class="tspfoot">
-        <button
-          type="button"
-          class="btn press-touch btn-primary btn-{act.stage}"
-          onclick={() => onclaim(card.task, claimableSub)}
-          disabled={runner.busy || processing}
-          title={act.title}>{act.label}</button
-        >
         {#if !card.pre && !inView}
           <a
-            class="btn press-touch"
+            class="btn btn-small press-touch"
             href={reviewViewHref(campaign, card.task)}
             title="Open the full-screen review view: score and facsimile side by side, with the Approve and Request changes buttons."
             >Open review</a
           >
         {/if}
+        <button
+          aria-label={act.label}
+          type="button"
+          class="btn press-touch btn-primary btn-{act.stage}"
+          onclick={() => onclaim(card.task, claimableSub)}
+          disabled={runner.busy || processing}
+          title={act.title}>{@render actLabel(act)}</button
+        >
       </div>
     {:else if myReview && !inView}
       {@const act = taskAction(card, "continue-review")}
       <div class="tspfoot">
+        <AbandonButton
+          small
+          review
+          disabled={runner.busy || processing}
+          onabandon={() => onabandon(card.task, myReviewSub ?? "")}
+        />
         <a
+          aria-label={act.label}
           class="btn press-touch btn-primary"
           href={processing
             ? undefined
             : (taskActionHref(campaign, card, act) ?? undefined)}
           aria-disabled={processing}
-          title={act.title}>{act.label}</a
+          title={act.title}>{@render actLabel(act)}</a
         >
-        <AbandonButton
-          review
-          disabled={runner.busy || processing}
-          onabandon={() => onabandon(card.task, myReviewSub ?? "")}
-        />
       </div>
     {/if}
   {:else if card.column === "done" && card.pre}
     <div class="tspfoot">
       <a
-        class="btn press-touch"
+        class="btn btn-small press-touch"
         href={editorRoute}
         title={`Open the accepted work in the ${editorName}, read-only.`}
         >View {editorName}</a
@@ -502,6 +518,7 @@
     color: var(--ink);
   }
   .tspfoot {
+    container: tspfoot / inline-size;
     padding: 12px 16px;
     background: var(--band);
     border-top: 1px solid var(--line);
@@ -509,11 +526,29 @@
     gap: 8px;
     flex-wrap: wrap;
   }
-  /* Buttons share the row while their labels fit on one line, else each
-     takes its own; a label longer than the panel wraps rather than widening
-     it. */
+  /* The secondary button keeps its width on the left; the primary fills the
+     rest of the row on the right, and its label wraps when the row is too
+     narrow for it. */
   .tspfoot .btn {
-    flex: 1 1 auto;
+    flex: none;
+  }
+  .tspfoot .btn-primary {
+    flex: 1 1 0;
     white-space: normal;
+  }
+  .actshort {
+    display: none;
+  }
+  /* Beside another button in a footer narrower than the longest pair of
+     labels ("Give back task" and "Continue in encoding alignment", 348px)
+     the main button shows its short label; its aria-label keeps the full
+     one. */
+  @container tspfoot (max-width: 347px) {
+    .btn-primary:not(:only-child) .actlong {
+      display: none;
+    }
+    .btn-primary:not(:only-child) .actshort {
+      display: inline;
+    }
   }
 </style>

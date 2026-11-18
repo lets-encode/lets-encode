@@ -221,9 +221,6 @@
     <span class="pnote">Changes only touch tasks nobody has worked on yet.</span
     >
     <span class="pspacer"></span>
-    <button type="button" class="btn" onclick={addTask} disabled={busy}
-      ><Icon name="plus" />Add task</button
-    >
     {#if askingDiscard}
       <ConfirmInline
         question="Discard the changes to the plan?"
@@ -236,6 +233,9 @@
         >Cancel</button
       >
     {/if}
+    <button type="button" class="btn" onclick={addTask} disabled={busy}
+      ><Icon name="plus" />Add task</button
+    >
     <button type="button" class="btn btn-primary" onclick={save} disabled={busy}
       >Save the plan</button
     >
@@ -349,7 +349,7 @@
           {#if g.editable}
             <button
               type="button"
-              class="btn btn-icon btn-danger"
+              class="btn btn-icon btn-small btn-danger"
               aria-label="Remove task"
               title="Remove this task"
               onclick={() => removeTask(i)}

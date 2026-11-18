@@ -178,7 +178,7 @@
             </div>
             <button
               type="button"
-              class="btn btn-icon btn-danger press-touch remove"
+              class="btn btn-icon btn-small btn-danger press-touch remove"
               onclick={() => remove(i)}
               aria-label="Remove {file.name}"
               title="Remove this file"

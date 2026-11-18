@@ -86,22 +86,22 @@
   {@render children?.()}
   {#if actions || oncomment || ondeselect}
     <div class="selactions">
+      {#if ondeselect}
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={ondeselect}
+          title={deselectTitle}><Icon name="close" />Deselect</button
+        >
+      {/if}
       {@render actions?.()}
       {#if oncomment}
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={oncomment}
           aria-label={commentTitle}
           title={commentTitle}><Icon name="comment" />Comment</button
-        >
-      {/if}
-      {#if ondeselect}
-        <button
-          type="button"
-          class="btn"
-          onclick={ondeselect}
-          title={deselectTitle}><Icon name="close" />Deselect</button
         >
       {/if}
     </div>

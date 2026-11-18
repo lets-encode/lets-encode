@@ -534,7 +534,7 @@
             {#if result}
               <button
                 type="button"
-                class="btn"
+                class="btn btn-small"
                 title={`Name its staves ${result} instead. One step, undo restores it.`}
                 onclick={() => onmerge(d)}>Make it {result}</button
               >
@@ -584,7 +584,7 @@
                     {#if result}
                       <button
                         type="button"
-                        class="btn merge"
+                        class="btn btn-small merge"
                         title={`Name its staves ${result} instead. One step, undo restores it.`}
                         onclick={() => onmerge(d)}>Make it {result}</button
                       >

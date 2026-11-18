@@ -297,7 +297,7 @@
       {#if recognition.omr && canEdit && recognition.result && recognition.result.failed.length > 0}
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={() => recognition.recognise()}
           disabled={busy}
           title="Run the staff model again on the {recognition.result.failed

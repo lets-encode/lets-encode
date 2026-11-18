@@ -88,14 +88,14 @@
 {#snippet editActions()}
   <button
     type="button"
-    class="btn"
+    class="btn btn-small"
     onclick={sel.newBox}
     title={`New ${boxName} beside this one (N)`}
     ><Icon name="plus" />New {boxName}</button
   >
   <button
     type="button"
-    class="btn btn-danger"
+    class="btn btn-small btn-danger"
     onclick={() => ed.deleteSelection()}
     aria-label={`Delete the ${boxName}`}
     title={`Delete the ${boxName}`}><Icon name="trash" />Delete</button
@@ -116,14 +116,14 @@
     {#snippet actions()}
       <button
         type="button"
-        class="btn"
+        class="btn btn-small"
         onclick={() => ed.duplicate()}
         title={`Copy the ${groupZs.length} ${boxNames} below or beside them (${MOD}drag one of them copies them to where you drop it)`}
         ><Icon name="copy" />Duplicate</button
       >
       <button
         type="button"
-        class="btn btn-danger"
+        class="btn btn-small btn-danger"
         onclick={() => ed.deleteSelection()}
         aria-label={`Delete the ${groupZs.length} ${boxNames}`}
         title={`Delete the ${groupZs.length} ${boxNames}`}

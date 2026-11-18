@@ -362,7 +362,7 @@
             {#if confirmingRemove !== p.id}
               <button
                 type="button"
-                class="btn btn-icon btn-danger press-touch delete"
+                class="btn btn-icon btn-small btn-danger press-touch delete"
                 onclick={() => (confirmingRemove = p.id)}
                 disabled={busy}
                 aria-label="Remove {labelOf(p)}"
@@ -388,7 +388,7 @@
           <div class="piece-actions">
             <button
               type="button"
-              class="btn"
+              class="btn btn-small"
               onclick={assignAllPages}
               disabled={busy}
             >
@@ -396,7 +396,7 @@
             </button>
             <button
               type="button"
-              class="btn"
+              class="btn btn-small"
               onclick={clearRegions}
               disabled={busy || !p.zones.length}
             >
@@ -433,7 +433,7 @@
           </span>
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => readdEncoding(encoding.name)}
             disabled={busy}
           >

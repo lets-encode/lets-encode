@@ -105,7 +105,7 @@
         {#if canEdit}
           <button
             type="button"
-            class="btn btn-icon btn-danger"
+            class="btn btn-icon btn-small btn-danger"
             onclick={() => editor.removeStaff(i)}
             disabled={model.staves.length <= 1 || hasNotation}
             aria-label={`Remove staff ${i + 1}`}

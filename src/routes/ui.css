@@ -50,10 +50,10 @@
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
-/* A button in a dense form of the side panel: 28px with a mouse, 32px on
-   a coarse pointer. */
+/* A button that belongs to one item of a surface: 26px with a mouse, the
+   height of a toggle pill; 32px on a coarse pointer. */
 .btn.btn-small {
-  min-height: 28px;
+  min-height: 26px;
   padding: 4px 12px;
 }
 @media (pointer: coarse) {
@@ -181,6 +181,19 @@ a.btn[aria-disabled="true"] {
   line-height: 1;
   border-radius: 50%;
   flex: none;
+}
+/* A small icon button, on one item's row: 26px with a mouse, 32px on a
+   coarse pointer. */
+.btn-icon.btn-small {
+  width: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+@media (pointer: coarse) {
+  .btn-icon.btn-small {
+    width: 32px;
+    min-height: 32px;
+  }
 }
 /* An icon button whose panel or menu is open, in the stage tint. */
 .btn-icon.on {

@@ -130,7 +130,7 @@
         {@const name = draft.entries?.title?.trim() || draft.handle}
         <button
           type="button"
-          class="btn other-draft"
+          class="btn btn-small other-draft"
           title={`Resume setup of “${name}”`}
           aria-label={`Resume setup of “${name}”`}
           onclick={() => onResume(draft.handle)}

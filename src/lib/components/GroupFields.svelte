@@ -123,7 +123,7 @@
     {#if onremove && !disabled}
       <button
         type="button"
-        class="btn btn-icon btn-danger"
+        class="btn btn-icon btn-small btn-danger"
         onclick={onremove}
         aria-label={removeLabel ?? "Remove this group"}
         title="Remove this group"><Icon name="trash" /></button

@@ -399,7 +399,7 @@
               />
               <button
                 type="button"
-                class="btn btn-icon btn-danger"
+                class="btn btn-icon btn-small btn-danger"
                 onclick={() => removeContributor(i)}
                 aria-label="Remove this contributor"
                 title="Remove this contributor"><Icon name="trash" /></button

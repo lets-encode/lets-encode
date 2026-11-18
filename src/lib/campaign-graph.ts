@@ -216,6 +216,8 @@ export type TaskActionMode =
     stage whose colour it takes. */
 export interface TaskAction {
   label: string;
+  /** The label without the place, for a narrow row. */
+  short: string;
   title: string;
   /** mei-friend (another site, opened by the editor command), the score
       check, a pre-task's own editor, or the review view. */
@@ -237,6 +239,7 @@ export function taskAction(
   if (mode === "claim-review")
     return {
       label: "Claim to review",
+      short: "Claim to review",
       title: task.pre
         ? `Claims a review of this task for you and opens the ${place}.`
         : "Claims a review of this task for you and opens the review.",
@@ -247,21 +250,25 @@ export function taskAction(
     return task.pre
       ? {
           label: `Continue in ${place}`,
+          short: "Continue",
           title: `Opens the ${place} to review the submitted work.`,
           target: "pre",
           stage: "review",
         }
       : {
           label: "Continue in review",
+          short: "Continue",
           title:
             "Opens the review view: score and facsimile side by side, with the Approve and Request changes buttons.",
           target: "review",
           stage: "review",
         };
   const claim = mode === "claim";
+  const short = claim ? "Claim & open" : "Continue";
   if (task.pre)
     return {
       label: claim ? claimLabel(task.locator) : `Continue in ${place}`,
+      short,
       title: claim
         ? `Claims this task for you and opens the ${place}.`
         : `Opens the ${place} of the task you hold.`,
@@ -271,6 +278,7 @@ export function taskAction(
   if (task.checksOpening)
     return {
       label: claim ? "Claim & open score check" : "Continue in score check",
+      short,
       title: claim
         ? "Claims this task for you and opens the score check of the clefs, key signatures, meter and transpositions, before the draft opens in mei-friend."
         : "Opens the score check of the task you hold, which opens the draft in mei-friend.",
@@ -279,6 +287,7 @@ export function taskAction(
     };
   return {
     label: claim ? claimLabel(task.locator) : "Continue in mei-friend",
+    short,
     title: claim
       ? "Claims this task for you and opens the score in mei-friend."
       : "Opens the task you hold in mei-friend. Completing it there submits it for review.",

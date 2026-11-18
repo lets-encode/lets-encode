@@ -104,7 +104,7 @@
         {#if editor.chosen}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={editor.placeAutomatically}
             title="Let the alignment choose the file measure for this measure again"
             ><Icon name="wand" />Place automatically</button
@@ -114,7 +114,7 @@
           {@const m = editor.selectedMatch.measure}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() =>
               editor.editFile(
                 addFileMeasure(
@@ -129,7 +129,7 @@
           >
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() =>
               editor.editFile(
                 addFileMeasure(
@@ -144,7 +144,7 @@
           >
           <button
             type="button"
-            class="btn btn-danger"
+            class="btn btn-small btn-danger"
             onclick={() => editor.removeFileMeasure(m)}
             title="Take the file measure this measure holds out of the file; the file measures after it move up"
             ><Icon name="trash" />Remove file measure</button
@@ -163,7 +163,7 @@
             {#if canEdit}
               <button
                 type="button"
-                class="btn btn-icon"
+                class="btn btn-icon btn-small"
                 onclick={change.undo}
                 aria-label={change.added
                   ? "Remove this empty measure"
@@ -197,7 +197,7 @@
         {#if problem.measures.length}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => onshowproblem(problem.measures)}>Show</button
           >
         {/if}

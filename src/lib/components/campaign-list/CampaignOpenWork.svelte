@@ -151,7 +151,7 @@
                 </a>
                 {#if t.group === "validating"}
                   <a
-                    class="btn"
+                    class="btn btn-small"
                     href={reviewHref(t.campaignSlug, t.locator, t.task)}
                     title={taskAction(t, "continue-review").title}>Review</a
                   >
@@ -160,7 +160,7 @@
                   {#if act.target === "mei-friend"}
                     <button
                       type="button"
-                      class="btn"
+                      class="btn btn-small"
                       disabled={busy || processing(t)}
                       onclick={() => onOpenEditor(t)}
                       title={act.title}
@@ -168,7 +168,7 @@
                     >
                   {:else}
                     <a
-                      class="btn"
+                      class="btn btn-small"
                       href={processing(t)
                         ? undefined
                         : (taskActionHref(t.campaignSlug, t, act) ?? undefined)}

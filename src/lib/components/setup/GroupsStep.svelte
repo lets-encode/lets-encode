@@ -50,19 +50,21 @@
         the last staff of the group.
       </p>
       <div class="markbtns">
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={() => marking.clearMark()}>Cancel</button
+        >
         {#each marking.containing(marking.markFrom + 1) as g (g)}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.toggleRow(g)}
             title="Open this group"
             ><MusicGlyph name={symbolGlyph(g.symbol)} />{symbolName(g.symbol)}
             {g.start}–{g.end}</button
           >
         {/each}
-        <button type="button" class="btn" onclick={() => marking.clearMark()}
-          >Cancel</button
-        >
       </div>
     {:else if marking.markSpan}
       <p class="note markhint">
@@ -72,11 +74,16 @@
         <p class="groupwarn">{marking.markProblem}</p>
       {/if}
       <div class="markbtns">
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={() => marking.clearMark()}>Cancel</button
+        >
         {#if marking.sameGroup}
           {@const sameGroup = marking.sameGroup}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.toggleRow(sameGroup)}
             title="Open this group"
             ><MusicGlyph name={symbolGlyph(sameGroup.symbol)} />{symbolName(
@@ -87,22 +94,19 @@
         {:else if !marking.markProblem}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.addMarked("brace")}
             title="Join the staves with a brace: the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2."
             ><MusicGlyph name="brace" />Brace</button
           >
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.addMarked("bracket")}
             title="Join the staves with a bracket: a section, like the woodwinds or the strings."
             ><MusicGlyph name="bracket" />Bracket</button
           >
         {/if}
-        <button type="button" class="btn" onclick={() => marking.clearMark()}
-          >Cancel</button
-        >
       </div>
     {/if}
   </div>

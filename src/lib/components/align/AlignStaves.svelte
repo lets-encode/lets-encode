@@ -178,7 +178,7 @@
             {#if !fixed && staves.length > 1}
               <button
                 type="button"
-                class="btn btn-icon btn-danger"
+                class="btn btn-icon btn-small btn-danger"
                 onclick={() => remove(t)}
                 aria-label={`Remove staff ${t + 1}`}
                 title="Remove this staff"><Icon name="trash" /></button
@@ -197,7 +197,7 @@
       {#if !fixed}
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={() => onchange([...staves, null])}
           title="Add an empty staff below the last one"
           ><Icon name="plus" />Add staff</button
@@ -206,7 +206,7 @@
       {#if chosen}
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={() => onchange(undefined)}
           title="Let the alignment choose the file staff for every staff again"
           ><Icon name="wand" />Place automatically</button
@@ -223,7 +223,7 @@
           {#if canEdit}
             <button
               type="button"
-              class="btn btn-icon"
+              class="btn btn-icon btn-small"
               onclick={() => {
                 const next = placeFileStaff(staves, n, !fixed);
                 if (next) onchange(next);

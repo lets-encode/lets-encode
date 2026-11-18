@@ -5,6 +5,18 @@ parentheses.
 
 ## 2026-11-18
 
+- Buttons that act on one item or sit in a nested form are small, and small buttons are 26px.
+- The side panel's buttons are small, except the solid primary and the footer.
+- The actions on a selected box, measure or region are small.
+- The task box keeps its buttons on one line with the primary on the right, shortening its label when narrow.
+- Inline confirmations, selections, the plan editor and the group-marking bar put Cancel or Deselect first.
+- The Comments toggle and the icon buttons on item rows are small.
+- The campaign panel leaves space between its title and the line below it.
+- A task's comment section ends with a line.
+- An empty comment list leaves no extra space above the field.
+- Comment text is 13px.
+- A comment being resolved shows no Reply button.
+- Resolve is disabled on a comment while the field holds a reply to it.
 - The campaign workflow and the coordinator action name bash without its path again.
 - The coordinator action downloads the Node setup action only when the runner has no suitable Node.
 - The campaign workflow and the coordinator action name bash by its full path.

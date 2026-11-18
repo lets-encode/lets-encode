@@ -465,7 +465,7 @@
   {#if open}
     <button
       type="button"
-      class="btn btn-icon press-docked showinline"
+      class="btn btn-icon btn-small press-docked showinline"
       aria-expanded="true"
       aria-label="Close"
       title="Close the panel"
@@ -481,7 +481,7 @@
   {:else}
     <button
       type="button"
-      class="btn press-docked showinline"
+      class="btn btn-small press-docked showinline"
       aria-expanded="false"
       onpointerdown={() => (openAtPress = open)}
       onclick={toggle}
@@ -587,7 +587,7 @@
       {#if ondeselect}
         <button
           type="button"
-          class="btn press-docked deselect"
+          class="btn btn-small press-docked deselect"
           title="Deselect the task and show the campaign comments"
           onclick={ondeselect}><Icon name="arrow-left" /> Campaign</button
         >
@@ -671,6 +671,7 @@
               {inScore}
               {onanchor}
               onreply={t.root.kind === "comment" ? startReply : undefined}
+              replying={replyTo?.comment_id === t.root.comment_id}
               {onresolve}
             />
             {#each t.replies as reply (reply.comment_id)}
@@ -826,6 +827,11 @@
     background: var(--band);
     padding: 6px 16px 12px;
   }
+  /* Below a task's comments a hairline closes their section; as a shadow it
+     falls on the footer's border rather than doubling it. */
+  .hastask > .composerwrap {
+    box-shadow: 0 1px 0 var(--line);
+  }
   /* Right below the task box or the selection the composer starts its own
      section; below the comments it continues theirs. */
   .sp > :not(.clist):not(.composerwrap) + .composerwrap {
@@ -846,16 +852,23 @@
     background: var(--card);
     border-top: 1px solid var(--line);
   }
-  /* The Comments button, 32px with a 44px press (.press); its word gives
-     way to the icon below 320px of task heading (TaskBox's taskhead
-     container). */
+  /* The Comments button, small: 26px with a mouse, 32px on a coarse
+     pointer, with a 44px press (.press); its word gives way to the icon
+     below 320px of task heading (TaskBox's taskhead container). */
   .commentsbtn {
     flex: none;
     box-sizing: border-box;
-    min-width: 32px;
-    min-height: 32px;
+    min-width: 26px;
+    min-height: 26px;
+    padding-block: 4px;
     justify-content: center;
     gap: 5px;
+  }
+  @media (pointer: coarse) {
+    .commentsbtn {
+      min-width: 32px;
+      min-height: 32px;
+    }
   }
   .cbtnlabel,
   .cbtncount {
@@ -976,6 +989,9 @@
     min-height: 0;
     overflow-y: visible;
   }
+  .sphead:not(.bare):not(.hidden) + .empty {
+    margin-top: 10px;
+  }
   .empty {
     margin: 0;
     font-size: 12.5px;
@@ -1010,6 +1026,10 @@
     padding: 12px 16px 6px;
     background: var(--band);
     border-top: 1px solid var(--line);
+  }
+  /* Without its heading, room for one line. */
+  .sp > .clist:has(> .sechead.hidden) {
+    min-height: 22px;
   }
   .sechead {
     font-size: 12px;

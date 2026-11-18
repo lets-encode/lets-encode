@@ -296,7 +296,11 @@
             Continue that setup from the campaign list
           </a>
         {:else}
-          <button type="button" class="btn btn-inline" onclick={adoptClaim}>
+          <button
+            type="button"
+            class="btn btn-small btn-inline"
+            onclick={adoptClaim}
+          >
             Use the name here — replaces that setup
           </button>
         {/if}
@@ -322,7 +326,11 @@
           longer be changed.
         </span>
       {:else if wizard.claim}
-        <button type="button" class="btn btn-inline" onclick={changeName}>
+        <button
+          type="button"
+          class="btn btn-small btn-inline"
+          onclick={changeName}
+        >
           Use a different name
         </button>
       {/if}
