@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-18
 
+- The campaign workflow and the coordinator action name bash by its full path.
 - The coordinator commits the tables in one request.
 - The coordinator reads the branch head and the tables in one request.
 - The coordinator reads the tables while it reads the pull request.
