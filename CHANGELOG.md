@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-18
 
+- An open change request disables Approve and turns Request changes into Cancel request.
 - Buttons that act on one item or sit in a nested form are small, and small buttons are 26px.
 - The side panel's buttons are small, except the solid primary and the footer.
 - The actions on a selected box, measure or region are small.

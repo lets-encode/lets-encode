@@ -122,12 +122,10 @@
     failForm ? withStaff(failForm.staff, "").length : 0,
   );
   const noteTooLong = $derived(noteLength > MAX_COMMENT_LENGTH);
-  // A change request being written holds Approve, which would drop it.
+  // An open change request holds Approve.
   const approveHeld = $derived(
     approveBlock ??
-      (failForm?.body.trim()
-        ? "Send or discard the change request first."
-        : null),
+      (failForm ? "Send or cancel the change request first." : null),
   );
 
   async function submitFail(edit: boolean) {
@@ -198,8 +196,16 @@
       onclick={() =>
         (failForm = failForm ? null : { body: "", staff: "", ...prefill() })}
       disabled={runner.busy || processing}
-      title="Ask for changes — a request carries a note saying what needs to change."
-      >Request changes</button
+      title={failForm
+        ? "Close the change request without sending it."
+        : "Ask for changes — a request carries a note saying what needs to change."}
+      ><!-- Both labels share one grid cell, so the button keeps the width
+        of the longer one. --><span
+        class="faillabel"
+        ><span class:off={!!failForm}>Request changes</span><span
+          class:off={!failForm}>Cancel request</span
+        ></span
+      ></button
     >
   </span>
   {#if failForm}
@@ -338,6 +344,16 @@
   .failbtn.on {
     background: var(--danger-bg);
     border-color: var(--danger);
+  }
+  .faillabel {
+    display: inline-grid;
+  }
+  .faillabel > span {
+    grid-area: 1 / 1;
+    text-align: center;
+  }
+  .faillabel > .off {
+    visibility: hidden;
   }
   .failform {
     order: -1;
