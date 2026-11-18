@@ -1,8 +1,8 @@
 <!--
   The measure correction's action at the side panel's bottom: why Submit is
   not available yet, the transcription's state in the instruments step, the
-  claim or the draft state and give back, then the next step or the
-  submission.
+  claim or the draft state and give back, then the next step, the other
+  systems after the first system's instruments, or the submission.
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
@@ -23,6 +23,7 @@
     submitBlock,
     onstep,
     onsubmit,
+    systems = null,
   }: {
     /** The host's status: the claim or the draft state and give back. */
     status: Snippet;
@@ -41,9 +42,20 @@
     submitBlock: string | null;
     onstep: (step: LayoutStep) => void;
     onsubmit: () => void;
+    /** The instruments step's parts, for an editor: whether the other systems are open, why they cannot be opened yet (null when they can), and the switch between them. */
+    systems?: {
+      fixed: boolean;
+      block: string | null;
+      onfix: (fixed: boolean) => void;
+    } | null;
   } = $props();
 
   const transcription = $derived(transcriber.transcription);
+  // The first system's instruments are open: the step's button opens the
+  // other systems.
+  const toOthers = $derived(
+    naming && layoutStep === 4 && systems && !systems.fixed ? systems : null,
+  );
 </script>
 
 <!-- The button to the next step of a layout task, for the editor and the
@@ -81,7 +93,11 @@
 
 <WorkspaceFooter class="presses-docked">
   <!-- Why Submit is not available yet, while it is the step's button. -->
-  {#if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
+  {#if toOthers}
+    {#if toOthers.block}
+      <p class="blockline">{toOthers.block}</p>
+    {/if}
+  {:else if submitBlock && canEdit && !(omr && layoutStep < (naming ? 4 : 3))}
     <p class="blockline">{submitBlock}</p>
   {/if}
   {#if step4 && canEdit && transcription}
@@ -107,6 +123,17 @@
   {@render status()}
   {#if omr && layoutStep < lastStep}
     {@render nextStep()}
+  {:else if toOthers}
+    <button
+      type="button"
+      class="btn"
+      onclick={() => toOthers.onfix(true)}
+      disabled={toOthers.block !== null}
+      title={toOthers.block ??
+        "Go on to the other systems: choose for every staff an instrument of the first system and its parts. Submission is there."}
+    >
+      Next: other systems
+    </button>
   {:else}
     <button
       type="button"

@@ -110,6 +110,17 @@
     c;
   const coarse = $derived(c.coarse);
   const submitBlock = $derived(c.submitBlock);
+  // The instruments step's two parts, switched in the side panel and from
+  // the footer by an editor.
+  const systems = $derived(
+    canEdit
+      ? {
+          fixed: instruments.shownNamed.fixed,
+          block: instruments.firstBlock,
+          onfix: instruments.naming4.fix,
+        }
+      : null,
+  );
   const boxName = $derived(c.boxName);
   const setLayoutStep = c.setLayoutStep;
   // The side panel's tab; selecting a box shows its controls.
@@ -277,6 +288,7 @@
         layoutStep={steps.layoutStep}
         instrumentCount={instruments.shownNamed.instruments.length}
         onstep={setLayoutStep}
+        {systems}
       />
     {/snippet}
 
@@ -315,6 +327,7 @@
         {submitBlock}
         onstep={setLayoutStep}
         onsubmit={submit}
+        {systems}
       />
     {/snippet}
 

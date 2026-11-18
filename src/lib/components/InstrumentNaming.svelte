@@ -48,9 +48,7 @@
     onassign,
     onabbr,
     ongroups,
-    onfix,
     onmerge,
-    fixBlock,
   }: {
     /** The pages with their corrected boxes; staff boxes carry their named staff. */
     pages: PageModel[];
@@ -72,12 +70,8 @@
     /** Set an instrument's short name. */
     onabbr: (instrument: string, abbr: string) => void;
     ongroups: (groups: LayoutGroup[]) => void;
-    /** Open the other systems (true) or the first system (false). */
-    onfix: (fixed: boolean) => void;
     /** Make an instrument named a second time a part of the one it looks like. */
     onmerge: (double: DoubleNaming) => void;
-    /** Why the other systems cannot be opened yet; null when they can. */
-    fixBlock: string | null;
   } = $props();
 
   // Instruments that look like another one named a second time, by id.
@@ -462,30 +456,6 @@
 </datalist>
 
 <div class="naming">
-  {#if canEdit}
-    <div class="seg systems-tabs" role="tablist" aria-label="Systems">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={!named.fixed}
-        class:on={!named.fixed}
-        title="Name the instruments of the first system, their parts and the groups. The other systems keep their choices."
-        onclick={() => named.fixed && onfix(false)}>First system</button
-      >
-      <button
-        type="button"
-        role="tab"
-        aria-selected={named.fixed}
-        aria-disabled={!named.fixed && fixBlock !== null}
-        class:on={named.fixed}
-        title={!named.fixed && fixBlock
-          ? fixBlock
-          : "Choose for every staff of the other systems an instrument of the first system and its parts."}
-        onclick={() => !named.fixed && fixBlock === null && onfix(true)}
-        >Other systems</button
-      >
-    </div>
-  {/if}
   <p
     class="phase"
     title="The automatic recognition reads each staff on its own and cannot tell which instrument the staff belongs to. These names put every recognised staff on the right staff of the score and make its list of instruments."
@@ -1062,9 +1032,6 @@
   .named-text.missing,
   .named-text.double {
     color: var(--warn);
-  }
-  .systems-tabs {
-    align-self: flex-start;
   }
   .doubles {
     display: flex;

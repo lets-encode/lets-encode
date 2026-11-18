@@ -5,6 +5,8 @@ parentheses.
 
 ## 2026-11-18
 
+- The switch between first system and other systems moved into the side panel as substeps of Instruments.
+- The instruments step's first system ends with Next: other systems.
 - An open change request disables Approve and turns Request changes into Cancel request.
 - Buttons that act on one item or sit in a nested form are small, and small buttons are 26px.
 - The side panel's buttons are small, except the solid primary and the footer.

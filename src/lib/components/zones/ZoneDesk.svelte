@@ -73,9 +73,7 @@
       onassign={instruments.naming4.assign}
       onabbr={instruments.naming4.abbr}
       ongroups={instruments.naming4.groups}
-      onfix={instruments.naming4.fix}
       onmerge={instruments.naming4.merge}
-      fixBlock={instruments.firstBlock}
     />
   {/if}
   <div
