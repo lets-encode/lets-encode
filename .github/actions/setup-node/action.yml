@@ -1,0 +1,21 @@
+name: Set up Node
+description: >
+  Installs the Node version a version file names, with actions/setup-node.
+  The runner downloads actions/setup-node when a step using this action runs,
+  not when the action that holds that step is prepared, nor when the step is
+  skipped.
+
+inputs:
+  node-version-file:
+    description: Path of the file that names the Node version, relative to the workspace.
+    required: true
+
+runs:
+  using: composite
+  # The coordinator runs without installing dependencies, so no package cache.
+  steps:
+    - name: Set up Node
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version-file: ${{ inputs.node-version-file }}
+        package-manager-cache: false

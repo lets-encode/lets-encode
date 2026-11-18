@@ -48,13 +48,14 @@ runs:
         fi
 
     # A runner without such a version downloads the one .nvmrc names. The
-    # coordinator runs without installing dependencies, so no package cache.
+    # local action holds actions/setup-node, which the runner downloads only
+    # when this step runs. A local action's path is relative to the
+    # workspace, into which campaign.yml fetches this repository as central/.
     - name: Set up Node
       if: steps.node.outputs.found != 'true'
-      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      uses: ./central/.github/actions/setup-node
       with:
         node-version-file: central/.nvmrc
-        package-manager-cache: false
 
     # Node runs the coordinator's TypeScript directly (type stripping,
     # Node 22.18 or later); an older Node fails the run step with an
