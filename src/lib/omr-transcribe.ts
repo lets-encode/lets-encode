@@ -1,14 +1,19 @@
 // Transcribing staves with the Musibot staff pipeline: crop each staff box
 // out of the page image (browser canvas), upload the crops to one ephemeral
-// page, run the pipeline once over all of them and collect the MusicXML each
-// staff produced. A staff the pipeline fails on yields null, not an error: one
-// failed staff must not fail a page.
+// page, run the pipeline over them and collect the MusicXML each staff
+// produced. A pipeline runs once over all crops; a model reads one staff per
+// execution, so it runs once per crop. A staff the pipeline fails on yields
+// null, not an error: one failed staff must not fail a page.
 
 import type { MeasureBox } from "./mei-facsimile.ts";
-import type { OmrClient, OmrPipeline } from "./omr-client.ts";
+import type { OmrClient, OmrExecution, OmrPipeline } from "./omr-client.ts";
 
 // The crops go to the staff model as JPEGs, like the pipeline's own crops.
 const CROP_JPEG_QUALITY = 0.95;
+
+// Executions of a model that run at once; the broker relays at most four
+// requests of one login at a time.
+const MODEL_RUNS_AT_ONCE = 3;
 
 /** Cut the given rectangles (page pixels, see staffCrops) out of a page image. Browser only. */
 export async function cropStaves(
@@ -57,16 +62,43 @@ export async function cropStaves(
 const cropPath = (k: number) => `Staves/${k + 1}/image.jpg`;
 const resultPath = (k: number) => `Staves/${k + 1}/transcription.musicxml`;
 
+/** Run `pipeline` once per path, MODEL_RUNS_AT_ONCE at a time, in path order. */
+async function runEach(
+  client: OmrClient,
+  pageId: string,
+  pipeline: OmrPipeline,
+  paths: string[],
+): Promise<OmrExecution[]> {
+  const executions = new Array<OmrExecution>(paths.length);
+  let next = 0;
+  let stopped = false;
+  const worker = async () => {
+    for (let i = next++; i < paths.length && !stopped; i = next++) {
+      try {
+        executions[i] = await client.run(pageId, pipeline, [paths[i]]);
+      } catch (err) {
+        stopped = true;
+        throw err;
+      }
+    }
+  };
+  const workers = Math.min(MODEL_RUNS_AT_ONCE, paths.length);
+  await Promise.all(Array.from({ length: workers }, worker));
+  return executions;
+}
+
 /**
- * Run the staff pipeline once over all crops, on one page, and return each
- * staff's MusicXML in crop order; null where the pipeline wrote nothing. The
- * pipeline writes no file for a staff it failed on, and the execution fails
- * only when every staff failed; `error` is then the execution's reason.
+ * Run the staff pipeline over all crops, on one page, and return each staff's
+ * MusicXML in crop order; null where the pipeline wrote nothing. `perStaff`
+ * runs it once per crop, as a model requires; otherwise once over all crops.
+ * No file is written for a staff that failed; `error` is set only when every
+ * execution failed, and is the first one's reason.
  */
 export async function transcribeStaves(
   client: OmrClient,
   pipeline: OmrPipeline,
   crops: Blob[],
+  perStaff = false,
 ): Promise<{ xmls: (string | null)[]; error: string | null }> {
   if (!crops.length) return { xmls: [], error: null };
   return client.withPage(async (pageId) => {
@@ -74,15 +106,15 @@ export async function transcribeStaves(
       pageId,
       Object.fromEntries(crops.map((crop, k) => [cropPath(k), crop])),
     );
-    const execution = await client.run(
-      pageId,
-      pipeline,
-      crops.map((_, k) => cropPath(k)),
-    );
-    if (execution.state !== "completed")
+    const paths = crops.map((_, k) => cropPath(k));
+    const executions = perStaff
+      ? await runEach(client, pageId, pipeline, paths)
+      : [await client.run(pageId, pipeline, paths)];
+    const failed = executions.filter((e) => e.state !== "completed");
+    if (failed.length === executions.length)
       return {
         xmls: crops.map(() => null),
-        error: execution.error ?? `the run ended as ${execution.state}`,
+        error: failed[0].error ?? `the run ended as ${failed[0].state}`,
       };
     const written = new Set(await client.files(pageId));
     const files = await client.download(

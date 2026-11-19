@@ -5,6 +5,7 @@ parentheses.
 
 ## 2026-11-18
 
+- Staff transcription uses the Musibot model musvit-e2e, one run per staff.
 - A held review's button says Continue review.
 - The campaign list colours continue buttons by stage.
 - The task box's Continue review button takes the review colour.

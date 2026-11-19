@@ -75,9 +75,10 @@ export interface OmrClient {
   pipelines(): Promise<OmrPipelineEntry[]>;
   /**
    * Throws unless every required pipeline is offered at exactly that
-   * version, naming the ones that are not.
+   * version, naming the ones that are not; returns their listing entries in
+   * the order required.
    */
-  requirePipelines(required: OmrPipeline[]): Promise<void>;
+  requirePipelines(required: OmrPipeline[]): Promise<OmrPipelineEntry[]>;
   createPage(): Promise<string>;
   deletePage(pageId: string): Promise<void>;
   /** Upload files by page-relative path (`image.jpg`, `Staves/3/image.jpg`). */
@@ -210,16 +211,17 @@ export function createOmrClient(
 
     async requirePipelines(required) {
       const offered = await client.pipelines();
-      const missing = required.filter(
-        (p) =>
-          !offered.some((o) => o.name === p.name && o.version === p.version),
+      const found = required.map((p) =>
+        offered.find((o) => o.name === p.name && o.version === p.version),
       );
+      const missing = required.filter((_, k) => !found[k]);
       if (missing.length) {
         throw new OmrError(
           `The OMR service no longer offers ${missing.map((p) => `${p.name} ${p.version}`).join(", ")}.`,
           0,
         );
       }
+      return found as OmrPipelineEntry[];
     },
 
     async createPage() {

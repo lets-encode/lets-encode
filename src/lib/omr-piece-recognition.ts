@@ -112,9 +112,12 @@ export async function recognisePiece(
   const todo = o.pages.flatMap((_, p) =>
     entries[p].some((e) => !e) ? [p] : [],
   );
+  // A model (an implicit pipeline) reads one staff per execution.
+  let perStaff = false;
   if (todo.length) {
     o.progress("Checking the recognition service");
-    await o.client.requirePipelines([o.pipeline]);
+    const [entry] = await o.client.requirePipelines([o.pipeline]);
+    perStaff = entry.implicit;
   }
   const labelErrors: PieceRecognition["labelErrors"] = [];
   const runErrors: string[] = [];
@@ -156,6 +159,7 @@ export async function recognisePiece(
       o.client,
       o.pipeline,
       work.flatMap((w) => w.crops),
+      perStaff,
     );
     if (runError && !runErrors.includes(runError)) runErrors.push(runError);
     let at = 0;

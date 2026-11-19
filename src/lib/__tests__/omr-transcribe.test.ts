@@ -19,8 +19,11 @@ const execution = (
   error,
 });
 
-/** A client whose one execution ends in `state` and writes the transcriptions of `written` (1-based staves). */
-function fakeClient(state: string, written: number[]) {
+/** A client whose executions end in `state` (or the state for their input) and write the transcriptions of `written` (1-based staves). */
+function fakeClient(
+  state: string | ((input: string[]) => string),
+  written: number[],
+) {
   const calls: string[] = [];
   const client = {
     async withPage<T>(work: (pageId: string) => Promise<T>) {
@@ -40,7 +43,12 @@ function fakeClient(state: string, written: number[]) {
       input: string[],
     ): Promise<OmrExecution> {
       calls.push(`run ${input.join(",")}`);
-      return execution(input, state, state === "failed" ? "all failed" : null);
+      const settled = typeof state === "string" ? state : state(input);
+      return execution(
+        input,
+        settled,
+        settled === "failed" ? `${input.join(",")} failed` : null,
+      );
     },
     async files() {
       calls.push("files");
@@ -84,7 +92,7 @@ test("transcribeStaves: a failed execution (every staff failed) yields null for 
   const { client, calls } = fakeClient("failed", []);
   assert.deepEqual(await transcribeStaves(client, pipeline, crops(2)), {
     xmls: [null, null],
-    error: "all failed",
+    error: "Staves/1/image.jpg,Staves/2/image.jpg failed",
   });
   assert.deepEqual(calls, [
     "create",
@@ -92,6 +100,43 @@ test("transcribeStaves: a failed execution (every staff failed) yields null for 
     "run Staves/1/image.jpg,Staves/2/image.jpg",
     "delete",
   ]);
+});
+
+test("transcribeStaves perStaff: one execution per crop, null for a staff whose execution failed", async () => {
+  const { client, calls } = fakeClient(
+    (input) => (input[0] === "Staves/2/image.jpg" ? "failed" : "completed"),
+    [1, 3],
+  );
+  const { xmls, error } = await transcribeStaves(
+    client,
+    pipeline,
+    crops(3),
+    true,
+  );
+  assert.equal(error, null);
+  assert.deepEqual(xmls, [
+    "<xml>Staves/1/transcription.musicxml</xml>",
+    null,
+    "<xml>Staves/3/transcription.musicxml</xml>",
+  ]);
+  assert.deepEqual(calls, [
+    "create",
+    "upload p1 Staves/1/image.jpg,Staves/2/image.jpg,Staves/3/image.jpg",
+    "run Staves/1/image.jpg",
+    "run Staves/2/image.jpg",
+    "run Staves/3/image.jpg",
+    "files",
+    "download Staves/1/transcription.musicxml,Staves/3/transcription.musicxml",
+    "delete",
+  ]);
+});
+
+test("transcribeStaves perStaff: every execution failed yields null for every staff, with the first reason", async () => {
+  const { client } = fakeClient("failed", []);
+  assert.deepEqual(await transcribeStaves(client, pipeline, crops(5), true), {
+    xmls: [null, null, null, null, null],
+    error: "Staves/1/image.jpg failed",
+  });
 });
 
 test("transcribeStaves: results stay in crop order", async () => {
