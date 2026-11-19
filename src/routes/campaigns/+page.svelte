@@ -16,6 +16,7 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import Notice from "$lib/components/Notice.svelte";
+  import { RATE_LIMIT_HEADLINE } from "$lib/forge/github-rest.ts";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { MediaQuery } from "svelte/reactivity";
@@ -312,8 +313,11 @@
       {/if}
       {#if !list.error && list.failed > 0}
         <Notice
-          tone="err"
-          title={`${list.failed} campaign${list.failed === 1 ? "" : "s"} couldn't be loaded`}
+          tone={list.partialRateLimit ? "warn" : "err"}
+          icon={list.partialRateLimit ? "clock-pause" : undefined}
+          title={list.partialRateLimit
+            ? `${list.failed} campaign${list.failed === 1 ? " is" : "s are"} not loaded yet`
+            : `${list.failed} campaign${list.failed === 1 ? "" : "s"} couldn't be loaded`}
           detail={`${list.partialRateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${list.failure?.message ?? ""}`}
           action={{
             label: "Try again",
@@ -324,8 +328,11 @@
       {/if}
       {#if list.error}
         <Notice
-          tone="err"
-          title="Couldn't load the campaigns"
+          tone={list.rateLimit ? "warn" : "err"}
+          icon={list.rateLimit ? "clock-pause" : undefined}
+          title={list.rateLimit
+            ? RATE_LIMIT_HEADLINE
+            : "Couldn't load the campaigns"}
           detail={`${list.rateLimit && auth.expired ? "Your GitHub login has expired. " : ""}${list.error.message}`}
           action={{
             label: "Try again",

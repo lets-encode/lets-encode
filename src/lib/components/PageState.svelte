@@ -7,6 +7,7 @@
 -->
 <script lang="ts">
   import { auth, login } from "$lib/auth.svelte.ts";
+  import { RATE_LIMIT_HEADLINE } from "$lib/forge/github-rest.ts";
   import Notice, { splitMessage } from "./Notice.svelte";
 
   let {
@@ -44,6 +45,9 @@
     campaign?: string;
   } = $props();
 
+  // A reached request limit is a pause, drawn as a warning with a clock.
+  const limited = $derived(!!error?.startsWith(`${RATE_LIMIT_HEADLINE}: `));
+
   const allCampaigns = {
     label: "All campaigns",
     href: "/campaigns",
@@ -61,7 +65,8 @@
     <p class="loading">Loading {loading}…</p>
   {:else if error}
     <Notice
-      tone="err"
+      tone={limited ? "warn" : "err"}
+      icon={limited ? "clock-pause" : undefined}
       {...splitMessage(error)}
       action={onretry ? { label: "Try again", run: onretry } : undefined}
     />

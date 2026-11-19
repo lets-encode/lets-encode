@@ -16,6 +16,7 @@ export {
   fromUpstream,
   brokerFetch,
   RateLimitError,
+  RATE_LIMIT_HEADLINE,
   ApiError,
   isTransientError,
   getGitHubRequestTelemetry,

@@ -115,6 +115,9 @@ export const baseHeaders: Record<string, string> = {
  * app and says when to retry; logged out, it also names logging in as the way
  * past the shared anonymous limit.
  */
+/** Headline of a notice about a reached request limit. */
+export const RATE_LIMIT_HEADLINE = "Request limit reached";
+
 export class RateLimitError extends Error {
   readonly source: "github" | "broker";
   /** The request carried no credentials, so the per-address anonymous limit applied. */
@@ -147,7 +150,7 @@ export class RateLimitError extends Error {
   }) {
     // A reset time is shown to the minute, rounded up so it is never early.
     const when = retryAfterSeconds
-      ? `in about ${retryAfterSeconds} seconds`
+      ? `in about ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}`
       : resetAt
         ? `at ${minuteClock(resetAt * 1000, true)}`
         : "later";

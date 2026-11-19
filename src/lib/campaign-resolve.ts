@@ -10,7 +10,11 @@
 // registry is a failure, never a miss. There is no name-search fallback.
 
 import { provider, registryUrl } from "./forge/config.ts";
-import { brokerFetch } from "./forge/github-rest.ts";
+import {
+  brokerFetch,
+  RateLimitError,
+  RATE_LIMIT_HEADLINE,
+} from "./forge/github-rest.ts";
 import type { ForgeClient } from "./forge/types.ts";
 
 /** A campaign name resolved to its repo's stable id and current owner/name. */
@@ -223,9 +227,11 @@ export async function registerCampaign(
  * (resolveCampaign threw — the forge request errored, e.g. the API rate limit)
  * as opposed to a genuine miss (resolveCampaign returned null), or its tables
  * could not be read. A failed resolution must never be presented as "campaign
- * not found".
+ * not found". A reached request limit gets RATE_LIMIT_HEADLINE as its headline.
  */
 export function campaignLoadFailure(e: unknown): string {
+  if (e instanceof RateLimitError)
+    return `${RATE_LIMIT_HEADLINE}: ${e.message}`;
   return `The campaign could not be loaded: ${e instanceof Error ? e.message : String(e)}`;
 }
 

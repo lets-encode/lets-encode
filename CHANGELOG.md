@@ -3,6 +3,10 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-19
+
+- The campaign list and the campaign pages show a reached request limit as a warning with a clock.
+
 ## 2026-11-18
 
 - Staff transcription uses the Musibot model musvit-e2e, one run per staff.
