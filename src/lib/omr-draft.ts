@@ -17,6 +17,8 @@
 // a `<scoreDef>` before that measure. A printed staff's layers can be
 // numbered by the parts it carries, and a system can open with a
 // `<scoreDef>` of its own (which staves it shows, under which names).
+// Verovio's @dur.ppq is left out: it counts in each staff's own MusicXML
+// divisions, and the score declares no @ppq to read it by.
 // Regex over the document text, no DOM.
 
 import { pageOfLocator } from "./campaign-graph.ts";
@@ -282,7 +284,9 @@ export function insertPageDraft(
   if (!systems[0].length) systems.shift();
 
   const staffCount = parseScoreDef(skeleton).staves.length;
-  const convertedMeasures = measuresOf(converted);
+  const convertedMeasures = measuresOf(
+    converted.replace(/\s+dur\.ppq="[^"]*"/g, ""),
+  );
   if (systems.length !== measuresPerSystem.length) {
     throw new Error(
       `Page ${page}: ${systems.length} system(s) of measure boxes, ${measuresPerSystem.length} transcribed.`,

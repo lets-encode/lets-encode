@@ -8,6 +8,10 @@ parentheses.
 - Staff transcription runs the Musibot pipeline mzk-staff 2 in one run per batch again.
 - The score header records the OMR layout model, staff pipeline and staff model with the days they ran.
 - Entries added to a score header keep its indentation.
+- Scores are re-indented when the app commits them and when the automation accepts them.
+- Transcription drafts leave out the dur.ppq values of the MusicXML conversion.
+- Transcription drafts spell notes and mark cautionary accidentals by the confirmed key.
+- Scores write accidentals, articulations, clefs, keys and meters as attributes where MEI allows it.
 
 ## 2026-11-19
 

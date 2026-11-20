@@ -38,6 +38,7 @@ import {
   relinkFacsimileImages,
   replaceMeiHead,
 } from "./mei-facsimile.ts";
+import { tidyMei } from "./mei-format.ts";
 import { campaignPieces, partitionPages, type DetectedPage } from "./pieces.ts";
 import {
   wizard,
@@ -284,7 +285,7 @@ export class CampaignFinisher {
             const relinked = relinkFacsimileImages(encoding.mei, images);
             scores.push({
               path: piecePath(piece.id),
-              content: replaceMeiHead(relinked, head),
+              content: tidyMei(replaceMeiHead(relinked, head)),
             });
             return;
           }
@@ -301,7 +302,7 @@ export class CampaignFinisher {
             );
             scores.push({
               path: piecePath(piece.id),
-              content: buildBlankScoreMei(head, count),
+              content: tidyMei(buildBlankScoreMei(head, count)),
             });
             return;
           }
@@ -317,7 +318,7 @@ export class CampaignFinisher {
           );
           scores.push({
             path: piecePath(piece.id),
-            content: buildFacsimileMei({ ...model, headXml: head }),
+            content: tidyMei(buildFacsimileMei({ ...model, headXml: head })),
           });
           // The encoding the piece starts from is kept as uploaded; its
           // measures are aligned with the corrected ones later.

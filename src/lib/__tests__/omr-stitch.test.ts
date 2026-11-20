@@ -383,3 +383,79 @@ test("a meter read without the symbol of the common time in force is no change",
   assert.equal(page.opening.time, null);
   assert.match(partOf(page.musicxml, 1), /<time symbol="common">/);
 });
+
+test("a note without a printed accidental is spelled by the key in force, an earlier accidental in its measure or its tie", () => {
+  const note = (step: string, octave: number) =>
+    `<note><pitch><step>${step}</step><octave>${octave}</octave></pitch><duration>1</duration></note>`;
+  const page = stitchPage(
+    // The staff model read no key on this staff, and one B as flat by its own reading.
+    [
+      [
+        staff(G, [
+          note("F", 5) +
+            "<note><pitch><step>C</step><octave>5</octave></pitch><duration>1</duration><accidental>natural</accidental></note>" +
+            note("C", 5) +
+            '<note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><tie type="start"/></note>',
+          '<note><pitch><step>G</step><octave>4</octave></pitch><duration>1</duration><tie type="stop"/></note>' +
+            "<note><pitch><step>B</step><alter>-1</alter><octave>4</octave></pitch><duration>1</duration></note>" +
+            "<note><pitch><step>F</step><alter>1</alter><octave>4</octave></pitch><duration>1</duration><accidental>sharp</accidental></note>",
+        ]),
+      ],
+    ],
+    ["G2"],
+    [[0]],
+    { fifths: 3, time: null },
+  );
+  const pitches = [
+    ...partOf(page.musicxml, 1).matchAll(/<pitch>([\s\S]*?)<\/pitch>/g),
+  ].map((m) =>
+    m[1]
+      .replace(/<\/?(step|octave)>/g, "")
+      .replace(/<alter>(-?\d)<\/alter>/, "($1)"),
+  );
+  assert.deepEqual(pitches, [
+    "F(1)5", // the key's F sharp
+    "C5", // a printed natural
+    "C5", // the natural carries through the measure
+    "G(1)4", // the key's G sharp, tied over the barline
+    "G(1)4",
+    "B4", // the model's own flat goes: the key has none
+    "F(1)4", // a printed sharp keeps the model's spelling
+  ]);
+});
+
+test("a printed accidental is cautionary exactly when the key in force and earlier accidentals already give its pitch", () => {
+  const printed = (
+    step: string,
+    alter: number,
+    accidental: string,
+    cautionary = false,
+  ) =>
+    `<note><pitch><step>${step}</step>${alter ? `<alter>${alter}</alter>` : ""}<octave>4</octave></pitch><duration>1</duration>` +
+    `<accidental${cautionary ? ' cautionary="yes" parentheses="no"' : ""}>${accidental}</accidental></note>`;
+  const page = stitchPage(
+    // The staff model read no key, so it took every natural for cautionary.
+    [
+      [
+        staff(G, [
+          printed("F", 0, "natural", true) +
+            printed("C", 1, "sharp") +
+            printed("B", 0, "natural", true) +
+            printed("F", 0, "natural", true),
+        ]),
+      ],
+    ],
+    ["G2"],
+    [[0]],
+    { fifths: 3, time: null },
+  );
+  const accidentals = [
+    ...partOf(page.musicxml, 1).matchAll(/<accidental\b[^>]*>[^<]*/g),
+  ].map((m) => m[0]);
+  assert.deepEqual(accidentals, [
+    "<accidental>natural", // cancels the key's F sharp
+    '<accidental cautionary="yes" parentheses="no">sharp', // the key's C sharp again
+    '<accidental cautionary="yes" parentheses="no">natural', // B is not in the key
+    '<accidental cautionary="yes" parentheses="no">natural', // the F natural earlier in the measure
+  ]);
+});

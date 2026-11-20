@@ -39,6 +39,7 @@ import {
   resolveRepoRelativeTarget,
 } from "../facsimile-images.ts";
 import { checkMei } from "../mei-check.ts";
+import { tidyMei } from "../mei-format.ts";
 import {
   correctedLayoutJson,
   correctedLayoutPath,
@@ -274,22 +275,24 @@ async function facsimileScore(
   const parsed = parseFacsimileMei(current);
   const record = instruments && omr ? parseOmrRecord(omr) : null;
   return {
-    content: buildFacsimileMei(
-      {
-        headXml: parsed.headXml,
-        scoreDef: instruments
-          ? instrumentScoreDef(
-              instruments,
-              parsed.scoreDef,
-              pages,
-              record
-                ? openingTranscriptions(instruments, pages, record)
-                : undefined,
-            )
-          : parsed.scoreDef,
-        pages,
-      },
-      { withBreaks: true, emptyMeasures: layout, padZones: layout },
+    content: tidyMei(
+      buildFacsimileMei(
+        {
+          headXml: parsed.headXml,
+          scoreDef: instruments
+            ? instrumentScoreDef(
+                instruments,
+                parsed.scoreDef,
+                pages,
+                record
+                  ? openingTranscriptions(instruments, pages, record)
+                  : undefined,
+              )
+            : parsed.scoreDef,
+          pages,
+        },
+        { withBreaks: true, emptyMeasures: layout, padZones: layout },
+      ),
     ),
     corrected: layout ? correctedLayoutJson(pages, instruments, source) : null,
   };
@@ -562,7 +565,7 @@ async function setupScore(
             { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
             { withBreaks: parsed.hasBreaks },
           );
-  return { content };
+  return { content: tidyMei(content) };
 }
 
 // Score setup: submit the piece's initial score definition — staves with their
@@ -702,7 +705,7 @@ const submitEncodingAlignment: CommandDef<
       const aligned = await alignmentScore(ctx, task, pins, choices);
       if (aligned.summary.kind === "different")
         return { error: differentReason(aligned.summary) };
-      const content = aligned.merged.mei;
+      const content = tidyMei(aligned.merged.mei);
       const recordPath = alignmentPath(task.fragment);
       const recordChanged =
         aligned.record !== (await f.getRepoFile(owner, repo, recordPath));

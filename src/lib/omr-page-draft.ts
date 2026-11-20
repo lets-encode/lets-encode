@@ -51,6 +51,7 @@ import {
   unprintedStaves,
 } from "./instrument-naming.ts";
 import { namedPieceStaves, pageChecks } from "./omr-page-checks.ts";
+import { tidyMei } from "./mei-format.ts";
 import { recordApplications, type Application } from "./mei-provenance.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { checkMei } from "./mei-check.ts";
@@ -225,12 +226,14 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   );
   // Drafts of other pages start from the same score; the page prefix keeps
   // their new ids apart when both are spliced in.
-  const content = addXmlIds(
-    recordApplications(
-      draft.mei,
-      transcriptionApplications(layoutSource(corrected), record),
+  const content = tidyMei(
+    addXmlIds(
+      recordApplications(
+        draft.mei,
+        transcriptionApplications(layoutSource(corrected), record),
+      ),
+      `p${page}-`,
     ),
-    `p${page}-`,
   );
   const meiError = await checkMei(content);
   if (meiError)
