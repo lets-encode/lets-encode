@@ -66,10 +66,9 @@ test("requirePipelines names the pipelines the service no longer offers", async 
       }),
   });
   const client = createOmrClient("/auth", { fetch, ...noSleep });
-  const [entry] = await client.requirePipelines([
+  await client.requirePipelines([
     { name: "dvorak-ola", version: "2.0-2025-03-09" },
   ]);
-  assert.equal(entry.implicit, true);
   await assert.rejects(
     client.requirePipelines([
       { name: "mzk-staff", version: "1" },

@@ -587,6 +587,8 @@ test("instrumentScoreDef with opening transcriptions: clefs where each staff fir
   const record: OmrRecord = {
     cropMargin: 0.9,
     staffPipeline: { name: "mzk-staff", version: "1" },
+    staffModel: null,
+    transcribed: "",
     ocr: { engine: "tesseract.js", version: "7.0.0", language: "deu+eng" },
     pages: [
       {

@@ -3,6 +3,12 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-20
+
+- Staff transcription runs the Musibot pipeline mzk-staff 2 in one run per batch again.
+- The score header records the OMR layout model, staff pipeline and staff model with the days they ran.
+- Entries added to a score header keep its indentation.
+
 ## 2026-11-19
 
 - The campaign list and the campaign pages show a reached request limit as a warning with a clock.

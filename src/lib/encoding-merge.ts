@@ -572,7 +572,7 @@ export function mergeEncoding(
 
   const filled = plans.flatMap((plan, i) => (plan.fromFile ? [i] : []));
   const mei = filled.length
-    ? recordApplications(out, [UPLOAD_APPLICATION])
+    ? recordApplications(out, [{ name: UPLOAD_APPLICATION }])
     : out;
   return {
     mei: addXmlIds(mei),

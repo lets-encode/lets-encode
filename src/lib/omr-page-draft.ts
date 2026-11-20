@@ -22,7 +22,6 @@
 // Browser only: the verovio WASM module.
 
 import type { ForgeClient } from "./forge/types.ts";
-import type { OmrPipeline } from "./omr-client.ts";
 import {
   parseFacsimileMei,
   replaceOpeningScoreDef,
@@ -36,11 +35,13 @@ import {
   scoreStaves,
 } from "./omr-timeline.ts";
 import { insertPageDraft } from "./omr-draft.ts";
-import { omrRecordPath, parseOmrRecord } from "./omr-record.ts";
+import { omrRecordPath, parseOmrRecord, type OmrRecord } from "./omr-record.ts";
 import {
   correctedLayoutPath,
   layoutInstruments,
+  layoutSource,
   withCorrectedLayout,
+  type LayoutSource,
 } from "./omr-layout.ts";
 import {
   plannedSystemIndex,
@@ -50,7 +51,7 @@ import {
   unprintedStaves,
 } from "./instrument-naming.ts";
 import { namedPieceStaves, pageChecks } from "./omr-page-checks.ts";
-import { recordApplications } from "./mei-provenance.ts";
+import { recordApplications, type Application } from "./mei-provenance.ts";
 import { addXmlIds } from "./mei-ids.ts";
 import { checkMei } from "./mei-check.ts";
 import { createToolkit } from "./verovio-render.ts";
@@ -64,12 +65,6 @@ const getConverter = (): Promise<VerovioToolkit> =>
     converter = null;
     throw err;
   }));
-
-/** The Musibot models the OMR preparation runs, pinned by version. */
-export interface OmrModels {
-  layoutModel: OmrPipeline;
-  staffPipeline: OmrPipeline;
-}
 
 export interface PageDraftOptions {
   forge: ForgeClient;
@@ -89,7 +84,6 @@ export interface PageDraftOptions {
    * it; absent keeps the score's.
    */
   scoreDef?: ScoreDefModel;
-  models: OmrModels;
   progress: (step: string) => void;
 }
 
@@ -100,11 +94,35 @@ export interface PageDraftResult {
   warnings: string[];
 }
 
-/** The application names the header records for a transcription. */
-export const applicationNames = (models: OmrModels): string[] =>
-  [models.layoutModel, models.staffPipeline].map(
-    (m) => `Musibot ${m.name} ${m.version}`,
-  );
+/**
+ * The applications the header records for a transcription: the layout model
+ * with the day it ran, where the corrected layout names it, and the staff
+ * pipeline with the model it ran and the day it ran.
+ */
+export function transcriptionApplications(
+  layout: LayoutSource | null,
+  record: OmrRecord,
+): Application[] {
+  const { staffPipeline: pipeline, staffModel: model } = record;
+  return [
+    ...(layout
+      ? [
+          {
+            name: `Musibot ${layout.model.name} ${layout.model.version}`,
+            isodate: layout.detected,
+            description: `Layout detection by the model ${layout.model.name} ${layout.model.version}.`,
+          },
+        ]
+      : []),
+    {
+      name: `Musibot ${pipeline.name} ${pipeline.version}`,
+      isodate: record.transcribed,
+      description: model
+        ? `Staff transcription by the pipeline ${pipeline.name} ${pipeline.version} with the model ${model.name} ${model.version}.`
+        : "",
+    },
+  ];
+}
 
 export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
   const { forge, owner, repo, fragment, page } = o;
@@ -205,14 +223,13 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     layerParts,
     systemScoreDefs,
   );
-  const models = {
-    layoutModel: o.models.layoutModel,
-    staffPipeline: record.staffPipeline,
-  };
   // Drafts of other pages start from the same score; the page prefix keeps
   // their new ids apart when both are spliced in.
   const content = addXmlIds(
-    recordApplications(draft.mei, applicationNames(models)),
+    recordApplications(
+      draft.mei,
+      transcriptionApplications(layoutSource(corrected), record),
+    ),
     `p${page}-`,
   );
   const meiError = await checkMei(content);

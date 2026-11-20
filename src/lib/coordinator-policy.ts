@@ -18,7 +18,7 @@ import type { CommandEnvelope } from "./command-envelope.ts";
 import { envelopeFromPrBody } from "./command-envelope.ts";
 import { spliceOpeningScoreDef, splicePage } from "./mei-page-splice.ts";
 import {
-  applicationNamesIn,
+  applicationsIn,
   recordApplications,
   recordContribution,
   type Contribution,
@@ -124,8 +124,8 @@ export function assembleSubmission({
   }
   mei = recordApplications(
     mei,
-    applicationNamesIn(forkMei).filter(
-      (name) =>
+    applicationsIn(forkMei).filter(
+      ({ name }) =>
         /^Musibot [\w.-]+ [\w.-]+$/.test(name) || name === UPLOAD_APPLICATION,
     ),
   );

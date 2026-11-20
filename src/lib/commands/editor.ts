@@ -259,7 +259,6 @@ const openEditor: CommandDef<
             fragment,
             page: pageNo,
             scoreDef,
-            models: ctx.omr,
             progress: (detail) => ctx.progress({ detail }),
           });
         } catch (e) {

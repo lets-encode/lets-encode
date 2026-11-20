@@ -88,9 +88,8 @@ export function correctorServices(
     keptLayouts: () =>
       readCachedLayouts(o.repoId, o.taskId, omrModels.layoutModel),
     forgetLayouts: () => clearCachedLayouts(o.repoId, o.taskId),
-    async checkLayoutService() {
-      await o.omrClient().requirePipelines([omrModels.layoutModel]);
-    },
+    checkLayoutService: () =>
+      o.omrClient().requirePipelines([omrModels.layoutModel]),
     async detectLayout(p, target) {
       const client = o.omrClient();
       const image = await pageImage(target);

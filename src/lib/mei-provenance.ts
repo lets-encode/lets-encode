@@ -14,9 +14,19 @@ import {
   indent,
   startTags,
   stripTags,
+  tagAttribute,
   xmlEscape,
   xmlUnescape,
 } from "./mei-xml.ts";
+
+/** An application recorded in <appInfo>. */
+export interface Application {
+  name: string;
+  /** When it acted on the document, as an ISO 8601 date; '' when not known. */
+  isodate?: string;
+  /** What it was and what it ran, one sentence, recorded as a <p>. */
+  description?: string;
+}
 
 /** One accepted contribution, as recorded in the header. */
 export interface Contribution {
@@ -32,9 +42,15 @@ export interface Contribution {
   application?: string;
 }
 
-/** Insert `addition` into `xml` directly before the first `closer`. */
+/**
+ * Insert `addition`, whole indented lines, into `xml` before the first
+ * `closer`: at the start of the closer's line when only whitespace precedes
+ * it there, so the closer keeps its indentation; directly before it otherwise.
+ */
 function insertBefore(xml: string, closer: string, addition: string): string {
-  const at = xml.indexOf(closer);
+  let at = xml.indexOf(closer);
+  const lineStart = xml.lastIndexOf("\n", at - 1) + 1;
+  if (/^[ \t]*$/.test(xml.slice(lineStart, at))) at = lineStart;
   return xml.slice(0, at) + addition + xml.slice(at);
 }
 
@@ -69,7 +85,7 @@ function withContributor(head: string, name: string, id?: string): string {
     : insertBefore(
         titleStmt.text,
         "</titleStmt>",
-        `${indent(4)}<respStmt>\n${entry}${indent(4)}</respStmt>\n${indent(3)}`,
+        `${indent(4)}<respStmt>\n${entry}${indent(4)}</respStmt>\n`,
       );
   // The title statement's own place: an identical copy may come earlier, in
   // a comment.
@@ -88,7 +104,8 @@ export function applicationId(name: string): string {
 }
 
 /** The application among <appInfo>'s entries, added once (matched by name). */
-function withApplication(head: string, name: string): string {
+function withApplication(head: string, app: Application): string {
+  const name = app.name;
   // Present: some <name> start tag followed by the name and an end tag.
   const recorded = new RegExp(`\\s*${escapeRegex(name)}\\s*</name>`, "y");
   for (const { start, tag } of startTags(head, "name")) {
@@ -96,9 +113,14 @@ function withApplication(head: string, name: string): string {
     if (recorded.test(head)) return head;
   }
 
+  const isodate = app.isodate ? ` isodate="${xmlEscape(app.isodate)}"` : "";
+  const description = app.description
+    ? `${indent(5)}<p>${xmlEscape(app.description)}</p>\n`
+    : "";
   const application =
-    `${indent(4)}<application xml:id="${applicationId(name)}">\n` +
+    `${indent(4)}<application xml:id="${applicationId(name)}"${isodate}>\n` +
     `${indent(5)}<name>${xmlEscape(name)}</name>\n` +
+    description +
     `${indent(4)}</application>\n`;
 
   if (head.includes("</appInfo>"))
@@ -137,7 +159,7 @@ function withChange(head: string, c: Contribution): string {
   return insertBefore(
     head,
     "</meiHead>",
-    `${indent(2)}<revisionDesc>\n${change}${indent(2)}</revisionDesc>\n${indent(1)}`,
+    `${indent(2)}<revisionDesc>\n${change}${indent(2)}</revisionDesc>\n`,
   );
 }
 
@@ -155,16 +177,29 @@ function firstElement(
     : null;
 }
 
-/** The application names a document's header records in <appInfo>, in order. */
-export function applicationNamesIn(mei: string): string[] {
+/**
+ * The applications a document's header records in <appInfo>, in order: each
+ * one's first <name>, @isodate and first <p>, where they hold only text.
+ */
+export function applicationsIn(mei: string): Application[] {
   const head = firstElement(mei, "meiHead")?.text ?? "";
   const appInfo = firstElement(head, "appInfo")?.text ?? "";
+  const text = (inner: string | undefined): string | undefined =>
+    inner === undefined || inner.includes("<")
+      ? undefined
+      : xmlUnescape(inner.trim());
   return [...elementsNamed(appInfo, "application")].flatMap((application) => {
-    // The first <name> of each application, when it holds only text.
-    const name = firstElementNamed(application.inner, "name")?.inner;
-    return name === undefined || name.includes("<")
-      ? []
-      : [xmlUnescape(name.trim())];
+    const name = text(firstElementNamed(application.inner, "name")?.inner);
+    if (name === undefined) return [];
+    const isodate = tagAttribute(application.tag, "isodate");
+    const description = text(firstElementNamed(application.inner, "p")?.inner);
+    return [
+      {
+        name,
+        ...(isodate ? { isodate } : {}),
+        ...(description ? { description } : {}),
+      },
+    ];
   });
 }
 
@@ -172,12 +207,16 @@ export function applicationNamesIn(mei: string): string[] {
  * Record applications in the score's <appInfo>, each once, matched by name.
  * The score is returned unchanged when it has no <meiHead>.
  */
-export function recordApplications(mei: string, names: string[]): string {
+export function recordApplications(
+  mei: string,
+  applications: Application[],
+): string {
   const match = firstElement(mei, "meiHead");
   if (!match) return mei;
   let head = match.text;
-  for (const name of names)
-    if (name.trim()) head = withApplication(head, name.trim());
+  for (const app of applications)
+    if (app.name.trim())
+      head = withApplication(head, { ...app, name: app.name.trim() });
   return (
     mei.slice(0, match.index) +
     head +
@@ -199,7 +238,8 @@ export function recordContribution(mei: string, c: Contribution): string {
 
   let head = match.text;
   if (name) head = withContributor(head, name, c.id);
-  if (c.application?.trim()) head = withApplication(head, c.application.trim());
+  if (c.application?.trim())
+    head = withApplication(head, { name: c.application.trim() });
   head = withChange(head, { ...c, name, message });
   return (
     mei.slice(0, match.index) +

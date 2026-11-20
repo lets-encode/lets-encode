@@ -8,7 +8,7 @@ import {
   parseScoreDef,
 } from "../mei-facsimile.ts";
 import { buildPieceHead, emptySourceMetadata } from "../source-metadata.ts";
-import { applicationNamesIn, recordApplications } from "../mei-provenance.ts";
+import { applicationsIn, recordApplications } from "../mei-provenance.ts";
 import {
   addedRowFromPatch,
   appendedCommentsFromPatch,
@@ -830,12 +830,20 @@ test("assembleSubmission keeps the campaign's header for a whole-file task", () 
     },
     { withBreaks: true },
   );
-  // The fork renames the piece, credits someone and adds two applications.
+  // The fork renames the piece, credits someone and adds three applications.
   const fork = recordApplications(
     base
       .replace(/<mRest\b[^>]*\/>/g, '<note dur="4" oct="4" pname="c"/>')
       .replace(">Lied</title>", ">Mallory's Lied</title>"),
-    ["Uploaded encoding", "Other tool"],
+    [
+      { name: "Uploaded encoding" },
+      { name: "Other tool" },
+      {
+        name: "Musibot mzk-staff 2",
+        isodate: "2026-11-20",
+        description: "Staff transcription by the pipeline mzk-staff 2.",
+      },
+    ],
   );
   const task: TaskRow = {
     task_id: "T0001",
@@ -864,9 +872,17 @@ test("assembleSubmission keeps the campaign's header for a whole-file task", () 
   assert.match(mei, /<note /);
   assert.match(mei, />Lied<\/title>/);
   assert.doesNotMatch(mei, /Mallory/);
-  const apps = applicationNamesIn(mei);
-  assert.ok(apps.includes("Uploaded encoding"));
-  assert.ok(!apps.includes("Other tool"));
+  const apps = applicationsIn(mei);
+  // The template's own entry, then the two the coordinator carries over.
+  assert.deepEqual(apps, [
+    { name: "Let's Encode!" },
+    { name: "Uploaded encoding" },
+    {
+      name: "Musibot mzk-staff 2",
+      isodate: "2026-11-20",
+      description: "Staff transcription by the pipeline mzk-staff 2.",
+    },
+  ]);
   assert.match(mei, /Encoding of T0001/);
   assert.throws(
     () => assembleSubmission({ ...input, baseMei: null }),

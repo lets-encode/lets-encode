@@ -44,9 +44,14 @@ import {
   correctedLayoutPath,
   layoutInstruments,
   layoutRecordPath,
+  layoutSource,
   withCorrectedLayout,
 } from "../omr-layout.ts";
-import type { LayoutInstruments, LayoutRecord } from "../omr-layout.ts";
+import type {
+  LayoutInstruments,
+  LayoutRecord,
+  LayoutSource,
+} from "../omr-layout.ts";
 import { omrRecordPath, parseOmrRecord } from "../omr-record.ts";
 import { alignmentPath, differentReason } from "../encoding-align.ts";
 import type { AlignmentChoices, Pin } from "../encoding-align.ts";
@@ -261,6 +266,7 @@ async function facsimileScore(
   layout: boolean,
   instruments?: LayoutInstruments,
   omr?: string | null,
+  source?: LayoutSource | null,
 ): Promise<{ content: string; corrected: string | null }> {
   const { forge: f, owner, repo } = ctx;
   const current = await f.getRepoFile(owner, repo, task.fragment);
@@ -285,7 +291,7 @@ async function facsimileScore(
       },
       { withBreaks: true, emptyMeasures: layout, padZones: layout },
     ),
-    corrected: layout ? correctedLayoutJson(pages, instruments) : null,
+    corrected: layout ? correctedLayoutJson(pages, instruments, source) : null,
   };
 }
 
@@ -333,14 +339,6 @@ async function submitFacsimile(
     const record =
       omr ?? (instruments ? await savedSideFile(ctx, task, recordPath) : null);
     const recordChanged = record != null && record !== campaignRecord;
-    const { content, corrected } = await facsimileScore(
-      ctx,
-      task,
-      pages,
-      layout,
-      instruments,
-      record ?? campaignRecord,
-    );
     // The layout model's raw output from an earlier session of the claim
     // was saved with the work.
     const rawLayoutJson = rawLayout
@@ -348,10 +346,22 @@ async function submitFacsimile(
       : layout
         ? await savedSideFile(ctx, task, layoutRecordPath(fragment))
         : null;
+    const campaignCorrected = layout
+      ? await f.getRepoFile(owner, repo, correctedLayoutPath(fragment))
+      : null;
+    // The boxes' layout model: the raw output's, else the one the campaign's
+    // corrected layout names.
+    const { content, corrected } = await facsimileScore(
+      ctx,
+      task,
+      pages,
+      layout,
+      instruments,
+      record ?? campaignRecord,
+      layoutSource(rawLayoutJson) ?? layoutSource(campaignCorrected),
+    );
     const correctedChanged =
-      corrected !== null &&
-      corrected !==
-        (await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)));
+      corrected !== null && corrected !== campaignCorrected;
     const meiError = await checkMei(content);
     if (meiError)
       return {
