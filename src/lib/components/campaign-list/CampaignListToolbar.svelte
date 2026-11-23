@@ -45,11 +45,11 @@
       aria-label="Search campaigns"
     />
   </label>
-  <label class="sort" title={`Sort campaigns: ${sortLabels[sort]}`}>
+  <label class="btn on-tint sort" title={`Sort campaigns: ${sortLabels[sort]}`}>
     <Icon name="sort" />
     <span class="sortlabel">{sortLabels[sort]}</span>
     <span class="sortchev"><Icon name="chevron-down" size={12} /></span>
-    {#if sort !== "active"}<span class="sortdot"></span>{/if}
+    {#if sort !== "active"}<span class="statusdot sortdot"></span>{/if}
     <select bind:value={sort} aria-label="Sort campaigns">
       <option value="active">{sortLabels.active}</option>
       <option value="newest">{sortLabels.newest}</option>
@@ -59,7 +59,7 @@
 </div>
 <div class="shead">
   <div class="phead">
-    <h2 class="stitle">All campaigns</h2>
+    <h2 class="sectitle">All campaigns</h2>
     <span
       class="countpill"
       title={failed > 0 ? `${failed} more could not be loaded` : undefined}
@@ -106,66 +106,17 @@
   }
   .search {
     flex: 1;
-    min-width: 0;
     max-width: 520px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-height: 36px;
-    padding: 0 12px;
-    box-sizing: border-box;
-    color: var(--ink-faint);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-  }
-  /* The input has no outline of its own; the field shows the focus. */
-  .search:focus-within {
-    border-color: var(--accent);
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  .search input {
-    flex: 1;
-    min-width: 0;
-    min-height: 32px;
-    padding: 0;
-    font: 400 14px var(--font);
-    color: var(--ink);
-    background: transparent;
-    border: 0;
-    outline: none;
-  }
-  .search input::placeholder {
-    color: var(--ink-faint);
   }
   /* The sort control is a native select laid transparently over a button
      face, so the platform's own menu opens. */
   .sort {
     position: relative;
     flex: none;
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    min-height: 32px;
-    padding: 6px 14px;
-    box-sizing: border-box;
-    font: 600 12.5px var(--font);
-    color: var(--ink-soft);
-    background: var(--card);
-    border: 1px solid var(--line-input);
-    border-radius: 999px;
-    cursor: pointer;
   }
   .sort:focus-within {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
-  }
-  @media (hover: hover) {
-    .sort:hover {
-      color: var(--accent);
-      border-color: var(--accent);
-    }
   }
   .sortchev {
     display: flex;
@@ -197,10 +148,7 @@
       position: absolute;
       top: 3px;
       right: 3px;
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: var(--accent);
+      color: var(--accent);
     }
   }
   .shead {
@@ -214,12 +162,6 @@
     display: flex;
     align-items: center;
     gap: 8px;
-  }
-  .stitle {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
   }
   .shead .seg {
     max-width: 100%;

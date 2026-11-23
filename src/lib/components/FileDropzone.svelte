@@ -162,7 +162,7 @@
   {/if}
 
   {#if note}
-    <p class="note">{note}</p>
+    <p class="note warn">{note}</p>
   {/if}
 
   {#if files.length}
@@ -178,7 +178,7 @@
             </div>
             <button
               type="button"
-              class="btn btn-icon btn-danger remove"
+              class="btn btn-icon btn-small btn-danger press-touch remove"
               onclick={() => remove(i)}
               aria-label="Remove {file.name}"
               title="Remove this file"
@@ -195,7 +195,7 @@
 {#if overlay !== null}
   <div class="drop-overlay" style={overlay} aria-hidden="true">
     <span class="overlay-icon"><Icon name="upload" size={30} /></span>
-    <span class="overlay-title">Drop to add files</span>
+    <span class="drop-title">Drop to add files</span>
     <span class="types">Page images, PDFs or MEI encodings</span>
   </div>
 {/if}
@@ -384,7 +384,7 @@
   }
   .drop-overlay {
     position: fixed;
-    z-index: 40;
+    z-index: var(--z-drop);
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
@@ -394,7 +394,7 @@
     text-align: center;
     pointer-events: none;
     border: 2px dashed var(--accent-line-strong);
-    border-radius: 18px;
+    border-radius: var(--radius-card);
     background: color-mix(in srgb, var(--accent-tint) 95%, transparent);
   }
   .overlay-icon {
@@ -408,16 +408,13 @@
     color: var(--accent);
     background: var(--card);
   }
-  .overlay-title {
+  .drop-title {
     font-size: 18px;
     font-weight: 600;
     color: var(--ink);
   }
   .note {
     flex: none;
-    margin: 0;
-    font-size: 12px;
-    color: var(--warn);
   }
   .file-row {
     flex: none;
@@ -449,10 +446,7 @@
     min-width: 0;
   }
   .name {
-    font:
-      12.5px ui-monospace,
-      Menlo,
-      monospace;
+    font: 12.5px var(--mono);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -465,13 +459,5 @@
   .remove {
     position: relative;
     margin-left: auto;
-  }
-  /* Touch: a 44px press area around the 32px button. */
-  @media (pointer: coarse) {
-    .remove::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
   }
 </style>

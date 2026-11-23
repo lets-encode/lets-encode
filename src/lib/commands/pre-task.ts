@@ -7,8 +7,10 @@ import {
   parseTaskCsv,
   parseStateCsv,
   parseLockCsv,
+  parseHistoryCsv,
   findRow,
   CONFIG_PATH,
+  HISTORY_PATH,
   LOCK_PATH,
   STATE_PATH,
   TASK_PATH,
@@ -37,14 +39,20 @@ import {
   resolveRepoRelativeTarget,
 } from "../facsimile-images.ts";
 import { checkMei } from "../mei-check.ts";
+import { tidyMei } from "../mei-format.ts";
 import {
   correctedLayoutJson,
   correctedLayoutPath,
   layoutInstruments,
   layoutRecordPath,
+  layoutSource,
   withCorrectedLayout,
 } from "../omr-layout.ts";
-import type { LayoutInstruments, LayoutRecord } from "../omr-layout.ts";
+import type {
+  LayoutInstruments,
+  LayoutRecord,
+  LayoutSource,
+} from "../omr-layout.ts";
 import { omrRecordPath, parseOmrRecord } from "../omr-record.ts";
 import { alignmentPath, differentReason } from "../encoding-align.ts";
 import type { AlignmentChoices, Pin } from "../encoding-align.ts";
@@ -114,7 +122,7 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
   log: "none",
   async run({ task_id }, ctx) {
     const { forge: f, owner, repo, viewer } = ctx;
-    const { files } = await readTableFiles(ctx);
+    const { files, canPush } = await readTableFiles(ctx);
     const [taskCsv, stateCsv, lockCsv, configYaml] = [
       TASK_PATH,
       STATE_PATH,
@@ -138,7 +146,10 @@ const readFacsimile: CommandDef<{ task_id: string }, FacsimileTaskData> = {
     // kept from expired claims, else on the campaign's score.
     const source =
       holdsLock && taskState?.status === "encoding_required"
-        ? await workSource(ctx, task)
+        ? await workSource(ctx, task, {
+            history: parseHistoryCsv(files[HISTORY_PATH] ?? ""),
+            canPush,
+          })
         : null;
     const from = source ?? { owner, repo, ref: undefined };
     const [mei, corrected] = await Promise.all([
@@ -256,6 +267,7 @@ async function facsimileScore(
   layout: boolean,
   instruments?: LayoutInstruments,
   omr?: string | null,
+  source?: LayoutSource | null,
 ): Promise<{ content: string; corrected: string | null }> {
   const { forge: f, owner, repo } = ctx;
   const current = await f.getRepoFile(owner, repo, task.fragment);
@@ -263,24 +275,26 @@ async function facsimileScore(
   const parsed = parseFacsimileMei(current);
   const record = instruments && omr ? parseOmrRecord(omr) : null;
   return {
-    content: buildFacsimileMei(
-      {
-        headXml: parsed.headXml,
-        scoreDef: instruments
-          ? instrumentScoreDef(
-              instruments,
-              parsed.scoreDef,
-              pages,
-              record
-                ? openingTranscriptions(instruments, pages, record)
-                : undefined,
-            )
-          : parsed.scoreDef,
-        pages,
-      },
-      { withBreaks: true, emptyMeasures: layout, padZones: layout },
+    content: tidyMei(
+      buildFacsimileMei(
+        {
+          headXml: parsed.headXml,
+          scoreDef: instruments
+            ? instrumentScoreDef(
+                instruments,
+                parsed.scoreDef,
+                pages,
+                record
+                  ? openingTranscriptions(instruments, pages, record)
+                  : undefined,
+              )
+            : parsed.scoreDef,
+          pages,
+        },
+        { withBreaks: true, emptyMeasures: layout, padZones: layout },
+      ),
     ),
-    corrected: layout ? correctedLayoutJson(pages, instruments) : null,
+    corrected: layout ? correctedLayoutJson(pages, instruments, source) : null,
   };
 }
 
@@ -328,14 +342,6 @@ async function submitFacsimile(
     const record =
       omr ?? (instruments ? await savedSideFile(ctx, task, recordPath) : null);
     const recordChanged = record != null && record !== campaignRecord;
-    const { content, corrected } = await facsimileScore(
-      ctx,
-      task,
-      pages,
-      layout,
-      instruments,
-      record ?? campaignRecord,
-    );
     // The layout model's raw output from an earlier session of the claim
     // was saved with the work.
     const rawLayoutJson = rawLayout
@@ -343,10 +349,22 @@ async function submitFacsimile(
       : layout
         ? await savedSideFile(ctx, task, layoutRecordPath(fragment))
         : null;
+    const campaignCorrected = layout
+      ? await f.getRepoFile(owner, repo, correctedLayoutPath(fragment))
+      : null;
+    // The boxes' layout model: the raw output's, else the one the campaign's
+    // corrected layout names.
+    const { content, corrected } = await facsimileScore(
+      ctx,
+      task,
+      pages,
+      layout,
+      instruments,
+      record ?? campaignRecord,
+      layoutSource(rawLayoutJson) ?? layoutSource(campaignCorrected),
+    );
     const correctedChanged =
-      corrected !== null &&
-      corrected !==
-        (await f.getRepoFile(owner, repo, correctedLayoutPath(fragment)));
+      corrected !== null && corrected !== campaignCorrected;
     const meiError = await checkMei(content);
     if (meiError)
       return {
@@ -547,7 +565,7 @@ async function setupScore(
             { headXml: parsed.headXml, scoreDef, pages: parsed.pages },
             { withBreaks: parsed.hasBreaks },
           );
-  return { content };
+  return { content: tidyMei(content) };
 }
 
 // Score setup: submit the piece's initial score definition — staves with their
@@ -687,7 +705,7 @@ const submitEncodingAlignment: CommandDef<
       const aligned = await alignmentScore(ctx, task, pins, choices);
       if (aligned.summary.kind === "different")
         return { error: differentReason(aligned.summary) };
-      const content = aligned.merged.mei;
+      const content = tidyMei(aligned.merged.mei);
       const recordPath = alignmentPath(task.fragment);
       const recordChanged =
         aligned.record !== (await f.getRepoFile(owner, repo, recordPath));

@@ -36,7 +36,7 @@
   }
 
   // The main screen, the campaign view, the wizard, the pre-task editors, the
-  // score check and the review view are full-bleed, full-height surfaces (the wizard splits
+  // score check, the review view and the development unit pages are full-bleed, full-height surfaces (the wizard splits
   // into a form pane and a page-preview pane); every other route keeps the
   // narrow reading column.
   const corrector = $derived(
@@ -44,7 +44,8 @@
       page.route.id === "/[campaign]/setup/[task]" ||
       page.route.id === "/[campaign]/align/[task]" ||
       page.route.id === "/[campaign]/check/[task]" ||
-      page.route.id === "/[campaign]/review/[task]",
+      page.route.id === "/[campaign]/review/[task]" ||
+      page.route.id === "/units/[[unit]]",
   );
   const full = $derived(
     page.route.id === "/campaigns" ||
@@ -141,15 +142,15 @@
     {#if auth.user}
       <div class="user">
         {#if auth.user.avatar_url}
-          <img class="avatar" src={auth.user.avatar_url} alt="" />
+          <img class="userimg" src={auth.user.avatar_url} alt="" />
         {/if}
         <span>{auth.user.login}</span>
-        <button type="button" class="btn btn-soft" onclick={() => logout()}
+        <button type="button" class="btn" onclick={() => logout()}
           >Log out</button
         >
       </div>
     {:else if auth.status === "anonymous"}
-      <button type="button" class="btn btn-soft" onclick={() => login()}
+      <button type="button" class="btn" onclick={() => login()}
         >Log in with GitHub</button
       >
     {/if}
@@ -371,9 +372,6 @@
     .user > span {
       display: none;
     }
-    header .user :global(.btn) {
-      padding: 5px 11px;
-    }
     .nav-link.back {
       --back-h: 32px;
       min-width: 32px;
@@ -387,10 +385,6 @@
     .brand img {
       height: 24px;
     }
-    header .user :global(.btn) {
-      min-height: 32px;
-      padding: 4px 12px;
-    }
   }
   .user {
     display: flex;
@@ -399,11 +393,9 @@
     font-size: 13.5px;
   }
   .user :global(.btn) {
-    font-size: 14px;
-    padding: 6px 13px;
     background: var(--bg-alt);
   }
-  .avatar {
+  .userimg {
     width: 26px;
     height: 26px;
     border-radius: 50%;
@@ -496,7 +488,7 @@
     stroke: currentColor;
     stroke-width: 1.6;
     stroke-linejoin: round;
-    transition: fill 0.2s ease;
+    transition: fill var(--dur-long) var(--ease);
   }
   .bulb-filament {
     fill: none;
@@ -505,14 +497,14 @@
     stroke-linecap: round;
     stroke-linejoin: round;
     opacity: 0.55;
-    transition: opacity 0.2s ease;
+    transition: opacity var(--dur-long) var(--ease);
   }
   .bulb-rays {
     opacity: 0;
     transform-origin: 12px 11px;
     transition:
-      opacity 0.2s ease,
-      transform 0.2s ease;
+      opacity var(--dur-long) var(--ease),
+      transform var(--dur-long) var(--ease);
   }
   /* Lit bulb in dark mode: a warm glowing shine so it reads as "on". */
   :global([data-theme="dark"]) .theme-toggle {

@@ -21,16 +21,16 @@
   import type { CommentAnchorInput, Result } from "$lib/commands.ts";
   import {
     commentAnchor,
-    type MeasureAnchor,
     pieceLabel,
     clipTitle,
   } from "$lib/campaign-tables.ts";
+  import type { MeasureAnchor } from "$lib/editor-units.ts";
   import type { CommandRunner } from "$lib/command-runner.svelte.ts";
   import type { CommentRow, PieceRef } from "$lib/campaign-tables.ts";
   import { anchorCell } from "$lib/campaign-submit.ts";
   import type { BoardCard } from "$lib/campaign-board.ts";
   import type { SidePanelState } from "$lib/side-panels.ts";
-  import ScorePreview from "./ScorePreview.svelte";
+  import RepoScorePreview from "./RepoScorePreview.svelte";
   import SidePanel from "./SidePanel.svelte";
 
   let {
@@ -95,7 +95,7 @@
     onresolve: (comment_id: string) => Promise<unknown>;
   } = $props();
 
-  let preview = $state<ReturnType<typeof ScorePreview>>();
+  let preview = $state<ReturnType<typeof RepoScorePreview>>();
   // svelte-ignore state_referenced_locally -- an initial value by contract
   let shownAnchor = $state(anchor);
 
@@ -172,7 +172,7 @@
 <div class="scoreview">
   <div class="shead">
     <h1
-      class="sname"
+      class="sectitle sname"
       bind:this={heading}
       tabindex="-1"
       title={pieceLabel(piece)}
@@ -195,7 +195,7 @@
   </div>
   <div class="srow sidehost">
     <div class="smain">
-      <ScorePreview
+      <RepoScorePreview
         bind:this={preview}
         {owner}
         {repo}
@@ -260,10 +260,6 @@
     gap: 10px;
   }
   .sname {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--ink);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

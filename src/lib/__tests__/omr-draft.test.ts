@@ -298,6 +298,25 @@ test("a key or meter change verovio writes before a measure goes before the skel
   );
 });
 
+test("the draft leaves out verovio's dur.ppq", () => {
+  const converted =
+    '<mei><section><measure n="1"><staff n="1"><layer n="1">' +
+    '<note xml:id="q1" pname="c" oct="4" dur="4" dur.ppq="2"/><rest xml:id="r1" dur.ppq="1" dur="8"/>' +
+    '<chord xml:id="c1" dur.ppq="4" dur="2"><note pname="e" oct="4"/></chord>' +
+    "</layer></staff></measure></section></mei>";
+  const result = insertPageDraft(
+    skeleton([1]),
+    "surface-1",
+    converted,
+    [1],
+    allPrinted(1),
+  );
+  assert.doesNotMatch(result.mei, /dur\.ppq/);
+  assert.match(result.mei, /<note xml:id="q1" pname="c" oct="4" dur="4"\/>/);
+  assert.match(result.mei, /<rest xml:id="r1" dur="8"\/>/);
+  assert.match(result.mei, /<chord xml:id="c1" dur="2">/);
+});
+
 test("a staff the system does not print keeps the clef change verovio placed on it", () => {
   const converted =
     '<mei><section><measure n="1"><staff n="1"><layer n="1"><note xml:id="c1" pname="c" oct="4" dur="1"/></layer></staff>' +

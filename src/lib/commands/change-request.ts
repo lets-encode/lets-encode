@@ -88,7 +88,8 @@ const ACCEPTED_MARK = "✅";
 // Wait until the campaign automation has processed a PR and return its
 // decision. The decision is the history.csv row naming the PR, which the
 // coordinator commits before it comments on and closes the PR; it is read once
-// the PR is closed, its run has ended or the wait runs out. A PR closed
+// the PR is closed (beside the comment), its run has ended or the wait runs
+// out. A PR closed
 // without one was rejected without a record (a malformed operation). A
 // timeout means the run is still in flight, not failed. Once the PR is closed, a `head` branch
 // the app created in the user's fork is deleted: the automation deletes
@@ -104,7 +105,7 @@ async function waitForPrProcessed(
     cleanup?: "always" | "accepted";
     createdAt?: string;
   },
-  { waitMs = 90_000, maxDelayMs = 3_000 } = {},
+  { waitMs = 90_000, maxDelayMs = 1_000 } = {},
 ): Promise<PrProcessingResult> {
   const { forge: f, owner, repo } = ctx;
   ctx.progress({
@@ -117,6 +118,8 @@ async function waitForPrProcessed(
   // clock). A watch failure never fails the command — the PR itself stays the
   // source of truth — and ends the watching only after WATCH_FAILURES in a row.
   const since = pr.createdAt ? Date.parse(pr.createdAt) : Date.now();
+  // Set once the PR is closed: a tick still in flight then reports nothing.
+  let closed = false;
   const runWatch = (headSha: string, from: number) =>
     new WorkflowRunWatch(
       f,
@@ -128,7 +131,9 @@ async function waitForPrProcessed(
         headSha,
         since: from,
       },
-      ctx.progress,
+      (update) => {
+        if (!closed) ctx.progress(update);
+      },
     );
   let watch = pr.headSha ? runWatch(pr.headSha, since) : null;
   let watchedSha = pr.headSha ?? "";
@@ -180,9 +185,9 @@ async function waitForPrProcessed(
     verdict,
   });
   const deadline = Date.now() + waitMs;
-  // Fast cadence, low cap: the PR-state and run reads are ETag-cached, so an
-  // unchanged poll answers 304 and does not count against the API rate limit —
-  // the cap trades a few extra free polls for catching the close sooner.
+  // The pause between polls starts at one second and grows to `maxDelayMs`.
+  // The PR-state and run reads are ETag-cached, so an unchanged poll answers
+  // 304 and does not count against the API rate limit.
   let delayMs = 1_000;
   // Consecutive polls that failed; POLL_FAILURES in a row end the wait.
   let pollFailures = 0;
@@ -193,29 +198,30 @@ async function waitForPrProcessed(
   while (Date.now() < deadline) {
     await sleep(delayMs);
     delayMs = Math.min(maxDelayMs, Math.ceil(delayMs * 1.5));
-    // The PR-state read and the run-watch tick are independent reads — one
-    // round trip per iteration instead of two. Both are waited for, so a tick
-    // never overlaps the next one.
-    const [read] = await Promise.allSettled([
-      f.getPullRequestState(owner, repo, pr.number),
-      watch?.tick().then(
-        () => (watchFailures = 0),
-        (e) => {
-          if (++watchFailures < WATCH_FAILURES) return;
-          console.warn(
-            "[pr] stopped watching the Actions run:",
-            (e as Error).message,
-          );
-          watch = null;
-        },
-      ),
-    ]);
-    if (read.status === "rejected") {
-      pollFailed(read.reason);
+    // The PR-state read and the run-watch tick are independent reads and run
+    // side by side. A closed PR is acted on without waiting for the tick;
+    // otherwise the tick is waited for, so it never overlaps the next one.
+    const tick = watch?.tick().then(
+      () => (watchFailures = 0),
+      (e) => {
+        if (++watchFailures < WATCH_FAILURES) return;
+        console.warn(
+          "[pr] stopped watching the Actions run:",
+          (e as Error).message,
+        );
+        watch = null;
+      },
+    );
+    let state: Awaited<ReturnType<typeof f.getPullRequestState>>;
+    try {
+      state = await f.getPullRequestState(owner, repo, pr.number);
+    } catch (e) {
+      await tick;
+      pollFailed(e);
       continue;
     }
-    const state = read.value;
     if (state === "closed") {
+      closed = true;
       // The row is committed before the PR closes, but a read can still miss
       // it. Without it, a read is repeated once, and for up to HISTORY_READS
       // reads while the bot's comment says the PR was accepted: the row is
@@ -224,22 +230,19 @@ async function waitForPrProcessed(
       // was rejected without a record (a malformed operation).
       let row: Awaited<ReturnType<typeof decision>> = null;
       let verdict: string | null = null;
-      let commented = false;
       try {
         for (let read = 0; read < HISTORY_READS; read++) {
           if (read > 0) await sleep(2_000);
-          row = await decision();
+          [row, verdict] = await Promise.all([decision(), comment()]);
           if (row) break;
-          verdict = await comment();
-          commented = true;
           if (otherContract(verdict)) break;
           if (read > 0 && !verdict?.startsWith(ACCEPTED_MARK)) break;
         }
       } catch (e) {
+        await tick;
         pollFailed(e);
         continue;
       }
-      if (!commented) verdict = await comment();
       // A coordinator on another contract may record its decision
       // differently, so neither its row nor its absence can be relied on.
       if (otherContract(verdict))
@@ -263,10 +266,12 @@ async function waitForPrProcessed(
         pr.cleanup !== "accepted" ||
         (result.state === "decided" && result.accepted)
       ) {
-        await cleanupForkHeadBranch(ctx, pr.head);
+        // Not waited for: the result does not depend on the branch.
+        void cleanupForkHeadBranch(ctx, pr.head);
       }
       return result;
     }
+    await tick;
     pollFailures = 0;
     // A failed run never closes the PR — report the failure rather than
     // letting the wait time out as if the run were merely slow. A skipped
@@ -361,17 +366,18 @@ async function cleanupForkHeadBranch(
 }
 
 // The default branch head and the files at `paths` as they stand at it. An
-// operation's pull request starts at that head (openChangePr's `baseSha`), so
-// its diff holds only the operation's own change, also when the branch moves
-// on while the pull request is being opened.
+// operation's pull request starts at that head (openChangePr's `baseSha` and
+// `baseTreeSha`), so its diff holds only the operation's own change, also
+// when the branch moves on while the pull request is being opened.
 async function readAtHead(
   ctx: CommandContext,
   paths: string[],
-): Promise<{ sha: string; files: (string | null)[] }> {
+): Promise<{ sha: string; treeSha: string; files: (string | null)[] }> {
   const { forge: f, owner, repo } = ctx;
-  const { sha } = await f.getRepoHead(owner, repo);
+  const { sha, treeSha } = await f.getRepoHead(owner, repo);
   return {
     sha,
+    treeSha,
     files: await Promise.all(
       paths.map((path) => f.getRepoFile(owner, repo, path, sha)),
     ),
@@ -565,7 +571,7 @@ function openAndFinishInBackground(
 // sink entry `id` with it. `ctx` reports no progress: this runs in the
 // background.
 // A background submission is followed until it is decided, so its task's
-// controls hold meanwhile: for SETTLE_WAIT_MS polling every 15 s at most, then
+// controls hold meanwhile: for SETTLE_WAIT_MS polling every 3 s at most, then
 // once a minute, since a pull request whose own run was lost waits for a
 // scheduled run, which can come hours later.
 const SETTLE_WAIT_MS = 70 * 60_000;
@@ -585,7 +591,7 @@ async function settleWhenProcessed(
   try {
     let outcome = await waitForPrProcessed(ctx, pr, {
       waitMs,
-      maxDelayMs: 15_000,
+      maxDelayMs: 3_000,
     });
     // Past the wait, the PR is followed without a limit, until it is decided
     // or its polls keep failing.

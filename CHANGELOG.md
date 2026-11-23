@@ -3,6 +3,110 @@
 All notable changes to the instigation platform. Commit hashes are given in
 parentheses.
 
+## 2026-11-20
+
+- Staff transcription runs the Musibot pipeline mzk-staff 2 in one run per batch again.
+- The score header records the OMR layout model, staff pipeline and staff model with the days they ran.
+- Entries added to a score header keep its indentation.
+- Scores are re-indented when the app commits them and when the automation accepts them.
+- Transcription drafts leave out the dur.ppq values of the MusicXML conversion.
+- Transcription drafts spell notes and mark cautionary accidentals by the confirmed key.
+- Scores write accidentals, articulations, clefs, keys and meters as attributes where MEI allows it.
+
+## 2026-11-19
+
+- The campaign list and the campaign pages show a reached request limit as a warning with a clock.
+
+## 2026-11-18
+
+- Staff transcription uses the Musibot model musvit-e2e, one run per staff.
+- A held review's button says Continue review.
+- The campaign list colours continue buttons by stage.
+- The task box's Continue review button takes the review colour.
+- Sorted by recent activity, the campaign list shows campaigns where you hold a task first.
+- The switch between first system and other systems moved into the side panel as substeps of Instruments.
+- The instruments step's first system ends with Next: other systems.
+- An open change request disables Approve and turns Request changes into Cancel request.
+- Buttons that act on one item or sit in a nested form are small, and small buttons are 26px.
+- The side panel's buttons are small, except the solid primary and the footer.
+- The actions on a selected box, measure or region are small.
+- The task box keeps its buttons on one line with the primary on the right, shortening its label when narrow.
+- Inline confirmations, selections, the plan editor and the group-marking bar put Cancel or Deselect first.
+- The Comments toggle and the icon buttons on item rows are small.
+- The campaign panel leaves space between its title and the line below it.
+- A task's comment section ends with a line.
+- An empty comment list leaves no extra space above the field.
+- Comment text is 13px.
+- A comment being resolved shows no Reply button.
+- Resolve is disabled on a comment while the field holds a reply to it.
+- The campaign workflow and the coordinator action name bash without its path again.
+- The coordinator action downloads the Node setup action only when the runner has no suitable Node.
+- The campaign workflow and the coordinator action name bash by its full path.
+- The coordinator commits the tables in one request.
+- The coordinator reads the branch head and the tables in one request.
+- The coordinator reads the tables while it reads the pull request.
+- The coordinator no longer reads config and comments a second time for a verdict or a submission.
+
+## 2026-11-17
+
+- The broker keeps its connections to GitHub open between read requests.
+- A pre-task page finds the claim holder's saved work from the history it has already read.
+- Opening a submission reads the branch head once and no longer reads its commit.
+- A submission followed in the background is polled every 3 seconds at most, a claim or give-back every second.
+- The result of a closed submission is read without waiting for the run's status, with its comment read beside its record.
+- A claim of a pre-task deletes the old task branch without first looking up its repository.
+- The campaign workflow reads the pointer with curl and fetches the central code with git, without the checkout action.
+- The coordinator logs the start and duration of each of its GitHub requests.
+- An automation.ref that starts with a hyphen fails the run.
+- The coordinator action uses the runner's own Node when it is new enough and runs the setup action only otherwise.
+- `npm run check:styles` reports component styles that depart from the shared styles.
+- The page captions of the measure correction are regular weight again.
+- The warning line above the pieces step's pages is in the warning colour.
+- The page captions of the instrument naming look like the other page captions.
+- The request-changes form has its note above its two buttons, which share one line and are 28px high with a mouse.
+- The arrow of compact selects stands in from the border.
+- The campaign list's work panel has the sections Your open tasks, Waiting for review and Done, and a dialog lists all done tasks with a search and a campaign filter.
+- An instrument that enters in a later system takes its place in the score order from its neighbours in that system.
+- The "your next task" badge on the board no longer touches the lane's heading.
+- The campaign list's sort control is a soft button like the other buttons.
+- The campaign list takes its titles, notes, group label and card surfaces from shared classes.
+- The campaign name above the board is 21px at every width.
+- The board takes its heading, notes, card surfaces and monospace text from shared classes.
+- Page crops and thumbnails in the volunteer view have square corners and the page edge of the viewers.
+- The campaign name in the volunteer view is 21px at every width.
+- The task and piece lists of the volunteer view have the small shadow of the other tiles.
+- The help panel and the view menu of the measure correction have a 12px radius and the large shadow.
+- Comment cards have the small shadow of the other tiles.
+- The empty and waiting lines of the score setup are 13px in the soft ink.
+- The fields of the request-changes form and the mei-friend link row use the app's compact control and button.
+- The wizard marks its steps with the numbered disc of the task pages.
+- Errors in the wizard, the drafts list, the setup preview and the encoding alignment show as notice lines.
+- The wizard's first step has a 21px heading like the other steps.
+- The buttons in the top bar have the size of the other buttons.
+- The under-construction dialog and the branch dialog have a 14px radius.
+- The buttons in the side panel's head and under a task have the size of the other buttons.
+- The chevron of a piece row in the volunteer view is in the faint ink like the other row chevrons.
+- The file drop overlay and the group bar of the pieces step have a 14px radius.
+- The wizard's pane tabs sit beside the step heading at the width of their labels.
+
+## 2026-11-16
+
+- Styles that were written in several components exist once as shared classes, tokens and components.
+- The score preview draws the selected measure and a flagged measure in the app's blue and red.
+- The progress segments of the volunteer view no longer carry the outline and padding of the segmented control.
+- A new campaign repository gets the text of the licence chosen in the wizard as its LICENSE.
+- A IIIF canvas the source does not deliver no longer fails the upload step: the pages step marks the page and offers Try again.
+- The wizard's rail lists the other setups by their title under the line "Resume another setup".
+- A drag with Shift over the pages of the wizard's pages step keeps or leaves out every page from the first to the last passed.
+- The measure and layout correction takes its pages, its progress display and its network work from the page that hosts it.
+- The score setup takes its score, its progress display and its recognition from the page that hosts it.
+- The dev server shows the score viewer, the encoding alignment, the measure correction and the score setup on fixture data under `/units`, and `units` is a reserved campaign name.
+- The measure correction and the score setup are each assembled by one module that their task page and their development page share.
+
+## 2026-11-13
+
+- The score viewer takes the score's text and its page image addresses from a loading component, and the encoding alignment is split into a state module and components.
+
 ## 2026-11-11
 
 - The wizard's preparation step groups the optical music recognition options in one box that credits Musibot, the Prague Music Computing Group and OmniOMR with both logos.

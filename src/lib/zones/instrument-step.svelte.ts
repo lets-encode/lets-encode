@@ -4,9 +4,6 @@
 // undoable steps, and the names read from the printed labels when a part of
 // the step first opens for the claim holder.
 
-import { forge } from "../auth.svelte.ts";
-import type { FacsimileTaskData } from "../commands.ts";
-import type { CommandRunner } from "../command-runner.svelte.ts";
 import type { LayoutGroup } from "../omr-layout.ts";
 import {
   assignUnit,
@@ -26,22 +23,23 @@ import {
   type NamingUnit,
 } from "../instrument-naming.ts";
 import { readStaffLabels } from "../ocr.ts";
-import { resolveRepoRelativeTarget } from "../facsimile-images.ts";
 import { toPageModels } from "./edit-pages.ts";
+import type { UnitWork } from "../editor-units.ts";
+import type { CorrectorInput, CorrectorServices } from "./host.ts";
 import type { ZonePages } from "./zone-pages.svelte.ts";
 
 export interface InstrumentStepHost {
   model: ZonePages;
-  runner: CommandRunner;
+  runner: UnitWork;
   omr(): boolean;
   /** The layout task names the instruments. */
   naming(): boolean;
   layoutStep(): number;
   canEdit(): boolean;
   taskId(): string;
-  data(): FacsimileTaskData | null;
-  owner(): string;
-  repo(): string;
+  data(): CorrectorInput | null;
+  /** The network work; null while it is not available. */
+  services(): CorrectorServices | null;
   /** Record the change as one undoable step. */
   commit(): void;
 }
@@ -215,12 +213,10 @@ export class InstrumentStep {
   };
 
   async prefillNames() {
-    const f = forge();
-    const data = this.#host.data();
-    if (!f || !data) return;
+    const services = this.#host.services();
+    if (!services || !this.#host.data()) return;
     const m = this.#host.model;
     const runner = this.#host.runner;
-    const fragment = data.fragment;
     const models = this.#toPageModels();
     const first = firstNamingSystem(models);
     const open = [
@@ -241,14 +237,7 @@ export class InstrumentStep {
           runner.log.step(
             `Reading the instrument names on page ${p + 1} of ${m.pages.length}`,
           );
-          const path = resolveRepoRelativeTarget(fragment, m.pages[p].image);
-          const image = path
-            ? await f.getRepoFileBytes(
-                this.#host.owner(),
-                this.#host.repo(),
-                path,
-              )
-            : null;
+          const image = await services.pageImage(m.pages[p].image);
           if (!image) {
             runner.log.detail("The page image could not be read.");
             unread.push(p + 1);

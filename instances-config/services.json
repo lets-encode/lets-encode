@@ -2,6 +2,10 @@
   "measureDetectorUrl": "https://measure-detector.edirom.de",
   "omr": {
     "layoutModel": { "name": "dvorak-ola", "version": "2.0-2025-03-09" },
-    "staffPipeline": { "name": "mzk-staff", "version": "1" }
+    "staffPipeline": {
+      "name": "mzk-staff",
+      "version": "2",
+      "model": { "name": "musvit-e2e", "version": "2026-11-12-130358-e219" }
+    }
   }
 }

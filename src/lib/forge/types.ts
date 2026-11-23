@@ -189,7 +189,7 @@ export interface ForgeClient {
   /**
    * Commit `files` to a fresh branch (in the repo or the user's fork) and open
    * a PR upstream. The branch starts at `baseSha` when given, else at the
-   * default branch's head.
+   * default branch's head. `baseTreeSha` is the tree of `baseSha`.
    */
   openChangePr(
     owner: string,
@@ -201,6 +201,7 @@ export interface ForgeClient {
       title: string;
       body: string;
       baseSha?: string;
+      baseTreeSha?: string;
     },
   ): Promise<OpenedChangeRequest>;
   /** Trigger a CI run (GitHub: workflow_dispatch) of `workflow` on `ref`. */

@@ -4,7 +4,7 @@
 
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
-import type { FacsimileTaskData } from "../commands.ts";
+import type { SetupInput } from "./host.ts";
 import {
   DEFAULT_SCORE_DEF,
   withoutIds,
@@ -84,7 +84,7 @@ export class SetupModel {
   }
 
   /** Take the loaded task's definition into the form. */
-  load(d: FacsimileTaskData) {
+  load(d: SetupInput) {
     this.staves = d.model.scoreDef.staves.map((s) => ({ ...s }));
     this.groups = d.model.scoreDef.groups.map((g) => ({ ...g }));
     // A loaded group's one-instrument value is kept, not guessed again.

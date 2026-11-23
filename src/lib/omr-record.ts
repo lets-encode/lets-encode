@@ -45,6 +45,10 @@ export interface OmrRecord {
   /** Multiple of the staff height the crops were cut with. */
   cropMargin: number;
   staffPipeline: OmrPipeline;
+  /** The model the staff pipeline ran; null when the record does not name it. */
+  staffModel: OmrPipeline | null;
+  /** The day the record's transcriptions were collected (YYYY-MM-DD); '' when the record does not say. */
+  transcribed: string;
   ocr: OcrEngine;
   pages: OmrPageEntry[];
   /** Opening-clef corrections: the score staff, the clef the model read and the clef it should be. */
@@ -72,7 +76,12 @@ export function serializeOmrRecord(record: OmrRecord): string {
     XML_DECLARATION.trim(),
     `<omr schema="${OMR_RECORD_SCHEMA}" cropMargin="${record.cropMargin}">`,
     "  <models>",
-    `    <staffPipeline name="${xmlEscape(record.staffPipeline.name)}" version="${xmlEscape(record.staffPipeline.version)}"/>`,
+    `    <staffPipeline name="${xmlEscape(record.staffPipeline.name)}" version="${xmlEscape(record.staffPipeline.version)}"${record.transcribed ? ` isodate="${xmlEscape(record.transcribed)}"` : ""}/>`,
+    ...(record.staffModel
+      ? [
+          `    <staffModel name="${xmlEscape(record.staffModel.name)}" version="${xmlEscape(record.staffModel.version)}"/>`,
+        ]
+      : []),
     `    <ocr engine="${xmlEscape(record.ocr.engine)}" version="${xmlEscape(record.ocr.version)}" language="${xmlEscape(record.ocr.language)}"/>`,
     "  </models>",
   ];
@@ -118,6 +127,7 @@ export function parseOmrRecord(xml: string | null): OmrRecord | null {
   const root = xml ? /<omr\b[^>]*>/.exec(xml)?.[0] : null;
   if (!xml || !root || num(root, "schema") !== OMR_RECORD_SCHEMA) return null;
   const pipeline = /<staffPipeline\b[^>]*>/.exec(xml)?.[0] ?? "";
+  const model = /<staffModel\b[^>]*>/.exec(xml)?.[0];
   const ocr = /<ocr\b[^>]*>/.exec(xml)?.[0] ?? "";
   // Pages and staff entries are found by their attributes: the embedded
   // MusicXML has <staff>, <staff-details> and <page-layout> elements of its own.
@@ -161,6 +171,13 @@ export function parseOmrRecord(xml: string | null): OmrRecord | null {
       name: tagAttribute(pipeline, "name") ?? "",
       version: tagAttribute(pipeline, "version") ?? "",
     },
+    staffModel: model
+      ? {
+          name: tagAttribute(model, "name") ?? "",
+          version: tagAttribute(model, "version") ?? "",
+        }
+      : null,
+    transcribed: tagAttribute(pipeline, "isodate") ?? "",
     ocr: {
       engine: tagAttribute(ocr, "engine") ?? "",
       version: tagAttribute(ocr, "version") ?? "",

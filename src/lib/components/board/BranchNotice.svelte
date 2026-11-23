@@ -32,13 +32,15 @@
 </Notice>
 <dialog
   bind:this={branch.dialog}
-  class="branch-dialog"
+  class="dialog branch-dialog"
   aria-labelledby="branch-dialog-title"
   onclick={(e) => {
     if (e.target === branch.dialog) branch.dialog?.close();
   }}
 >
-  <h2 id="branch-dialog-title">Point the campaign at its branch</h2>
+  <h2 class="sectitle" id="branch-dialog-title">
+    Point the campaign at its branch
+  </h2>
   <p>
     Dev server: this campaign runs the coordinator from <code>{hint.ref}</code>
     but <code>campaign.yml</code> from <code>{hint.called}</code>, so
@@ -49,7 +51,7 @@
   <div class="branch-actions">
     <button
       type="button"
-      class="btn btn-secondary"
+      class="btn"
       onclick={() =>
         navigator.clipboard
           .writeText(branch.command)
@@ -70,18 +72,9 @@
     width: 640px;
     max-width: calc(100vw - 32px);
     padding: 20px 24px;
-    border: none;
-    border-radius: 16px;
-    background: var(--card);
-    color: var(--ink);
-    box-shadow: var(--shadow);
-  }
-  .branch-dialog::backdrop {
-    background: rgba(35, 40, 56, 0.48);
   }
   .branch-dialog h2 {
     margin: 0 0 8px;
-    font-size: 1.1rem;
   }
   .branch-dialog pre {
     margin: 12px 0;

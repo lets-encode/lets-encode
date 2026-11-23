@@ -10,6 +10,7 @@ import {
 } from "../campaign-tables.ts";
 import { encodingClaimOf } from "../campaign-claim.ts";
 import { liveLocks } from "../campaign-reaper.ts";
+import { tidyMei } from "../mei-format.ts";
 import type { PageModel, ScoreDefModel } from "../mei-facsimile.ts";
 import { correctedLayoutPath, layoutRecordPath } from "../omr-layout.ts";
 import type { LayoutInstruments, LayoutRecord } from "../omr-layout.ts";
@@ -99,7 +100,7 @@ const saveDraft: CommandDef<DraftInput, Result & { sha?: string }> = {
       } else if (input.pins) {
         const aligned = await alignmentScore(ctx, task, input.pins, input);
         files.push(
-          { path: task.fragment, content: aligned.merged.mei },
+          { path: task.fragment, content: tidyMei(aligned.merged.mei) },
           { path: alignmentPath(task.fragment), content: aligned.record },
         );
       } else if (input.pages) {

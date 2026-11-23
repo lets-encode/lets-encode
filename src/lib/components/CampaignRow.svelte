@@ -121,7 +121,7 @@
   const actionOf = (n: NextTask) => taskAction(n, nextTaskMode(n));
 </script>
 
-<div class="shelfrow">
+<div class="shelfrow face-panel">
   <div class="rowmain">
     <span class="spine">
       {#if thumb}
@@ -175,7 +175,7 @@
       {:else if next.action === "continue"}
         {@const act = actionOf(next)}
         <a
-          class="btn"
+          class="btn btn-{act.stage}"
           href={taskActionHref(stats.name, next, act)}
           title={act.title}>{act.label}</a
         >
@@ -204,14 +204,10 @@
   .shelfrow {
     display: flex;
     align-items: stretch;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    box-shadow: var(--shadow-sm);
     overflow: hidden;
     transition:
-      border-color 0.15s ease,
-      box-shadow 0.15s ease;
+      border-color var(--dur-short) var(--ease),
+      box-shadow var(--dur-short) var(--ease);
   }
   @media (hover: hover) {
     .shelfrow:hover {

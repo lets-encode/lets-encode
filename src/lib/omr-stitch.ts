@@ -29,6 +29,16 @@
 // system; later systems hold them only where they change. A change in the
 // opening system is reported in `opening` for the same reason as its clefs.
 //
+// Pitches: the staff model spells a note without a printed accidental by
+// the key it read on that staff. Each such note is spelled again by the key
+// in force on its part (a key the staff reads after its opening included),
+// an accidental printed earlier in the measure on the same step and octave,
+// or the note its tie continues. A note with a printed accidental keeps the
+// model's spelling; the accidental is cautionary exactly when the note would
+// sound the same without it, by the same key and earlier accidentals. The
+// staff model has no cautionary accidentals of its own: its MusicXML marks
+// them by the key the model read on the staff.
+//
 // Staves of one system may disagree on their measure count; the shorter ones
 // are padded with empty measures so the parts stay aligned, and the count
 // each system ends up with is reported for the draft insertion to check
@@ -200,6 +210,92 @@ function editAttributes(
   return newBody ? `${open}${newBody}</measure>` : `${open.slice(0, -1)}/>`;
 }
 
+// The order sharps and flats enter a key signature.
+const SHARP_STEPS = "FCGDAEB";
+const FLAT_STEPS = "BEADGCF";
+
+/** The alteration a key of `fifths` gives `step`. */
+const keyAlter = (fifths: number, step: string): number =>
+  fifths > 0 && SHARP_STEPS.indexOf(step) < fifths
+    ? 1
+    : fifths < 0 && FLAT_STEPS.indexOf(step) < -fifths
+      ? -1
+      : 0;
+
+/** A `<pitch>` with its `<alter>` set to `alter`, or removed for 0. */
+function withAlter(pitch: string, alter: number): string {
+  const without = pitch.replace(/\s*<alter>[^<]*<\/alter>/, "");
+  return alter
+    ? without.replace(/(<step>[^<]*<\/step>)/, `$1<alter>${alter}</alter>`)
+    : without;
+}
+
+/** A note with its `<accidental>` marked cautionary, or unmarked. */
+const withCautionary = (note: string, cautionary: boolean): string =>
+  note.replace(/<accidental\b[^>]*>/, (tag) =>
+    tag
+      .replace(/\s+(cautionary|parentheses)="[^"]*"/g, "")
+      .replace(
+        /^<accidental/,
+        cautionary ? '<accidental cautionary="yes" parentheses="no"' : "$&",
+      ),
+  );
+
+/**
+ * A staff's measures with every note that has no printed accidental spelled
+ * by the key in force (`fifths`, then any `<key>` the measures hold after the
+ * first measure's opening attributes), an accidental printed earlier in its
+ * measure on the same step and octave, or the note its tie continues; a
+ * printed accidental marked cautionary where it changes nothing by those.
+ */
+function respelled(measures: string[], fifths: number): string[] {
+  let key = fifths;
+  // Step and octave to alteration of the notes whose ties run into the next measure.
+  let tied = new Map<string, number>();
+  return measures.map((measure, m) => {
+    const opening = m === 0 ? openingAttributes(measure) : null;
+    const printed = new Map<string, number>();
+    const nextTied = new Map<string, number>();
+    const out = measure.replace(
+      /<attributes\b[\s\S]*?<\/attributes>|<note\b[\s\S]*?<\/note>/g,
+      (token) => {
+        if (token.startsWith("<attributes")) {
+          const read = fifthsOf(element(token, "key") ?? "");
+          if (read !== null && token !== opening) key = read;
+          return token;
+        }
+        const pitch = element(token, "pitch");
+        if (!pitch) return token;
+        const step = /<step>\s*([A-G])\s*<\/step>/.exec(pitch)?.[1];
+        const octave = /<octave>\s*(-?\d+)\s*<\/octave>/.exec(pitch)?.[1];
+        if (!step || octave === undefined) return token;
+        const at = step + octave;
+        const own = Number(
+          /<alter>\s*(-?[\d.]+)\s*<\/alter>/.exec(pitch)?.[1] ?? 0,
+        );
+        let alter: number;
+        let note = token;
+        if (/<accidental\b/.test(token)) {
+          alter = own;
+          note = withCautionary(
+            token,
+            own === (printed.get(at) ?? keyAlter(key, step)),
+          );
+          printed.set(at, alter);
+        } else if (/<tie\b[^>]*type="stop"/.test(token) && tied.has(at))
+          alter = tied.get(at)!;
+        else alter = printed.get(at) ?? keyAlter(key, step);
+        if (/<tie\b[^>]*type="start"/.test(token)) nextTied.set(at, alter);
+        return alter === own
+          ? note
+          : note.replace(pitch, withAlter(pitch, alter));
+      },
+    );
+    tied = nextTied;
+    return out;
+  });
+}
+
 /**
  * Stitch the systems of one page into a page-level score with one part per
  * entry of `partClefs` (the clef in force on each staff of the score
@@ -297,7 +393,7 @@ export function stitchPage(
       : { time: newTime ? timeXml(newTime) : null };
 
     for (let k = 0; k < parts; k++) {
-      const measures = [...(staffMeasures[k] ?? [])];
+      const measures = respelled(staffMeasures[k] ?? [], keys[k]);
       const inForce = clefs[k];
       const read = measures[0]
         ? element(openingAttributes(measures[0]) ?? "", "clef")

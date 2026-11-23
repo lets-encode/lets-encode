@@ -10,6 +10,8 @@
 // fixed; everything after them is a validation cell (validate_status_1…n), so
 // `required_validations` is just their count.
 
+import type { MeasureAnchor } from "./editor-units.ts";
+
 /** A task-definition row from task.csv. */
 export interface TaskRow {
   task_id: string;
@@ -535,13 +537,6 @@ export function clipTitle(title: string, max = TITLE_MAX): string {
 
 /** The colour zone (1–8) of the piece at `index` in config order. */
 export const pieceZone = (index: number): number => (index % 8) + 1;
-
-/** A measure range on a score page, as a comment anchors it. */
-export interface MeasureAnchor {
-  page: number;
-  m1: number;
-  m2: number;
-}
 
 /** A comment's anchor; an unreadable measure number reads as 0. */
 export function commentAnchor(c: CommentRow): MeasureAnchor {

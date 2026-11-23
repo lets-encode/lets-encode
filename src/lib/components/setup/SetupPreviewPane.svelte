@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import type { SetupPreview } from "$lib/setup/setup-preview.svelte.ts";
+  import Notice, { splitMessage } from "$lib/components/Notice.svelte";
 
   let {
     preview,
@@ -34,11 +35,11 @@
 <section class="previewbox" aria-label="Preview of the setup">
   <span class="page-label">Preview of the setup</span>
   {#if !meterValid}
-    <p class="muted">Enter a whole number of beats to see the preview.</p>
+    <p class="note">Enter a whole number of beats to see the preview.</p>
   {:else if !groupsValid}
-    <p class="muted">Fix the staff groups to see the preview.</p>
+    <p class="note">Fix the staff groups to see the preview.</p>
   {:else if preview.previewError}
-    <p class="msg-error">{preview.previewError}</p>
+    <Notice tone="err" {...splitMessage(preview.previewError)} live={false} />
   {:else if preview.previewSvg}
     <!-- In step 2 the staves take clicks and taps; the Groups section
          of the panel is the path without a pointer. -->
@@ -74,15 +75,11 @@
       {/each}
     </div>
   {:else}
-    <p class="muted">Rendering…</p>
+    <p class="note">Rendering…</p>
   {/if}
 </section>
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-    font-size: 0.9rem;
-  }
   /* The preview column: a sheet at the column's full size with the
      rendered setup at the width the script computes (--w), its first staff
      level with the source's (--offset). Until measured, the rendering takes
@@ -100,8 +97,6 @@
     flex: 1 1 0;
     min-height: 0;
     display: flex;
-    background: var(--facsimile-paper);
-    border: 1px solid var(--line-input);
     box-shadow: var(--shadow-paper);
     padding: 8px 8px 8px 28px;
     overflow: hidden;
@@ -121,7 +116,7 @@
     pointer-events: none;
   }
   .staffmark.lit {
-    color: #1b66c7;
+    color: rgb(var(--paper-select));
   }
   .sheet > :global(svg) {
     display: block;
@@ -149,7 +144,7 @@
   /* The staves a row of the form points at, and the marked ones. */
   .sheet :global(g.staff.pointed),
   .sheet :global(g.staff.pointed *) {
-    fill: #1b66c7;
-    stroke: #1b66c7;
+    fill: rgb(var(--paper-select));
+    stroke: rgb(var(--paper-select));
   }
 </style>

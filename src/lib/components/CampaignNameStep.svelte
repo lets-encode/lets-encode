@@ -260,7 +260,7 @@
     intro="The name identifies the campaign to volunteers and becomes its address."
     status="choosing the name"
   >
-    <label class="field">
+    <label class="field stepfield">
       Campaign name
       <input
         class="input"
@@ -296,7 +296,11 @@
             Continue that setup from the campaign list
           </a>
         {:else}
-          <button type="button" class="btn btn-inline" onclick={adoptClaim}>
+          <button
+            type="button"
+            class="btn btn-small btn-inline"
+            onclick={adoptClaim}
+          >
             Use the name here — replaces that setup
           </button>
         {/if}
@@ -322,7 +326,11 @@
           longer be changed.
         </span>
       {:else if wizard.claim}
-        <button type="button" class="btn btn-inline" onclick={changeName}>
+        <button
+          type="button"
+          class="btn btn-small btn-inline"
+          onclick={changeName}
+        >
           Use a different name
         </button>
       {/if}
@@ -334,7 +342,7 @@
       {/if}
     </label>
 
-    <label class="field">
+    <label class="field stepfield">
       Title
       <input
         class="input"
@@ -347,7 +355,7 @@
       </span>
     </label>
 
-    <label class="field">
+    <label class="field stepfield">
       About this campaign
       <textarea
         class="input"
@@ -372,7 +380,7 @@
       {/if}
       <button
         type="submit"
-        class="btn btn-primary"
+        class="btn btn-primary press-touch"
         disabled={!canAdvance || claiming}
         aria-describedby={!canAdvance && blockReason
           ? "name-block-reason"
@@ -391,17 +399,17 @@
     /* The workbench inside lays the screen out; the form only submits it. */
     display: contents;
   }
-  .field {
+  .stepfield {
     margin-top: 18px;
   }
-  .field:first-child {
+  .stepfield:first-child {
     margin-top: 26px;
   }
   @media (max-width: 599px) {
-    .field {
+    .stepfield {
       margin-top: 14px;
     }
-    .field:first-child {
+    .stepfield:first-child {
       margin-top: 18px;
     }
   }

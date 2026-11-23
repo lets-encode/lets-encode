@@ -30,7 +30,7 @@
 
 <div class="volhead">
   <div class="voltitle">
-    <h1 title={name}>{name}</h1>
+    <h1 class="pagehead" title={name}>{name}</h1>
     {#if standing}
       <span class="volstanding">{standing}</span>
     {/if}
@@ -60,12 +60,6 @@
     width: 0;
     min-width: 100%;
     box-sizing: border-box;
-  }
-  .volhead h1 {
-    margin: 0;
-    font-size: 22px;
-    font-weight: 600;
-    color: var(--ink);
   }
   .voltitle {
     display: flex;
@@ -97,7 +91,6 @@
     .volhead h1 {
       grid-area: 1 / 1;
       align-self: center;
-      font-size: 20px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;

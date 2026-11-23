@@ -18,7 +18,7 @@
 </svelte:head>
 
 <section class="error">
-  <h1>
+  <h1 class="pagehead">
     {detail
       ? page.error?.message
       : missing
@@ -37,10 +37,8 @@
   <p class="actions">
     <a class="btn btn-primary" href="/campaigns">All campaigns</a>
     {#if !missing}
-      <button
-        type="button"
-        class="btn btn-secondary"
-        onclick={() => location.reload()}>Reload</button
+      <button type="button" class="btn" onclick={() => location.reload()}
+        >Reload</button
       >
     {/if}
   </p>
@@ -51,12 +49,6 @@
   .error {
     max-width: 520px;
     margin: 3rem auto 0;
-  }
-  h1 {
-    margin: 0;
-    font-size: 21px;
-    font-weight: 600;
-    line-height: 1.25;
   }
   p {
     margin: 10px 0 0;

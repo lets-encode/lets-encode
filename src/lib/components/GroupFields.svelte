@@ -65,7 +65,7 @@
 
 <div class="gfields">
   <div class="gfirst">
-    <div class="field">
+    <div class="gfield">
       <span>Symbol</span>
       <GlyphSelect
         options={[
@@ -88,7 +88,7 @@
         title="A brace joins the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2. A bracket joins a section, like the strings."
       />
     </div>
-    <label class="field" class:narrow={unit === "staff"}>
+    <label class="gfield" class:narrow={unit === "staff"}>
       <span>From {member}</span>
       <select
         class="ctl"
@@ -105,7 +105,7 @@
         {/each}
       </select>
     </label>
-    <label class="field" class:narrow={unit === "staff"}>
+    <label class="gfield" class:narrow={unit === "staff"}>
       <span>To {member}</span>
       <select
         class="ctl"
@@ -123,14 +123,14 @@
     {#if onremove && !disabled}
       <button
         type="button"
-        class="btn btn-icon btn-danger"
+        class="btn btn-icon btn-small btn-danger"
         onclick={onremove}
         aria-label={removeLabel ?? "Remove this group"}
         title="Remove this group"><Icon name="trash" /></button
       >
     {/if}
   </div>
-  <label class="field">
+  <label class="gfield">
     <span>Label</span>
     <input
       class="ctl"
@@ -208,37 +208,32 @@
     align-items: flex-end;
     gap: 8px;
   }
-  .field {
+  .gfield {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
     gap: 4px;
+    font-size: 13px;
+    font-weight: 600;
   }
-  .gfirst > .field.narrow {
+  .gfirst > .gfield.narrow {
     flex: none;
     width: 72px;
   }
-  .field > span,
-  .mfield > span {
+  .gfield > span {
     font-size: 11.5px;
     font-weight: 600;
     color: var(--ink-faint);
   }
-  .field select,
-  .field input {
+  .gfield select,
+  .gfield input {
     width: 100%;
   }
   .gtoggles {
     display: flex;
     flex-wrap: wrap;
     gap: 8px 12px;
-  }
-  .mfield {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    min-width: 0;
   }
   .gseg {
     display: grid;

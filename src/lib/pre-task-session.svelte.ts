@@ -11,6 +11,8 @@
 import { beforeNavigate, goto } from "$app/navigation";
 import { auth, forge } from "./auth.svelte.ts";
 import type { ForgeClient } from "./forge/types.ts";
+import { RateLimitError } from "./forge/github-rest.ts";
+import { campaignLoadFailure } from "./campaign-resolve.ts";
 import { commands, invoke, commentInput } from "./commands.ts";
 import type {
   CampaignTables,
@@ -379,7 +381,10 @@ export class PreTaskSession {
       this.#draftBase = d.draftBase;
       this.#hooks.loaded(d);
     } catch (e) {
-      this.loadError = `Could not load ${task}: ${(e as Error).message}`;
+      this.loadError =
+        e instanceof RateLimitError
+          ? campaignLoadFailure(e)
+          : `Could not load ${task}: ${(e as Error).message}`;
     } finally {
       this.loading = false;
     }

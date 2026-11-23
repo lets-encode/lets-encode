@@ -38,6 +38,7 @@ RESERVED_NAMES: frozenset[str] = frozenset(
         "assets",
         "static",
         "new",
+        "units",
         "join",
         "www",
         "index",

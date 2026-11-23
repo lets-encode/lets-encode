@@ -111,12 +111,6 @@
 </div>
 
 <style>
-  .mono {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-  }
-  .muted {
-    color: var(--ink-faint);
-  }
   /* The owner's side panel, above the campaign comments. */
   .cinfo {
     flex: none;

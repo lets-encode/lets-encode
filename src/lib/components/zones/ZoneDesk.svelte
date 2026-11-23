@@ -73,9 +73,7 @@
       onassign={instruments.naming4.assign}
       onabbr={instruments.naming4.abbr}
       ongroups={instruments.naming4.groups}
-      onfix={instruments.naming4.fix}
       onmerge={instruments.naming4.merge}
-      fixBlock={instruments.firstBlock}
     />
   {/if}
   <div
@@ -90,7 +88,7 @@
         {#each sp.pages as p (p)}
           {@const pg = pages[p]}
           <div class="page">
-            <p class="page-label pagehead">Page {p + 1} · Facsimile</p>
+            <p class="page-label pagecap">Page {p + 1} · Facsimile</p>
             {#if pg.failed}
               <Notice
                 tone="err"
@@ -161,7 +159,7 @@
   .page {
     margin-bottom: 1.5rem;
   }
-  .pagehead {
+  .pagecap {
     margin-bottom: 4px;
   }
 </style>

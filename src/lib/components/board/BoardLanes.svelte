@@ -63,7 +63,7 @@
   {/each}
 </div>
 {#if boardScope === "open" && columns.every((c) => c.cards.length === 0)}
-  <p class="boardnote">
+  <p class="note">
     No tasks are open right now: every task is claimed, in review, waiting for
     an earlier task, or done.
   </p>
@@ -81,7 +81,7 @@
       </div>
       <div class="well">
         {#if col.cards.length === 0}
-          <p class="laneempty">No tasks</p>
+          <p class="note">No tasks</p>
         {/if}
         {#each col.cards as card (card.task)}
           <BoardCard
@@ -120,11 +120,6 @@
   :global(.split) .well {
     overflow-y: visible;
     contain: none;
-  }
-  .boardnote {
-    margin: 0;
-    font-size: 13px;
-    color: var(--ink-soft);
   }
   .board {
     flex: 1;
@@ -177,11 +172,6 @@
     color: var(--lane-text);
     border-bottom: 1px solid var(--lane-line);
   }
-  .laneempty {
-    margin: 0;
-    font-size: 12px;
-    color: var(--ink-soft);
-  }
   /* The neutral Open lane in dark: a mid slate bar, not the light ink. */
   :global([data-theme="dark"]) .bcol:not(.c-encoding, .c-validation, .c-done),
   :global([data-theme="dark"])
@@ -224,7 +214,8 @@
     --lane-line: var(--ok-line);
   }
   .well {
-    padding: 8px;
+    /* A card's edge badge reaches 8px above the card (BoardCard.svelte). */
+    padding: 9px 8px 8px;
     display: flex;
     flex-direction: column;
     gap: 8px;

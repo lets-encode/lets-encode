@@ -13,11 +13,18 @@ import {
   attentionItems,
   contributingSince,
   doneTasks,
-  openWorkOrder,
+  toDoOrder,
+  claimEndsSoon,
+  doneGroups,
   viewerTasks,
   workSummary,
 } from "../campaign-list/my-work.ts";
 import type { CampaignStats, MyTask } from "../campaign-stats.ts";
+import {
+  parseLockCsv,
+  parseStateCsv,
+  parseTaskCsv,
+} from "../campaign-tables.ts";
 
 const campaign = (over: Partial<CampaignStats>): CampaignStats =>
   ({
@@ -34,6 +41,13 @@ const campaign = (over: Partial<CampaignStats>): CampaignStats =>
     lastActivity: "",
     createdAt: "",
     history: [],
+    taskDefs: [],
+    rows: [],
+    validationColumns: [],
+    locks: [],
+    piecePreparations: {},
+    passThreshold: 2,
+    allowSelfValidation: false,
     ...over,
   }) as CampaignStats;
 
@@ -135,6 +149,52 @@ test("filterCampaigns filters, then sorts by the chosen order", () => {
   );
 });
 
+test("filterCampaigns by activity puts held work, then claims, then tasks open to others first", () => {
+  const TASKS =
+    "task_id,subtask_id,fragment,locator,allowlist,blocklist,depends_on\n" +
+    "T0001,,sources/a.mei,surface-1,,,\n" +
+    "T0001,S0001,sources/a.mei,surface-1,,,\n";
+  const STATE =
+    "task_id,subtask_id,status,encoder,encoded_at,validate_status_1\n";
+  const LOCKS = "task_id,subtask_id,user_id,timestamp,kind,expires\n";
+  const withTask = (name: string, state: string, locks = "") =>
+    campaign({
+      name,
+      lastActivity: "2026-01-01",
+      taskDefs: parseTaskCsv(TASKS),
+      ...((t) => ({ rows: t.rows, validationColumns: t.validationColumns }))(
+        parseStateCsv(STATE + state),
+      ),
+      locks: parseLockCsv(LOCKS + locks),
+    });
+  const encoding = "T0001,,encoding_required,,,\nT0001,S0001,pending,,,\n";
+  const none = campaign({ name: "none", lastActivity: "2026-05-01" });
+  // 7 encoded the task; another volunteer has to review it.
+  const others = withTask(
+    "others",
+    "T0001,,validation_required,7,2026-01-01T00:00:00Z,\n" +
+      "T0001,S0001,validation_required,,,\n",
+  );
+  const claim = withTask("claim", encoding);
+  const held = withTask(
+    "held",
+    encoding,
+    "T0001,,7,2026-01-01T00:00:00Z,encoding,2099-01-01T00:00:00.000Z\n",
+  );
+  const me = { viewer: "7", user: { login: "me" } };
+  const q = { search: "", filter: "all" as const };
+  const list = [none, others, claim, held];
+  assert.deepEqual(
+    filterCampaigns(list, { ...q, sort: "active" }, me).map((s) => s.name),
+    ["held", "claim", "others", "none"],
+  );
+  // The other sorts ignore the next task.
+  assert.deepEqual(
+    filterCampaigns(list, { ...q, sort: "progress" }, me).map((s) => s.name),
+    ["none", "others", "claim", "held"],
+  );
+});
+
 const task = (over: Partial<MyTask>): MyTask =>
   ({
     group: "encoding",
@@ -145,21 +205,72 @@ const task = (over: Partial<MyTask>): MyTask =>
     ...over,
   }) as MyTask;
 
-test("openWorkOrder lists encoding, reviewing, then awaiting, newest first", () => {
-  const order = openWorkOrder(
+test("toDoOrder lists encoding, then reviews, newest claim first", () => {
+  const order = toDoOrder(
     [
       task({ task: "E1", claimedAt: "2026-01-01" }),
       task({ task: "E2", claimedAt: "2026-02-01" }),
     ],
     [task({ group: "validating", task: "V1" })],
-    [
-      task({ group: "awaiting", task: "A2", campaignSlug: "b" }),
-      task({ group: "awaiting", task: "A1", campaignSlug: "a" }),
-    ],
   );
   assert.deepEqual(
     order.map((t) => t.task),
-    ["E2", "E1", "V1", "A1", "A2"],
+    ["E2", "E1", "V1"],
+  );
+});
+
+test("claimEndsSoon names a claim in its last 48 hours", () => {
+  const now = Date.parse("2026-01-01T00:00:00Z");
+  assert.equal(
+    claimEndsSoon(task({ expiresAt: "2026-01-01T05:00:00Z" }), now),
+    "claim expires in 5 h",
+  );
+  assert.equal(
+    claimEndsSoon(task({ expiresAt: "2026-01-04T00:00:00Z" }), now),
+    "",
+  );
+  assert.equal(claimEndsSoon(task({ expiresAt: "" }), now), "");
+});
+
+test("doneGroups groups by campaign in list order and filters", () => {
+  const done = [
+    task({
+      task: "D1",
+      campaignSlug: "a",
+      campaign: "Alpha",
+      title: "Encode p. 1",
+    }),
+    task({
+      task: "D2",
+      campaignSlug: "b",
+      campaign: "Beta",
+      title: "Score setup",
+    }),
+    task({
+      task: "D3",
+      campaignSlug: "a",
+      campaign: "Alpha",
+      title: "Encode p. 2",
+    }),
+  ];
+  assert.deepEqual(
+    doneGroups(done).map((g) => [g.campaign, g.tasks.map((t) => t.task)]),
+    [
+      ["Alpha", ["D1", "D3"]],
+      ["Beta", ["D2"]],
+    ],
+  );
+  assert.deepEqual(
+    doneGroups(done, " P. 2 ").map((g) => g.tasks.map((t) => t.task)),
+    [["D3"]],
+  );
+  assert.deepEqual(
+    doneGroups(done, "beta").map((g) => g.campaign),
+    ["Beta"],
+  );
+  assert.deepEqual(
+    doneGroups(done, "", "b").map((g) => g.tasks.length),
+    [1],
   );
 });
 
@@ -177,24 +288,12 @@ test("doneTasks keeps the done group, latest submission first", () => {
 
 test("workSummary leads with an incomplete listing and always counts done", () => {
   assert.equal(
-    workSummary({
-      incomplete: false,
-      encoding: 0,
-      validating: 0,
-      awaiting: 0,
-      done: 0,
-    }),
+    workSummary({ incomplete: false, awaiting: 0, done: 0 }),
     "0 done",
   );
   assert.equal(
-    workSummary({
-      incomplete: true,
-      encoding: 2,
-      validating: 1,
-      awaiting: 3,
-      done: 4,
-    }),
-    "Incomplete · 2 encoding · 1 reviewing · 3 awaiting review · 4 done",
+    workSummary({ incomplete: true, awaiting: 3, done: 4 }),
+    "Incomplete · 3 waiting · 4 done",
   );
 });
 

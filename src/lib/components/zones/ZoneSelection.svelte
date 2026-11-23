@@ -8,8 +8,6 @@
 <script lang="ts">
   import Icon from "$lib/components/Icon.svelte";
   import SelectionPanel from "$lib/components/SelectionPanel.svelte";
-  import { auth } from "$lib/auth.svelte.ts";
-  import { MAX_ANCHOR_LENGTH } from "$lib/campaign-submit.ts";
   import {
     boxNameOf,
     boxNamesOf,
@@ -30,6 +28,7 @@
     canEdit,
     coarse,
     docked,
+    labelMax,
     oncompose,
   }: {
     editor: ZoneEditor;
@@ -44,8 +43,10 @@
     coarse: boolean;
     /** The side panel is docked as a sheet below the pages. */
     docked: boolean;
-    /** Opens the panel's comment field. */
-    oncompose: () => void;
+    /** The longest measure number that may be typed. */
+    labelMax: number;
+    /** Opens the panel's comment field; absent when no comment can be made. */
+    oncompose?: () => void;
   } = $props();
 
   const pages = $derived(model.pages);
@@ -69,7 +70,7 @@
   {@const zone = pages[p].zones[z]}
   <input
     class="selnum"
-    maxlength={MAX_ANCHOR_LENGTH}
+    maxlength={labelMax}
     value={zone.override ?? zone.label}
     oninput={(e) => model.setLabel(p, z, (e.target as HTMLInputElement).value)}
     onchange={() => ed.commit()}
@@ -87,14 +88,14 @@
 {#snippet editActions()}
   <button
     type="button"
-    class="btn"
+    class="btn btn-small"
     onclick={sel.newBox}
     title={`New ${boxName} beside this one (N)`}
     ><Icon name="plus" />New {boxName}</button
   >
   <button
     type="button"
-    class="btn btn-danger"
+    class="btn btn-small btn-danger"
     onclick={() => ed.deleteSelection()}
     aria-label={`Delete the ${boxName}`}
     title={`Delete the ${boxName}`}><Icon name="trash" />Delete</button
@@ -115,14 +116,14 @@
     {#snippet actions()}
       <button
         type="button"
-        class="btn"
+        class="btn btn-small"
         onclick={() => ed.duplicate()}
         title={`Copy the ${groupZs.length} ${boxNames} below or beside them (${MOD}drag one of them copies them to where you drop it)`}
         ><Icon name="copy" />Duplicate</button
       >
       <button
         type="button"
-        class="btn btn-danger"
+        class="btn btn-small btn-danger"
         onclick={() => ed.deleteSelection()}
         aria-label={`Delete the ${groupZs.length} ${boxNames}`}
         title={`Delete the ${groupZs.length} ${boxNames}`}
@@ -141,7 +142,7 @@
     canStep={(dir) => (dir < 0 ? sel.hasPrev : sel.hasNext)}
     keys={["A", "D"]}
     actions={canEdit ? editActions : undefined}
-    oncomment={selectedLabel && auth.user ? () => oncompose() : undefined}
+    oncomment={selectedLabel && oncompose ? () => oncompose() : undefined}
     commentTitle={`Comment on measure ${selectedLabel}`}
     ondeselect={coarse && !(docked && canEdit)
       ? () => ed.select(0, null)

@@ -7,6 +7,7 @@ import {
   layoutBoxes,
   layoutInstruments,
   layoutRecord,
+  layoutSource,
   pageSystems,
   staffCountOf,
   staffCrops,
@@ -194,6 +195,35 @@ test("layoutRecord marks the raw layouts as uncorrected and names the model", ()
   assert.deepEqual(record.model, { name: "dvorak-ola", version: "2.0" });
   assert.match(record.note, /not corrected/);
   assert.deepEqual(record.pages, [{ image: "img/01.jpg", layout }]);
+  assert.match(record.detected!, /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test("the corrected layout names the layout model of its raw layout, and layoutSource reads it from either file", () => {
+  const source = {
+    model: { name: "dvorak-ola", version: "2.0" },
+    detected: "2026-11-20",
+  };
+  const raw = JSON.stringify({
+    ...layoutRecord(source.model, []),
+    detected: source.detected,
+  });
+  assert.deepEqual(layoutSource(raw), source);
+  const page: PageModel = {
+    image: "img/01.jpg",
+    width: 10,
+    height: 10,
+    zones: [],
+  };
+  const corrected = correctedLayoutJson([page], undefined, layoutSource(raw));
+  assert.deepEqual(layoutSource(corrected), source);
+  assert.equal(layoutSource(correctedLayoutJson([page])), null);
+  assert.equal(layoutSource(null), null);
+  // A record written without a date names the model with no day.
+  const undated = JSON.stringify({ model: source.model, pages: [] });
+  assert.deepEqual(layoutSource(undated), {
+    model: source.model,
+    detected: "",
+  });
 });
 
 test("the corrected layout restores the tight measure boxes and the staff boxes a padded score leaves out", () => {

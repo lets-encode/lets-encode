@@ -47,7 +47,12 @@
   } = $props();
 </script>
 
-<form class="setup" class:docked onsubmit={(e) => e.preventDefault()}>
+<form
+  class="setup"
+  class:docked
+  class:presses-docked={docked}
+  onsubmit={(e) => e.preventDefault()}
+>
   {#if docked}<SetupSteps
       {step}
       staves={model.staves.length}
@@ -56,7 +61,7 @@
     />{/if}
   {#if step === 1}
     <fieldset disabled={!canEdit} class="sec-meter">
-      <p class="grouphead">Key and time signature</p>
+      <p class="setup-grouphead">Key and time signature</p>
       <KeyTimeFields
         bind:keysig={model.keysig}
         bind:meterType={model.meterType}
@@ -67,12 +72,12 @@
     </fieldset>
 
     <fieldset disabled={!canEdit} class="sec-staves">
-      <p class="grouphead">Staves</p>
+      <p class="setup-grouphead">Staves</p>
       <StaffList {model} editor={staffList} {preview} {canEdit} {hasNotation} />
     </fieldset>
   {:else}
     <fieldset disabled={!canEdit} class="sec-groups">
-      <p class="grouphead">Groups</p>
+      <p class="setup-grouphead">Groups</p>
       <GroupsStep {model} {marking} {canEdit} {markable} {compact} {tapWord} />
     </fieldset>
   {/if}
@@ -87,18 +92,10 @@
     gap: 12px;
     container-type: inline-size;
   }
-  /* Docked, the 32px buttons take a 44px press through an invisible
-     ::after. */
+  /* Docked, the glyph selects are 32px high and the 32px buttons take a
+     44px press (.presses-docked). */
   .setup.docked :global(.gsel) {
     min-height: 32px;
-  }
-  .setup.docked :global(.btn) {
-    position: relative;
-  }
-  .setup.docked :global(.btn)::after {
-    content: "";
-    position: absolute;
-    inset: -6px;
   }
   /* The step's sections share the panel's paper, a hairline between them
      running to its edges. */
@@ -112,11 +109,6 @@
     margin-inline: -16px;
     padding: 14px 16px 0;
     border-top: 1px solid var(--line);
-  }
-  .grouphead {
-    margin: 0 0 10px;
-    font-size: 13.5px;
-    font-weight: 600;
   }
   /* The staff blocks take the section's width up to a narrow margin. */
   .setup fieldset.sec-staves {

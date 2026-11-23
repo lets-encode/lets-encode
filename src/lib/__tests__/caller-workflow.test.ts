@@ -20,12 +20,20 @@ const action = readFileSync(
   new URL("../../../.github/actions/coordinator/action.yml", import.meta.url),
   "utf8",
 );
+const setupNode = readFileSync(
+  new URL("../../../.github/actions/setup-node/action.yml", import.meta.url),
+  "utf8",
+);
 const callerUrl =
   "https://raw.githubusercontent.com/lets-encode/campaign-template/main/.github/workflows/caller.yml";
 const response = await fetch(callerUrl);
 assert.ok(response.ok, `fetching ${callerUrl}: ${response.status}`);
 const caller = await response.text();
-const files = { "campaign.yml": workflow, "action.yml": action };
+const files = {
+  "campaign.yml": workflow,
+  "action.yml": action,
+  "setup-node/action.yml": setupNode,
+};
 const indentOf = (line: string) => line.length - line.trimStart().length;
 
 // Lines inside an `env:` mapping (of any step), where PR head values may appear.
@@ -74,24 +82,84 @@ test("the PR head is passed to the coordinator only as env data", () => {
   assert.deepEqual(offenders, []);
 });
 
-test("no step checks out the fork", () => {
-  for (const step of steps()) {
-    if (!step.some((l) => /uses:\s*actions\/checkout/.test(l))) continue;
-    const withBlock = step
-      .filter((l) => /^\s*(ref|repository|token):/.test(l))
-      .join("\n");
-    assert.doesNotMatch(
-      withBlock,
-      /head|pull_request|fork/,
-      `checkout reads the fork:\n${step.join("\n")}`,
-    );
-  }
+// The central code is fetched by git (below), so neither file runs the
+// checkout action, which could be pointed at the fork.
+test("no step uses the checkout action", () => {
+  for (const [name, text] of Object.entries(files))
+    assert.doesNotMatch(text, /uses:\s*actions\/checkout/, name);
+});
+
+// An action from another repository is pinned to a full commit hash; a tag
+// or branch can be moved to other code.
+test("every action from another repository is pinned to a commit", () => {
+  for (const [name, text] of Object.entries(files))
+    for (const line of text.split("\n")) {
+      const uses = /^\s*(?:- )?uses:\s*(\S+)/.exec(line)?.[1];
+      if (!uses || uses.startsWith("./")) continue;
+      assert.match(
+        uses,
+        /^[\w.-]+\/[\w./-]+@[0-9a-f]{40}$/,
+        `${name}: ${line}`,
+      );
+    }
+});
+
+// The runner downloads an action from another repository when it prepares
+// the composite action that names it, also for a skipped step, and downloads
+// the actions named by a local composite action only when its step runs.
+// setup-node therefore sits in a local action of its own, used only when the
+// runner has no suitable Node.
+test("actions/setup-node is downloaded only when no suitable Node is found", () => {
+  assert.doesNotMatch(action, /uses:\s*actions\//);
+  const setup = steps().find((s) =>
+    s.some((l) =>
+      /uses:\s*\.\/central\/\.github\/actions\/setup-node\s*$/.test(l),
+    ),
+  );
+  assert.ok(setup, "the coordinator action does not use the setup-node action");
+  assert.ok(
+    setup!.some((l) =>
+      /^\s*if: steps\.node\.outputs\.found != 'true'\s*$/.test(l),
+    ),
+    "the setup-node step has no condition on the Node step",
+  );
+  assert.match(setupNode, /^\s*using: composite\s*$/m);
+  assert.match(setupNode, /uses: actions\/setup-node@[0-9a-f]{40} /);
+  assert.match(action, /node-version-file: central\/\.nvmrc/);
+});
+
+// The central code is fetched by git in a run step. The step gets the pointer
+// and nothing else: no token and no value of the pull request.
+test("the central fetch takes only the central pointer", () => {
+  const fetch = steps().find((s) =>
+    s.some((l) => /git -C central fetch/.test(l)),
+  );
+  assert.ok(fetch, "no step fetches the central code");
+  const env = fetch!.filter((_, i) => isInEnv(fetch!, i)).map((l) => l.trim());
+  assert.deepEqual(env, [
+    "CENTRAL_REPO: ${{ steps.cfg.outputs.repo }}",
+    "CENTRAL_REF: ${{ steps.cfg.outputs.ref }}",
+  ]);
+  const block = fetch!.join("\n");
+  assert.doesNotMatch(
+    block,
+    /pull_request|head_(ref|sha|repo)|token|secrets\./i,
+  );
+  // The ref cannot be read as an option of git.
+  assert.match(
+    block,
+    /git -C central fetch -q --depth=1 --no-tags --end-of-options "\$url" "\$1"/,
+  );
+  assert.match(block, /url="\$GITHUB_SERVER_URL\/\$CENTRAL_REPO"/);
+  // No environment reaches the steps from outside their own env blocks.
+  assert.doesNotMatch(workflow, /^ {0,4}env:/m);
+  for (const text of Object.values(files))
+    assert.doesNotMatch(text, /GITHUB_ENV/);
 });
 
 // The central pointer (repository, ref, entry point) is base-controlled data
-// read from config.yaml. It reaches the checkout as action inputs and the run
-// step as a quoted environment variable, never as an expansion inside a
-// command line.
+// read from config.yaml. It reaches the fetch and the run step as quoted
+// environment variables, never as an expansion inside a command line.
 test("run steps do not expand PR head values or the central pointer into commands", () => {
   const expansions: Array<[RegExp, string]> = [
     [/\$\{\{[^}]*head\.(sha|ref|repo)/, "the PR head"],
@@ -120,6 +188,7 @@ test("the cfg step validates the pointer fields before exporting them", () => {
     block,
     /\[\[ "\$repo" =~ \^\[A-Za-z0-9_.-\]\+\/\[A-Za-z0-9_.-\]\+\$ \]\]/,
   );
+  assert.match(block, /\[\[ "\$ref" == -\* \]\]/);
   // The entry point is checked by the action, from the same checkout.
   assert.match(action, /"\$CENTRAL_PATH" != "scripts\/coordinator\.ts"/);
 });

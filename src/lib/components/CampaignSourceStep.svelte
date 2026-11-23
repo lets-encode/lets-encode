@@ -47,7 +47,7 @@
     <div class="material-card">
       <ViewerToolbar>
         <span class="toolbar-name head-name">meiHead — source header</span>
-        <span class="chip" class:chip-ok={xmlValid} class:chip-err={!xmlValid}>
+        <span class="chip" class:chip-ok={xmlValid} class:chip-fail={!xmlValid}>
           <span class="chip-dot"></span>
           {xmlValid ? "Well-formed" : "Not a well-formed meiHead"}
         </span>

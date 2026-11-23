@@ -159,7 +159,7 @@
     max-height: none;
   }
   .editor :global(.cm-scroller) {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
+    font-family: var(--mono);
   }
   .editor :global(.cm-gutters) {
     min-width: 44px;

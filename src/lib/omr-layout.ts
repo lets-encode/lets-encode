@@ -29,6 +29,8 @@ export interface CocoLayout {
  */
 export interface LayoutRecord {
   model: OmrPipeline;
+  /** The day the record was written (YYYY-MM-DD); absent in records written without it. */
+  detected?: string;
   /** Always false: the boxes in this file are not corrected. */
   corrected: false;
   note: string;
@@ -48,7 +50,32 @@ export function layoutRecord(
   model: OmrPipeline,
   pages: { image: string; layout: CocoLayout }[],
 ): LayoutRecord {
-  return { model, corrected: false, note: LAYOUT_RECORD_NOTE, pages };
+  return {
+    model,
+    detected: new Date().toISOString().slice(0, 10),
+    corrected: false,
+    note: LAYOUT_RECORD_NOTE,
+    pages,
+  };
+}
+
+/** The layout model that found a piece's boxes, and the day its record was written ('' when not known). */
+export interface LayoutSource {
+  model: OmrPipeline;
+  detected: string;
+}
+
+/** The source of a layout record (`layout.json`) or of a corrected layout that names one; null when the text names none. */
+export function layoutSource(json: string | null): LayoutSource | null {
+  if (!json) return null;
+  const layout = JSON.parse(json) as Partial<LayoutRecord & CorrectedLayout>;
+  const model = layout.model ?? layout.layoutModel;
+  return model?.name && model.version
+    ? {
+        model: { name: model.name, version: model.version },
+        detected: layout.detected ?? "",
+      }
+    : null;
 }
 
 /** One player of an instrument with several (Flauto I, Posaune 2). */
@@ -116,6 +143,10 @@ export interface LayoutInstruments {
  */
 export interface CorrectedLayout {
   note: string;
+  /** The layout model the boxes were detected by, as `layout.json` names it. */
+  layoutModel?: OmrPipeline;
+  /** The day `layout.json` was written (YYYY-MM-DD). */
+  detected?: string;
   instruments?: LayoutInstrument[];
   groups?: LayoutGroup[];
   /** LayoutInstruments.fixed. */
@@ -150,14 +181,22 @@ const roundedStaff = (box: StaffBox): StaffBox => ({
 
 /**
  * The pages' corrected boxes, as `layout-corrected.json` is written, with the
- * named instruments where the layout task names them.
+ * named instruments where the layout task names them and the layout model
+ * that detected them where it is known.
  */
 export function correctedLayoutJson(
   pages: PageModel[],
   named?: LayoutInstruments,
+  source?: LayoutSource | null,
 ): string {
   const layout: CorrectedLayout = {
     note: CORRECTED_LAYOUT_NOTE,
+    ...(source
+      ? {
+          layoutModel: source.model,
+          ...(source.detected ? { detected: source.detected } : {}),
+        }
+      : {}),
     ...(named
       ? {
           instruments: named.instruments,

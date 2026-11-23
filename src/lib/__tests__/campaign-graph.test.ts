@@ -335,6 +335,9 @@ test("taskAction: one button per task and mode, wherever the task is offered", (
   assert.match(taskAction(check, "claim").title, /score check/);
   assert.equal(taskAction(check, "claim").stage, "enc");
   assert.equal(taskAction(pre, "claim").stage, "pre");
+  // A held review says so, for a pre-task and an encoding alike.
+  assert.equal(taskAction(pre, "continue-review").label, "Continue review");
+  assert.equal(taskAction(encode, "continue-review").label, "Continue review");
   assert.equal(
     taskAction(encode, "claim-review").title,
     "Claims a review of this task for you and opens the review.",

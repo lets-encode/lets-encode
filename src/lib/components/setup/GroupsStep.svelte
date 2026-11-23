@@ -41,42 +41,49 @@
 {#if markable && !(compact && marking.openG && marking.markFrom === null)}
   <div class="markline">
     {#if marking.markFrom === null}
-      <p class="markhint">
+      <p class="note markhint">
         {tapWord} the first staff of a group in the preview.
       </p>
     {:else if marking.markTo === null}
-      <p class="markhint">
+      <p class="note markhint">
         <strong>Staff {marking.markFrom + 1}</strong> · {tapWord.toLowerCase()}
         the last staff of the group.
       </p>
       <div class="markbtns">
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={() => marking.clearMark()}>Cancel</button
+        >
         {#each marking.containing(marking.markFrom + 1) as g (g)}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.toggleRow(g)}
             title="Open this group"
             ><MusicGlyph name={symbolGlyph(g.symbol)} />{symbolName(g.symbol)}
             {g.start}–{g.end}</button
           >
         {/each}
-        <button type="button" class="btn" onclick={() => marking.clearMark()}
-          >Cancel</button
-        >
       </div>
     {:else if marking.markSpan}
-      <p class="markhint">
+      <p class="note markhint">
         <strong>Staves {marking.markSpan.start}–{marking.markSpan.end}</strong>
       </p>
       {#if marking.markProblem}
         <p class="groupwarn">{marking.markProblem}</p>
       {/if}
       <div class="markbtns">
+        <button
+          type="button"
+          class="btn btn-small"
+          onclick={() => marking.clearMark()}>Cancel</button
+        >
         {#if marking.sameGroup}
           {@const sameGroup = marking.sameGroup}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.toggleRow(sameGroup)}
             title="Open this group"
             ><MusicGlyph name={symbolGlyph(sameGroup.symbol)} />{symbolName(
@@ -87,22 +94,19 @@
         {:else if !marking.markProblem}
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.addMarked("brace")}
             title="Join the staves with a brace: the staves of one instrument, like a piano, or of a pair, like Horn 1 and 2."
             ><MusicGlyph name="brace" />Brace</button
           >
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => marking.addMarked("bracket")}
             title="Join the staves with a bracket: a section, like the woodwinds or the strings."
             ><MusicGlyph name="bracket" />Bracket</button
           >
         {/if}
-        <button type="button" class="btn" onclick={() => marking.clearMark()}
-          >Cancel</button
-        >
       </div>
     {/if}
   </div>
@@ -116,7 +120,7 @@
     {#each model.ordered as g (g)}
       <li>{@render groupRow(g)}</li>
     {:else}
-      <li class="muted">No groups.</li>
+      <li class="note">No groups.</li>
     {/each}
   </ul>
   {#if canEdit && marking.freePair !== null}
@@ -197,21 +201,12 @@
 {/snippet}
 
 <style>
-  .muted {
-    color: var(--ink-faint);
-    font-size: 0.9rem;
-  }
   /* The marking in the preview: what to do next, then its buttons. */
   .markline {
     display: flex;
     flex-direction: column;
     gap: 8px;
     margin-bottom: 12px;
-  }
-  .markhint {
-    margin: 0;
-    font-size: 13px;
-    color: var(--ink-soft);
   }
   .markhint strong {
     font-weight: 600;

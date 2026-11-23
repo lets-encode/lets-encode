@@ -8,14 +8,13 @@
 -->
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import Icon from "$lib/components/Icon.svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import {
-    goToStep,
     wizard,
     type WIZARD_STEPS,
     type WizardStepId,
   } from "$lib/wizard.svelte.ts";
+  import WizardStep from "./WizardStep.svelte";
 
   let {
     steps,
@@ -84,36 +83,15 @@
       {/if}
       <ol>
         {#each steps as s, i (s.id)}
-          {@const done = i < current}
-          {@const active = i === current}
-          {@const value = valueOf(i, s.id)}
           <li>
-            <button
-              type="button"
-              class="tstep"
-              class:active
-              disabled={!done || backDisabled || navBlocked !== undefined}
-              title={(done && navBlocked) || value || undefined}
-              aria-label={s.label}
-              onclick={() => goToStep(s.id)}
-              aria-current={active ? "step" : undefined}
-            >
-              <span class="hit">
-                <span class="bubble" class:done class:active>
-                  {#if done}<Icon name="check" size={12} />{:else}{i + 1}{/if}
-                </span>
-              </span>
-              <span
-                class="step-label"
-                class:active
-                class:upcoming={!done && !active}>{s.label}</span
-              >
-              {#if value}
-                <span class={active ? "step-status" : "step-summary"}
-                  >{value}</span
-                >
-              {/if}
-            </button>
+            <WizardStep
+              step={s}
+              index={i}
+              {current}
+              value={valueOf(i, s.id)}
+              {backDisabled}
+              {navBlocked}
+            />
           </li>
         {/each}
       </ol>
@@ -134,62 +112,16 @@
 </div>
 
 <style>
-  /* ---- Shared with the step rail: bubbles, labels, saved line ----------- */
-  .bubble {
-    box-sizing: border-box;
-    flex: none;
-    width: 26px;
-    height: 26px;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 12.5px;
-    background: var(--card);
-    border: 1px solid var(--line-strong);
-    color: var(--ink-faint);
-    position: relative;
-    z-index: 1;
-  }
-  .bubble.done {
-    font-size: 13px;
-    background: var(--ok-btn);
-    border: none;
-    color: #fff;
-  }
-  .bubble.active {
-    font-weight: 600;
-    background: var(--accent-btn);
-    border: none;
-    color: #fff;
-    box-shadow: 0 0 0 4px rgba(37, 99, 201, 0.15);
-  }
-  .step-label {
-    display: block;
-    font-size: 13.5px;
-    font-weight: 600;
-    line-height: 16px;
-    color: var(--ink-soft);
-  }
-  .step-label.active {
-    color: var(--ink);
-  }
-  .step-label.upcoming {
-    color: var(--ink-faint);
-  }
-  .step-summary,
+  /* ---- Shared with the step rail: saved line -------------------------- */
   .step-status {
     display: block;
     font-size: 11.5px;
     line-height: 15px;
-    color: var(--ink-faint);
+    color: var(--accent);
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-  }
-  .step-status {
-    color: var(--accent);
-    font-weight: 600;
   }
   .saved {
     font-size: 11.5px;
@@ -216,16 +148,6 @@
     margin-block: -4px;
   }
 
-  /* A window 500px tall or less (the frame's .short). */
-  :global(.short) .bubble {
-    width: 24px;
-    height: 24px;
-    font-size: 11.5px;
-  }
-  :global(.short) .step-label {
-    font-size: 13px;
-  }
-
   /* ---- Step track -------------------------------------------------------- */
   .trackbar {
     flex: none;
@@ -249,10 +171,7 @@
     min-width: 0;
   }
   .tslug {
-    font:
-      12px ui-monospace,
-      Menlo,
-      monospace;
+    font: 12px var(--mono);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -286,7 +205,7 @@
     display: grid;
     grid-template-columns: repeat(var(--n), minmax(0, 1fr));
   }
-  /* The connecting line runs between the first and the last bubble's
+  /* The connecting line runs between the first and the last disc's
      centres; its completed part ends at the current step. */
   .line {
     position: absolute;
@@ -307,62 +226,6 @@
   .track li {
     min-width: 0;
   }
-  .tstep {
-    position: relative;
-    width: 100%;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1px;
-    min-width: 0;
-    padding: 0 2px;
-    background: none;
-    border: none;
-    font: inherit;
-    color: inherit;
-    text-align: center;
-    cursor: pointer;
-  }
-  .tstep:disabled {
-    cursor: default;
-  }
-  .hit {
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .tstep .bubble {
-    width: 24px;
-    height: 24px;
-    font-size: 11.5px;
-  }
-  .tstep .bubble.active {
-    box-shadow: 0 0 0 3px rgba(37, 99, 201, 0.15);
-  }
-  .tstep .step-label {
-    margin-top: -6px;
-    font-size: 12px;
-    line-height: 14px;
-    white-space: nowrap;
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .tstep .step-summary,
-  .tstep .step-status {
-    max-width: 100%;
-    font-size: 10.5px;
-    line-height: 13px;
-  }
-  /* 600–799px: labels, and the current step's status; from 800px the
-     completed steps' values too. */
-  @media (max-width: 799px) {
-    .tstep .step-summary {
-      display: none;
-    }
-  }
   .tcur {
     display: none;
   }
@@ -381,10 +244,6 @@
        bar; their 44px press areas overlap the line above. */
     .track {
       margin-top: -6px;
-    }
-    .tstep .step-label,
-    .tstep .step-status {
-      display: none;
     }
     .tcur {
       display: flex;

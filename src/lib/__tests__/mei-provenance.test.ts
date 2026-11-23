@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SyntaxValidator } from "fast-xml-validator";
 import {
-  applicationNamesIn,
+  applicationsIn,
   recordContribution,
   recordApplications,
 } from "../mei-provenance.ts";
@@ -186,11 +186,24 @@ test("omits the application when none is given", () => {
   assert.match(out, /<change n="2"/);
 });
 
-test("applicationNamesIn lists the applications recordApplications writes", () => {
+test("applicationsIn lists the applications recordApplications writes", () => {
   const mei = "<mei><meiHead><fileDesc></fileDesc></meiHead><music/></mei>";
-  assert.deepEqual(applicationNamesIn(mei), []);
-  const out = recordApplications(mei, ["Musibot mzk-staff 1", "A & B"]);
-  assert.deepEqual(applicationNamesIn(out), ["Musibot mzk-staff 1", "A & B"]);
+  assert.deepEqual(applicationsIn(mei), []);
+  const apps = [
+    { name: "Musibot dvorak-ola 2.0" },
+    {
+      name: "Musibot mzk-staff 2",
+      isodate: "2026-11-20",
+      description: "Pipeline mzk-staff 2 with the model musvit-e2e x.",
+    },
+    { name: "A & B", description: "" },
+  ];
+  const out = recordApplications(mei, apps);
+  assert.match(
+    out,
+    /<application xml:id="app-musibot-mzk-staff-2" isodate="2026-11-20">\s*<name>Musibot mzk-staff 2<\/name>\s*<p>Pipeline mzk-staff 2 with the model musvit-e2e x\.<\/p>\s*<\/application>/,
+  );
+  assert.deepEqual(applicationsIn(out), [apps[0], apps[1], { name: "A & B" }]);
 });
 
 test("records a contribution in linear time whatever the header's comments hold", () => {
@@ -203,21 +216,51 @@ test("records a contribution in linear time whatever the header's comments hold"
   assert.ok(crafted.length > BARE.length + 600_000);
   const started = performance.now();
   recordContribution(crafted, CONTRIBUTION);
-  recordApplications(crafted, ["Musibot mzk-staff 1"]);
+  recordApplications(crafted, [{ name: "Musibot mzk-staff 1" }]);
   const elapsed = performance.now() - started;
   assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
 });
 
-test("applicationNamesIn reads application names in linear time", () => {
+test("applicationsIn reads application names in linear time", () => {
   // A long run of spaces in a name that never closes, and one that does.
   const spaces = " ".repeat(200_000);
   const open = `<mei><meiHead><encodingDesc><appInfo><application><name>${spaces}x</appInfo></encodingDesc></meiHead></mei>`;
   const closed = `<mei><meiHead><encodingDesc><appInfo><application><name>${spaces}Musibot a 1${spaces}</name></application></appInfo></encodingDesc></meiHead></mei>`;
   const started = performance.now();
-  assert.deepEqual(applicationNamesIn(open), []);
-  assert.deepEqual(applicationNamesIn(closed), ["Musibot a 1"]);
+  assert.deepEqual(applicationsIn(open), []);
+  assert.deepEqual(applicationsIn(closed), [{ name: "Musibot a 1" }]);
   const elapsed = performance.now() - started;
   assert.ok(elapsed < 1000, `took ${Math.round(elapsed)} ms`);
+});
+
+test("entries added to an indented header keep its indentation", () => {
+  let out = recordApplications(BARE, [{ name: "A" }]);
+  out = recordApplications(out, [{ name: "B" }]);
+  out = recordContribution(out, { ...CONTRIBUTION, name: "x" });
+  out = recordContribution(out, { ...CONTRIBUTION, name: "y" });
+  const lines = (from: string, to: string) =>
+    out.slice(out.indexOf(from), out.indexOf(to) + to.length).split("\n");
+  assert.deepEqual(lines("            <respStmt>", "</titleStmt>"), [
+    "            <respStmt>",
+    '               <persName role="contributor">x</persName>',
+    '               <persName role="contributor">y</persName>',
+    "            </respStmt>",
+    "         </titleStmt>",
+  ]);
+  assert.deepEqual(lines("            <application", "</appInfo>"), [
+    '            <application xml:id="app-a">',
+    "               <name>A</name>",
+    "            </application>",
+    '            <application xml:id="app-b">',
+    "               <name>B</name>",
+    "            </application>",
+    '            <application xml:id="app-mei-friend">',
+    "               <name>mei-friend</name>",
+    "            </application>",
+    "         </appInfo>",
+  ]);
+  assert.match(out, /\n {9}<\/change>\n {9}<change n="2"/);
+  assert.match(out, /\n {6}<\/revisionDesc>\n {3}<\/meiHead>\n/);
 });
 
 test("recordApplications finds an application named inside another name", () => {
@@ -225,7 +268,7 @@ test("recordApplications finds an application named inside another name", () => 
     "</fileDesc>",
     "</fileDesc>\n      <encodingDesc><appInfo><application><name>Old <name>Verovio</name></name></application></appInfo></encodingDesc>",
   );
-  assert.equal(recordApplications(mei, ["Verovio"]), mei);
+  assert.equal(recordApplications(mei, [{ name: "Verovio" }]), mei);
 });
 
 test("recordContribution names the contributor in the title statement, not a copy of it", () => {

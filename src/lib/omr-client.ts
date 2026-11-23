@@ -19,6 +19,11 @@ export interface OmrPipeline {
   version: string;
 }
 
+/** A staff pipeline and the model it runs; the service's listing does not name the model. */
+export interface OmrStaffPipeline extends OmrPipeline {
+  model: OmrPipeline;
+}
+
 /** One pipeline of the service's listing. */
 export interface OmrPipelineEntry extends OmrPipeline {
   /** What the pipeline reads and writes, as page-relative file patterns. */

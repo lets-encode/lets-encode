@@ -23,7 +23,12 @@
     label: string | null;
     /** The 0-based page the measure is on; -1 when unknown. */
     page: number;
-    preview: ReturnType<typeof ScorePreview> | undefined;
+    preview:
+      | Pick<
+          ReturnType<typeof ScorePreview>,
+          "stepMeasure" | "canStepMeasure" | "clearSelection"
+        >
+      | undefined;
     /** Opens the comment composer; without it there is no Comment button. */
     oncomment?: () => void;
     /** The text shown without a selection. */

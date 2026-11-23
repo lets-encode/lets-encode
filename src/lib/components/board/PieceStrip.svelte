@@ -27,7 +27,7 @@
 </script>
 
 <div class="ctxstrip" style="--zone: var(--zone-{pieceZone(index)})">
-  <span class="ctxpaper">
+  <span class="sheet ctxpaper">
     {#if preview?.thumb}
       <img src={preview.thumb} alt="" loading="lazy" />
     {/if}
@@ -70,9 +70,6 @@
     flex: none;
     width: 36px;
     height: 47px;
-    background: var(--facsimile-paper);
-    border: 1px solid var(--line);
-    border-radius: 2px;
     overflow: hidden;
   }
   .ctxpaper img {

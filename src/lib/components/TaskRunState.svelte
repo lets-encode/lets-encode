@@ -34,7 +34,7 @@
 
 <!-- A live region that is always present, so a run state appearing in it
      is announced; empty, it takes no room. -->
-<div class="live" aria-live="polite">
+<div class="live" class:vh={!entry} aria-live="polite">
   {#if entry}
     <div
       class="runstate {entry.state}"
@@ -90,13 +90,6 @@
 </div>
 
 <style>
-  .live:empty {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
   .runstate {
     display: flex;
     align-items: center;
@@ -110,7 +103,7 @@
     margin-top: 0;
     padding: 3px 10px;
     /* Full pill on one line; a rounded box where the text wraps. */
-    border-radius: 11px;
+    border-radius: var(--radius-panel);
     font-size: 11.5px;
     line-height: 1.25;
     width: fit-content;

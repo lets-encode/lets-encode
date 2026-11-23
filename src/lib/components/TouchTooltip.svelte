@@ -120,7 +120,7 @@
 <style>
   .touchtip {
     position: fixed;
-    z-index: 1000;
+    z-index: var(--z-tooltip);
     max-width: min(320px, calc(100vw - 16px));
     transform: translateY(calc(-100% - 8px));
     padding: 8px 11px;

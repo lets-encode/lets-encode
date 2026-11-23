@@ -3,7 +3,7 @@
 // deletion.
 
 import { parseHistoryCsv, HISTORY_PATH } from "../campaign-tables.ts";
-import type { TaskRow } from "../campaign-tables.ts";
+import type { HistoryRow, TaskRow } from "../campaign-tables.ts";
 import { sideFilesOf } from "../campaign-submit.ts";
 import {
   claimPullRequest,
@@ -12,15 +12,16 @@ import {
 } from "../coordinator-policy.ts";
 import type { CommandContext } from "./core.ts";
 
-// Delete the viewer's task branch `encode-<task_id>` — in the campaign repo
-// with push access, in their fork otherwise. Non-fatal: a leftover branch is
-// deleted by the next claim of the task.
+// Delete the viewer's task branch `encode-<task_id>` in `workRepo`, else in
+// the repo workRepoOf finds. Non-fatal: a leftover branch is deleted by the
+// next claim of the task.
 async function deleteTaskBranch(
   ctx: CommandContext,
   task_id: string,
+  workRepo?: { owner: string; repo: string },
 ): Promise<void> {
   try {
-    const workRepo = await workRepoOf(ctx, task_id);
+    workRepo ??= await workRepoOf(ctx, task_id);
     await ctx.forge.deleteBranch(
       workRepo.owner,
       workRepo.repo,
@@ -37,24 +38,50 @@ const claimHeadRepos = new Map<
   Promise<{ owner: string; repo: string } | null>
 >();
 
+// Record the head repo of the claim pull request `pr`, as known from opening
+// it, so that workRepoOf does not read it.
+function rememberClaimRepo(
+  ctx: CommandContext,
+  pr: number,
+  head: { owner: string; repo: string },
+): void {
+  claimHeadRepos.set(
+    `${ctx.repoId}#${pr}`,
+    Promise.resolve({ owner: head.owner, repo: head.repo }),
+  );
+}
+
+/** The campaign's history and the viewer's push access, read at one head. */
+export interface HistoryRead {
+  history: HistoryRow[];
+  canPush: boolean;
+}
+
+async function readHistory(ctx: CommandContext): Promise<HistoryRead> {
+  const { forge: f, owner, repo } = ctx;
+  const { sha, canPush } = await f.getRepoHead(owner, repo);
+  return {
+    history: parseHistoryCsv(
+      (await f.getRepoFile(owner, repo, HISTORY_PATH, sha)) ?? "",
+    ),
+    canPush,
+  };
+}
+
 // The repo the viewer's task branch `encode-<task_id>` lives in: the repo
 // their accepted claim's pull request came from, where the campaign
 // automation also looks for it. Without one (or when that repo is gone), the
 // campaign repo with push access, their fork otherwise (a repo cannot be
-// forked by its owner).
+// forked by its owner). `read` is the history when the caller has just read
+// it.
 async function workRepoOf(
   ctx: CommandContext,
   task_id: string,
+  read?: HistoryRead,
 ): Promise<{ owner: string; repo: string }> {
   const { forge: f, owner, repo } = ctx;
-  const { sha, canPush } = await f.getRepoHead(owner, repo);
-  const pr = claimPullRequest(
-    parseHistoryCsv(
-      (await f.getRepoFile(owner, repo, HISTORY_PATH, sha)) ?? "",
-    ),
-    task_id,
-    ctx.viewer,
-  );
+  const { history, canPush } = read ?? (await readHistory(ctx));
+  const pr = claimPullRequest(history, task_id, ctx.viewer);
   if (pr !== null) {
     const key = `${ctx.repoId}#${pr}`;
     let head = claimHeadRepos.get(key);
@@ -97,13 +124,15 @@ async function keptWorkRef(
 // Where the viewer's work on a task stands: their task branch
 // `encode-<task_id>` when it carries the task's score, else the work kept
 // from expired claims (keptWorkRef) when there is any; null when the work
-// starts from `main`.
+// starts from `main`. `read` is the history when the caller has just read it.
 async function workSource(
   ctx: CommandContext,
   task: TaskRow,
+  read?: HistoryRead,
 ): Promise<FileSource | null> {
   const { forge: f, owner, repo } = ctx;
-  const workRepo = await workRepoOf(ctx, task.task_id);
+  read ??= await readHistory(ctx);
+  const workRepo = await workRepoOf(ctx, task.task_id, read);
   const own = { ...workRepo, ref: `encode-${task.task_id}` };
   const sha = await f.getBranchHead(own.owner, own.repo, own.ref);
   if (
@@ -111,7 +140,10 @@ async function workSource(
     (await f.getRepoFile(own.owner, own.repo, task.fragment, sha)) != null
   )
     return { ...own, sha };
-  const ref = await keptWorkRef(ctx, task.task_id);
+  const ref =
+    keptWorkSince(read.history, task.task_id).length > 0
+      ? keptWorkBranch(task.task_id)
+      : null;
   if (ref && (await f.getRepoFile(owner, repo, task.fragment, ref)) != null)
     return { owner, repo, ref };
   return null;
@@ -147,4 +179,10 @@ async function seedFromKeptWork(
   return true;
 }
 
-export { deleteTaskBranch, seedFromKeptWork, workRepoOf, workSource };
+export {
+  deleteTaskBranch,
+  rememberClaimRepo,
+  seedFromKeptWork,
+  workRepoOf,
+  workSource,
+};

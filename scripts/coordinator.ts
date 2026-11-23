@@ -113,16 +113,19 @@ import {
   getPullRequestCommitMessages,
   getPullRequestDetails,
   getRepoFile,
-  getRepoHead,
+  getRepoHeadFiles,
   getPullRequest,
   getUserLogin,
   listOpenPullRequests,
   listBranchCommitTimes,
   getCollaboratorCanPush,
   commitFiles,
+  commitToBranch,
+  BranchMovedError,
   commentAndClosePr,
   deleteBranch,
   getGitHubRequestTelemetry,
+  onGitHubRequest,
   isTransientError,
   listWorkflowRuns,
 } from "../src/lib/forge/github-rest.ts";
@@ -202,6 +205,29 @@ const boundPr = (): BoundPullRequest => ({
 
 const MAX_ATTEMPTS = 10;
 
+// The tracking tables and config, read together: each operation uses some of
+// them.
+const TABLE_PATHS = [
+  TASK_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  HISTORY_PATH,
+  COMMENT_PATH,
+  CONFIG_PATH,
+];
+type Tables = Awaited<ReturnType<typeof getRepoHeadFiles>>;
+
+// The default branch head and the tables at that commit. Each read logs its
+// own duration as the `read_tables` phase, whether it succeeds or fails.
+async function readTables(): Promise<Tables> {
+  const readStart = Date.now();
+  try {
+    return await getRepoHeadFiles(token, owner, repo, TABLE_PATHS);
+  } finally {
+    logPhase("read_tables", readStart);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shared helpers
 
@@ -249,17 +275,15 @@ const locksAtSubmission = (
 // without kept work.
 async function keepExpiredWork(
   removed: LockRow[],
-  historyCsv: string | null,
+  tableFiles: Tables["files"],
   mainBranch: string,
   sha: string,
 ): Promise<Set<LockRow>> {
   const kept = new Set<LockRow>();
   const encoding = removed.filter((l) => l.kind === "encoding");
   if (encoding.length === 0) return kept;
-  const history = parseHistoryCsv(historyCsv ?? "");
-  const tasks = parseTaskCsv(
-    (await getRepoFile(token, owner, repo, TASK_PATH, sha)) ?? "",
-  );
+  const history = parseHistoryCsv(tableFiles[HISTORY_PATH] ?? "");
+  const tasks = parseTaskCsv(tableFiles[TASK_PATH] ?? "");
   for (const lock of encoding) {
     try {
       const task = tasks.find(
@@ -333,10 +357,14 @@ function checkMeiOnce(mei: string): Promise<MeiCheck> {
 // write's error message ends in "(<status> <method> <path>)" (github-rest.ts).
 const LOST_RACE = /\(422 PATCH \S*\/git\/refs\/heads\//;
 
+// Whether `e` is a commit lost to another run's: a refused branch update, or
+// a commit refused because the branch moved (BranchMovedError).
+const lostRace = (e: unknown): boolean =>
+  e instanceof BranchMovedError || LOST_RACE.test((e as Error).message);
+
 // Whether another attempt may get past `e`: a commit lost to another run's,
 // or a failure of GitHub's that may pass (isTransientError).
-const retryable = (e: unknown): boolean =>
-  isTransientError(e) || LOST_RACE.test((e as Error).message);
+const retryable = (e: unknown): boolean => isTransientError(e) || lostRace(e);
 
 // Every attempt of a decision lost the commit to other runs' commits. The
 // pull request is closed with that reason rather than left open, so the
@@ -352,23 +380,26 @@ let lastAttempt = false;
 
 // Run one optimistic decide-and-apply pass, retrying (up to MAX_ATTEMPTS) when
 // it throws an error another attempt may get past (retryable) — most often
-// the non-fast-forward commit failing because the branch head moved. Each
-// attempt re-reads the tables before writing, so retrying a failed read is
-// equally safe. Any other error is thrown at once.
+// the commit failing because the branch head moved. Each attempt is handed
+// its own read of the tables (the first attempt `first`, when given), so
+// retrying a failed read is equally safe. Any other error is thrown at once.
 // Runs for different pull requests execute concurrently — several at once when
 // operations are submitted in quick succession — so a random pause that grows
 // with each retry (up to 8 s) spreads competing writers apart until each has
 // committed.
-async function withRetry<T>(attempt: () => Promise<T>): Promise<T> {
+async function withRetry<T>(
+  attempt: (tables: Promise<Tables>) => Promise<T>,
+  first?: Promise<Tables>,
+): Promise<T> {
   for (let i = 0; ; i++) {
     lastAttempt = i === MAX_ATTEMPTS - 1;
     try {
-      return await attempt();
+      return await attempt(i === 0 && first ? first : readTables());
     } catch (e) {
       if (!retryable(e)) throw e;
       const message = (e as Error).message;
       if (i === MAX_ATTEMPTS - 1)
-        throw LOST_RACE.test(message) ? new TablesBusy(message) : e;
+        throw lostRace(e) ? new TablesBusy(message) : e;
       console.warn(`Attempt ${i + 1} failed, retrying: ${message}`);
       await new Promise((resolve) =>
         setTimeout(resolve, Math.random() * Math.min(8_000, 500 * 2 ** i)),
@@ -408,21 +439,19 @@ async function cleanupHeadBranch(): Promise<void> {
 // Claim (a PR adding one row to lock.csv)
 
 async function attemptClaim(
+  tables: Promise<Tables>,
   changedPaths: string[],
   intent: { task_id: string; subtask_id: string; kind: string } | null,
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { lock?: LockRow }> {
-  const readStart = Date.now();
-  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [taskCsv, stateCsv, lockCsv, historyCsv, configText] =
-    await Promise.all([
-      getRepoFile(token, owner, repo, TASK_PATH, sha),
-      getRepoFile(token, owner, repo, STATE_PATH, sha),
-      getRepoFile(token, owner, repo, LOCK_PATH, sha),
-      getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-      getRepoFile(token, owner, repo, CONFIG_PATH, sha),
-    ]);
-  logPhase("read_tables", readStart);
+  const { branch, sha, treeSha, files: tableFiles } = await tables;
+  const [taskCsv, stateCsv, lockCsv, historyCsv, configText] = [
+    TASK_PATH,
+    STATE_PATH,
+    LOCK_PATH,
+    HISTORY_PATH,
+    CONFIG_PATH,
+  ].map((path) => tableFiles[path]);
   const prior = priorVerdict(historyCsv);
   if (prior)
     return {
@@ -447,16 +476,16 @@ async function attemptClaim(
     verdict,
     locks,
     removed,
-    keptWork: await keepExpiredWork(removed, historyCsv, branch, sha),
+    keptWork: await keepExpiredWork(removed, tableFiles, branch, sha),
     historyCsv,
     now,
     envelope,
   });
   if (!commit) return verdict;
   const { files, message } = commit;
-  // Non-fast-forward update fails if `main` moved since `sha` → we retry.
+  // The commit fails if `main` moved since `sha` → we retry.
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -468,19 +497,21 @@ async function attemptClaim(
 async function runClaim(
   files: PullRequestFile[],
   envelope: CommandEnvelope | null,
+  tables: Promise<Tables>,
 ): Promise<void> {
   const changedPaths = files.map((f) => f.filename);
   const lockFile = files.find((f) => f.filename === LOCK_PATH);
   const removedRow = lockFile && removedRowFromPatch(lockFile.patch);
   if (removedRow) {
-    await runRelease(changedPaths, removedRow, envelope);
+    await runRelease(changedPaths, removedRow, envelope, tables);
     return;
   }
   const addedRow = lockFile && addedRowFromPatch(lockFile.patch);
   const intent = addedRow ? lockIntentFromRow(addedRow) : null;
 
-  const verdict = await withRetry(() =>
-    attemptClaim(changedPaths, intent, envelope),
+  const verdict = await withRetry(
+    (read) => attemptClaim(read, changedPaths, intent, envelope),
+    tables,
   );
 
   const body = claimComment(verdict, authorLabel);
@@ -497,17 +528,15 @@ async function runClaim(
 // Release (a PR removing one row from lock.csv: the author abandons a claim)
 
 async function attemptRelease(
+  tables: Promise<Tables>,
   changedPaths: string[],
   intent: { task_id: string; subtask_id: string; kind: string },
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { lock?: LockRow }> {
-  const readStart = Date.now();
-  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [lockCsv, historyCsv] = await Promise.all([
-    getRepoFile(token, owner, repo, LOCK_PATH, sha),
-    getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-  ]);
-  logPhase("read_tables", readStart);
+  const { branch, sha, treeSha, files: tableFiles } = await tables;
+  const [lockCsv, historyCsv] = [LOCK_PATH, HISTORY_PATH].map(
+    (path) => tableFiles[path],
+  );
   const prior = priorVerdict(historyCsv);
   if (prior) return prior;
   const now = new Date().toISOString();
@@ -530,13 +559,13 @@ async function attemptRelease(
     verdict,
     locks,
     removed,
-    keptWork: await keepExpiredWork(removed, historyCsv, branch, sha),
+    keptWork: await keepExpiredWork(removed, tableFiles, branch, sha),
     historyCsv,
     now,
     envelope,
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -549,10 +578,12 @@ async function runRelease(
   changedPaths: string[],
   removedRow: string,
   envelope: CommandEnvelope | null,
+  tables: Promise<Tables>,
 ): Promise<void> {
   const intent = lockIntentFromRow(removedRow);
-  const verdict = await withRetry(() =>
-    attemptRelease(changedPaths, intent, envelope),
+  const verdict = await withRetry(
+    (read) => attemptRelease(read, changedPaths, intent, envelope),
+    tables,
   );
   const body = releaseComment(verdict, intent, authorLabel);
   const closeStart = Date.now();
@@ -566,21 +597,19 @@ async function runRelease(
 // appending one fail comment: the reviewer switches to editing the task)
 
 async function attemptReviewEdit(
+  tables: Promise<Tables>,
   prFiles: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { task?: string }> {
   const changedPaths = prFiles.map((f) => f.filename);
-  const readStart = Date.now();
-  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [stateCsv, lockCsv, commentCsv, historyCsv, configText] =
-    await Promise.all([
-      getRepoFile(token, owner, repo, STATE_PATH, sha),
-      getRepoFile(token, owner, repo, LOCK_PATH, sha),
-      getRepoFile(token, owner, repo, COMMENT_PATH, sha),
-      getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-      getRepoFile(token, owner, repo, CONFIG_PATH, sha),
-    ]);
-  logPhase("read_tables", readStart);
+  const { branch, sha, treeSha, files: tableFiles } = await tables;
+  const [stateCsv, lockCsv, commentCsv, historyCsv, configText] = [
+    STATE_PATH,
+    LOCK_PATH,
+    COMMENT_PATH,
+    HISTORY_PATH,
+    CONFIG_PATH,
+  ].map((path) => tableFiles[path]);
   const prior = priorVerdict(historyCsv);
   if (prior) return { ...prior, task: prior.row.task_id };
 
@@ -617,7 +646,7 @@ async function attemptReviewEdit(
     locks,
     removed,
     openingExpired: opening.expired,
-    keptWork: await keepExpiredWork(removed, historyCsv, branch, sha),
+    keptWork: await keepExpiredWork(removed, tableFiles, branch, sha),
     historyCsv,
     commentCsv,
     now,
@@ -625,7 +654,7 @@ async function attemptReviewEdit(
     newId: shortId(),
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -637,8 +666,12 @@ async function attemptReviewEdit(
 async function runReviewEdit(
   files: PullRequestFile[],
   envelope: CommandEnvelope | null,
+  tables: Promise<Tables>,
 ): Promise<void> {
-  const verdict = await withRetry(() => attemptReviewEdit(files, envelope));
+  const verdict = await withRetry(
+    (read) => attemptReviewEdit(read, files, envelope),
+    tables,
+  );
   const body = reviewEditComment(verdict, authorLabel);
   const closeStart = Date.now();
   await commentAndClose(body);
@@ -652,6 +685,7 @@ async function runReviewEdit(
 
 async function decideEncoding(
   sha: string,
+  tableConfig: string | null,
   tasks: TaskRow[],
   state: ParsedState,
   locks: LockRow[],
@@ -696,10 +730,10 @@ async function decideEncoding(
 
   const isPageTask = pageOfLocator(task.locator) !== null;
   const readStart = Date.now();
-  const [forkMei, baseMei, configText, commitMessages] = await Promise.all([
+  const configText = isPageTask ? tableConfig : null;
+  const [forkMei, baseMei, commitMessages] = await Promise.all([
     getRepoFile(token, headOwner, headRepo, task.fragment, headSha),
     getRepoFile(token, owner, repo, task.fragment, sha),
-    isPageTask ? getRepoFile(token, owner, repo, CONFIG_PATH, sha) : null,
     getPullRequestCommitMessages(token, owner, repo, prNumber),
   ]);
   logPhase("read_pr_files", readStart);
@@ -792,7 +826,8 @@ async function decideEncoding(
 }
 
 async function decideValidation(
-  sha: string,
+  configText: string | null,
+  commentCsv: string | null,
   state: ParsedState,
   locks: LockRow[],
   prFiles: PullRequestFile[],
@@ -812,24 +847,14 @@ async function decideValidation(
   });
   if ("rejected" in intent) return intent.rejected;
 
-  // The config always (pass_threshold), the comment table when the decision
-  // reads it.
-  const readStart = Date.now();
-  const [configText, baseCommentCsv] = await Promise.all([
-    getRepoFile(token, owner, repo, CONFIG_PATH, sha),
-    intent.wantsComments
-      ? getRepoFile(token, owner, repo, COMMENT_PATH, sha)
-      : null,
-  ]);
-  logPhase("read_pr_files", readStart);
-
+  // The comment table goes in only when the decision reads it.
   return validationDecision({
     pr: boundPr(),
     intent,
     state,
     locks,
     configText,
-    baseCommentCsv,
+    baseCommentCsv: intent.wantsComments ? commentCsv : null,
     changedPaths,
     now,
     expired,
@@ -841,20 +866,21 @@ async function decideValidation(
 // One decide-and-apply pass, pinned to the branch head we read. Throws only if
 // the commit races (caller retries); returns the verdict otherwise.
 async function attemptSubmit(
+  tables: Promise<Tables>,
   kind: "encoding" | "validation",
   prFiles: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict> {
   const changedPaths = prFiles.map((f) => f.filename);
-  const readStart = Date.now();
-  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [taskCsv, stateCsv, lockCsv, historyCsv] = await Promise.all([
-    getRepoFile(token, owner, repo, TASK_PATH, sha),
-    getRepoFile(token, owner, repo, STATE_PATH, sha),
-    getRepoFile(token, owner, repo, LOCK_PATH, sha),
-    getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-  ]);
-  logPhase("read_tables", readStart);
+  const { branch, sha, treeSha, files: tableFiles } = await tables;
+  const [taskCsv, stateCsv, lockCsv, historyCsv, commentCsv, configText] = [
+    TASK_PATH,
+    STATE_PATH,
+    LOCK_PATH,
+    HISTORY_PATH,
+    COMMENT_PATH,
+    CONFIG_PATH,
+  ].map((path) => tableFiles[path]);
   const prior = priorVerdict(historyCsv);
   if (prior) return prior;
   const tasks = parseTaskCsv(taskCsv ?? "");
@@ -870,7 +896,8 @@ async function attemptSubmit(
   const outcome =
     kind === "validation"
       ? await decideValidation(
-          sha,
+          configText,
+          commentCsv,
           state,
           opening.decide,
           prFiles,
@@ -881,6 +908,7 @@ async function attemptSubmit(
         )
       : await decideEncoding(
           sha,
+          configText,
           tasks,
           state,
           opening.decide,
@@ -900,7 +928,7 @@ async function attemptSubmit(
     outcome,
     locks,
     removed,
-    keptWork: await keepExpiredWork(removed, historyCsv, branch, sha),
+    keptWork: await keepExpiredWork(removed, tableFiles, branch, sha),
     historyCsv,
     now,
     envelope,
@@ -914,7 +942,7 @@ async function attemptSubmit(
   )
     throw new HeadMoved();
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -938,8 +966,12 @@ async function runSubmit(
   kind: "encoding" | "validation",
   files: PullRequestFile[],
   envelope: CommandEnvelope | null,
+  tables: Promise<Tables>,
 ): Promise<void> {
-  const verdict = await withRetry(() => attemptSubmit(kind, files, envelope));
+  const verdict = await withRetry(
+    (read) => attemptSubmit(read, kind, files, envelope),
+    tables,
+  );
 
   const body = submitComment(kind, verdict);
   const closeStart = Date.now();
@@ -952,18 +984,17 @@ async function runSubmit(
 // Comment (a PR appending one discussion row to comment.csv, or resolving one)
 
 async function attemptComment(
+  tables: Promise<Tables>,
   prFiles: PullRequestFile[],
   envelope: CommandEnvelope | null,
 ): Promise<Verdict & { action: string }> {
   const changedPaths = prFiles.map((f) => f.filename);
-  const readStart = Date.now();
-  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [stateCsv, commentCsv, historyCsv] = await Promise.all([
-    getRepoFile(token, owner, repo, STATE_PATH, sha),
-    getRepoFile(token, owner, repo, COMMENT_PATH, sha),
-    getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-  ]);
-  logPhase("read_tables", readStart);
+  const { branch, sha, treeSha, files: tableFiles } = await tables;
+  const [stateCsv, commentCsv, historyCsv] = [
+    STATE_PATH,
+    COMMENT_PATH,
+    HISTORY_PATH,
+  ].map((path) => tableFiles[path]);
   const prior = priorVerdict(historyCsv);
   if (prior) return { ...prior, action: prior.row.action };
   const now = new Date().toISOString();
@@ -995,7 +1026,7 @@ async function attemptComment(
     envelope,
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -1011,8 +1042,12 @@ async function attemptComment(
 async function runComment(
   files: PullRequestFile[],
   envelope: CommandEnvelope | null,
+  tables: Promise<Tables>,
 ): Promise<void> {
-  const verdict = await withRetry(() => attemptComment(files, envelope));
+  const verdict = await withRetry(
+    (read) => attemptComment(read, files, envelope),
+    tables,
+  );
   const body = commentComment(verdict);
   const closeStart = Date.now();
   await commentAndClose(body);
@@ -1023,16 +1058,14 @@ async function runComment(
 // ---------------------------------------------------------------------------
 // Reaper (scheduled / manually dispatched)
 
-async function attemptReap(): Promise<void> {
-  const readStart = Date.now();
-  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
-  const [lockCsv, historyCsv, stateCsv, configText] = await Promise.all([
-    getRepoFile(token, owner, repo, LOCK_PATH, sha),
-    getRepoFile(token, owner, repo, HISTORY_PATH, sha),
-    getRepoFile(token, owner, repo, STATE_PATH, sha),
-    getRepoFile(token, owner, repo, CONFIG_PATH, sha),
-  ]);
-  logPhase("read_tables", readStart);
+async function attemptReap(tables: Promise<Tables>): Promise<void> {
+  const { branch, sha, treeSha, files: tableFiles } = await tables;
+  const [lockCsv, historyCsv, stateCsv, configText] = [
+    LOCK_PATH,
+    HISTORY_PATH,
+    STATE_PATH,
+    CONFIG_PATH,
+  ].map((path) => tableFiles[path]);
   const now = new Date().toISOString();
 
   const { kept, removed } = reapAt(parseLockCsv(lockCsv ?? ""), now);
@@ -1048,12 +1081,12 @@ async function attemptReap(): Promise<void> {
     kept,
     removed,
     reached,
-    keptWork: await keepExpiredWork(removed, historyCsv, branch, sha),
+    keptWork: await keepExpiredWork(removed, tableFiles, branch, sha),
     historyCsv,
     now,
   });
   const commitStart = Date.now();
-  await commitFiles(token, owner, repo, files, message, {
+  await commitToBranch(token, owner, repo, files, message, {
     baseSha: sha,
     baseTreeSha: treeSha,
     branch,
@@ -1082,6 +1115,30 @@ async function runReap(): Promise<void> {
 // `capped` — its author has more than MAX_OPEN_PRS_PER_AUTHOR open, which
 // leaves it to the scheduled pass.
 async function processPullRequest(
+  open?: OpenPullRequest[],
+  options?: { capped?: boolean },
+): Promise<boolean> {
+  // The table read does not depend on the pull request and starts together
+  // with the pull request's read. The decision's first attempt awaits it and
+  // meets its error there. This function returns only once the read has
+  // settled, so its requests are in the run's request log and its output
+  // precedes the next pull request's; an error of a read no attempt used is
+  // dropped.
+  const tables = readTables();
+  const settled = tables.then(
+    () => {},
+    () => {},
+  );
+  try {
+    return await decidePullRequest(tables, open, options);
+  } finally {
+    await settled;
+  }
+}
+
+// processPullRequest's work, given the table read it started.
+async function decidePullRequest(
+  tables: Promise<Tables>,
   open?: OpenPullRequest[],
   { capped = true } = {},
 ): Promise<boolean> {
@@ -1124,10 +1181,11 @@ async function processPullRequest(
   }
   const kind = classifyPullRequest(changedPaths);
   try {
-    if (kind === "claim") await runClaim(files, envelope);
-    else if (kind === "review_edit") await runReviewEdit(files, envelope);
-    else if (kind === "comment") await runComment(files, envelope);
-    else await runSubmit(kind, files, envelope);
+    if (kind === "claim") await runClaim(files, envelope, tables);
+    else if (kind === "review_edit")
+      await runReviewEdit(files, envelope, tables);
+    else if (kind === "comment") await runComment(files, envelope, tables);
+    else await runSubmit(kind, files, envelope, tables);
   } catch (e) {
     if (e instanceof HeadMoved) {
       console.log(
@@ -1344,15 +1402,31 @@ async function run(): Promise<void> {
 // commands, so the runner stops processing them for the rest of the run.
 console.log(`::stop-commands::${crypto.randomUUID()}`);
 
+// Every request of the run as [start, duration, method, status, endpoint],
+// the times in milliseconds from the run's start: requests whose spans
+// overlap ran in parallel.
+const runStartedAt = Date.now();
+const requestSpans: Array<[number, number, string, number | null, string]> = [];
+onGitHubRequest((entry) =>
+  requestSpans.push([
+    Date.now() - entry.durationMs - runStartedAt,
+    entry.durationMs,
+    entry.method,
+    entry.status,
+    entry.endpoint,
+  ]),
+);
+
 run()
   .catch((e) => {
     console.error(e);
     process.exitCode = 1;
   })
-  .finally(() =>
-    // JSON on one line, so log collectors can extract the whole summary.
+  .finally(() => {
+    // JSON on one line each, so log collectors can extract them whole.
+    console.info("[github-api-requests]", JSON.stringify(requestSpans));
     console.info(
       "[github-api-summary]",
       JSON.stringify(getGitHubRequestTelemetry()),
-    ),
-  );
+    );
+  });

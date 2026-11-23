@@ -40,6 +40,7 @@
   import ConfirmInline from "./ConfirmInline.svelte";
   import Icon from "./Icon.svelte";
   import MetadataForm from "./MetadataForm.svelte";
+  import Notice, { splitMessage } from "./Notice.svelte";
   import PieceZoneEditor from "./PieceZoneEditor.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
@@ -326,7 +327,7 @@
   finish={last && !finisher.error}
 >
   <div class="pieces-head">
-    <span class="pieces-count"
+    <span class="grouplabel pieces-count"
       >Pieces <span class="countpill">{wizard.pieces.length}</span></span
     >
     <button
@@ -361,7 +362,7 @@
             {#if confirmingRemove !== p.id}
               <button
                 type="button"
-                class="btn btn-icon btn-danger delete"
+                class="btn btn-icon btn-small btn-danger press-touch delete"
                 onclick={() => (confirmingRemove = p.id)}
                 disabled={busy}
                 aria-label="Remove {labelOf(p)}"
@@ -387,7 +388,7 @@
           <div class="piece-actions">
             <button
               type="button"
-              class="btn"
+              class="btn btn-small"
               onclick={assignAllPages}
               disabled={busy}
             >
@@ -395,7 +396,7 @@
             </button>
             <button
               type="button"
-              class="btn"
+              class="btn btn-small"
               onclick={clearRegions}
               disabled={busy || !p.zones.length}
             >
@@ -432,7 +433,7 @@
           </span>
           <button
             type="button"
-            class="btn"
+            class="btn btn-small"
             onclick={() => readdEncoding(encoding.name)}
             disabled={busy}
           >
@@ -561,7 +562,7 @@
 
   {#snippet pinned()}
     {#if pagesError}
-      <p class="msg-error" role="alert">{pagesError}</p>
+      <Notice tone="err" {...splitMessage(pagesError)} />
     {/if}
     {#if wizard.piecesRedone}
       <p class="msg-warn" role="status">
@@ -569,7 +570,7 @@
       </p>
     {/if}
     {#if finisher.error}
-      <p class="msg-error" role="alert">{finisher.error}</p>
+      <Notice tone="err" {...splitMessage(finisher.error)} />
     {:else if last && !finisher.busy && auth.user}
       <p class="finish-note">{finishSummary(auth.user.login)}</p>
     {/if}
@@ -586,11 +587,6 @@
   }
   .pieces-count {
     flex: 1;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
   }
   .pieces {
     display: grid;
@@ -657,17 +653,6 @@
   }
   .delete {
     margin-right: 10px;
-  }
-  /* On touch the remove button's press area grows to 44px. */
-  @media (pointer: coarse) {
-    .delete {
-      position: relative;
-    }
-    .delete::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
-    }
   }
   .ask {
     padding: 0 12px 10px 35px;

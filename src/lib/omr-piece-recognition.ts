@@ -10,7 +10,7 @@
 
 import type { ForgeClient } from "./forge/types.ts";
 import type { PageModel } from "./mei-facsimile.ts";
-import type { OmrClient, OmrPipeline } from "./omr-client.ts";
+import type { OmrClient, OmrStaffPipeline } from "./omr-client.ts";
 import { pageSystems, STAFF_CROP_MARGIN, staffCrops } from "./omr-layout.ts";
 import {
   entryFor,
@@ -38,7 +38,7 @@ export interface PieceRecognitionOptions {
   pages: PageModel[];
   /** The record at the head, when the piece has one. */
   existing: OmrRecord | null;
-  pipeline: OmrPipeline;
+  pipeline: OmrStaffPipeline;
   progress: (step: string) => void;
   /** Whether the labels in front of the staves are read; default true. */
   readLabels?: boolean;
@@ -203,10 +203,17 @@ export async function recognisePiece(
       ? [{ n: p + 1, image: pg.image, staves: entries[p].map((e) => e!) }]
       : [],
   );
+  // Staves all taken from the head's record keep its date; any staff
+  // transcribed now or taken from this browser's cache dates the record today.
+  const fromRecord = !todo.length && !fromCache && o.existing;
   return {
     record: {
       cropMargin: STAFF_CROP_MARGIN,
-      staffPipeline: o.pipeline,
+      staffPipeline: { name: o.pipeline.name, version: o.pipeline.version },
+      staffModel: o.pipeline.model,
+      transcribed: fromRecord
+        ? fromRecord.transcribed
+        : new Date().toISOString().slice(0, 10),
       ocr: OCR_ENGINE,
       pages,
       clefs: o.existing?.clefs ?? [],

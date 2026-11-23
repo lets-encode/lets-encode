@@ -1,7 +1,8 @@
 <!--
   The measure correction's task tools in the side panel: the layout steps
   of an OMR-prepared piece with their counts, or the measure and section
-  counts.
+  counts. While the instruments step is open to an editor, its two parts,
+  the first system and the other systems, follow it as substeps.
 -->
 <script lang="ts">
   import StepGlyph from "$lib/components/StepGlyph.svelte";
@@ -15,6 +16,7 @@
     layoutStep,
     instrumentCount,
     onstep,
+    systems = null,
   }: {
     model: ZonePages;
     /** The task corrects an OMR layout, in steps. */
@@ -25,7 +27,15 @@
     /** How many instruments some staff box shows. */
     instrumentCount: number;
     onstep: (step: LayoutStep) => void;
+    /** The instruments step's parts, for an editor: whether the other systems are open, why they cannot be opened yet (null when they can), and the switch between them. */
+    systems?: {
+      fixed: boolean;
+      block: string | null;
+      onfix: (fixed: boolean) => void;
+    } | null;
   } = $props();
+
+  const subs = $derived(naming && layoutStep === 4 ? systems : null);
 
   const staffCount = $derived(model.staffCount);
   const grandstaffCount = $derived(model.grandstaffCount);
@@ -46,6 +56,7 @@
           type="button"
           class="step"
           class:on={layoutStep === s.step}
+          class:parent={s.step === 4 && subs}
           aria-pressed={layoutStep === s.step}
           onclick={() => onstep(s.step as LayoutStep)}
           aria-label={`${s.step} · ${s.long}, ${s.count}`}
@@ -60,6 +71,31 @@
         >
       {/each}
     </div>
+    {#if subs}
+      <div class="substeps" role="group" aria-label="Systems">
+        <button
+          type="button"
+          class="substep"
+          class:on={!subs.fixed}
+          aria-pressed={!subs.fixed}
+          title="Name the instruments of the first system, their parts and the groups. The other systems keep their choices."
+          onclick={() => subs.fixed && subs.onfix(false)}
+          ><span class="subdot"></span>First system</button
+        >
+        <button
+          type="button"
+          class="substep"
+          class:on={subs.fixed}
+          aria-pressed={subs.fixed}
+          aria-disabled={!subs.fixed && subs.block !== null}
+          title={!subs.fixed && subs.block
+            ? subs.block
+            : "Choose for every staff of the other systems an instrument of the first system and its parts."}
+          onclick={() => !subs.fixed && subs.block === null && subs.onfix(true)}
+          ><span class="subdot"></span>Other systems</button
+        >
+      </div>
+    {/if}
   {:else}
     <span class="abcount"
       >{measureCount} measure{measureCount === 1 ? "" : "s"} · {movementCount}

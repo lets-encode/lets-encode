@@ -67,6 +67,10 @@ export async function getRepoFile(
 export interface RepoFiles {
   /** The head commit the files were read at; '' for a repo without commits. */
   headSha: string;
+  /** The tree of `headSha`; '' for a repo without commits. */
+  treeSha: string;
+  /** The default branch; '' for a repo without commits. */
+  branch: string;
   isPrivate: boolean;
   /** Whether the authenticated user can push to the repo. */
   canPush: boolean;
@@ -105,9 +109,9 @@ export async function getRepoFilesBatch(
 }
 
 type BlobNode = { text?: string | null; isTruncated?: boolean } | null;
-type CommitNode = { oid?: string } & Record<
+type CommitNode = { oid?: string; tree?: { oid?: string } } & Record<
   string,
-  { object: BlobNode } | string | null | undefined
+  { object?: BlobNode; oid?: string } | string | null | undefined
 >;
 
 async function repoFilesQuery(
@@ -132,7 +136,7 @@ async function repoFilesQuery(
     variables[`o${i}`] = owner;
     variables[`n${i}`] = repo;
     declarations.push(`$o${i}: String!`, `$n${i}: String!`);
-    return `r${i}: repository(owner: $o${i}, name: $n${i}) { isPrivate viewerPermission defaultBranchRef { target { ... on Commit { oid ${fileFields} } } } }`;
+    return `r${i}: repository(owner: $o${i}, name: $n${i}) { isPrivate viewerPermission defaultBranchRef { name target { ... on Commit { oid tree { oid } ${fileFields} } } } }`;
   });
   const query = `query(${declarations.join(", ")}) { ${repoFields.join(" ")} }`;
   const res = await ghSend<{
@@ -141,7 +145,10 @@ async function repoFilesQuery(
       {
         isPrivate: boolean;
         viewerPermission: string | null;
-        defaultBranchRef: { target: CommitNode | null } | null;
+        defaultBranchRef: {
+          name: string;
+          target: CommitNode | null;
+        } | null;
       } | null
     > | null;
     errors?: Array<{
@@ -192,6 +199,8 @@ async function repoFilesQuery(
       );
       return {
         headSha,
+        treeSha: commit?.tree?.oid ?? "",
+        branch: found.defaultBranchRef?.name ?? "",
         isPrivate: found.isPrivate,
         canPush: PUSH_PERMISSIONS.has(found.viewerPermission ?? ""),
         files,

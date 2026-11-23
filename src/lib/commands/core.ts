@@ -8,7 +8,6 @@ import type { HistoryRow } from "../campaign-tables.ts";
 import { envelopeColumns } from "../command-envelope.ts";
 import type { CommandEnvelope } from "../command-envelope.ts";
 import type { ProgressUpdate } from "../run-watch.ts";
-import type { OmrModels } from "../omr-page-draft.ts";
 
 const MAX_LOG_ATTEMPTS = 3;
 
@@ -26,8 +25,6 @@ export interface CommandContext {
   viewerLogin: string;
   /** Editor instance used for the mei-friend hand-off; undefined when the deployment sets none. */
   meiFriendUrl?: string;
-  /** The OMR models, pinned by version. */
-  omr: OmrModels;
   /**
    * Progress for a busy indicator: `step` opens a new stage, `detail` says
    * which part of the running stage is being worked on. Pass a no-op when

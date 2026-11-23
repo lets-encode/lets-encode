@@ -4,7 +4,7 @@
 // pass it to `run` as the follow-up.
 
 import { auth, forge } from "./auth.svelte.ts";
-import { meiFriendUrl, omr } from "./forge/config.ts";
+import { meiFriendUrl } from "./forge/config.ts";
 import { createForge } from "./forge/index.ts";
 import { readLocal, removeLocal, writeLocal } from "./local-store.ts";
 import type { ForgeClient } from "./forge/index.ts";
@@ -89,7 +89,6 @@ export const commandContext = (
   viewer: viewerId(),
   viewerLogin: auth.user?.login ?? "",
   meiFriendUrl,
-  omr,
   progress,
 });
 

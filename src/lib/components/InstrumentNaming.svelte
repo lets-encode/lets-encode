@@ -48,9 +48,7 @@
     onassign,
     onabbr,
     ongroups,
-    onfix,
     onmerge,
-    fixBlock,
   }: {
     /** The pages with their corrected boxes; staff boxes carry their named staff. */
     pages: PageModel[];
@@ -72,12 +70,8 @@
     /** Set an instrument's short name. */
     onabbr: (instrument: string, abbr: string) => void;
     ongroups: (groups: LayoutGroup[]) => void;
-    /** Open the other systems (true) or the first system (false). */
-    onfix: (fixed: boolean) => void;
     /** Make an instrument named a second time a part of the one it looks like. */
     onmerge: (double: DoubleNaming) => void;
-    /** Why the other systems cannot be opened yet; null when they can. */
-    fixBlock: string | null;
   } = $props();
 
   // Instruments that look like another one named a second time, by id.
@@ -462,31 +456,6 @@
 </datalist>
 
 <div class="naming">
-  {#if canEdit}
-    <div class="seg systems-tabs" role="tablist" aria-label="Systems">
-      <button
-        type="button"
-        role="tab"
-        aria-selected={!named.fixed}
-        class:on={!named.fixed}
-        title="Name the instruments of the first system, their parts and the groups. The other systems keep their choices."
-        onclick={() => named.fixed && onfix(false)}>First system</button
-      >
-      <button
-        type="button"
-        role="tab"
-        aria-selected={named.fixed}
-        aria-disabled={!named.fixed && fixBlock !== null}
-        class:on={named.fixed}
-        class:blocked={!named.fixed && fixBlock !== null}
-        title={!named.fixed && fixBlock
-          ? fixBlock
-          : "Choose for every staff of the other systems an instrument of the first system and its parts."}
-        onclick={() => !named.fixed && fixBlock === null && onfix(true)}
-        >Other systems</button
-      >
-    </div>
-  {/if}
   <p
     class="phase"
     title="The automatic recognition reads each staff on its own and cannot tell which instrument the staff belongs to. These names put every recognised staff on the right staff of the score and make its list of instruments."
@@ -535,7 +504,7 @@
             {#if result}
               <button
                 type="button"
-                class="btn"
+                class="btn btn-small"
                 title={`Name its staves ${result} instead. One step, undo restores it.`}
                 onclick={() => onmerge(d)}>Make it {result}</button
               >
@@ -548,10 +517,10 @@
 
   {#if named.fixed && canEdit}
     <section class="summary" aria-label="Instruments and groups">
-      <h2 class="list-h">
+      <h2 class="sectitle">
         Instruments <span class="countpill">{named.instruments.length}</span>
       </h2>
-      <div class="sumcard">
+      <div class="sumcard face-tile">
         <table>
           <thead>
             <tr>
@@ -585,7 +554,7 @@
                     {#if result}
                       <button
                         type="button"
-                        class="btn merge"
+                        class="btn btn-small merge"
                         title={`Name its staves ${result} instead. One step, undo restores it.`}
                         onclick={() => onmerge(d)}>Make it {result}</button
                       >
@@ -657,7 +626,7 @@
         <section class="npage" aria-label={`Page ${p + 1}`}>
           <p class="page-label">Page {p + 1} · Facsimile</p>
           {#if !systems.length}
-            <p class="muted">No staves on this page.</p>
+            <p class="note">No staves on this page.</p>
           {/if}
           {#each systems as strip (strip.system)}
             {@const v = strip.view}
@@ -908,7 +877,7 @@
               </div>
               <div class="cropbox">
                 <svg
-                  class="crop"
+                  class="sheet crop"
                   viewBox={`${v.ulx} ${v.uly} ${w} ${h}`}
                   style:width={`${w * strip.scale}px`}
                   role="img"
@@ -949,7 +918,7 @@
 
     {#if !named.fixed}
       <section class="groups" aria-label="Groups">
-        <h2 class="list-h">Groups</h2>
+        <h2 class="sectitle">Groups</h2>
         {#each named.groups as group, k (group.id)}
           {@const options = named.instruments.map((i) => ({
             value: i.id,
@@ -975,7 +944,7 @@
             />
           </div>
         {:else}
-          <p class="muted">No groups.</p>
+          <p class="note">No groups.</p>
         {/each}
         {#if canEdit && !named.fixed}
           <button
@@ -1021,9 +990,6 @@
   }
   .page-label {
     margin: 0;
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--ink-faint);
   }
   .strip {
     display: grid;
@@ -1066,14 +1032,6 @@
   .named-text.missing,
   .named-text.double {
     color: var(--warn);
-  }
-  /* The tab of the other systems before the first is named. */
-  .systems-tabs {
-    align-self: flex-start;
-  }
-  .systems-tabs > button.blocked {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   .doubles {
     display: flex;
@@ -1177,9 +1135,6 @@
     display: block;
     max-width: 100%;
     height: auto;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 6px;
   }
   .strip.whole .crop {
     max-width: none;
@@ -1200,9 +1155,6 @@
     max-width: 760px;
   }
   .sumcard {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
     overflow: hidden;
   }
   .sumcard table {
@@ -1275,10 +1227,6 @@
     flex-direction: column;
     gap: 10px;
     max-width: 760px;
-  }
-  .list-h {
-    margin: 0;
-    font-size: 15px;
   }
   .field-row .short {
     width: 64px;

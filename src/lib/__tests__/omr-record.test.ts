@@ -21,6 +21,8 @@ const MUSICXML =
 const record = (): OmrRecord => ({
   cropMargin: 0.9,
   staffPipeline: PIPELINE,
+  staffModel: { name: "musvit-e2e", version: "2026-11-12-130358-e219" },
+  transcribed: "2026-11-20",
   ocr: OCR,
   pages: [
     {
@@ -69,6 +71,18 @@ test("a record survives writing and reading", () => {
     xml,
     /<staff zone="staff-zone-3-2" ulx="212" uly="540" lrx="1810" lry="604" error="pipeline execution failed"\/>/,
   );
+});
+
+test("a record without a model or date reads them as null and ''", () => {
+  const xml = serializeOmrRecord({
+    ...record(),
+    staffModel: null,
+    transcribed: "",
+  });
+  assert.doesNotMatch(xml, /staffModel|isodate/);
+  const back = parseOmrRecord(xml)!;
+  assert.equal(back.staffModel, null);
+  assert.equal(back.transcribed, "");
 });
 
 test("another schema or no file reads as no record", () => {

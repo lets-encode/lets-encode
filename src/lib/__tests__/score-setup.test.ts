@@ -179,6 +179,8 @@ function piece(sign: string, line: number) {
   const record: OmrRecord = {
     cropMargin: 0.9,
     staffPipeline: { name: "mzk-staff", version: "1" },
+    staffModel: null,
+    transcribed: "",
     ocr: { engine: "tesseract.js", version: "7.0.0", language: "deu+eng" },
     pages: [
       {

@@ -6,11 +6,14 @@ campaign repositories.
 
 import json
 import re
+import threading
 import time
-from os import getenv
+from http.cookiejar import DefaultCookiePolicy
+from os import getenv, getpid
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import requests
+from requests.adapters import HTTPAdapter
 from flask import Blueprint, current_app, jsonify, request, session
 
 try:
@@ -25,6 +28,54 @@ github_proxy = Blueprint("github_proxy", __name__)
 
 # The proxy relays only GitHub API calls (the SPA does no git smart-HTTP).
 ALLOWED_DOMAINS = ["api.github.com"]
+
+# The idle connections to api.github.com one worker process keeps for reuse:
+# at least `threads` in gunicorn_config.py. No call streams its response, so
+# each thread holds at most one connection at a time.
+GITHUB_POOL_SIZE = 8
+
+_github_session = None
+_github_session_lock = threading.Lock()
+
+
+def github_session():
+    """
+    The requests.Session this process sends the proxy's GET requests to
+    api.github.com through, which keeps their connections open between
+    requests. All users share it, so it holds no per-user state: each call
+    passes its own Authorization header, and its cookie jar accepts no
+    cookies. It is created on first use in each process, so forked worker
+    processes share no connection.
+    """
+    global _github_session
+    with _github_session_lock:
+        if _github_session is None or _github_session[0] != getpid():
+            github = requests.Session()
+            github.cookies.set_policy(DefaultCookiePolicy(allowed_domains=[]))
+            github.mount(
+                "https://",
+                HTTPAdapter(pool_connections=1, pool_maxsize=GITHUB_POOL_SIZE),
+            )
+            _github_session = (getpid(), github)
+        return _github_session[1]
+
+
+def github_request(method, url, **options):
+    """
+    A request to api.github.com. A GET goes through github_session(); when
+    its pooled connection fails (ConnectionError), the GET is sent once more
+    on a new connection. A timeout is not repeated. Other methods are sent
+    once, on a new connection, so a write is never repeated.
+    """
+    if method != "GET":
+        return requests.request(method, url, **options)
+    try:
+        return github_session().request(method, url, **options)
+    except requests.Timeout:
+        raise
+    except requests.ConnectionError:
+        return requests.request(method, url, **options)
+
 
 # The GitHub endpoints the SPA calls (src/lib/forge/github-rest.ts), by
 # method. The proxy relays no others, so a script running in the page cannot
@@ -160,7 +211,8 @@ def fetch_repository(full_name):
     GitHub does not show it (404). Raises RepositoryLookupFailed for any other
     failed answer.
     """
-    response = requests.get(
+    response = github_request(
+        "GET",
         "{}/repos/{}".format(GITHUB_API, full_name),
         headers={
             "Accept": "application/vnd.github+json",
@@ -351,7 +403,8 @@ def moved_repository_url(location):
         or not match
     ):
         return None
-    lookup = requests.get(
+    lookup = github_request(
+        "GET",
         "{}/repositories/{}".format(GITHUB_API, match.group(1)),
         headers={
             "Accept": "application/vnd.github+json",
@@ -428,7 +481,7 @@ def proxy(url):
     # hung upstream connection: 10s to connect, 60s between reads.
     started_at = time.monotonic()
     try:
-        response = requests.request(
+        response = github_request(
             request.method,
             url,
             headers=headers,
@@ -458,7 +511,7 @@ def proxy(url):
             if refusal is not None:
                 return refusal
             url = moved
-            response = requests.request(
+            response = github_request(
                 request.method,
                 url,
                 headers=headers,

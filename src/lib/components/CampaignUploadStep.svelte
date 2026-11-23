@@ -27,6 +27,7 @@
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
   import FileDropzone from "./FileDropzone.svelte";
+  import Notice, { splitMessage } from "./Notice.svelte";
   import ProgressSteps from "./ProgressSteps.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
@@ -118,11 +119,11 @@
         log.fail();
         return;
       }
-      // Everything is kept to begin with, so an upload that is all of the source
-      // needs no choosing.
+      // Every page with a preview is kept to begin with, so an upload that is
+      // all of the source needs no choosing.
       wizard.candidates = prepared.candidates.map((page) => ({
         ...page,
-        include: true,
+        include: page.preview !== null,
       }));
       wizard.encodings = prepared.encodings;
       wizard.uploadKey = key;
@@ -172,7 +173,7 @@
   <FileDropzone bind:files={wizard.files} />
 
   <div class="divider" aria-hidden="true">
-    <span>or from a IIIF server</span>
+    <span class="grouplabel">or from a IIIF server</span>
   </div>
 
   <label class="field manifest">
@@ -191,7 +192,7 @@
 
   {#snippet pinned()}
     {#if error}
-      <p class="msg-error" role="alert">{error}</p>
+      <Notice tone="err" {...splitMessage(error)} />
     {/if}
     <ProgressSteps {log} />
   {/snippet}
@@ -210,13 +211,6 @@
     flex: 1;
     height: 1px;
     background: var(--line);
-  }
-  .divider span {
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
   }
   .manifest {
     margin-top: 14px;

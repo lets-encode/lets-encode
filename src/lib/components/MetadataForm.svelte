@@ -23,6 +23,7 @@
     type SourceMetadata,
   } from "$lib/source-metadata.ts";
   import Icon from "./Icon.svelte";
+  import Notice from "./Notice.svelte";
   import XmlEditor from "./XmlEditor.svelte";
 
   type View = "short" | "long" | "xml";
@@ -168,7 +169,7 @@
       </p>
       {#if readBack}
         <div class="read-back">
-          <div class="read-back-head">Read from the XML</div>
+          <div class="grouplabel read-back-head">Read from the XML</div>
           <div class="read-back-rows">
             <div class="row">
               <span class="key">Title</span><span class="val"
@@ -211,15 +212,16 @@
       </p>
       <XmlEditor bind:value={xml} />
       {#if !xmlValid}
-        <p class="msg-error" role="alert">
-          Not a well-formed meiHead. The fields keep the last well-formed
-          version.
-        </p>
+        <Notice
+          tone="err"
+          title="Not a well-formed meiHead"
+          detail="The fields keep the last well-formed version."
+        />
       {/if}
     {/if}
   {:else}
     <div class="fields">
-      <label class="field">
+      <label class="field metafield">
         Title
         <input
           class="input"
@@ -230,7 +232,7 @@
         />
       </label>
       {#if view === "short"}
-        <label class="field">
+        <label class="field metafield">
           Composer
           <input
             class="input"
@@ -238,7 +240,7 @@
             placeholder="e.g. L. van Beethoven"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Lyricist
           <input
             class="input"
@@ -246,7 +248,7 @@
             placeholder="e.g. J. W. von Goethe"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Editor
           <input
             class="input"
@@ -256,7 +258,7 @@
         </label>
         {#if variant === "source"}
           <div class="pair">
-            <label class="field grow">
+            <label class="field metafield grow">
               Publisher
               <input
                 class="input"
@@ -264,7 +266,7 @@
                 placeholder="e.g. Breitkopf &amp; Härtel"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Place of publication
               <input
                 class="input"
@@ -272,7 +274,7 @@
                 placeholder="e.g. Leipzig"
               />
             </label>
-            <label class="field year">
+            <label class="field metafield year">
               Year
               <input
                 class="input"
@@ -283,7 +285,7 @@
           </div>
         {/if}
       {:else}
-        <label class="field">
+        <label class="field metafield">
           Composer
           <input
             class="input"
@@ -291,7 +293,7 @@
             placeholder="e.g. L. van Beethoven"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Lyricist
           <input
             class="input"
@@ -299,7 +301,7 @@
             placeholder="e.g. J. W. von Goethe"
           />
         </label>
-        <label class="field">
+        <label class="field metafield">
           Editor
           <input
             class="input"
@@ -309,7 +311,7 @@
         </label>
         {#if variant === "source"}
           <div class="row">
-            <label class="field grow">
+            <label class="field metafield grow">
               Publisher
               <input
                 class="input"
@@ -317,7 +319,7 @@
                 placeholder="e.g. Breitkopf &amp; Härtel"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Place of publication
               <input
                 class="input"
@@ -325,7 +327,7 @@
                 placeholder="e.g. Leipzig"
               />
             </label>
-            <label class="field year">
+            <label class="field metafield year">
               Year
               <input
                 class="input"
@@ -335,7 +337,7 @@
             </label>
           </div>
           <div class="row">
-            <label class="field grow">
+            <label class="field metafield grow">
               Edition
               <input
                 class="input"
@@ -343,7 +345,7 @@
                 placeholder="e.g. 2nd revised edition"
               />
             </label>
-            <label class="field year">
+            <label class="field metafield year">
               Year of edition
               <input
                 class="input"
@@ -351,7 +353,7 @@
                 placeholder="e.g. 1854"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Extent
               <input
                 class="input"
@@ -361,7 +363,7 @@
             </label>
           </div>
           <div class="row">
-            <label class="field grow">
+            <label class="field metafield grow">
               Holding institution
               <input
                 class="input"
@@ -369,7 +371,7 @@
                 placeholder="e.g. Austrian National Library"
               />
             </label>
-            <label class="field grow">
+            <label class="field metafield grow">
               Shelfmark
               <input
                 class="input"
@@ -397,7 +399,7 @@
               />
               <button
                 type="button"
-                class="btn btn-icon btn-danger"
+                class="btn btn-icon btn-small btn-danger"
                 onclick={() => removeContributor(i)}
                 aria-label="Remove this contributor"
                 title="Remove this contributor"><Icon name="trash" /></button
@@ -410,7 +412,7 @@
         </fieldset>
 
         <div class="row">
-          <label class="field grow">
+          <label class="field metafield grow">
             {variant === "piece"
               ? "Note about the piece"
               : "Note about the source"}
@@ -442,7 +444,7 @@
     display: grid;
     grid-template-columns: 1fr;
   }
-  .field {
+  .metafield {
     margin-top: 14px;
   }
   /* Fields in a row line up at their inputs when a label wraps. A field
@@ -482,6 +484,9 @@
       width: 110px;
     }
   }
+  .metaform > :global(.notice) {
+    margin-top: 10px;
+  }
   .xml-note {
     margin: 14px 0 0;
     font-size: 12px;
@@ -495,11 +500,6 @@
   }
   .read-back-head {
     padding: 8px 12px;
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--ink-faint);
     background: var(--bg-alt);
     border-bottom: 1px solid var(--line);
   }

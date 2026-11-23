@@ -15,7 +15,7 @@
   import { onDestroy } from "svelte";
   import { auth } from "$lib/auth.svelte.ts";
   import { provider } from "$lib/forge/config.ts";
-  import { resolvePages } from "$lib/prepare-images.ts";
+  import { fetchCanvasPreview, resolvePages } from "$lib/prepare-images.ts";
   import { followPages } from "$lib/pieces.ts";
   import {
     wizard,
@@ -25,6 +25,7 @@
     saveDraft,
     nextStep,
     previousStep,
+    type PageChoice,
   } from "$lib/wizard.svelte.ts";
   import { ProgressLog } from "$lib/progress-log.svelte.ts";
   import WizardCard from "./WizardCard.svelte";
@@ -40,6 +41,7 @@
   } from "./ZoomLevel.svelte";
   import { zoomGestures } from "$lib/zoom-gestures.ts";
   import Icon from "./Icon.svelte";
+  import Notice, { splitMessage } from "./Notice.svelte";
   import { wizardLayout } from "$lib/wizard-layout.svelte.ts";
 
   let busy = $state(false);
@@ -105,6 +107,15 @@
   let lifted = $state(false);
   let picked = $state<number | null>(null);
   let swallowClick = false;
+  // A Shift+drag with the mouse: the page it started on and the one it is
+  // over, the state the pages between them take, and every page's state
+  // before it. Null until the drag reaches a second page.
+  let sweep: {
+    from: number;
+    to: number | null;
+    include: boolean;
+    before: boolean[];
+  } | null = null;
   // The page being moved by drag or pick-up, for the drop markers.
   const moving = $derived(dragIndex ?? picked);
   // Read out by screen readers when a page is picked up or moved.
@@ -188,14 +199,29 @@
       dragIndex = null;
       overIndex = null;
     };
-    // A mouse held still on a page picks it up; one that moves drags it.
+    const endSweep = () => {
+      if (sweep?.to != null) anchor = sweep.to;
+      sweep = null;
+    };
+    // A mouse held still on a page picks it up; one that moves drags it. With
+    // Shift, one that moves keeps or leaves out the pages it passes.
     const mouseDown = (e: PointerEvent) => {
       if (e.pointerType !== "mouse") return;
       swallowClick = false;
       cancelHold();
+      endSweep();
       if (e.button !== 0 || busy) return;
       const index = indexAt(e.clientX, e.clientY);
       if (index === null) return;
+      if (e.shiftKey && picked === null && wizard.candidates[index].preview) {
+        sweep = {
+          from: index,
+          to: null,
+          include: !wizard.candidates[index].include,
+          before: wizard.candidates.map((page) => page.include),
+        };
+        return;
+      }
       hold = {
         x: e.clientX,
         y: e.clientY,
@@ -207,6 +233,22 @@
       };
     };
     const mouseMove = (e: PointerEvent) => {
+      if (sweep && e.pointerType === "mouse") {
+        const { from, include, before } = sweep;
+        const to = indexAt(e.clientX, e.clientY);
+        if (to === null || to === sweep.to) return;
+        if (sweep.to === null && to === from) return;
+        sweep.to = to;
+        // The click that ends the drag on its first page changes nothing.
+        swallowClick = true;
+        wizard.candidates.forEach((page, i) => {
+          page.include =
+            page.preview && i >= Math.min(from, to) && i <= Math.max(from, to)
+              ? include
+              : before[i];
+        });
+        return;
+      }
       if (
         hold &&
         e.pointerType === "mouse" &&
@@ -226,8 +268,12 @@
     list.addEventListener("pointerup", mouseUp);
     list.addEventListener("pointercancel", mouseUp);
     list.addEventListener("dragstart", cancelHold);
+    window.addEventListener("pointerup", endSweep);
+    window.addEventListener("pointercancel", endSweep);
     return () => {
       cancelHold();
+      window.removeEventListener("pointerup", endSweep);
+      window.removeEventListener("pointercancel", endSweep);
       list.removeEventListener("touchstart", start);
       list.removeEventListener("touchmove", drag);
       list.removeEventListener("touchend", drop);
@@ -246,6 +292,7 @@
   const objectUrls = new Map<Blob, string>();
   const urls = $derived(
     wizard.candidates.map((page) => {
+      if (!page.preview) return "";
       let url = objectUrls.get(page.preview);
       if (!url) {
         url = URL.createObjectURL(page.preview);
@@ -302,13 +349,36 @@
     const include = !wizard.candidates[index].include;
     const from = extend && anchor !== null ? Math.min(anchor, index) : index;
     const to = extend && anchor !== null ? Math.max(anchor, index) : index;
-    for (let i = from; i <= to; i++) wizard.candidates[i].include = include;
+    for (let i = from; i <= to; i++)
+      if (wizard.candidates[i].preview) wizard.candidates[i].include = include;
     anchor = index;
   }
 
   function setAll(include: boolean) {
-    for (const page of wizard.candidates) page.include = include;
+    for (const page of wizard.candidates)
+      page.include = include && page.preview !== null;
     anchor = null;
+  }
+
+  // The pages whose source did not deliver a preview. They cannot be kept
+  // until a new attempt loads them.
+  const unloaded = $derived(wizard.candidates.filter((page) => !page.preview));
+  let retrying = $state<string[]>([]);
+
+  async function retry(page: PageChoice) {
+    if (page.source.kind !== "iiif" || retrying.includes(page.id)) return;
+    retrying = [...retrying, page.id];
+    try {
+      page.preview = await fetchCanvasPreview(page.source.canvas, {
+        brokerUrl: provider.brokerUrl,
+      });
+      page.failure = undefined;
+      page.include = true;
+    } catch (err) {
+      page.failure = (err as Error).message;
+    } finally {
+      retrying = retrying.filter((id) => id !== page.id);
+    }
   }
 
   /** Move a page to another position, taking the rest along. */
@@ -478,60 +548,80 @@
               overIndex = null;
             }}
           >
-            <button
-              type="button"
-              class="thumb"
-              aria-pressed={page.include}
-              disabled={busy}
-              title={wizardLayout.coarse ? undefined : page.label}
-              draggable={!busy && !wizardLayout.coarse}
-              onclick={(e) => {
-                if (swallowClick) swallowClick = false;
-                else if (picked !== null) place(i);
-                else toggle(i, e.shiftKey);
-              }}
-              oncontextmenu={(e) => wizardLayout.coarse && e.preventDefault()}
-              onkeydown={(e) => {
-                if (!e.altKey) return;
-                const by =
-                  e.key === "ArrowLeft" || e.key === "ArrowUp"
-                    ? -1
-                    : e.key === "ArrowRight" || e.key === "ArrowDown"
-                      ? 1
-                      : 0;
-                if (!by) return;
-                e.preventDefault();
-                move(i, i + by);
-              }}
-              ondragstart={(e) => {
-                dragIndex = i;
-                // Firefox starts a drag only once the transfer carries data.
-                e.dataTransfer?.setData("text/plain", String(i));
-                if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
-              }}
-              ondragend={() => {
-                dragIndex = null;
-                overIndex = null;
-              }}
-            >
-              <!-- An image is draggable in its own right, which would drag the
-                 picture instead of the page. -->
-              <img
-                src={urls[i]}
-                alt={page.label}
-                draggable="false"
-                bind:naturalWidth={natW[i]}
-                bind:naturalHeight={natH[i]}
-              />
-              <span class="mark" aria-hidden="true">
-                {page.include ? numbers[i] : "—"}
-              </span>
-              {#if !page.include}
-                <span class="left-out" aria-hidden="true"
-                  ><span>left out</span></span
+            {#if !page.preview}
+              <div class="thumb unloaded">
+                <span>Not loaded</span>
+                <button
+                  type="button"
+                  class="btn btn-small"
+                  title={page.failure}
+                  onclick={() => retry(page)}
+                  disabled={busy || retrying.includes(page.id)}
                 >
-              {/if}
-            </button>
+                  {retrying.includes(page.id) ? "Working…" : "Try again"}
+                </button>
+              </div>
+            {:else}
+              <button
+                type="button"
+                class="thumb"
+                aria-pressed={page.include}
+                disabled={busy}
+                title={wizardLayout.coarse ? undefined : page.label}
+                draggable={!busy && !wizardLayout.coarse}
+                onclick={(e) => {
+                  if (swallowClick) swallowClick = false;
+                  else if (picked !== null) place(i);
+                  else toggle(i, e.shiftKey);
+                }}
+                oncontextmenu={(e) => wizardLayout.coarse && e.preventDefault()}
+                onkeydown={(e) => {
+                  if (!e.altKey) return;
+                  const by =
+                    e.key === "ArrowLeft" || e.key === "ArrowUp"
+                      ? -1
+                      : e.key === "ArrowRight" || e.key === "ArrowDown"
+                        ? 1
+                        : 0;
+                  if (!by) return;
+                  e.preventDefault();
+                  move(i, i + by);
+                }}
+                ondragstart={(e) => {
+                  // A drag with Shift selects pages.
+                  if (e.shiftKey) {
+                    e.preventDefault();
+                    return;
+                  }
+                  dragIndex = i;
+                  // Firefox starts a drag only once the transfer carries data.
+                  e.dataTransfer?.setData("text/plain", String(i));
+                  if (e.dataTransfer) e.dataTransfer.effectAllowed = "move";
+                }}
+                ondragend={() => {
+                  dragIndex = null;
+                  overIndex = null;
+                }}
+              >
+                <!-- An image is draggable in its own right, which would drag the
+                 picture instead of the page. -->
+                <img
+                  src={urls[i]}
+                  alt={page.label}
+                  draggable="false"
+                  bind:naturalWidth={natW[i]}
+                  bind:naturalHeight={natH[i]}
+                />
+                <span class="mark" aria-hidden="true">
+                  {page.include ? numbers[i] : "—"}
+                </span>
+                {#if !page.include}
+                  <span class="left-out" aria-hidden="true"
+                    ><span>left out</span></span
+                  >
+                {/if}
+              </button>
+            {/if}
             <span class="page-caption">Page {i + 1} · Facsimile</span>
           </li>
         {/each}
@@ -548,7 +638,7 @@
       <li>Hold a page, then drag it or tap where it goes</li>
     {:else}
       <li>Click a page to keep or leave it out</li>
-      <li>Shift-click marks a whole run</li>
+      <li>Shift-click or Shift-drag marks a whole run</li>
       <li>
         Drag a page to move it, hold it and click where it goes, or press Alt
         and an arrow key
@@ -613,11 +703,26 @@
       />
     </div>
     {@render hints()}
+    {#if unloaded.length}
+      <Notice
+        tone="err"
+        surface="inline"
+        title={unloaded.length === 1
+          ? "The source did not deliver 1 page"
+          : `The source did not deliver ${unloaded.length} pages`}
+        detail="A page without an image cannot be kept."
+        action={{
+          label: "Try again",
+          run: () => unloaded.forEach(retry),
+          disabled: busy || retrying.length > 0,
+        }}
+      />
+    {/if}
   {/if}
 
   {#snippet pinned()}
     {#if error}
-      <p class="msg-error" role="alert">{error}</p>
+      <Notice tone="err" {...splitMessage(error)} />
     {/if}
     <ProgressSteps {log} />
   {/snippet}
@@ -626,8 +731,6 @@
 <style>
   .note {
     margin: 22px 0 0;
-    font-size: 13.5px;
-    color: var(--ink-soft);
   }
   .count-row {
     display: flex;
@@ -732,6 +835,19 @@
        selecting text. */
     -webkit-touch-callout: none;
     user-select: none;
+  }
+  /* A page without a preview: the tile at a page's proportions. */
+  .thumb.unloaded {
+    aspect-ratio: 0.73;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    cursor: default;
+    font-size: 12px;
+    color: var(--ink-faint);
+    border-color: var(--line);
   }
   li.out .thumb {
     border-color: var(--line);

@@ -2,6 +2,8 @@
 // refs (read, create, fast-forward, list, delete).
 
 import {
+  ApiError,
+  RateLimitError,
   apiRoot,
   authHeaders,
   baseHeaders,
@@ -11,21 +13,17 @@ import {
 } from "./request.ts";
 import type { ErrorResponse, FileChange, RepoData } from "./shapes.ts";
 import { RESOLVE_TTL_MS, memoGet, repoHeadInfoCache } from "./caches.ts";
-import { encodeRepoPath } from "./files.ts";
+import { encodeRepoPath, getRepoFile, getRepoFilesBatch } from "./files.ts";
 
 /**
- * Read a repo's default branch, its current head commit SHA and that commit's
- * tree SHA, and whether the authenticated user can push to it (drives the
- * same-repo vs. fork PR path). The tree SHA is what a commit built on this
- * head starts from (`commitFiles`'s `baseTreeSha`).
+ * A repo's default branch and whether the authenticated user can push to it.
+ * Both are memoised.
  */
-export async function getRepoHead(
+export async function getRepoHeadInfo(
   token: string,
   owner: string,
   repo: string,
-): Promise<{ branch: string; sha: string; treeSha: string; canPush: boolean }> {
-  // The branch name and push permission are memoised; the head SHA is read
-  // fresh on every call — callers rely on it for optimistic concurrency.
+): Promise<{ branch: string; canPush: boolean }> {
   const key = `${owner}/${repo}`;
   let info = memoGet(repoHeadInfoCache, key);
   if (!info) {
@@ -46,6 +44,23 @@ export async function getRepoHead(
       expires: Date.now() + RESOLVE_TTL_MS,
     });
   }
+  return info;
+}
+
+/**
+ * Read a repo's default branch, its current head commit SHA and that commit's
+ * tree SHA, and whether the authenticated user can push to it (drives the
+ * same-repo vs. fork PR path). The tree SHA is what a commit built on this
+ * head starts from (`commitFiles`'s `baseTreeSha`).
+ */
+export async function getRepoHead(
+  token: string,
+  owner: string,
+  repo: string,
+): Promise<{ branch: string; sha: string; treeSha: string; canPush: boolean }> {
+  // The branch name and push permission are memoised; the head SHA is read
+  // fresh on every call — callers rely on it for optimistic concurrency.
+  const info = await getRepoHeadInfo(token, owner, repo);
   // The branch endpoint carries the head commit together with its tree, so
   // one read serves both the optimistic-concurrency parent and the tree a
   // commit on it is built from.
@@ -66,6 +81,52 @@ export async function getRepoHead(
     sha: head.sha,
     treeSha: head.commit.tree.sha,
     canPush: info.canPush,
+  };
+}
+
+/**
+ * The default branch, its head commit and that commit's tree, and the text of
+ * each of `paths` at that commit: null where the file does not exist. One
+ * GraphQL query reads them all (getRepoFilesBatch). When that query fails —
+ * GraphQL reports errors, a missing file among them, with status 200 — or
+ * returns no head, the head is read as getRepoHead reads it and each file
+ * through REST at that head.
+ */
+export async function getRepoHeadFiles(
+  token: string,
+  owner: string,
+  repo: string,
+  paths: string[],
+): Promise<{
+  branch: string;
+  sha: string;
+  treeSha: string;
+  files: Record<string, string | null>;
+}> {
+  try {
+    const [read] =
+      (await getRepoFilesBatch(token, [{ owner, repo }], paths)) ?? [];
+    if (read?.headSha && read.treeSha && read.branch)
+      return {
+        branch: read.branch,
+        sha: read.headSha,
+        treeSha: read.treeSha,
+        files: read.files,
+      };
+  } catch (e) {
+    console.warn(
+      `The batched read of ${owner}/${repo} failed; reading each file: ${(e as Error).message}`,
+    );
+  }
+  const { branch, sha, treeSha } = await getRepoHead(token, owner, repo);
+  const contents = await Promise.all(
+    paths.map((path) => getRepoFile(token, owner, repo, path, sha)),
+  );
+  return {
+    branch,
+    sha,
+    treeSha,
+    files: Object.fromEntries(paths.map((path, i) => [path, contents[i]])),
   };
 }
 
@@ -254,6 +315,128 @@ export async function commitFiles(
   }
 
   return commit.sha;
+}
+
+/** A commit refused because its branch no longer points at the expected head. */
+export class BranchMovedError extends Error {}
+
+/**
+ * The largest total size, in UTF-8 bytes, of the files commitToBranch sends
+ * in one GraphQL request. The request carries them base64-encoded, 4/3 of
+ * this size; GitHub documents no limit on a GraphQL request body. Larger
+ * commits go through the Git Data API, which takes text files inline.
+ */
+export const MAX_ONE_REQUEST_COMMIT_BYTES = 1_000_000;
+
+const COMMIT_ON_BRANCH = `mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }`;
+
+// Bytes as base64, in chunks small enough to pass as call arguments.
+function encodeBase64(bytes: Uint8Array): string {
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000)
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(binary);
+}
+
+/**
+ * Commit text files to `branch` on top of `baseSha` in one request, GitHub's
+ * `createCommitOnBranch` mutation, and return the new commit SHA. GitHub
+ * makes the commit only while the branch points at `baseSha`. The commit is
+ * authored by the token's account and signed by GitHub; the message is
+ * stored as its first line, a blank line and the rest.
+ *
+ * The commit goes through commitFiles, with the same parent and message,
+ * when the mutation cannot carry it: a binary file, more than
+ * MAX_ONE_REQUEST_COMMIT_BYTES, or a message whose first line is empty or is
+ * followed by anything but a blank line and a non-empty rest ("A\n\n"
+ * included).
+ *
+ * The mutation's answer decides the rest:
+ * - a commit oid: returned, also beside errors;
+ * - an error of type STALE_DATA: throws a BranchMovedError;
+ * - errors that all carry another type (FORBIDDEN, NOT_FOUND, ...), a 4xx,
+ *   or a rate limit: nothing was committed; with a warning, the commit goes
+ *   through commitFiles;
+ * - no oid and no errors, an error without a type, a 5xx, or no answer:
+ *   whether the commit was made is unknown; throws a TypeError, or the 5xx's
+ *   ApiError, both of which isTransientError accepts.
+ */
+export async function commitToBranch(
+  token: string,
+  owner: string,
+  repo: string,
+  files: FileChange[],
+  message: string,
+  opts: { baseSha: string; baseTreeSha: string; branch: string },
+): Promise<string> {
+  const viaRest = () => commitFiles(token, owner, repo, files, message, opts);
+  const newline = message.indexOf("\n");
+  const headline = newline < 0 ? message : message.slice(0, newline);
+  const body = newline < 0 ? undefined : message.slice(newline + 2);
+  const encoder = new TextEncoder();
+  const additions = files.map((f) => ({
+    path: f.path,
+    bytes: f.content == null ? null : encoder.encode(f.content),
+  }));
+  const size = additions.reduce((n, a) => n + (a.bytes?.length ?? 0), 0);
+  if (
+    headline === "" ||
+    (body !== undefined &&
+      (body === "" || `${headline}\n\n${body}` !== message)) ||
+    additions.some((a) => a.bytes === null) ||
+    size > MAX_ONE_REQUEST_COMMIT_BYTES
+  )
+    return viaRest();
+
+  // Every value goes in as a variable, never into the document.
+  const input = {
+    branch: {
+      repositoryNameWithOwner: `${owner}/${repo}`,
+      branchName: opts.branch,
+    },
+    expectedHeadOid: opts.baseSha,
+    message: body === undefined ? { headline } : { headline, body },
+    fileChanges: {
+      additions: additions.map((a) => ({
+        path: a.path,
+        contents: encodeBase64(a.bytes!),
+      })),
+    },
+  };
+  let refusal: string;
+  try {
+    const res = await ghSend<{
+      data?: { createCommitOnBranch?: { commit?: { oid?: string } } | null };
+      errors?: Array<{ type?: string; message?: string }>;
+    }>("POST", "/graphql", token, {
+      query: COMMIT_ON_BRANCH,
+      variables: { input },
+    });
+    const oid = res.data?.createCommitOnBranch?.commit?.oid;
+    if (oid) return oid;
+    const errors = res.errors ?? [];
+    const stale = errors.find((e) => e.type === "STALE_DATA");
+    if (stale)
+      throw new BranchMovedError(
+        `${stale.message || "The branch moved"} (STALE_DATA createCommitOnBranch ${opts.branch})`,
+      );
+    if (errors.length === 0 || errors.some((e) => !e.type))
+      throw new TypeError(
+        `The outcome of the one-request commit is unknown: ${errors.find((e) => !e.type)?.message || "no commit in the answer"}`,
+      );
+    refusal = errors.map((e) => `${e.type}: ${e.message}`).join("; ");
+  } catch (e) {
+    if (
+      !(e instanceof RateLimitError) &&
+      !(e instanceof ApiError && e.status < 500)
+    )
+      throw e;
+    refusal = (e as Error).message;
+  }
+  console.warn(
+    `The one-request commit failed; committing through the Git Data API: ${refusal}`,
+  );
+  return viaRest();
 }
 
 /** The commit `branch` points at, or null when there is no such branch. */

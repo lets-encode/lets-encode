@@ -38,7 +38,7 @@
     onclick={onback}><Icon name="arrow-left" /> Board</button
   >
   <span class="bcsep">/</span>
-  <span class="crumbtitle">{name}</span>
+  <span class="sectitle crumbtitle">{name}</span>
   <span class="crumbsub">· Manage</span>
   <span class="ownerpill">owner</span>
   <span class="cspacer"></span>
@@ -75,8 +75,6 @@
     color: var(--line-input);
   }
   .crumbtitle {
-    font-size: 15px;
-    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

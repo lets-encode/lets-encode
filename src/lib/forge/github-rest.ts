@@ -16,10 +16,12 @@ export {
   fromUpstream,
   brokerFetch,
   RateLimitError,
+  RATE_LIMIT_HEADLINE,
   ApiError,
   isTransientError,
   getGitHubRequestTelemetry,
   resetGitHubRequestTelemetry,
+  onGitHubRequest,
 } from "./github-rest/request.ts";
 export type { GitHubRequestTelemetry } from "./github-rest/request.ts";
 export type {
@@ -58,7 +60,11 @@ export {
 export type { RepoFiles } from "./github-rest/files.ts";
 export {
   getRepoHead,
+  getRepoHeadFiles,
   commitFiles,
+  commitToBranch,
+  BranchMovedError,
+  MAX_ONE_REQUEST_COMMIT_BYTES,
   getBranchHead,
   createBranch,
   fastForwardBranch,

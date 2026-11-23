@@ -393,7 +393,7 @@
   </ViewerToolbar>
 
   {#if notice}
-    <p class="msg-warn notice" role="status">{notice}</p>
+    <p class="msg-warn zonenote" role="status">{notice}</p>
   {/if}
   <span class="vh" role="status"
     >{ed.armed
@@ -580,23 +580,23 @@
         <span class="groupcount">{members.length} regions</span>
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
+          onclick={() => ed.select(0, null)}
+          title="Deselect the regions"><Icon name="close" />Deselect</button
+        >
+        <button
+          type="button"
+          class="btn btn-small"
           onclick={() => ed.duplicate()}
           title={`Copy the ${members.length} regions below or beside them`}
           ><Icon name="copy" />Duplicate</button
         >
         <button
           type="button"
-          class="btn btn-danger"
+          class="btn btn-small btn-danger"
           onclick={() => ed.deleteSelection()}
           title={`Delete the ${members.length} regions`}
           ><Icon name="trash" />Delete</button
-        >
-        <button
-          type="button"
-          class="btn"
-          onclick={() => ed.select(0, null)}
-          title="Deselect the regions"><Icon name="close" />Deselect</button
         >
       </div>
     </div>
@@ -637,7 +637,7 @@
     gap: 6px;
     padding: 6px 8px;
     background: var(--card);
-    border-radius: 18px;
+    border-radius: var(--radius-card);
     box-shadow: var(--shadow-sm);
   }
   .groupcount {
@@ -730,7 +730,7 @@
   .material-body.drawing {
     touch-action: none;
   }
-  .notice {
+  .zonenote {
     margin: 0;
     padding: 6px 16px;
     border-bottom: 1px solid var(--line);
@@ -809,7 +809,7 @@
     color: var(--danger);
     background: var(--card);
     border: 1px solid var(--line-input);
-    border-radius: 7px;
+    border-radius: var(--radius-strip);
     pointer-events: auto;
     cursor: pointer;
   }

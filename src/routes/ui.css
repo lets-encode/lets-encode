@@ -6,6 +6,21 @@
    and fonts come from the tokens in theme.css.
    ========================================================================= */
 
+/* ---- Breakpoints -------------------------------------------------------
+   A media or container query cannot read a custom property, so each rule
+   writes its query out. The query strings in use for the two layout widths:
+     Docked (the side panel below the content; DOCKED_QUERY in
+     side-panels.ts):
+       @media (orientation: portrait) and (max-width: 1100px)
+     Phone:
+       @media (max-width: 560px)       app shell, campaigns page, notices
+       @media (max-width: 599px)       wizard
+       @media (max-width: 640px)       instrument naming
+       @media (orientation: portrait) and (max-width: 559px)
+                                       docked sheet at phone width
+       @container (max-width: 559px)   page viewers, selection panel
+       @container (min-width: 560px)   selection panel */
+
 /* ---- Buttons -----------------------------------------------------------
    One vocabulary for every button in the app. .btn is the soft default: a
    faint ink-tinted fill (--soft) with no outline, pill radius. A surface
@@ -14,7 +29,6 @@
      .btn-primary   solid accent — at most one per surface (page, open dock
                     panel, or wizard footer); its label states the consequence
      .btn-finish    the solid green Pass/complete action (the only solid green)
-     .btn-secondary / .btn-soft   the same soft fill, kept as names
      .btn-danger    red label on the soft fill — danger actions are never solid
      .btn-icon      round icon-only button (32×32)
    Buttons are at most 32px tall; sizing comes from context, not new
@@ -32,9 +46,20 @@
   color: var(--ink);
   background: var(--btn-bg, var(--soft));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
+}
+/* A button that belongs to one item of a surface: 26px with a mouse, the
+   height of a toggle pill; 32px on a coarse pointer. */
+.btn.btn-small {
+  min-height: 26px;
+  padding: 4px 12px;
+}
+@media (pointer: coarse) {
+  .btn.btn-small {
+    min-height: 32px;
+  }
 }
 /* Links styled as buttons drop their underline. */
 a.btn {
@@ -157,6 +182,19 @@ a.btn[aria-disabled="true"] {
   border-radius: 50%;
   flex: none;
 }
+/* A small icon button, on one item's row: 26px with a mouse, 32px on a
+   coarse pointer. */
+.btn-icon.btn-small {
+  width: 26px;
+  min-height: 26px;
+  padding: 0;
+}
+@media (pointer: coarse) {
+  .btn-icon.btn-small {
+    width: 32px;
+    min-height: 32px;
+  }
+}
 /* An icon button whose panel or menu is open, in the stage tint. */
 .btn-icon.on {
   color: var(--st);
@@ -222,7 +260,7 @@ a.btn[aria-disabled="true"] {
   padding: 3px;
   background: var(--bg-tint);
   box-shadow: inset 0 0 0 1px var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .seg > button {
   cursor: pointer;
@@ -235,7 +273,7 @@ a.btn[aria-disabled="true"] {
   color: var(--ink-soft);
   background: transparent;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
 }
 @media (hover: hover) {
@@ -246,9 +284,10 @@ a.btn[aria-disabled="true"] {
 .seg > button.on {
   color: var(--ink);
   background: var(--card);
-  box-shadow: 0 1px 3px rgba(31, 36, 51, 0.22);
+  box-shadow: var(--shadow-segment);
 }
-.seg > button:disabled {
+.seg > button:disabled,
+.seg > button[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
 }
@@ -262,7 +301,7 @@ a.btn[aria-disabled="true"] {
   color: var(--ink-soft);
   background: var(--btn-bg, var(--soft));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--btn-shadow, none);
 }
 @media (hover: hover) {
@@ -306,7 +345,7 @@ a.btn[aria-disabled="true"] {
 }
 
 /* A small status chip: neutral for a task's state, coloured for a result
-   (.chip-ok, .chip-err) or something that needs attention (.chip-fail,
+   (.chip-ok, .chip-fail) or something that needs attention (.chip-fail,
    .chip-note). */
 .chip {
   display: inline-flex;
@@ -317,7 +356,7 @@ a.btn[aria-disabled="true"] {
   color: var(--ink-soft);
   background: var(--bg-tint);
   border: 1px solid var(--line);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   line-height: 1;
   padding: 4px 10px;
   white-space: nowrap;
@@ -330,11 +369,6 @@ a.btn[aria-disabled="true"] {
 button.chip {
   min-height: 24px;
   cursor: pointer;
-}
-.chip.chip-err {
-  color: var(--danger);
-  background: var(--danger-bg);
-  border-color: var(--danger-line);
 }
 /* Attention chips on a task (fails, comments) and measure-anchor chips. */
 .chip.chip-fail {
@@ -362,7 +396,7 @@ button.chip {
   letter-spacing: 0;
   text-transform: none;
   padding: 3px 7px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, currentColor 12%, transparent);
   font-variant-numeric: tabular-nums;
 }
@@ -370,7 +404,7 @@ button.chip {
    the element itself) takes the card's colour and a light shadow. */
 .on-tint {
   --btn-bg: var(--card);
-  --btn-shadow: 0 1px 2px rgba(31, 36, 51, 0.1);
+  --btn-shadow: var(--shadow-lift);
   --btn-bg-hover: color-mix(in srgb, var(--ink) 5%, var(--card));
 }
 /* A task's standing among the viewer's tasks: your next task, just
@@ -383,7 +417,7 @@ button.chip {
   letter-spacing: 0.03em;
   line-height: 1;
   padding: 4px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   white-space: nowrap;
   color: #fff;
   background: var(--st-solid);
@@ -391,12 +425,44 @@ button.chip {
 .taskbadge.done {
   background: var(--ok-solid);
 }
+/* A 6px dot in the text colour of its place. */
+.statusdot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
 .chip .chip-dot {
   flex: none;
   width: 6px;
   height: 6px;
   border-radius: 50%;
   background: currentColor;
+}
+
+/* A person's initial in a 20px circle. */
+.avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent-btn);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+/* An 8px circle in a piece's colour (--zone). */
+.piecedot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--zone);
 }
 
 /* An on/off toggle: a soft pill at rest, the stage tint with the stage's
@@ -413,7 +479,7 @@ button.chip {
   color: var(--ink-soft);
   background: var(--btn-bg, var(--soft));
   border: 1px solid transparent;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--btn-shadow, none);
   white-space: nowrap;
 }
@@ -478,7 +544,7 @@ button.chip {
   height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--line) 55%, transparent);
   color: var(--ink-soft);
   cursor: grab;
@@ -506,6 +572,11 @@ button.chip {
 .grip.target {
   cursor: pointer;
 }
+/* The row moving with the pointer. */
+.dragged {
+  background: var(--accent-tint-strong);
+  box-shadow: var(--shadow-md);
+}
 
 /* ---- Pane divider --------------------------------------------------------
    The grab bar between two panes side by side, with a centred handle;
@@ -523,7 +594,7 @@ button.chip {
   content: "";
   width: 3px;
   height: 2.5rem;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--line);
 }
 @media (hover: hover) {
@@ -643,6 +714,43 @@ button.chip {
   }
 }
 
+/* ---- Press area ---------------------------------------------------------
+   A 32px control takes a 44px press through an invisible ::after that
+   reaches 6px past each edge. The class goes on the control and names the
+   condition: .press always, .press-touch on a coarse pointer, .press-docked
+   on the docked query. .presses-docked goes on a container, for every .btn
+   and .tbtn inside it. */
+.press {
+  position: relative;
+}
+.press::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+@media (pointer: coarse) {
+  .press-touch {
+    position: relative;
+  }
+  .press-touch::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
+@media (orientation: portrait) and (max-width: 1100px) {
+  .press-docked,
+  .presses-docked :is(.btn, .tbtn) {
+    position: relative;
+  }
+  .press-docked::after,
+  .presses-docked :is(.btn, .tbtn)::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+  }
+}
+
 /* ---- Form controls ----------------------------------------------------- */
 .input {
   display: block;
@@ -657,7 +765,7 @@ button.chip {
   color: var(--ink);
   background: var(--bg);
   border: 1px solid var(--line-input);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
 }
 .input:focus-visible {
   outline: 2px solid var(--accent);
@@ -695,19 +803,82 @@ textarea.input {
   height: 32px;
   padding: 4px 8px;
   border: 1px solid var(--line-input);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--card);
   color: var(--ink);
   text-overflow: ellipsis;
 }
-/* The select's arrow brings its own space on the right. */
+/* The select draws its own arrow: a 12px chevron of two gradient strokes,
+   8px in from the right edge, with the right padding keeping the text clear
+   of it. The Content-Security-Policy's img-src admits no data: image. */
 select.ctl {
-  padding: 4px 2px 4px 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  padding: 4px 22px 4px 6px;
+  --ctl-arrow: var(--ink-soft);
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent calc(50% - 1.25px),
+      var(--ctl-arrow) calc(50% - 0.5px),
+      var(--ctl-arrow) calc(50% + 0.5px),
+      transparent calc(50% + 1.25px)
+    ),
+    linear-gradient(
+      135deg,
+      transparent calc(50% - 1.25px),
+      var(--ctl-arrow) calc(50% - 0.5px),
+      var(--ctl-arrow) calc(50% + 0.5px),
+      transparent calc(50% + 1.25px)
+    );
+  background-position:
+    right 14px center,
+    right 8px center;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
 }
 .ctl:disabled {
   color: var(--ink-faint);
-  background: var(--bg-tint);
+  background-color: var(--bg-tint);
   cursor: not-allowed;
+}
+select.ctl:disabled {
+  --ctl-arrow: var(--ink-faint);
+}
+
+/* A search field: a label that holds the search icon and the input. */
+.search {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  color: var(--ink-faint);
+  background: var(--card);
+  border: 1px solid var(--line-input);
+  border-radius: 8px;
+}
+/* The input has no outline of its own; the field shows the focus. */
+.search:focus-within {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0;
+  font: 400 14px var(--font);
+  color: var(--ink);
+  background: transparent;
+  border: 0;
+  outline: none;
+}
+.search input::placeholder {
+  color: var(--ink-faint);
 }
 
 /* Label text above a control. The control's own top margin sets the gap. */
@@ -715,6 +886,124 @@ select.ctl {
   display: block;
   font-size: 13px;
   font-weight: 600;
+}
+/* A small label (a span) stacked above its control. */
+.mfield {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.mfield > span {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
+}
+
+/* ---- Text roles ---------------------------------------------------------
+   The heading of a page. */
+.pagehead {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* The title of a section or pane. */
+.sectitle {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* Text in the monospace stack: repository names, file names, identifiers. */
+.mono {
+  font-family: var(--mono);
+}
+/* A small uppercase heading above a group of rows or fields. */
+.grouplabel {
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+/* Text in the faint ink; the place sets its size. */
+.muted {
+  color: var(--ink-faint);
+}
+/* A line of running text outside a form: a state, an empty list, a remark. */
+.note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+.note.small {
+  font-size: 12.5px;
+  color: var(--ink-faint);
+}
+.note.warn {
+  color: var(--warn);
+}
+
+/* ---- Card surfaces ------------------------------------------------------
+   A raised surface on the page: the card at 14px, the panel at 12px, the
+   tile at 10px. */
+.face-card,
+.face-panel,
+.face-tile {
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.face-card {
+  border-radius: var(--radius-card);
+}
+.face-panel {
+  border-radius: var(--radius-panel);
+}
+.face-tile {
+  border-radius: var(--radius-tile);
+}
+
+/* ---- Floating surfaces --------------------------------------------------
+   A menu or panel that opens over the page; the place sets its position,
+   layer and padding. */
+.popover {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow);
+}
+
+/* ---- Page sheets --------------------------------------------------------
+   A page of the source or of the rendered score, at any size: paper with
+   square corners and a hairline edge. */
+.sheet {
+  background: var(--facsimile-paper);
+  border: 1px solid var(--line-input);
+  border-radius: 0;
+}
+
+/* ---- Chevrons -----------------------------------------------------------
+   The chevron at the end of a row that opens or unfolds. */
+.chev {
+  flex: none;
+  display: inline-flex;
+  color: var(--ink-faint);
+}
+
+/* ---- Row buttons --------------------------------------------------------
+   A button that shows as text or as a whole row: the browser's button face
+   is removed and the place sets the rest. */
+.rowbtn {
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
 
 /* ---- Messages ----------------------------------------------------------
@@ -736,18 +1025,11 @@ select.ctl {
 .hint-err {
   color: var(--danger);
 }
-.msg-error {
-  margin: 1.25rem 0 0;
-  padding: 0.7rem 0.9rem;
-  font-size: 0.9rem;
-  color: var(--danger);
-  border: 1px solid var(--danger);
-  border-radius: 6px;
-}
-/* A failure reported next to the control it concerns, rather than in a box. */
+/* A failure reported next to the control it concerns, rather than in a
+   notice line. */
 .msg-error-inline {
   margin: 0 0 0.5rem;
-  font-size: 0.85rem;
+  font-size: 13.5px;
   color: var(--danger);
 }
 /* What a final action will do, stated above its button. */
@@ -759,7 +1041,7 @@ select.ctl {
 }
 .msg-warn {
   margin: 1rem 0 0;
-  font-size: 0.85rem;
+  font-size: 13.5px;
   color: var(--warn);
 }
 
@@ -775,7 +1057,7 @@ select.ctl {
   flex-direction: column;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   box-shadow: var(--shadow);
   overflow: hidden;
 }
@@ -790,10 +1072,7 @@ select.ctl {
   box-shadow: none;
 }
 .vtoolbar .toolbar-name {
-  font:
-    11.5px ui-monospace,
-    Menlo,
-    monospace;
+  font: 11.5px var(--mono);
   color: var(--ink-faint);
   white-space: nowrap;
   overflow: hidden;
@@ -825,10 +1104,10 @@ select.ctl {
   border-radius: 0;
 }
 .tbtn-pair > .tbtn:first-child {
-  border-radius: 999px 0 0 999px;
+  border-radius: var(--radius-pill) 0 0 var(--radius-pill);
 }
 .tbtn-pair > .tbtn:last-child {
-  border-radius: 0 999px 999px 0;
+  border-radius: 0 var(--radius-pill) var(--radius-pill) 0;
 }
 .tbtn-pair > * + * {
   margin-left: 2px;
@@ -937,7 +1216,7 @@ select.ctl {
 .notice.card {
   padding: 10px 14px;
   background: var(--nt-wash);
-  border-radius: 10px;
+  border-radius: var(--radius-tile);
 }
 .notice.strip {
   flex: none;
@@ -1028,7 +1307,7 @@ select.ctl {
   padding: 14px 16px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 10px;
+  border-radius: var(--radius-tile);
   cursor: pointer;
 }
 @media (hover: hover) {
@@ -1060,6 +1339,20 @@ select.ctl {
   color: var(--ink-soft);
 }
 
+/* ---- Dialogs ---------------------------------------------------------
+   A native <dialog> that holds text and actions, opened with showModal()
+   over a darkened page; the place sets its width and padding. */
+.dialog {
+  border: none;
+  border-radius: var(--radius-card);
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+.dialog::backdrop {
+  background: var(--backdrop);
+}
+
 /* ---- Command overlays -----------------------------------------------
    The modal card a command's progress or outcome shows on, over a dimmed
    page. Markup: <dialog class="overlay"> opened with showModal(); the rules
@@ -1067,7 +1360,7 @@ select.ctl {
 .overlay {
   position: fixed;
   inset: 0;
-  z-index: 60;
+  z-index: var(--z-overlay);
   width: auto;
   height: auto;
   max-width: none;
@@ -1098,7 +1391,7 @@ select.ctl {
   padding: 26px 34px;
   background: var(--card);
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-card);
   box-shadow: 0 12px 44px var(--shade);
   text-align: center;
 }
@@ -1118,7 +1411,7 @@ select.ctl {
 .overlay-error {
   margin: 0;
   color: var(--danger);
-  font-size: 0.85rem;
+  font-size: 13.5px;
   overflow-wrap: anywhere;
 }
 /* Sits where the spinner was: a ring of the same size around a cross. */
@@ -1144,6 +1437,28 @@ select.ctl {
     flex-direction: column !important;
     gap: 0 !important;
   }
+}
+
+/* ------------------------------------------------------------ task workspace
+   A task page's desk: the work column and, beside it, the side panel, which
+   brings no outer spacing of its own. Markup: <div class="workshell
+   sidehost"><div class="workmain">work</div><SidePanel /></div> */
+.workshell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  background: var(--desk);
+  box-shadow: var(--shadow-inset);
+}
+.workshell > .spwrap:not(.docked) {
+  margin: 12px 16px 4px 0;
+}
+.workmain {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ------------------------------------------------------- selection controls
@@ -1201,7 +1516,7 @@ select.ctl {
   color: var(--ink);
   background: var(--card);
   border: 1px solid var(--line-input);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
 }
 .selnum:focus-visible {
   outline: 2px solid var(--accent);
@@ -1346,7 +1661,11 @@ select.ctl {
    count, and the active cell, as wide as it needs, also the long name. Markup: <div class="steps" role="group">
    <button class="step" class:on><span class="stepno">1</span> glyph <span
    class="steplong"/><span class="stepshort"/><span class="stepcount"/><span
-   class="stepn"/></button>…</div>. */
+   class="stepn"/></button>…</div>. A step with parts is followed by <div
+   class="substeps"> of <button class="substep" class:on><span
+   class="subdot"/>label</button>, joined to the step's number by a line
+   that bends into the column of the step glyphs; the step itself then marks
+   its number with an outline. Docked, the substeps are a second row. */
 .steps {
   position: relative;
   display: flex;
@@ -1376,7 +1695,7 @@ select.ctl {
   text-align: left;
   background: none;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
 }
 @media (hover: hover) {
@@ -1403,10 +1722,17 @@ select.ctl {
   background: var(--card);
   border: 1.5px solid var(--line-strong);
 }
-.step.on .stepno {
+.step.on .stepno,
+.stepno.on {
   color: #fff;
   background: var(--st-solid);
   border-color: var(--st-solid);
+}
+/* A completed step of a sequence that is worked through once. */
+.stepno.done {
+  color: #fff;
+  background: var(--ok-solid);
+  border-color: var(--ok-solid);
 }
 .steplong {
   flex: 1;
@@ -1429,19 +1755,122 @@ select.ctl {
 .stepn {
   display: none;
 }
+.substeps {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: -2px;
+  padding-top: 10px;
+}
+/* The line from the step's number to the column of the glyphs (dots at
+   51px, under the 22px glyph after the 28px number), in two rounded bends. */
+.substeps::before,
+.substeps::after {
+  content: "";
+  position: absolute;
+  box-sizing: border-box;
+  border: 0 solid var(--line);
+}
+.substeps::before {
+  left: 15px;
+  top: -8px;
+  width: 19px;
+  height: 12px;
+  border-left-width: 2px;
+  border-bottom-width: 2px;
+  border-bottom-left-radius: 8px;
+}
+.substeps::after {
+  left: 32px;
+  top: 2px;
+  bottom: 14px;
+  width: 20px;
+  border-top-width: 2px;
+  border-right-width: 2px;
+  border-top-right-radius: 8px;
+}
+.substep {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 17px;
+  min-height: 28px;
+  margin-left: 36px;
+  padding: 0 12px 0 11px;
+  font: 400 13px var(--font);
+  color: var(--ink-soft);
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .substep:hover:not(.on):not([aria-disabled="true"]) {
+    color: var(--ink);
+    background: var(--btn-bg-hover, var(--soft-hover));
+  }
+}
+.substep.on {
+  font-weight: 600;
+  color: var(--ink);
+  background: var(--st-tint);
+}
+.substep[aria-disabled="true"] {
+  color: var(--ink-faint);
+  cursor: default;
+}
+.subdot {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--card);
+  border: 1.5px solid var(--line-strong);
+}
+.substep.on .subdot {
+  background: var(--st-solid);
+  border-color: var(--st-solid);
+}
+@media not all and (orientation: portrait) and (max-width: 1100px) {
+  .step.on.parent {
+    background: none;
+  }
+  .step.on.parent .stepno {
+    color: var(--st-solid);
+    background: var(--card);
+  }
+}
 @media (orientation: portrait) and (max-width: 1100px) {
-  .steps {
+  .steps,
+  .substeps {
     min-width: 0;
     flex-direction: row;
     padding: 3px;
     background: var(--bg-tint);
     box-shadow: inset 0 0 0 1px var(--line);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
   }
-  .steps::before {
+  .substeps {
+    flex: 1 1 100%;
+    margin: 0;
+    gap: 0;
+  }
+  .steps::before,
+  .substeps::before,
+  .substeps::after,
+  .subdot {
     display: none;
   }
-  .step {
+  .substep {
+    margin: 0;
+  }
+  .step,
+  .substep {
     flex: 1 1 0;
     min-width: 0;
     justify-content: center;
@@ -1450,17 +1879,20 @@ select.ctl {
     padding: 0 6px;
     font-size: 12px;
   }
-  .step::after {
+  .step::after,
+  .substep::after {
     content: "";
     position: absolute;
     inset: -6px 0;
   }
-  .step.on {
+  .step.on,
+  .substep.on {
     background: var(--card);
-    box-shadow: 0 1px 3px rgba(31, 36, 51, 0.22);
+    box-shadow: var(--shadow-segment);
   }
   /* Dark paper is darker than the track; the active cell lifts lighter. */
-  [data-theme="dark"] .step.on {
+  [data-theme="dark"] .step.on,
+  [data-theme="dark"] .substep.on {
     background: color-mix(in srgb, var(--ink) 16%, var(--card));
   }
   .stepno {
@@ -1489,13 +1921,16 @@ select.ctl {
 }
 /* A phone sheet: a lower row, the press area still 44px. */
 @media (orientation: portrait) and (max-width: 559px) {
-  .steps {
+  .steps,
+  .substeps {
     padding: 2px;
   }
-  .step {
+  .step,
+  .substep {
     min-height: 26px;
   }
-  .step::after {
+  .step::after,
+  .substep::after {
     inset: -9px 0;
   }
   .stepno {
@@ -1516,6 +1951,41 @@ select.ctl {
     display: inline;
     flex: 0 1 auto;
   }
+}
+
+/* --------------------------------------------------------------- score setup
+   In the setup form and its summary: a section's heading, and a staff's
+   number before its row. */
+.setup-grouphead {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+.setup-staffno {
+  flex: none;
+  width: 22px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- zone boxes
+   A measure's and a staff's box at rest on a page of the zone editor and in
+   its magnifier: SVG rects whose markup sets
+   vector-effect="non-scaling-stroke", the stroke in screen pixels scaled by
+   --stroke-scale. */
+.zonebox-measure {
+  fill: rgba(var(--layer-measure), 0.2);
+  stroke: rgba(var(--layer-measure), 0.85);
+  stroke-width: calc(2px * var(--stroke-scale, 1));
+  cursor: pointer;
+}
+.zonebox-staff {
+  fill: rgba(var(--layer-staff), 0.16);
+  stroke: rgba(var(--layer-staff), 0.9);
+  stroke-width: calc(2px * var(--stroke-scale, 1));
+  cursor: pointer;
 }
 
 /* Verovio's own rules for the SVG it renders, which reach the page without

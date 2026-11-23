@@ -214,16 +214,13 @@
 
 <div class="plan">
   <div class="phead">
-    <span class="plabel"
+    <span class="grouplabel"
       >Task plan <span class="countpill">{groups.length}</span></span
     >
     <span class="pmode">● Editing the plan</span>
     <span class="pnote">Changes only touch tasks nobody has worked on yet.</span
     >
     <span class="pspacer"></span>
-    <button type="button" class="btn" onclick={addTask} disabled={busy}
-      ><Icon name="plus" />Add task</button
-    >
     {#if askingDiscard}
       <ConfirmInline
         question="Discard the changes to the plan?"
@@ -236,11 +233,14 @@
         >Cancel</button
       >
     {/if}
+    <button type="button" class="btn" onclick={addTask} disabled={busy}
+      ><Icon name="plus" />Add task</button
+    >
     <button type="button" class="btn btn-primary" onclick={save} disabled={busy}
       >Save the plan</button
     >
   </div>
-  <div class="prow phrow">
+  <div class="grouplabel prow phrow">
     <span></span><span>Task</span><span>Type</span><span>Size</span><span
       >Depends on</span
     ><span>Status</span><span></span>
@@ -349,7 +349,7 @@
           {#if g.editable}
             <button
               type="button"
-              class="btn btn-icon btn-danger"
+              class="btn btn-icon btn-small btn-danger"
               aria-label="Remove task"
               title="Remove this task"
               onclick={() => removeTask(i)}
@@ -388,13 +388,6 @@
     padding: 0 16px;
     gap: 10px;
   }
-  .plabel {
-    font-size: 12px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
-  }
   .pmode {
     font-size: 11.5px;
     font-weight: 600;
@@ -424,11 +417,6 @@
     background: var(--bg-alt);
     border-bottom: 1px solid var(--line);
     padding: 8px 16px;
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--ink-faint);
   }
   .pbody {
     flex: 1;
@@ -436,10 +424,6 @@
   }
   .prow.locked {
     opacity: 0.65;
-  }
-  .prow.dragged {
-    background: var(--accent-tint-strong);
-    box-shadow: 0 2px 8px rgba(31, 36, 51, 0.14);
   }
   .prow.picked {
     background: var(--accent-tint-strong);
@@ -461,10 +445,6 @@
   .psub.muted,
   .muted {
     font-size: 11.5px;
-    color: var(--ink-faint);
-  }
-  .mono {
-    font-family: ui-monospace, Menlo, monospace;
   }
   .pselect,
   .pinput {

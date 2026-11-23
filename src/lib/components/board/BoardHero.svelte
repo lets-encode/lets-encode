@@ -50,7 +50,7 @@
 
 <div class="hero">
   <div class="hero-line">
-    <h1 title={name}>{name}</h1>
+    <h1 class="pagehead" title={name}>{name}</h1>
     <a class="mono slug" href={repoUrl} target="_blank" rel="noreferrer"
       >{repoLabel} <Icon name="external" size={12} /></a
     >
@@ -79,7 +79,7 @@
   </div>
   <!-- One line: the progress first; the other counts give way
        as the column narrows, the attention count last. -->
-  <div class="hero-stats" class:quiet={board.attention === 0}>
+  <div class="hero-stats face-panel" class:quiet={board.attention === 0}>
     <span class="heroprogress">
       <ProgressBar done={board.done} total={board.total} />
     </span>
@@ -116,7 +116,7 @@
       {#each attentionCards as card (card.task)}
         <button
           type="button"
-          class="attnrow"
+          class="attnrow face-tile"
           onclick={() => onopen(card.task)}
           title="Open this task"
         >
@@ -136,7 +136,7 @@
                 : "s"}</span
             >
           {/if}
-          <span class="attnchev"><Icon name="chevron-right" /></span>
+          <span class="chev"><Icon name="chevron-right" /></span>
         </button>
       {/each}
     </div>
@@ -144,9 +144,6 @@
 </div>
 
 <style>
-  .mono {
-    font-family: ui-monospace, Menlo, Consolas, monospace;
-  }
   .hero {
     flex: none;
     padding: 18px 32px 16px;
@@ -163,11 +160,7 @@
     min-width: 0;
   }
   .hero-line h1 {
-    margin: 0;
     min-width: 0;
-    font-size: 26px;
-    line-height: 1.2;
-    font-weight: 600;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -200,10 +193,6 @@
       text-decoration: underline;
     }
   }
-  .hero-acts .btn,
-  .hero-line .btn {
-    padding-block: 4px;
-  }
   .managechip {
     color: var(--owner);
     background: var(--owner-bg);
@@ -222,11 +211,7 @@
     display: flex;
     gap: 10px;
     align-items: center;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 12px;
     padding: 5px 6px 5px 16px;
-    box-shadow: var(--shadow-sm);
   }
   /* The board filter is ScopeToggle's root. */
   .hero-stats > *,
@@ -288,9 +273,6 @@
     font-family: inherit;
     font-size: 13px;
     text-align: left;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 10px;
     padding: 10px 14px;
     cursor: pointer;
   }
@@ -304,10 +286,6 @@
   }
   .attnspacer {
     flex: 1;
-  }
-  .attnchev {
-    font-size: 15px;
-    color: var(--ink-faint);
   }
   @container view (max-width: 700px) {
     .hero-stats > :global(.seg),
@@ -324,9 +302,6 @@
     }
     .hero-line {
       gap: 8px 10px;
-    }
-    .hero-line h1 {
-      font-size: 20px;
     }
     .managechip {
       width: 32px;

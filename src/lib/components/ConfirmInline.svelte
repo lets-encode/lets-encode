@@ -1,6 +1,6 @@
 <!--
   A confirmation in place of the control that asked for it: the question,
-  the confirming button (danger, or soft where nothing is lost) and Cancel.
+  Cancel and the confirming button (danger, or soft where nothing is lost).
   `stacked` puts the question on its own line above the buttons, for a
   question longer than a few words. Rich text goes in `children`.
 -->
@@ -16,6 +16,7 @@
     soft = false,
     disabled = false,
     stacked = false,
+    small = false,
   }: {
     question?: string;
     /** The question as markup, in place of `question`. */
@@ -27,6 +28,8 @@
     soft?: boolean;
     disabled?: boolean;
     stacked?: boolean;
+    /** Small buttons. */
+    small?: boolean;
   } = $props();
 </script>
 
@@ -35,13 +38,17 @@
     >{#if children}{@render children()}{:else}{question}{/if}</span
   >
   <span class="btns">
+    <button type="button" class="btn" class:btn-small={small} onclick={oncancel}
+      >Cancel</button
+    >
     <button
       type="button"
-      class="btn {soft ? 'btn-soft' : 'btn-danger'}"
+      class="btn"
+      class:btn-danger={!soft}
+      class:btn-small={small}
       {disabled}
       onclick={onconfirm}>{confirm}</button
     >
-    <button type="button" class="btn" onclick={oncancel}>Cancel</button>
   </span>
 </span>
 

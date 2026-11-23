@@ -16,9 +16,10 @@ import type {
 } from "./campaign-tables.ts";
 import type { CommandEnvelope } from "./command-envelope.ts";
 import { envelopeFromPrBody } from "./command-envelope.ts";
+import { tidyMei } from "./mei-format.ts";
 import { spliceOpeningScoreDef, splicePage } from "./mei-page-splice.ts";
 import {
-  applicationNamesIn,
+  applicationsIn,
   recordApplications,
   recordContribution,
   type Contribution,
@@ -85,8 +86,8 @@ export function checksOpening(
  * with the header of `baseMei`. Of the fork's header only the applications
  * the app itself records are carried over: the Musibot recognition models
  * and the uploaded encoding. Then `contributions` are recorded in the header,
- * in order. Throws when the campaign has no score at the task's fragment or
- * the page cannot be spliced.
+ * in order, and the score is tidied (tidyMei). Throws when the
+ * campaign has no score at the task's fragment or the page cannot be spliced.
  */
 export function assembleSubmission({
   task,
@@ -124,14 +125,14 @@ export function assembleSubmission({
   }
   mei = recordApplications(
     mei,
-    applicationNamesIn(forkMei).filter(
-      (name) =>
+    applicationsIn(forkMei).filter(
+      ({ name }) =>
         /^Musibot [\w.-]+ [\w.-]+$/.test(name) || name === UPLOAD_APPLICATION,
     ),
   );
   for (const contribution of contributions)
     mei = recordContribution(mei, contribution);
-  return mei;
+  return tidyMei(mei);
 }
 
 /**

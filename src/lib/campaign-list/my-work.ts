@@ -18,6 +18,8 @@ import { isOwned } from "./list-query.ts";
  * all of them, so a long list cannot push the campaigns out of reach.
  */
 export const SIDE_MAX = 5;
+/** The work panel's waiting and done sections list this many tasks. */
+export const WORK_MAX = 3;
 
 /** The viewer's tasks; a claim past its expiry at `now` is no longer theirs. */
 export function viewerTasks(
@@ -92,37 +94,74 @@ export const newestFirst =
     a.campaignSlug.localeCompare(b.campaignSlug) ||
     a.task.localeCompare(b.task);
 
-/** Open work in its listed order: encoding, reviewing, then awaiting review. */
-export function openWorkOrder(
+/** The tasks the viewer holds, encoding then reviews, each newest claim first. */
+export function toDoOrder(
   encoding: readonly MyTask[],
   validating: readonly MyTask[],
-  awaiting: readonly MyTask[],
 ): MyTask[] {
   return [
     ...[...encoding].sort(newestFirst((t) => t.claimedAt)),
     ...[...validating].sort(newestFirst((t) => t.claimedAt)),
-    ...[...awaiting].sort(newestFirst((t) => t.submittedAt)),
   ];
 }
 
 /** The folded work bar's one-line summary. */
 export function workSummary(counts: {
   incomplete: boolean;
-  encoding: number;
-  validating: number;
   awaiting: number;
   done: number;
 }): string {
   return [
     // First, so a cut-off summary still shows it.
     counts.incomplete ? "Incomplete" : "",
-    counts.encoding ? `${counts.encoding} encoding` : "",
-    counts.validating ? `${counts.validating} reviewing` : "",
-    counts.awaiting ? `${counts.awaiting} awaiting review` : "",
+    counts.awaiting ? `${counts.awaiting} waiting` : "",
     `${counts.done} done`,
   ]
     .filter(Boolean)
     .join(" · ");
+}
+
+/** A claim counts as ending soon in its last SOON_MS. */
+const SOON_MS = 48 * 60 * 60 * 1000;
+
+/** "claim expires in 5 h" for a claim that ends soon, else "". */
+export function claimEndsSoon(t: MyTask, now: number): string {
+  const end = Date.parse(t.expiresAt);
+  return Number.isFinite(end) && end - now < SOON_MS
+    ? `claim ${expiresIn(t.expiresAt, now)}`
+    : "";
+}
+
+export interface DoneGroup {
+  campaignSlug: string;
+  campaign: string;
+  tasks: MyTask[];
+}
+
+/**
+ * Done tasks grouped by campaign, in the order of `done`: a group stands
+ * where its first task does. `query` keeps the tasks whose title or campaign
+ * title contains it; `campaignSlug` keeps one campaign.
+ */
+export function doneGroups(
+  done: readonly MyTask[],
+  query = "",
+  campaignSlug = "",
+): DoneGroup[] {
+  const q = query.trim().toLowerCase();
+  const groups = new Map<string, DoneGroup>();
+  for (const t of done) {
+    if (campaignSlug && t.campaignSlug !== campaignSlug) continue;
+    if (q && !`${t.title}\n${t.campaign}`.toLowerCase().includes(q)) continue;
+    const g = groups.get(t.campaignSlug) ?? {
+      campaignSlug: t.campaignSlug,
+      campaign: t.campaign,
+      tasks: [],
+    };
+    g.tasks.push(t);
+    groups.set(t.campaignSlug, g);
+  }
+  return [...groups.values()];
 }
 
 /** When the claim was made and when it expires. */

@@ -73,7 +73,7 @@
   {#if helpOpen}
     <div
       id="zone-help"
-      class="helppanel"
+      class="popover helppanel"
       role="region"
       aria-label="Editor help"
     >
@@ -97,7 +97,7 @@
   {#if viewOpen && view.viewMenu}
     <div
       id="zone-view"
-      class="viewmenu"
+      class="popover viewmenu presses-docked"
       role="group"
       aria-label={view.inSheet ? "View options and help" : "View options"}
     >
@@ -178,10 +178,6 @@
     font-size: 12.5px;
     line-height: 1.5;
     color: var(--ink-soft);
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-md);
   }
   .helppanel ul {
     flex: 1;
@@ -265,10 +261,6 @@
     flex-direction: column;
     align-items: flex-start;
     gap: 12px;
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 14px;
-    box-shadow: var(--shadow-md);
   }
   /* In draw mode the toolbar takes the stage's wash and line, so the mode
      shows over the pages. */
@@ -276,18 +268,12 @@
     background: var(--st-wash);
     border-color: var(--st);
   }
-  /* Docked as a sheet the View options' buttons take a 44px press. */
+  /* Docked as a sheet the View options' buttons are 32px high, with a 44px
+     press (.presses-docked). */
   @media (orientation: portrait) and (max-width: 1100px) {
     .viewmenu :global(.tbtn),
     .viewmenu .btn {
-      position: relative;
       min-height: 32px;
-    }
-    .viewmenu :global(.tbtn)::after,
-    .viewmenu .btn::after {
-      content: "";
-      position: absolute;
-      inset: -6px;
     }
   }
 </style>

@@ -378,6 +378,8 @@ test("loadAllCampaignStats reads all repositories in one batch when it can", asy
           ? null
           : {
               headSha: `${repo}-head`,
+              treeSha: `${repo}-tree`,
+              branch: "main",
               isPrivate: false,
               canPush: false,
               files: Object.fromEntries(

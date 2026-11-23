@@ -122,12 +122,10 @@
     failForm ? withStaff(failForm.staff, "").length : 0,
   );
   const noteTooLong = $derived(noteLength > MAX_COMMENT_LENGTH);
-  // A change request being written holds Approve, which would drop it.
+  // An open change request holds Approve.
   const approveHeld = $derived(
     approveBlock ??
-      (failForm?.body.trim()
-        ? "Send or discard the change request first."
-        : null),
+      (failForm ? "Send or cancel the change request first." : null),
   );
 
   async function submitFail(edit: boolean) {
@@ -198,13 +196,22 @@
       onclick={() =>
         (failForm = failForm ? null : { body: "", staff: "", ...prefill() })}
       disabled={runner.busy || processing}
-      title="Ask for changes — a request carries a note saying what needs to change."
-      >Request changes</button
+      title={failForm
+        ? "Close the change request without sending it."
+        : "Ask for changes — a request carries a note saying what needs to change."}
+      ><!-- Both labels share one grid cell, so the button keeps the width
+        of the longer one. --><span
+        class="faillabel"
+        ><span class:off={!!failForm}>Request changes</span><span
+          class:off={!failForm}>Cancel request</span
+        ></span
+      ></button
     >
   </span>
   {#if failForm}
     <div class="failform">
       <textarea
+        class="ctl"
         rows="3"
         bind:value={failForm.body}
         aria-label="What needs to change"
@@ -226,6 +233,7 @@
       <div class="failform-anchor">
         <label
           >p. <input
+            class="ctl"
             size="3"
             maxlength={MAX_ANCHOR_LENGTH}
             bind:value={failForm.page}
@@ -234,7 +242,7 @@
         {#if staffs}
           <label
             >staff <input
-              class="staffin"
+              class="ctl staffin"
               bind:value={failForm.staff}
               placeholder="click a staff or group"
               title="Click a staff on the page or in the summary, or a brace or bracket in the summary, to fill this in. It is put in front of the note."
@@ -244,6 +252,7 @@
         {#if measures}
           <label
             >m. <input
+              class="ctl"
               size="4"
               maxlength={MAX_ANCHOR_LENGTH}
               bind:value={failForm.m1}
@@ -252,6 +261,7 @@
           >
           <label
             >– <input
+              class="ctl"
               size="4"
               maxlength={MAX_ANCHOR_LENGTH}
               bind:value={failForm.m2}
@@ -259,10 +269,15 @@
             /></label
           >
         {/if}
-        <span class="mspacer"></span>
+      </div>
+      <p class="editnote">
+        Edit yourself gives you the task to edit. Your edit is then reviewed by
+        someone else.
+      </p>
+      <div class="failacts">
         <button
           type="button"
-          class="btn"
+          class="btn btn-small"
           onclick={() => submitFail(true)}
           disabled={runner.busy ||
             !failForm.body.trim() ||
@@ -273,7 +288,7 @@
         >
         <button
           type="button"
-          class="btn btn-danger"
+          class="btn btn-small btn-danger"
           onclick={() => submitFail(false)}
           disabled={runner.busy ||
             !failForm.body.trim() ||
@@ -282,10 +297,6 @@
           title="Sends the change request with this note.">Send request</button
         >
       </div>
-      <p class="editnote">
-        Edit yourself gives you the task to edit. Your edit is then reviewed by
-        someone else.
-      </p>
     </div>
   {/if}
 </div>
@@ -302,9 +313,6 @@
     align-items: center;
     gap: 8px;
     container: ractions / inline-size;
-  }
-  .mspacer {
-    flex: 1;
   }
   .rverdict {
     display: flex;
@@ -337,6 +345,16 @@
     background: var(--danger-bg);
     border-color: var(--danger);
   }
+  .faillabel {
+    display: inline-grid;
+  }
+  .faillabel > span {
+    grid-area: 1 / 1;
+    text-align: center;
+  }
+  .faillabel > .off {
+    visibility: hidden;
+  }
   .failform {
     order: -1;
     flex-basis: 100%;
@@ -350,13 +368,8 @@
     background: var(--danger-wash);
   }
   .failform textarea {
-    font: inherit;
-    font-size: 12.5px;
+    height: auto;
     padding: 7px 10px;
-    border: 1px solid var(--line-input);
-    border-radius: 8px;
-    background: var(--card);
-    color: var(--ink);
     resize: vertical;
   }
   .editnote {
@@ -372,15 +385,22 @@
     color: var(--ink-soft);
     flex-wrap: wrap;
   }
+  /* The height of the selection panel's number field; on a coarse pointer
+     the compact control's 32px. */
   .failform-anchor input {
-    font: inherit;
-    font-size: 11.5px;
-    padding: 3px 6px;
-    border: 1px solid var(--line-input);
-    border-radius: 6px;
-    background: var(--card);
-    color: var(--ink);
-    width: 3.2em;
+    width: 4.2em;
+    height: 28px;
+    padding-block: 2px;
+  }
+  @media (pointer: coarse) {
+    .failform-anchor input {
+      height: 32px;
+    }
+  }
+  .failacts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
   }
   .failform-anchor .staffin {
     width: 12em;

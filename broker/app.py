@@ -316,6 +316,7 @@ try:
         campaign_repository,
         fetch_repository,
         github_proxy,
+        github_session,
     )
     from .iiif_relay import (  # noqa: F401
         IIIF_MAX_BYTES,
@@ -346,6 +347,7 @@ except ImportError:
         campaign_repository,
         fetch_repository,
         github_proxy,
+        github_session,
     )
     from iiif_relay import (  # noqa: F401
         IIIF_MAX_BYTES,

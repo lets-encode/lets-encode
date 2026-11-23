@@ -115,6 +115,9 @@ export const baseHeaders: Record<string, string> = {
  * app and says when to retry; logged out, it also names logging in as the way
  * past the shared anonymous limit.
  */
+/** Headline of a notice about a reached request limit. */
+export const RATE_LIMIT_HEADLINE = "Request limit reached";
+
 export class RateLimitError extends Error {
   readonly source: "github" | "broker";
   /** The request carried no credentials, so the per-address anonymous limit applied. */
@@ -147,7 +150,7 @@ export class RateLimitError extends Error {
   }) {
     // A reset time is shown to the minute, rounded up so it is never early.
     const when = retryAfterSeconds
-      ? `in about ${retryAfterSeconds} seconds`
+      ? `in about ${retryAfterSeconds} second${retryAfterSeconds === 1 ? "" : "s"}`
       : resetAt
         ? `at ${minuteClock(resetAt * 1000, true)}`
         : "later";
@@ -226,6 +229,16 @@ const requestTelemetry: GitHubRequestTelemetry = {
   byResource: {},
   last: null,
 };
+
+type GitHubRequestEntry = NonNullable<GitHubRequestTelemetry["last"]>;
+let requestListener: ((entry: GitHubRequestEntry) => void) | null = null;
+
+/** Calls `listener` with every finished request's entry; null stops it. */
+export function onGitHubRequest(
+  listener: ((entry: GitHubRequestEntry) => void) | null,
+): void {
+  requestListener = listener;
+}
 
 /** Cumulative GitHub request counters for this browser tab or coordinator run. */
 export function getGitHubRequestTelemetry(): GitHubRequestTelemetry {
@@ -309,6 +322,7 @@ function recordRequest(
   requestTelemetry.byResource[bucket] =
     (requestTelemetry.byResource[bucket] ?? 0) + 1;
   requestTelemetry.last = entry;
+  requestListener?.(entry);
   if (res == null || res.status >= 400 || source === "broker") {
     console.info("[github-api]", entry);
   }
