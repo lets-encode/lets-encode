@@ -65,6 +65,17 @@ test("stores a draft under its account and campaign name and reads it back", () 
   assert.equal(writeDraft(draft()), null);
   assert.deepEqual([...items.keys()], ["lets-encode:setup:ada/symphony-9"]);
   assert.deepEqual(readDraft("ada", "symphony-9"), draft());
+  const onTasks = draft({
+    entries: entries({
+      step: "tasks",
+      division: "none",
+      reviews: 2,
+      selfReview: true,
+    }),
+  });
+  assert.equal(writeDraft(onTasks), null);
+  assert.deepEqual(readDraft("ada", "symphony-9"), onTasks);
+  assert.equal(writeDraft(draft()), null);
   assert.equal(readDraft("ada", "other"), null);
   assert.equal(readDraft("grace", "symphony-9"), null);
 });

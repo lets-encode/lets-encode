@@ -15,6 +15,8 @@ parentheses.
 
 ## 2026-11-19
 
+- The wizard has a Tasks step for how encoding is divided, the reviews per task and self-review.
+- A piece that is not divided gets one encoding task whose draft covers every page.
 - The campaign list and the campaign pages show a reached request limit as a warning with a clock.
 
 ## 2026-11-18

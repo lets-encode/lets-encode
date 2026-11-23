@@ -1,4 +1,5 @@
-// The draft an OMR-prepared piece's page task starts from. Run when the
+// The draft an OMR-prepared piece's encoding task starts from: one page for
+// a page task, every page in turn for a whole-file task. Run when the
 // encoding task's branch has just been created: the page's staff
 // transcriptions and labels are taken from the piece's recognition record
 // (`omr.xml`, committed by the score setup or the layout task), with its clef
@@ -125,116 +126,194 @@ export function transcriptionApplications(
   ];
 }
 
-export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
-  const { forge, owner, repo, fragment, page } = o;
+/** The draft of one page task: that page of the piece. */
+export const draftPage = (o: PageDraftOptions): Promise<PageDraftResult> =>
+  draftPages(o, o.page);
+
+/** The draft of a whole-file task: every page of the piece, in one commit. */
+export const draftPiece = (
+  o: Omit<PageDraftOptions, "page">,
+): Promise<PageDraftResult> => draftPages(o, null);
+
+// The draft of page `only`, or of every page of the piece (null): each page
+// is put into the score the pages before it left, and the result is checked
+// and committed once.
+async function draftPages(
+  o: Omit<PageDraftOptions, "page">,
+  only: number | null,
+): Promise<PageDraftResult> {
+  const { forge, owner, repo, fragment } = o;
   const [scoreAtHead, recordXml, corrected] = await Promise.all([
     forge.getRepoFile(owner, repo, fragment, o.headSha),
     forge.getRepoFile(owner, repo, omrRecordPath(fragment), o.headSha),
     forge.getRepoFile(owner, repo, correctedLayoutPath(fragment), o.headSha),
   ]);
   if (scoreAtHead == null) throw new Error(`Could not read ${fragment}.`);
-  const score = o.scoreDef
+  let score = o.scoreDef
     ? replaceOpeningScoreDef(scoreAtHead, o.scoreDef)
     : scoreAtHead;
   const parsed = parseFacsimileMei(score);
   parsed.pages = withCorrectedLayout(parsed.pages, corrected);
-  const pg = parsed.pages[page - 1];
-  if (!pg) throw new Error(`${fragment} has no page ${page}.`);
-  if (!pg.staves?.length) {
-    return {
-      note: `Page ${page} has no staff boxes, so it has no draft.`,
-      warnings: [],
-    };
-  }
+  if (only !== null && !parsed.pages[only - 1])
+    throw new Error(`${fragment} has no page ${only}.`);
+  const pageNumbers = only ? [only] : parsed.pages.map((_, i) => i + 1);
+  const subject = only ? `page ${only}` : "the piece";
   const record = parseOmrRecord(recordXml);
   if (!record) {
     return {
-      note: `The piece has no recognition record (${omrRecordPath(fragment)}), so page ${page} has no draft.`,
+      note: `The piece has no recognition record (${omrRecordPath(fragment)}), so ${subject} has no draft.`,
       warnings: [],
     };
   }
   o.progress("Reading the recognition record");
-  // The piece read through to this page: clef corrections, and the clefs,
-  // key and meter in force where the page starts.
+  // Recorded before the pages are drafted, so the header entries get their
+  // ids with the first drafted page's.
+  score = recordApplications(
+    score,
+    transcriptionApplications(layoutSource(corrected), record),
+  );
+  // The piece read through: clef corrections, and the clefs, key and meter
+  // in force where each page starts.
   const named = corrected ? layoutInstruments(corrected) : null;
   const plan = named ? staffPlan(named, parsed.pages) : null;
   const pieces = plan
     ? namedPieceStaves(parsed, record, plan)
     : pieceStaves(parsed, record, scoreStaves(parsed));
-  const staves = pieces[page - 1];
-  const flat = staves.systems.flat();
-  if (!flat.length) {
-    return {
-      note: `Page ${page}: no staff box lies on a system of measure boxes, so it has no draft.`,
-      warnings: [],
-    };
-  }
-  const unrecorded = staves.entries.flat().filter((e) => !e).length;
-  const failed = staves.entries.flat().filter((e) => e && !e.musicxml).length;
-
-  o.progress("Assembling the page");
-  const printed = staves.systems.map(
-    (_, s) => new Set(staves.assigned[s].filter((n) => n > 0)),
-  );
-  const left = staves.assigned.flat().filter((n) => n === 0).length;
-  // Per system of the page, from the staff plan solved through the piece:
-  // how the staves it does not print are written, the parts each printed
-  // staff carries, and the <scoreDef> it opens with; and why the page is to
-  // be checked.
-  const planned = staves.systems.map((_, s) =>
-    plan ? plannedSystemIndex(plan, page - 1, s) : -1,
-  );
   const allUnprinted = plan ? unprintedStaves(plan) : [];
   const states = plan ? staffStates(plan) : [];
-  const unprinted = planned.map((g) => allUnprinted[g] ?? new Map());
-  const layerParts = planned.map(
-    (g) =>
-      new Map(
-        g < 0 || !plan
-          ? []
-          : [...plan.systems[g].boxes.values()].flatMap((at) =>
-              plan.staves[at.n - 1].instrument.parts.length
-                ? [[at.n, at.parts] as const]
-                : [],
-            ),
-      ),
-  );
-  const systemScoreDefs = planned.map((g) =>
-    plan && g >= 0 ? systemScoreDef(plan, states, g) : "",
-  );
-  const checks = plan ? pageChecks(parsed, pieces, plan)[page - 1] : [];
-  const start = pageStart(parsed, pieces, page);
-  const stitched = stitchPage(
-    staves.transcriptions,
-    start.clefs,
-    placementsOf(staves),
-    start,
-  );
-  const tk = await getConverter();
-  if (!tk.loadData(stitched.musicxml))
-    throw new Error("Verovio could not read the transcription.");
-  const draft = insertPageDraft(
-    score,
-    `surface-${page}`,
-    tk.getMEI({}),
-    stitched.measuresPerSystem,
-    printed,
-    stitched.opening,
-    unprinted,
-    layerParts,
-    systemScoreDefs,
-  );
-  // Drafts of other pages start from the same score; the page prefix keeps
-  // their new ids apart when both are spliced in.
-  const content = tidyMei(
-    addXmlIds(
-      recordApplications(
-        draft.mei,
-        transcriptionApplications(layoutSource(corrected), record),
-      ),
-      `p${page}-`,
-    ),
-  );
+  const allChecks = plan ? pageChecks(parsed, pieces, plan) : [];
+
+  // Pages without a draft and why, the mismatches of the drafted ones, and
+  // the reasons to check them; in a piece's draft each names its page.
+  const skipped: string[] = [];
+  const warnings: string[] = [];
+  const checks: string[] = [];
+  const of = (page: number, text: string) =>
+    only ? text : `Page ${page}: ${text}`;
+  let drafted = 0;
+  let filled = 0;
+  for (const page of pageNumbers) {
+    if (!parsed.pages[page - 1].staves?.length) {
+      skipped.push(`Page ${page} has no staff boxes, so it has no draft.`);
+      continue;
+    }
+    const staves = pieces[page - 1];
+    const flat = staves.systems.flat();
+    if (!flat.length) {
+      skipped.push(
+        `Page ${page}: no staff box lies on a system of measure boxes, so it has no draft.`,
+      );
+      continue;
+    }
+    const unrecorded = staves.entries.flat().filter((e) => !e).length;
+    const failed = staves.entries.flat().filter((e) => e && !e.musicxml).length;
+
+    o.progress(
+      only
+        ? "Assembling the page"
+        : `Assembling page ${page} of ${pageNumbers.length}`,
+    );
+    const printed = staves.systems.map(
+      (_, s) => new Set(staves.assigned[s].filter((n) => n > 0)),
+    );
+    const left = staves.assigned.flat().filter((n) => n === 0).length;
+    // Per system of the page, from the staff plan solved through the piece:
+    // how the staves it does not print are written, the parts each printed
+    // staff carries, and the <scoreDef> it opens with.
+    const planned = staves.systems.map((_, s) =>
+      plan ? plannedSystemIndex(plan, page - 1, s) : -1,
+    );
+    const unprinted = planned.map((g) => allUnprinted[g] ?? new Map());
+    const layerParts = planned.map(
+      (g) =>
+        new Map(
+          g < 0 || !plan
+            ? []
+            : [...plan.systems[g].boxes.values()].flatMap((at) =>
+                plan.staves[at.n - 1].instrument.parts.length
+                  ? [[at.n, at.parts] as const]
+                  : [],
+              ),
+        ),
+    );
+    const systemScoreDefs = planned.map((g) =>
+      plan && g >= 0 ? systemScoreDef(plan, states, g) : "",
+    );
+    const start = pageStart(parsed, pieces, page);
+    const stitched = stitchPage(
+      staves.transcriptions,
+      start.clefs,
+      placementsOf(staves),
+      start,
+    );
+    const tk = await getConverter();
+    let draft: ReturnType<typeof insertPageDraft>;
+    try {
+      if (!tk.loadData(stitched.musicxml))
+        throw new Error("Verovio could not read the transcription.");
+      draft = insertPageDraft(
+        score,
+        `surface-${page}`,
+        tk.getMEI({}),
+        stitched.measuresPerSystem,
+        printed,
+        stitched.opening,
+        unprinted,
+        layerParts,
+        systemScoreDefs,
+      );
+    } catch (e) {
+      // A page task has nothing else to open with. In a piece's draft the
+      // page stays empty and the other pages are drafted.
+      if (only) throw e;
+      warnings.push(
+        `Page ${page} could not be drafted and stays empty: ${(e as Error).message}`,
+      );
+      continue;
+    }
+    // Drafts of other pages start from the same score; the page prefix keeps
+    // their new ids apart when they are spliced in or follow one another.
+    score = addXmlIds(draft.mei, `p${page}-`);
+    drafted++;
+    filled += draft.filled;
+    warnings.push(
+      ...[
+        ...(staves.unplaced
+          ? [
+              `${staves.unplaced} staff box(es) lie on no system of measure boxes and were left out.`,
+            ]
+          : []),
+        ...(failed
+          ? [
+              `${failed} of ${flat.length} staves could not be transcribed and stay empty.`,
+            ]
+          : []),
+        ...(unrecorded
+          ? [
+              `${unrecorded} of ${flat.length} staves are not in the recognition record, since their boxes changed after the score setup, and stay empty.`,
+            ]
+          : []),
+        ...(left
+          ? [
+              named
+                ? `${left} staff box(es) name no staff of the score and were left out.`
+                : `${left} staff box(es) are more than the score has staves and were left out.`,
+            ]
+          : []),
+        ...draft.warnings,
+      ].map((w) => of(page, w)),
+    );
+    checks.push(...(allChecks[page - 1] ?? []).map((c) => of(page, c)));
+  }
+  if (!drafted)
+    return {
+      note:
+        [...skipped, ...warnings].join(" ") ||
+        "The piece has no pages, so it has no draft.",
+      warnings,
+    };
+
+  const content = tidyMei(score);
   const meiError = await checkMei(content);
   if (meiError)
     throw new Error(`The draft fails the MEI schema check (${meiError}).`);
@@ -244,38 +323,16 @@ export async function draftPage(o: PageDraftOptions): Promise<PageDraftResult> {
     o.workRepo.owner,
     o.workRepo.repo,
     [{ path: fragment, content }],
-    `Transcription draft of page ${page} (${record.staffPipeline.name} ${record.staffPipeline.version})`,
+    `Transcription draft of ${only ? `page ${only}` : `${drafted} page(s)`} (${record.staffPipeline.name} ${record.staffPipeline.version})`,
     { branch: o.branch },
   );
 
-  const warnings = [
-    ...(staves.unplaced
-      ? [
-          `${staves.unplaced} staff box(es) lie on no system of measure boxes and were left out.`,
-        ]
-      : []),
-    ...(failed
-      ? [
-          `${failed} of ${flat.length} staves could not be transcribed and stay empty.`,
-        ]
-      : []),
-    ...(unrecorded
-      ? [
-          `${unrecorded} of ${flat.length} staves are not in the recognition record, since their boxes changed after the score setup, and stay empty.`,
-        ]
-      : []),
-    ...(left
-      ? [
-          named
-            ? `${left} staff box(es) name no staff of the score and were left out.`
-            : `${left} staff box(es) are more than the score has staves and were left out.`,
-        ]
-      : []),
-    ...draft.warnings,
-  ];
   return {
     note:
-      `Page ${page} was drafted into ${draft.filled} measure(s).` +
+      (only
+        ? `Page ${only} was drafted into ${filled} measure(s).`
+        : `${drafted} page(s) were drafted into ${filled} measure(s).`) +
+      (skipped.length ? ` ${skipped.join(" ")}` : "") +
       (warnings.length ? ` ${warnings.join(" ")}` : "") +
       (checks.length
         ? ` Check the clefs, key, meter and staves against the scan: ${checks.join(" ")}`

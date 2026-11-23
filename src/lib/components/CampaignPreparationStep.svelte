@@ -1,5 +1,5 @@
 <!--
-  Wizard step 7: whether the facsimile pieces go through optical music
+  Wizard step 8: whether the facsimile pieces go through optical music
   recognition, which decides how they get their measures and whether encoding
   starts from a draft, and the button that finishes the setup. Measure detection contacts
   the edirom detector for every page when Create campaign is pressed; both optical music
@@ -45,15 +45,15 @@
       name: "With a score setup task",
       info:
         "Staves and measures are detected and corrected in a measure correction task. The staves are then " +
-        "transcribed in the score setup, and each page's encoding starts from that draft.",
+        "transcribed in the score setup, and encoding starts from that draft.",
     },
     {
       id: "omr-instruments",
       name: "With instruments named during measure correction",
       info:
         "Staves and measures are detected and corrected in a measure correction task, which also names the " +
-        "instrument of every staff and transcribes the staves. The first page's encoding task starts with a " +
-        "check of the clefs, key and meter, and each page's encoding starts from the draft.",
+        "instrument of every staff and transcribes the staves. The first encoding task starts with a " +
+        "check of the clefs, key and meter, and encoding starts from the draft.",
     },
   ];
 
@@ -71,7 +71,7 @@
       name: "Draft from optical music recognition (OMR), only where a measure is empty or missing in the file",
       info:
         "Suits a file with passages or staves missing. Staves and measures are recognised and corrected in a " +
-        "measure-correction task; the file's measures are then placed in them, and each page's encoding starts " +
+        "measure-correction task; the file's measures are then placed in them, and encoding starts " +
         "from a recognised draft in measures and staves that are empty in the file and in measures missing from it.",
     },
   ];

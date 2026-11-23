@@ -183,7 +183,9 @@
     }
     if (card.pre) return preTaskInstruction(card.locator, true);
     if (card.omr)
-      return "Correct the notes of this page's draft, read automatically from the scan, in the mei-friend editor.";
+      return card.scope
+        ? "Correct the notes of this page's draft, read automatically from the scan, in the mei-friend editor."
+        : "Correct the notes of the piece's draft, read automatically from the scan, in the mei-friend editor.";
     return card.scope
       ? "Encode the music of this page in the mei-friend editor."
       : "Encode the music of the piece in the mei-friend editor.";

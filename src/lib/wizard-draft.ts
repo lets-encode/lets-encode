@@ -15,7 +15,7 @@
 // committed the campaign, the record is removed. So every record here describes
 // something that can be continued.
 
-import type { Preparation } from "./campaign-init.ts";
+import type { Division, Preparation } from "./campaign-init.ts";
 import type { EncodingSource } from "./prepare-images.ts";
 import type { SourceMetadata } from "./source-metadata.ts";
 import type { Piece } from "./pieces.ts";
@@ -40,6 +40,12 @@ export interface DraftEntries {
   title: string;
   description: string;
   license: string;
+  /** How encoding is divided into tasks; absent in drafts stored before. */
+  division?: Division;
+  /** Reviews per task; absent in drafts stored before. */
+  reviews?: number;
+  /** The encoder may review their own work; absent in drafts stored before. */
+  selfReview?: boolean;
   iiifManifestUrl: string;
   copyrightAccepted: boolean;
   /** Paths of the prepared page images, in page order; the bytes are in IndexedDB. */
@@ -86,6 +92,7 @@ const draftKey = (owner: string, handle: string) =>
 const STEP_IDS: readonly WizardStepId[] = [
   "name",
   "license",
+  "tasks",
   "upload",
   "pages",
   "source",

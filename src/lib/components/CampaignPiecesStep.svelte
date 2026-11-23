@@ -1,5 +1,5 @@
 <!--
-  Wizard step 6: the works within the source. Each piece gets its own metadata
+  Wizard step 7: the works within the source. Each piece gets its own metadata
   and, when it is read from the facsimile, the regions of the pages it covers.
 
   Pieces are seeded from what the upload produced — one per uploaded encoding,

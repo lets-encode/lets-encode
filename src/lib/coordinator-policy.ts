@@ -25,7 +25,7 @@ import {
   type Contribution,
 } from "./mei-provenance.ts";
 import { MAX_ANCHOR_LENGTH, MAX_COMMENT_LENGTH } from "./campaign-submit.ts";
-import { pageOfLocator } from "./campaign-graph.ts";
+import { isPreTask, pageOfLocator } from "./campaign-graph.ts";
 import { reapLocks } from "./campaign-reaper.ts";
 import { replaceMeiHead } from "./mei-facsimile.ts";
 import { firstElementNamed } from "./mei-xml.ts";
@@ -57,9 +57,9 @@ export function pieceFieldForPath(
 /**
  * Whether a task of a piece prepared as `preparation` checks the piece's
  * opening score definition before its draft, and may change it (mei-page-splice spliceOpeningScoreDef): the
- * first page task of an 'omr-instruments' piece, the page task that depends
- * on the piece's layout task, or on the encoding alignment that follows it
- * (planTasks).
+ * first encoding task of an 'omr-instruments' piece, the page task or
+ * whole-file task that depends on the piece's layout task, or on the
+ * encoding alignment that follows it (planTasks).
  */
 export function checksOpening(
   task: TaskRow,
@@ -67,7 +67,7 @@ export function checksOpening(
   preparation: string | null | undefined,
 ): boolean {
   return (
-    pageOfLocator(task.locator) !== null &&
+    !isPreTask(task.locator) &&
     preparation === "omr-instruments" &&
     tasks.some(
       (t) =>

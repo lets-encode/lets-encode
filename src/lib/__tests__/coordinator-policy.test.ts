@@ -558,7 +558,7 @@ test("a rejection detail is one capped line of inline code", () => {
   );
 });
 
-test("checksOpening: the page task of an omr-instruments piece that waits for its layout task", () => {
+test("checksOpening: the encoding task of an omr-instruments piece that waits for its layout task", () => {
   const row = (task_id: string, locator: string, depends_on = ""): TaskRow => ({
     task_id,
     subtask_id: "",
@@ -587,12 +587,15 @@ test("checksOpening: the page task of an omr-instruments piece that waits for it
     true,
     "after the encoding alignment",
   );
-  // A locator that is not a page (pageOfLocator) is a whole-file task.
-  const loose = [
-    row("P0001", "omr-layout"),
-    row("T0001", "surface-1a", "P0001"),
-  ];
-  assert.equal(checksOpening(loose[1], loose, "omr-instruments"), false);
+  assert.equal(
+    checksOpening(aligned[1], aligned, "omr-instruments"),
+    false,
+    "the alignment itself is a pre-task",
+  );
+  // The whole-file task of a piece that is not divided by page.
+  const whole = [row("P0001", "omr-layout"), row("T0001", "", "P0001")];
+  assert.equal(checksOpening(whole[1], whole, "omr-instruments"), true);
+  assert.equal(checksOpening(whole[1], whole, "omr"), false);
 });
 
 test("isLeftoverOperationBranch takes old operation branches without an open pull request", () => {

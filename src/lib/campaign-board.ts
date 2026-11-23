@@ -286,7 +286,10 @@ export function cardSummary(
       ? "Check the submitted work and approve it or request changes."
       : "Compare the encoding with the scan and approve it or request changes.";
   if (card.pre) return preTaskInstruction(card.locator);
-  if (card.omr) return "Correct the notes read automatically from this page.";
+  if (card.omr)
+    return card.scope
+      ? "Correct the notes read automatically from this page."
+      : "Correct the notes read automatically from the pages of the piece.";
   return card.scope
     ? "Encode the music of this page."
     : "Encode the music of the piece.";

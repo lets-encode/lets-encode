@@ -343,6 +343,10 @@ export class CampaignFinisher {
             title: wizard.title.trim(),
             description: wizard.description.trim(),
             license,
+            division: wizard.division,
+            required_validations: wizard.reviews,
+            pass_threshold: wizard.reviews,
+            allow_self_validation: wizard.selfReview,
             sourceKind: wizard.images.length
               ? "facsimile"
               : wizard.encodings.length

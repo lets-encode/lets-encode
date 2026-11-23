@@ -330,6 +330,12 @@ const plan = {
   pieces: pieces.map((piece) =>
     piece.kind === "facsimile" ? { ...piece, preparation } : piece,
   ),
+  fragmentation: {
+    division:
+      configString(configYaml, "division") === "none"
+        ? ("none" as const)
+        : ("page" as const),
+  },
   validation: {
     required_validations: Number(
       configString(configYaml, "required_validations"),

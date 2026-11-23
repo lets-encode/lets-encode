@@ -13,6 +13,8 @@ const base: SummarySource = {
   handle: "",
   title: "",
   license: "CC-BY-4.0",
+  division: "page",
+  reviews: 1,
   files: [],
   iiifManifestUrl: "",
   candidates: [],
@@ -63,6 +65,11 @@ test("stepSummaries reads each step's entries", () => {
   );
   assert.equal(s.name, "songs");
   assert.equal(s.license, "CC BY 4.0");
+  assert.equal(s.tasks, "by page · 1 review");
+  assert.equal(
+    stepSummaries({ ...base, division: "none", reviews: 2 }, "").tasks,
+    "not divided · 2 reviews",
+  );
   assert.equal(s.pages, "no pages");
   assert.equal(s.pieces, "2 pieces");
   assert.equal(s.preparation, "");

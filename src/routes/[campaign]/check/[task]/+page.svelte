@@ -1,11 +1,11 @@
 <!--
-  The score check of the first page task of an 'omr-instruments' piece: the
+  The score check of the first encoding task of an 'omr-instruments' piece: the
   clef, key signature and transposition of every staff of the opening score
   definition, and the score's key and meter, as the layout task proposed them
   from the recognition. Each staff is shown beside the scan of the staff box
   where it first appears; the staves of one grand staff share one box and one
   scan. Opening the view claims the task; nothing is saved
-  until "Open draft in mei-friend" makes the page's draft with the checked
+  until "Open draft in mei-friend" makes the task's draft with the checked
   definition (openEditor), commits both to the task branch and hands off.
   Once the branch holds the draft, the view shows the checked values
   read-only and opens mei-friend on it.
@@ -418,8 +418,8 @@
             onclick={openDraft}
             disabled={session.busy || !meterValid}
             title={drafted
-              ? "Opens your work on this page in mei-friend. Completing the task there submits it for review."
-              : "Makes the draft of this page with these clefs, key signatures, meter and transpositions and opens it in mei-friend. Completing the task there submits it for review."}
+              ? "Opens your work in mei-friend. Completing the task there submits it for review."
+              : "Makes the draft with these clefs, key signatures, meter and transpositions and opens it in mei-friend. Completing the task there submits it for review."}
             >{drafted ? "Open in mei-friend" : "Open draft in mei-friend"}
             <Icon name="external" /></button
           >

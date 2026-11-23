@@ -236,20 +236,22 @@ const openEditor: CommandDef<
         });
       }
 
-      // A page task of an OMR-prepared piece starts from a draft of its page
-      // made from the piece's recognition record, committed to the fresh
-      // branch before mei-friend opens. A branch with work in progress keeps it.
+      // An encoding task of an OMR-prepared piece starts from a draft made
+      // from the piece's recognition record, committed to the fresh branch
+      // before mei-friend opens: of its page for a page task, of every page
+      // for a whole-file task. A branch with work in progress keeps it.
       let draft: { note: string; warnings: string[] } | null = null;
       const pageNo = pageOfLocator(taskDef.locator);
       if (
         fresh &&
-        pageNo &&
+        (pageNo || taskDef.locator === "") &&
         usesOmr(pieceFieldForPath(configYaml, fragment, "preparation"))
       ) {
         ctx.progress({ step: "Preparing the transcription draft…" });
         try {
-          const { draftPage } = await import("../omr-page-draft.ts");
-          draft = await draftPage({
+          const { draftPage, draftPiece } =
+            await import("../omr-page-draft.ts");
+          const options = {
             forge: f,
             owner,
             repo,
@@ -257,10 +259,12 @@ const openEditor: CommandDef<
             workRepo,
             branch: ref,
             fragment,
-            page: pageNo,
             scoreDef,
-            progress: (detail) => ctx.progress({ detail }),
-          });
+            progress: (detail: string) => ctx.progress({ detail }),
+          };
+          draft = pageNo
+            ? await draftPage({ ...options, page: pageNo })
+            : await draftPiece(options);
         } catch (e) {
           return {
             error: `Could not prepare the transcription draft: ${(e as Error).message}`,

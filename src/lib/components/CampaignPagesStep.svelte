@@ -1,5 +1,5 @@
 <!--
-  Wizard step 4: which pages of the upload the campaign encodes, and in what
+  Wizard step 5: which pages of the upload the campaign encodes, and in what
   order. A source is routinely larger than the part of it being encoded — a few
   pages of a long PDF, one piece out of a digitised volume — so the pages the
   previous step read are shown here as previews to choose between, and can be

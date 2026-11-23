@@ -292,6 +292,10 @@ test("cardSummary describes the task by kind and stage", () => {
     "Correct the notes read automatically from this page.",
   );
   assert.equal(
+    cardSummary({ ...card, omr: true }),
+    "Correct the notes read automatically from the pages of the piece.",
+  );
+  assert.equal(
     cardSummary({ ...card, locator: "measure-zones", pre: true }),
     "Check the measure boxes on each page and correct the wrong ones.",
   );

@@ -1,5 +1,5 @@
 <!--
-  Wizard step 5: metadata describing the source as a whole — the physical
+  Wizard step 6: metadata describing the source as a whole — the physical
   manifestation the pieces were read from. Each piece copies this into its own
   header at the end, so it is collected once here rather than per piece.
 

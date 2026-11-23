@@ -104,7 +104,9 @@ test("buildCampaignConfig: instigator + repo_id come from args; defaults fill th
   assert.equal(config.campaign.repo_id, REPO_ID);
   assert.equal(config.automation.central_repository, "lets-encode/lets-encode");
   assert.equal(config.fragmentation.strategy, "by-piece");
+  assert.equal(config.fragmentation.division, "page");
   assert.equal(config.validation.required_validations, 1);
+  assert.equal("allow_self_validation" in config.validation, false);
   assert.equal(config.locking.stale_after_minutes, 1440);
   assert.equal(config.locking.max_claims_per_person, 10);
   assert.doesNotThrow(() => assertSupported(config));
@@ -161,6 +163,7 @@ test("configToYaml: matches the worked example", () => {
       '      composer: ""\n' +
       "fragmentation:\n" +
       '  strategy: "by-piece"\n' +
+      '  division: "page"\n' +
       "validation:\n" +
       "  required_validations: 1\n" +
       "  pass_threshold: 1\n" +
@@ -212,6 +215,28 @@ test("one facsimile piece: the measure pre-task, then setup, then its page task"
   );
 });
 
+test("configToYaml: the tasks step's values are recorded", () => {
+  const yaml = configToYaml(
+    build({
+      pieces: [facsimile("piece-01", [1])],
+      division: "none",
+      required_validations: 2,
+      pass_threshold: 2,
+      allow_self_validation: true,
+    }),
+  );
+  assert.ok(
+    yaml.includes(
+      'fragmentation:\n  strategy: "by-piece"\n  division: "none"\n' +
+        "validation:\n  required_validations: 2\n  pass_threshold: 2\n" +
+        "  allow_self_validation: true\nlocking:\n",
+    ),
+  );
+  const config = build({ pieces: [facsimile("piece-01", [1])] });
+  config.fragmentation.division = "part" as never;
+  assert.throws(() => configToYaml(config), /Unsupported division/);
+});
+
 /** A planned task as a one-line row: id, fragment, locator, depends_on. */
 const brief = (task: ReturnType<typeof planTasks>[number]) => [
   task.id,
@@ -241,6 +266,54 @@ test("an omr-instruments piece has no setup task; later pages wait for the first
     ["T0002", "sources/piece-01/score.mei", "surface-2", "T0001"],
     ["T0003", "sources/piece-01/score.mei", "surface-3", "T0001"],
   ]);
+});
+
+test("the division 'none' gives every piece one whole-file encoding task after its pre-tasks", () => {
+  const plan = (piece: ConfigPiece) =>
+    planTasks(build({ pieces: [piece], division: "none" })).map(brief);
+  assert.deepEqual(
+    plan({ ...facsimile("piece-01", [1, 2]), preparation: "omr" }),
+    [
+      ["P0001", "sources/piece-01/score.mei", "omr-layout", ""],
+      ["P0002", "sources/piece-01/score.mei", "score-setup", "P0001"],
+      ["T0001", "sources/piece-01/score.mei", "", "P0002"],
+    ],
+  );
+  assert.deepEqual(
+    plan({
+      ...facsimile("piece-01", [1, 2, 3]),
+      preparation: "omr-instruments",
+    }),
+    [
+      ["P0001", "sources/piece-01/score.mei", "omr-layout", ""],
+      ["T0001", "sources/piece-01/score.mei", "", "P0001"],
+    ],
+  );
+  assert.deepEqual(plan(physical("piece-01", 3)), [
+    ["P0001", "sources/piece-01/score.mei", "score-setup", ""],
+    ["T0001", "sources/piece-01/score.mei", "", "P0001"],
+  ]);
+  // Measured pages do not divide it either.
+  assert.deepEqual(
+    planTasks(
+      build({ pieces: [facsimile("piece-01", [1, 2])], division: "none" }),
+      { "piece-01": [1, 2] },
+    ).map(brief),
+    [
+      ["P0001", "sources/piece-01/score.mei", "measure-zones", ""],
+      ["P0002", "sources/piece-01/score.mei", "score-setup", "P0001"],
+      ["T0001", "sources/piece-01/score.mei", "", "P0002"],
+    ],
+  );
+  const config = build({
+    pieces: [facsimile("piece-01", [1])],
+    division: "none",
+    required_validations: 2,
+  });
+  assert.match(
+    buildStateCsv(config),
+    /^task_id,subtask_id,status,encoder,encoded_at,validate_status_1,validate_status_2\n/,
+  );
 });
 
 test("a piece starting from an uploaded encoding gets the alignment between its measure task and its setup", () => {

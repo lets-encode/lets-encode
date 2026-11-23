@@ -9,7 +9,7 @@
 // What is collected is also mirrored into the browser's storage as a draft, so a
 // setup that is interrupted can be continued; see wizard-draft.ts.
 
-import type { Preparation } from "./campaign-init.ts";
+import type { Division, Preparation } from "./campaign-init.ts";
 import type {
   EncodingSource,
   PageCandidate,
@@ -33,6 +33,7 @@ import { releaseClaim, releaseFailedNote } from "./campaign-resolve.ts";
 export const WIZARD_STEPS = [
   { id: "name", label: "Name" },
   { id: "license", label: "Licence" },
+  { id: "tasks", label: "Tasks" },
   { id: "upload", label: "Upload" },
   { id: "pages", label: "Pages" },
   { id: "source", label: "Source" },
@@ -99,6 +100,12 @@ export const wizard = $state<{
   description: string;
   /** SPDX id of the licence the encoding is published under. */
   license: string;
+  /** How a piece's encoding is divided into tasks. */
+  division: Division;
+  /** Reviews per task; sets the review columns of the state table. */
+  reviews: number;
+  /** The encoder may review their own work; for test campaigns. */
+  selfReview: boolean;
   /** Page images, PDFs and encodings picked in the upload step. */
   files: File[];
   /** A IIIF Presentation manifest whose canvases are fetched and committed. */
@@ -156,6 +163,9 @@ export const wizard = $state<{
   title: "",
   description: "",
   license: DEFAULT_LICENSE,
+  division: "page",
+  reviews: 1,
+  selfReview: false,
   files: [],
   iiifManifestUrl: "",
   copyrightAccepted: false,
@@ -172,6 +182,9 @@ export const wizard = $state<{
   preparation: "measure-detection",
   preparationPicked: false,
 });
+
+/** The most reviews per task the tasks step offers. */
+export const MAX_REVIEWS = 3;
 
 export const stepIndex = (id: WizardStepId) =>
   WIZARD_STEPS.findIndex((s) => s.id === id);
@@ -248,6 +261,9 @@ export function resetWizard(): void {
   wizard.title = "";
   wizard.description = "";
   wizard.license = DEFAULT_LICENSE;
+  wizard.division = "page";
+  wizard.reviews = 1;
+  wizard.selfReview = false;
   wizard.files = [];
   wizard.iiifManifestUrl = "";
   wizard.copyrightAccepted = false;
@@ -348,6 +364,9 @@ export function draftSnapshot(): DraftSnapshot {
       title: wizard.title,
       description: wizard.description,
       license: wizard.license,
+      division: wizard.division,
+      reviews: wizard.reviews,
+      selfReview: wizard.selfReview,
       iiifManifestUrl: wizard.iiifManifestUrl,
       copyrightAccepted: wizard.copyrightAccepted,
       imagePaths: wizard.images.map((image) => image.path),
@@ -442,6 +461,12 @@ export function applyDraft(draft: WizardDraft, images: PageImage[]): void {
   wizard.title = entries.title;
   wizard.description = entries.description;
   wizard.license = entries.license;
+  wizard.division = entries.division === "none" ? "none" : "page";
+  wizard.reviews = Math.min(
+    Math.max(Math.trunc(Number(entries.reviews)) || 1, 1),
+    MAX_REVIEWS,
+  );
+  wizard.selfReview = entries.selfReview === true;
   wizard.iiifManifestUrl = entries.iiifManifestUrl;
   wizard.copyrightAccepted = entries.copyrightAccepted;
   wizard.repo = draft.repo;

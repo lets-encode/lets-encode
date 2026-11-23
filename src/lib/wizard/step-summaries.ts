@@ -10,6 +10,8 @@ export interface SummarySource {
   handle: string;
   title: string;
   license: string;
+  division: string;
+  reviews: number;
   files: readonly { name: string }[];
   iiifManifestUrl: string;
   candidates: readonly unknown[];
@@ -49,6 +51,7 @@ export function stepSummaries(
   return {
     name: [w.handle, w.title].filter((s) => s.trim()).join(" · "),
     license: licenseById(w.license).name.split(" — ")[0],
+    tasks: `${w.division === "none" ? "not divided" : "by page"} · ${w.reviews} review${w.reviews === 1 ? "" : "s"}`,
     upload: uploadSummary(w),
     pages: w.images.length
       ? `${w.images.length} kept`

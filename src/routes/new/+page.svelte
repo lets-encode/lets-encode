@@ -10,6 +10,7 @@
   import { draftSnapshot, saveDraft, wizard } from "$lib/wizard.svelte.ts";
   import CampaignNameStep from "$lib/components/CampaignNameStep.svelte";
   import CampaignLicenseStep from "$lib/components/CampaignLicenseStep.svelte";
+  import CampaignTasksStep from "$lib/components/CampaignTasksStep.svelte";
   import CampaignUploadStep from "$lib/components/CampaignUploadStep.svelte";
   import CampaignPagesStep from "$lib/components/CampaignPagesStep.svelte";
   import CampaignSourceStep from "$lib/components/CampaignSourceStep.svelte";
@@ -74,6 +75,8 @@
   <CampaignNameStep />
 {:else if wizard.step === "license"}
   <CampaignLicenseStep />
+{:else if wizard.step === "tasks"}
+  <CampaignTasksStep />
 {:else if wizard.step === "upload"}
   <CampaignUploadStep />
 {:else if wizard.step === "pages"}

@@ -1,5 +1,5 @@
 <!--
-  Wizard step 3: what the campaign is built from — page images, PDFs, existing
+  Wizard step 4: what the campaign is built from — page images, PDFs, existing
   encodings or a IIIF manifest. A campaign needs page images or an encoding.
 
   Continuing reads the upload: a PDF is rasterised to one page per document page,

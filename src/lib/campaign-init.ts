@@ -97,6 +97,10 @@ export type Preparation = (typeof PREPARATIONS)[number];
 export const usesOmr = (preparation?: string | null): boolean =>
   preparation === "omr" || preparation === "omr-instruments";
 
+/** How a piece's encoding is divided into tasks. */
+export const DIVISIONS = ["page", "none"] as const;
+export type Division = (typeof DIVISIONS)[number];
+
 /** A schema-v3 campaign config object. */
 export interface CampaignConfig {
   schema_version: number;
@@ -129,8 +133,17 @@ export interface CampaignConfig {
     rights_acknowledged: string;
   };
   pieces: ConfigPiece[];
-  fragmentation: { strategy: string };
-  validation: { required_validations: number; pass_threshold: number };
+  fragmentation: {
+    strategy: string;
+    /** 'page': one encoding task per page of a piece; 'none': one per piece. */
+    division: Division;
+  };
+  validation: {
+    required_validations: number;
+    pass_threshold: number;
+    /** The encoder may review their own work, and one person every review. */
+    allow_self_validation?: boolean;
+  };
   locking: { stale_after_minutes: number; max_claims_per_person: number };
 }
 
@@ -152,8 +165,10 @@ export interface CampaignFields {
   images: string[];
   rightsAcknowledged: string;
   pieces: ConfigPiece[];
+  division?: Division;
   required_validations?: number;
   pass_threshold?: number;
+  allow_self_validation?: boolean;
   stale_after_minutes?: number;
   max_claims_per_person?: number;
 }
@@ -161,6 +176,7 @@ export interface CampaignFields {
 // Defaults for fields the create form does not surface.
 const DEFAULTS = {
   language: "en",
+  division: "page" as Division,
   required_validations: 1,
   pass_threshold: 1,
   stale_after_minutes: DEFAULT_STALE_MINUTES,
@@ -208,6 +224,10 @@ export function assertSupported(config: CampaignConfig): void {
       );
     }
   }
+  if (!DIVISIONS.includes(config.fragmentation.division))
+    throw new Error(
+      `Unsupported division: ${config.fragmentation.division} (only ${DIVISIONS.map((d) => `'${d}'`).join(", ")} are implemented).`,
+    );
   // Two pieces sharing a path would make a submission ambiguous: the
   // coordinator resolves a task by its fragment path alone.
   const paths = config.pieces.map((piece) => piece.path);
@@ -251,11 +271,15 @@ export function buildCampaignConfig(
       rights_acknowledged: fields.rightsAcknowledged,
     },
     pieces: fields.pieces,
-    fragmentation: { strategy: "by-piece" },
+    fragmentation: {
+      strategy: "by-piece",
+      division: fields.division ?? DEFAULTS.division,
+    },
     validation: {
       required_validations:
         fields.required_validations ?? DEFAULTS.required_validations,
       pass_threshold: fields.pass_threshold ?? DEFAULTS.pass_threshold,
+      ...(fields.allow_self_validation ? { allow_self_validation: true } : {}),
     },
     locking: {
       stale_after_minutes:
@@ -352,9 +376,11 @@ export function configToYaml(config: CampaignConfig): string {
     `pieces:\n${pieces}` +
     `fragmentation:\n` +
     `  strategy: ${yamlStr(config.fragmentation.strategy)}\n` +
+    `  division: ${yamlStr(config.fragmentation.division)}\n` +
     `validation:\n` +
     `  required_validations: ${v.required_validations}\n` +
     `  pass_threshold: ${v.pass_threshold}\n` +
+    (v.allow_self_validation ? `  allow_self_validation: true\n` : "") +
     `locking:\n` +
     `  stale_after_minutes: ${l.stale_after_minutes}\n` +
     `  max_claims_per_person: ${l.max_claims_per_person}\n`
@@ -381,6 +407,11 @@ function surfacesFor(piece: ConfigPiece, surfaces?: PieceSurfaces): number[] {
   const covered = new Set(piece.zones.map((zone) => zone.surface));
   return [...covered].map((_, i) => i + 1);
 }
+
+/** What the task plan reads of a config; without a division, pieces are divided by page. */
+export type PlanConfig = Pick<CampaignConfig, "pieces"> & {
+  fragmentation?: { division?: Division };
+};
 
 /** One planned task: the row pair the task and state tables each emit for it. */
 export interface PlannedTask {
@@ -429,15 +460,21 @@ export interface PlannedTask {
  * matching the blank score's `<pb>` markers); without one it gets a single
  * whole-file task. Either way its encoding depends on the setup task.
  *
+ * With the division 'none' (fragmentation.division) no piece's encoding is
+ * split by page: every piece gets a single whole-file encoding task after
+ * its pre-tasks. On an 'omr-instruments' piece that task checks the score
+ * definition before encoding, as the first page task does.
+ *
  * Task numbers run continuously across pieces while pre-task numbers run
  * across facsimile and physical pieces only, so every id is unique
  * campaign-wide. Both tables are rendered from this one plan so they cannot
  * fall out of step.
  */
 export function planTasks(
-  config: Pick<CampaignConfig, "pieces">,
+  config: PlanConfig,
   surfaces?: PieceSurfaces,
 ): PlannedTask[] {
+  const undivided = config.fragmentation?.division === "none";
   const planned: PlannedTask[] = [];
   let tasks = 0;
   let preTasks = 0;
@@ -450,7 +487,7 @@ export function planTasks(
         locator: "score-setup",
         dependsOn: "",
       });
-      const count = piece.pages ?? 0;
+      const count = undivided ? 0 : (piece.pages ?? 0);
       if (count < 1) {
         planned.push({
           id: taskId(++tasks),
@@ -502,7 +539,7 @@ export function planTasks(
       });
       opening = setup;
     }
-    const pages = surfacesFor(piece, surfaces);
+    const pages = undivided ? [] : surfacesFor(piece, surfaces);
     if (pages.length === 0) {
       planned.push({
         id: taskId(++tasks),
@@ -533,7 +570,7 @@ export function planTasks(
  * score by page (mei-page-splice.ts).
  */
 export function buildTaskCsv(
-  config: Pick<CampaignConfig, "pieces">,
+  config: PlanConfig,
   surfaces?: PieceSurfaces,
 ): string {
   const lines = [csvRow(TASK_COLUMNS)];
@@ -553,7 +590,7 @@ export function buildTaskCsv(
  * rows mirror buildTaskCsv one-for-one.
  */
 export function buildStateCsv(
-  config: Pick<CampaignConfig, "pieces" | "validation">,
+  config: PlanConfig & Pick<CampaignConfig, "validation">,
   surfaces?: PieceSurfaces,
 ): string {
   const count = config.validation?.required_validations ?? 0;
