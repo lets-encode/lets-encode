@@ -659,6 +659,19 @@ section.alt {
   width: auto;
 }
 
+/* Acknowledgements: one column per credited service (text + its logos), side by
+   side where there is room, stacked on narrow screens. */
+.ack-grid {
+  display: grid;
+  gap: 2.5rem 3rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+
+.ack-item p {
+  color: var(--ink-soft);
+  margin: 0;
+}
+
 /* Logos without a link: no card, left-aligned in a row. */
 .logos-plain {
   display: flex;
