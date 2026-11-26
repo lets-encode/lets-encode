@@ -241,6 +241,26 @@ a:hover {
   text-decoration: none;
 }
 
+/* "Acknowledgements" is the longest nav label; it shortens to "Thanks" only in the
+   two width bands where the full word would cost the row nav an extra line (measured:
+   one row needs >= 870px with it, >= 785px with "Thanks"; at 561-574px it makes three
+   rows to Thanks' two). Bands carry ~10px of slack for font differences. The burger
+   menu (<= 560px) keeps the full word. */
+.nav-short {
+  display: none;
+}
+
+@media (min-width: 561px) and (max-width: 584px),
+(min-width: 781px) and (max-width: 879px) {
+  .nav .nav-long {
+    display: none;
+  }
+
+  .nav .nav-short {
+    display: inline;
+  }
+}
+
 .nav-toggle {
   display: none;
 }
@@ -970,6 +990,31 @@ section.alt {
   transform-origin: 50% 0%;
 }
 
+/* lead: the hand sits inline before the word (no glyph to tweak), so the word
+   moves right and the heading keeps its margin. Negative block margins stop the
+   tall image from stretching the line box. */
+.gx.lead .hand {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  margin: -.45em .02em -.35em 0;
+}
+
+/* phones: the hand plus a long word overflow 375px even shrunk, so the hand
+   stacks on its own line just above the word, still at the left margin */
+@media (max-width: 480px) {
+  .gx.lead {
+    display: block;
+    --s: 1.4em !important;
+  }
+
+  .gx.lead .hand {
+    display: block;
+    width: max-content;
+    margin: 0 0 -.12em;
+  }
+}
+
 .gx.above .gly {
   transform-origin: 50% 92%;
 }
@@ -994,6 +1039,10 @@ section.alt {
 
 .callout h2:has(.gx.below) {
   margin-bottom: 1.1em;
+}
+
+.section-head h2:has(.gx.lead) {
+  margin-bottom: .45em;
 }
 
 /* Hover is handled in JS (lets-encode-logo.js): entering a heading replays the
@@ -1180,6 +1229,31 @@ section.alt {
   }
 }
 
+/* heart hands: a double heartbeat */
+@keyframes hpicBeat {
+
+  0%,
+  100% {
+    transform: scale(1)
+  }
+
+  14% {
+    transform: scale(1.12)
+  }
+
+  28% {
+    transform: scale(1)
+  }
+
+  42% {
+    transform: scale(1.08)
+  }
+
+  60% {
+    transform: scale(1)
+  }
+}
+
 .gx.twiddle.go .gly {
   animation: glyTwiddle .60s ease-in-out;
 }
@@ -1226,6 +1300,10 @@ section.alt {
 
 .gx.hold.go .hand {
   animation: handHold .75s ease-in-out;
+}
+
+.gx.beat.go .hpic {
+  animation: hpicBeat .9s ease-in-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
