@@ -1406,6 +1406,26 @@ section.alt {
   filter: brightness(0) invert(93%) sepia(11%) saturate(360%) hue-rotate(1deg) brightness(97%);
 }
 
+/* Logos whose own colours already read on the dark background keep them. */
+[data-theme="dark"] .logos img.logo-keep-colour {
+  filter: none;
+}
+
+/* A logo may ship a dark-mode copy (e.g. pmcg-dark.png, whose light-grey castle and
+   stave lines are recoloured near the background so the lettering leads); only the
+   copy matching the theme is shown. */
+.logos .logo-night {
+  display: none;
+}
+
+[data-theme="dark"] .logos .logo-day {
+  display: none;
+}
+
+[data-theme="dark"] .logos .logo-night {
+  display: block;
+}
+
 /* Hero wordmark (inline SVG): the letters and note are black ink with no fill
    declared, so recolour them to cream for the dark background. The coloured
    gloves and their outlines are left untouched — they read fine on dark. The
